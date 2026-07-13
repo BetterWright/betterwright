@@ -25,10 +25,10 @@ dependencies = ["cryptography>=41"]
 dev = ["pytest>=7", "ruff>=0.4"]
 
 [project.urls]
-Homepage = "https://github.com/betterwright/betterwright"
-Documentation = "https://github.com/betterwright/betterwright/tree/main/docs"
-Source = "https://github.com/betterwright/betterwright"
-Issues = "https://github.com/betterwright/betterwright/issues"
+Homepage = "https://github.com/CuriosityOS/betterwright"
+Documentation = "https://github.com/CuriosityOS/betterwright/tree/main/docs"
+Source = "https://github.com/CuriosityOS/betterwright"
+Issues = "https://github.com/CuriosityOS/betterwright/issues"
 
 [project.scripts]
 betterwright = "betterwright.cli:main"

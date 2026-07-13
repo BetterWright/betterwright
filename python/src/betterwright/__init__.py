@@ -14,7 +14,7 @@ screenshot artifacts for proof-of-work, and optional CAPTCHA solving.
         )
         print(result.value)
 
-See https://github.com/betterwright/betterwright for the full documentation.
+See https://github.com/CuriosityOS/betterwright for the full documentation.
 """
 
 from __future__ import annotations

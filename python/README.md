@@ -29,15 +29,15 @@ betterwright doctor    # confirms the runtime resolves
 ## Documentation
 
 Full docs, the JavaScript client, and runnable examples are in the
-[project repository](https://github.com/betterwright/betterwright):
+[project repository](https://github.com/CuriosityOS/betterwright):
 
-- [Getting started](https://github.com/betterwright/betterwright/blob/main/docs/getting-started.md)
-- [The browser API](https://github.com/betterwright/betterwright/blob/main/docs/browser-api.md)
-- [Network policy](https://github.com/betterwright/betterwright/blob/main/docs/network-policy.md)
-- [Credentials](https://github.com/betterwright/betterwright/blob/main/docs/credentials.md)
-- [CAPTCHA solving](https://github.com/betterwright/betterwright/blob/main/docs/captcha.md)
-- [Architecture & security model](https://github.com/betterwright/betterwright/blob/main/docs/architecture.md)
-- [Python API reference](https://github.com/betterwright/betterwright/blob/main/docs/python.md)
+- [Getting started](https://github.com/CuriosityOS/betterwright/blob/main/docs/getting-started.md)
+- [The browser API](https://github.com/CuriosityOS/betterwright/blob/main/docs/browser-api.md)
+- [Network policy](https://github.com/CuriosityOS/betterwright/blob/main/docs/network-policy.md)
+- [Credentials](https://github.com/CuriosityOS/betterwright/blob/main/docs/credentials.md)
+- [CAPTCHA solving](https://github.com/CuriosityOS/betterwright/blob/main/docs/captcha.md)
+- [Architecture & security model](https://github.com/CuriosityOS/betterwright/blob/main/docs/architecture.md)
+- [Python API reference](https://github.com/CuriosityOS/betterwright/blob/main/docs/python.md)
 
 ## License
 
