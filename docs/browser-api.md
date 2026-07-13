@@ -64,6 +64,8 @@ normal `page.locator(...)` API.
 
 ## Screenshots and artifacts
 
+![A completed task with a proof checkmark and captured screenshots](assets/proof.png)
+
 `screenshot(options)` captures the current page and records it as an artifact.
 
 | Option | Default | Notes |

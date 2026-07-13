@@ -1,5 +1,7 @@
 # CAPTCHA solving
 
+![A puzzle piece completing a "verify you are human" challenge](assets/captcha.png)
+
 When a legitimate, authorized flow stalls on a "verify you're human" wall, the
 `captcha` module hands the challenge to a third-party solving service and returns
 the token to inject back into the page. It speaks the `in.php` / `res.php`

@@ -1,5 +1,7 @@
 # Credential vault
 
+![A password flows from the vault into a login field without being exposed](assets/credentials.png)
+
 Agents that complete real tasks have to log in. Putting passwords in the
 prompt, in the model's context, or in the automation script is how they leak.
 The vault lets an agent fill a login form without the password ever being
