@@ -24,7 +24,7 @@
   "scripts": {
     "postinstall": "node bin/betterwright.mjs setup || true",
     "test": "node --test tests/node/*.test.mjs",
-    "lint": "for f in src/*.mjs bin/*.mjs; do node --check \"$f\" || exit 1; done"
+    "lint": "biome ci src bin scripts tests"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -44,9 +44,16 @@
     "web-agent"
   ],
   "license": "MIT",
+  "author": "BetterWright contributors",
   "repository": {
     "type": "git",
-    "url": "https://github.com/CuriosityOS/betterwright.git"
+    "url": "git+https://github.com/CuriosityOS/betterwright.git"
   },
-  "homepage": "https://github.com/CuriosityOS/betterwright#readme"
+  "bugs": {
+    "url": "https://github.com/CuriosityOS/betterwright/issues"
+  },
+  "homepage": "https://github.com/CuriosityOS/betterwright#readme",
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3"
+  }
 }
