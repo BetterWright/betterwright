@@ -19,6 +19,13 @@ import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
 import { detectBotChallenge, isPublicSearchNavigation } from "./challenges.mjs";
+import {
+  movePointer,
+  pointInside,
+  pressPointer,
+  scrollWheel,
+  typeText,
+} from "./human.mjs";
 
 const playwrightCoreDir = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "";
 const playwrightModule = playwrightCoreDir
@@ -631,6 +638,7 @@ function sessionFor(id) {
       lastActivity: Date.now(),
       nextDialog: null,
       awaitingAnswerSince: null,
+      cursor: { x: 0, y: 0, initialized: false },
     };
     sessions.set(sessionId, session);
   }
@@ -871,6 +879,43 @@ function captchaPoint(value, label) {
   return point;
 }
 
+function unwrapHumanTarget(page, value) {
+  if (typeof value === "string") return page.locator(value).first();
+  const raw = facadeToRaw.get(value) || value;
+  if (["Locator", "ElementHandle"].includes(objectKind(raw))) return raw;
+  if (value && typeof value === "object") return captchaBounds(value, "target");
+  throw new Error(
+    "human target must be a selector, Locator, ElementHandle, or bounds object.",
+  );
+}
+
+async function humanTargetBox(page, value, timeout = 10_000) {
+  const target = unwrapHumanTarget(page, value);
+  if (typeof target?.boundingBox !== "function") {
+    return { target: null, box: target, inputLike: false };
+  }
+  await target.scrollIntoViewIfNeeded?.({ timeout });
+  const box = await target.boundingBox({ timeout });
+  if (!box) throw new Error("human target is not visible.");
+  const inputLike = await target
+    .evaluate(
+      (element) =>
+        ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) ||
+        element.isContentEditable,
+    )
+    .catch(() => false);
+  return { target, box, inputLike };
+}
+
+async function humanClickTarget(page, session, value, options = {}) {
+  const timeout = Math.max(1, Number(options?.timeout) || 10_000);
+  const { box, inputLike } = await humanTargetBox(page, value, timeout);
+  const point = pointInside(box, inputLike);
+  await movePointer(page.mouse, session.cursor, point, options);
+  await pressPointer(page.mouse, inputLike);
+  return { point, inputLike };
+}
+
 async function installContextGuard(context) {
   await context.route("**/*", async (route) => {
     const request = route.request();
@@ -1027,6 +1072,12 @@ async function ensureBrowser(config) {
     if (launchConfig.executablePath)
       options.executablePath = launchConfig.executablePath;
     else options.channel = "chromium";
+    if (launchConfig.browserFlavor === "cloak") {
+      options.ignoreDefaultArgs = [
+        "--enable-automation",
+        "--enable-unsafe-swiftshader",
+      ];
+    }
 
     browserContext = await chromium.launchPersistentContext(
       profileLock.profileDir,
@@ -1575,8 +1626,38 @@ function buildSandbox(session, consoleMessages) {
         "Read the attached CAPTCHA crop visually and return only its text.",
     };
   });
+  const human = Object.create(null);
+  human.click = realm.safeFunction(async (target, options = {}) => {
+    const page = await ensureSessionPage(session);
+    await humanClickTarget(page, session, target, options);
+    return { clicked: true };
+  });
+  human.type = realm.safeFunction(async (target, text, options = {}) => {
+    const page = await ensureSessionPage(session);
+    await humanClickTarget(page, session, target, options);
+    if (options?.clear !== false) {
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+      await page.keyboard.press("Backspace");
+    }
+    await typeText(page.keyboard, text, options);
+    return { typed: String(text).length };
+  });
+  human.scroll = realm.safeFunction(async (deltaOrOptions, options = {}) => {
+    const page = await ensureSessionPage(session);
+    const settings =
+      deltaOrOptions && typeof deltaOrOptions === "object"
+        ? deltaOrOptions
+        : { ...options, deltaY: deltaOrOptions };
+    const deltaX = Number(settings?.deltaX) || 0;
+    const deltaY = Number(settings?.deltaY) || 0;
+    if (!deltaX && !deltaY)
+      throw new Error("human.scroll requires a non-zero deltaX or deltaY.");
+    await scrollWheel(page.mouse, deltaX, deltaY, settings);
+    return { scrolled: { deltaX, deltaY } };
+  });
   sandbox.dialogs = Object.freeze(dialogs);
   sandbox.captcha = Object.freeze(captcha);
+  sandbox.human = Object.freeze(human);
   sandbox.credentials = buildCredentials(session, realm);
   realm.installPage(getCurrentPage);
   return { context, realm, sandbox };

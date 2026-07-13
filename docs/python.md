@@ -15,7 +15,7 @@ BetterWright(
     home: Path | None = None,          # state dir; default $BETTERWRIGHT_HOME or ~/.betterwright
     policy: NetworkPolicy | None = None,   # default: safe policy
     vault: CredentialVault | bool | None = True,   # True → default vault; False/None → disabled
-    executable_path: str | None = None,    # explicit Chromium binary
+    executable_path: str | None = None,    # explicit binary; otherwise CLOAKBROWSER_BINARY_PATH
     headless: bool = True,
     default_timeout: int = 30,             # per-snippet seconds, min 5
 )
@@ -103,6 +103,12 @@ value. See [credentials.md](credentials.md).
 Code passed to `BetterWright.run()` receives `captcha.click(bounds)`,
 `captcha.drag(from, to)`, and `captcha.readText(bounds)`. No separate Python
 solver object or API key is required. See [captcha.md](captcha.md).
+
+## Human-shaped actions
+
+Browser snippets also receive `human.click(target)`, `human.type(target, text)`,
+and `human.scroll(deltaY)`. See the
+[browser API](browser-api.md#human-shaped-interactions) for details.
 
 ## `agent_system_prompt` and `Guardrails`
 

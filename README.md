@@ -76,7 +76,7 @@ Both packages ship the identical worker and pin the same Playwright version, so
 The `run()` call takes a string of asynchronous Playwright JavaScript. A single
 trailing expression is returned automatically; a multi-statement block must
 `return`. Inside that string the agent has a small set of globals — `page`,
-`openPage`, `snapshot`, `screenshot`, `credentials`, and a few others —
+`openPage`, `snapshot`, `screenshot`, `human`, `credentials`, and a few others —
 documented in [docs/browser-api.md](docs/browser-api.md).
 
 **Python**
@@ -146,6 +146,12 @@ claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
 - **[Native CAPTCHA helpers](docs/captcha.md)** — checkbox clicks, smooth
   slider drags, and tightly cropped text-challenge images for the agent's
   existing vision, with no external solving service or API key.
+- **[Human-shaped actions](docs/browser-api.md#human-shaped-interactions)** —
+  curved pointer movement, paced typing, and eased wheel events without another
+  runtime dependency.
+- **[Optional CloakBrowser binary](docs/getting-started.md#optional-cloakbrowser-binary)** —
+  use an explicitly installed binary without bundling its separate license or
+  changing BetterWright's Node requirement.
 - **[Agent guidance](docs/agent-prompt.md)** — drop-in operator instructions
   (`agent_system_prompt()`) that make the model act decisively on authorized
   tasks — logging in, signing up, buying — instead of hedging, with

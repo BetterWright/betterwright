@@ -62,6 +62,27 @@ return await snapshot();      // "page page-1 https://…\n- button \"Sign in\"\
 For anything Playwright can read — text, attributes, computed state — use the
 normal `page.locator(...)` API.
 
+## Human-shaped interactions
+
+The frozen `human` global emits visible actions with curved pointer movement,
+bounded key timing, and eased wheel steps instead of machine-perfect bursts:
+
+```js
+await human.click(page.getByRole('button', {name: 'Continue'}));
+await human.type('#email', 'person@example.com');
+await human.scroll(650); // negative values scroll upward
+```
+
+`human.click(target, options?)` and `human.type(target, text, options?)` accept a
+selector, Locator, ElementHandle, or `{x, y, width, height}` bounds. Typing clears
+the field by default; pass `{clear: false}` to append, or set `minDelay` and
+`maxDelay`. `human.scroll(deltaY, options?)` accepts `steps`, while the object
+form also accepts `deltaX`.
+
+These helpers reduce behavioral false positives; they do not make stock
+Chromium undetectable. Keep one stable persistent profile, avoid bursty public
+search traffic, and respect a site's rate limits.
+
 ## Screenshots and artifacts
 
 ![A completed task with a proof checkmark and captured screenshots](assets/proof.png)

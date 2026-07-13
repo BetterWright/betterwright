@@ -177,6 +177,7 @@ class BetterWright:
         vault, or ``None``/``False`` to disable the ``credentials`` helpers.
     executable_path:
         An explicit Chromium binary to launch instead of the pinned build.
+        When unset, ``CLOAKBROWSER_BINARY_PATH`` is honored if present.
     headless:
         ``True``, ``False``, or ``"auto"`` (the default). ``"auto"`` runs a
         visible browser when a display is available and headless otherwise — so

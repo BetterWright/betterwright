@@ -14,7 +14,7 @@ new BetterWright({
   home,             // state dir; default $BETTERWRIGHT_HOME or ~/.betterwright
   policy,           // a NetworkPolicy; default: safe policy
   vault,            // optional { handleRequest(action, payload, origin), redact? }
-  executablePath,   // explicit Chromium binary
+  executablePath,   // explicit Chromium binary; otherwise CLOAKBROWSER_BINARY_PATH
   headless = true,
   defaultTimeout = 30,   // per-snippet seconds, min 5
 });
@@ -87,6 +87,13 @@ Browser snippets receive `captcha.click(bounds)`, `captcha.drag(from, to)`, and
 `captcha.readText(bounds)`. The first two return a fresh accessibility snapshot;
 the last emits a cropped image artifact for the host model's existing vision.
 No solver dependency or API key is required. See [captcha.md](captcha.md).
+
+### Human-shaped actions
+
+Use `human.click(target)`, `human.type(target, text)`, and `human.scroll(deltaY)`
+for visible UI actions that should not arrive as perfectly timed bursts. See the
+[browser API](browser-api.md#human-shaped-interactions) for accepted targets and
+options.
 
 ## `NetworkPolicy`
 

@@ -97,6 +97,44 @@ def test_captcha_read_text_emits_cropped_image(browser):
     assert shots[0].read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_human_helpers_drive_pointer_keyboard_and_wheel(browser):
+    result = browser.run(
+        r"""
+        await page.setContent(`
+          <button id="go" style="margin:80px;width:180px;height:50px">Go</button>
+          <input id="name" style="display:block;margin:40px;width:240px;height:40px" value="old">
+          <div style="height:2400px"></div>
+          <p id="status">Waiting</p>
+          <script>
+            window.pointerMoves = 0;
+            window.wheelEvents = 0;
+            document.addEventListener('pointermove', () => window.pointerMoves++);
+            document.addEventListener('wheel', () => window.wheelEvents++);
+            document.querySelector('#go').addEventListener('click', () => {
+              document.querySelector('#status').textContent = 'Clicked';
+            });
+          <\/script>
+        `);
+        await human.click(page.locator('#go'));
+        await human.type('#name', 'Ada');
+        await human.scroll(600, {steps: 6});
+        return page.evaluate(() => ({
+          status: document.querySelector('#status').textContent,
+          value: document.querySelector('#name').value,
+          pointerMoves: window.pointerMoves,
+          wheelEvents: window.wheelEvents,
+          scrollY,
+        }));
+        """
+    )
+    result.raise_for_status()
+    assert result.value["status"] == "Clicked"
+    assert result.value["value"] == "Ada"
+    assert result.value["pointerMoves"] >= 18
+    assert result.value["wheelEvents"] >= 2
+    assert result.value["scrollY"] > 0
+
+
 def test_sessions_are_isolated(browser):
     browser.run("state.marker = 'a'; return state.marker", session="a")
     other = browser.run("return state.marker ?? 'unset'", session="b")

@@ -22,6 +22,10 @@ Initial release.
 - Proof/question/debug screenshot artifacts surfaced as `MEDIA:` references.
 - Native `captcha.click`, `captcha.drag`, and `captcha.readText` browser helpers
   for one-shot checkbox, slider, and text-challenge handling without a paid API.
+- Human-shaped `human.click`, `human.type`, and `human.scroll` actions, adapted
+  from CloakBrowser's MIT-licensed interaction layer.
+- Optional use of an explicitly installed CloakBrowser binary through
+  `CLOAKBROWSER_BINARY_PATH`, without bundling or downloading that binary.
 - Managed dedicated-Chrome attach mode, optional public-search pacing, and
   structured visible bot-challenge reporting.
 - A Pi tool-result image adapter that emits the top-level `data` and `mimeType`

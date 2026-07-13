@@ -139,3 +139,44 @@ test("captcha.readText emits only a cropped image artifact for Pi vision", opts,
     await bw.close();
   }
 });
+
+test("human helpers use shaped pointer, keyboard, and wheel events", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <button id="go" style="margin:80px;width:180px;height:50px">Go</button>
+        <input id="name" style="display:block;margin:40px;width:240px;height:40px" value="old">
+        <div style="height:2400px"></div>
+        <p id="status">Waiting</p>
+        <script>
+          window.pointerMoves = 0;
+          window.wheelEvents = 0;
+          document.addEventListener('pointermove', () => window.pointerMoves++);
+          document.addEventListener('wheel', () => window.wheelEvents++);
+          document.querySelector('#go').addEventListener('click', () => {
+            document.querySelector('#status').textContent = 'Clicked';
+          });
+        <\/script>
+      \`);
+      await human.click(page.locator('#go'));
+      await human.type('#name', 'Ada');
+      await human.scroll(600, {steps: 6});
+      return page.evaluate(() => ({
+        status: document.querySelector('#status').textContent,
+        value: document.querySelector('#name').value,
+        pointerMoves: window.pointerMoves,
+        wheelEvents: window.wheelEvents,
+        scrollY,
+      }));
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.status, "Clicked");
+    assert.equal(result.result.value, "Ada");
+    assert.ok(result.result.pointerMoves >= 18, result.result.pointerMoves);
+    assert.ok(result.result.wheelEvents >= 2, result.result.wheelEvents);
+    assert.ok(result.result.scrollY > 0, result.result.scrollY);
+  } finally {
+    await bw.close();
+  }
+});

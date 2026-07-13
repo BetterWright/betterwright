@@ -59,7 +59,8 @@ export class BetterWright {
    * @param {string} [options.home] state directory (default ~/.betterwright)
    * @param {NetworkPolicy} [options.policy] network policy
    * @param {object} [options.vault] optional vault with `handleRequest(action, payload, origin)`
-   * @param {string} [options.executablePath] explicit Chromium binary
+   * @param {string} [options.executablePath] explicit Chromium binary; when
+   *   omitted, CLOAKBROWSER_BINARY_PATH is used if set
    * @param {boolean|"auto"} [options.headless="auto"] "auto" shows a window when
    *   a display is available and runs headless otherwise; true/false force it
    * @param {number} [options.defaultTimeout=30] per-snippet timeout, seconds
@@ -74,7 +75,9 @@ export class BetterWright {
     this.home = options.home || defaultHome();
     this.policy = options.policy || new NetworkPolicy();
     this.vault = options.vault || null;
-    this.executablePath = options.executablePath || "";
+    const cloakExecutable = (process.env.CLOAKBROWSER_BINARY_PATH || "").trim();
+    this.executablePath = options.executablePath || cloakExecutable;
+    this.browserFlavor = !options.executablePath && cloakExecutable ? "cloak" : "chromium";
     this.headless = resolveHeadless(options.headless);
     this.connectOverCdp = (options.connectOverCdp || "").trim();
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
@@ -104,6 +107,7 @@ export class BetterWright {
       artifactsDir: artifacts,
       downloadsDir: downloads,
       executablePath: this.executablePath,
+      browserFlavor: this.browserFlavor,
       headless: this.headless,
       cdpEndpoint: this.connectOverCdp,
       searchMinIntervalMs: this.searchMinIntervalMs,

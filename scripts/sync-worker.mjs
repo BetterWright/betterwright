@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const files = ["worker.mjs", "challenges.mjs"];
+const files = ["worker.mjs", "challenges.mjs", "human.mjs"];
 const targetDir = path.join(root, "python", "src", "betterwright", "_worker");
 
 const check = process.argv.includes("--check");

@@ -23,6 +23,22 @@ npx betterwright doctor
 If `doctor` reports Node missing, install it from <https://nodejs.org> and rerun
 `setup`. If it reports Chromium missing, rerun `betterwright setup`.
 
+### Optional CloakBrowser binary
+
+BetterWright does not bundle or auto-download CloakBrowser's separately licensed
+binary. If you installed it from an official CloakHQ channel, point
+`CLOAKBROWSER_BINARY_PATH` at that executable before starting BetterWright. Both
+the JavaScript and Python clients will use it automatically while retaining
+BetterWright's profile, policy, vault, and agent helpers:
+
+```bash
+export CLOAKBROWSER_BINARY_PATH="$HOME/.cloakbrowser/chromium-.../chrome"
+```
+
+An explicit `executablePath` / `executable_path` still wins. Playwright warns
+that alternate executable versions are not guaranteed compatible, so keep the
+Cloak browser and BetterWright's pinned Playwright reasonably aligned.
+
 ## Your first run
 
 A snippet is a string of async Playwright JavaScript. The last expression is

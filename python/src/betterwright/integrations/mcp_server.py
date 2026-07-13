@@ -25,6 +25,8 @@ Configuration is read from the environment so the same command works everywhere:
     BETTERWRIGHT_CONNECT_OVER_CDP=http://127.0.0.1:9222
                                          attach to an existing Chrome instead of
                                          launching one (see docs/attach-mode.md)
+    CLOAKBROWSER_BINARY_PATH=/path/to/chrome
+                                         use an explicitly installed CloakBrowser
 
 Screenshots are returned as native MCP image content, so a client renders them
 directly — you never hand it a file path or guess a MIME type.
@@ -87,8 +89,9 @@ def browser(code: str, session: str = "default", note: str = "") -> list:
     """Run async Playwright JavaScript in a persistent, policy-guarded browser.
 
     Globals available to `code`: page, pages, context, state, openPage, usePage,
-    closePage, snapshot, screenshot, artifactPath, dialogs, credentials. A single
-    trailing expression is returned automatically; a statement block must return.
+    closePage, snapshot, screenshot, artifactPath, dialogs, credentials, captcha,
+    human. A single trailing expression is returned automatically; a statement
+    block must return.
     Capture `screenshot({kind: 'proof'})` before claiming a visible task is done —
     the image is returned inline; you do not need to open any file path.
 

@@ -56,8 +56,8 @@ class Bridge:
     vault:
         Credential store, or ``None`` to disable the ``credentials`` helpers.
     executable_path:
-        Explicit Chromium binary. When unset the pinned Playwright Chromium is
-        used.
+        Explicit Chromium binary. When unset, ``CLOAKBROWSER_BINARY_PATH`` is
+        honored before falling back to the pinned Playwright Chromium.
     """
 
     def __init__(
@@ -75,7 +75,11 @@ class Bridge:
         self.home = Path(home).expanduser().resolve() if home else betterwright_home()
         self.policy = policy if policy is not None else NetworkPolicy()
         self.vault = vault
-        self.executable_path = executable_path
+        cloak_executable = os.environ.get("CLOAKBROWSER_BINARY_PATH", "").strip()
+        self.executable_path = executable_path or cloak_executable or None
+        self.browser_flavor = (
+            "cloak" if executable_path is None and cloak_executable else "chromium"
+        )
         self.headless = resolve_headless(headless)
         self.default_timeout = max(int(default_timeout), 5)
         self.connect_over_cdp = (connect_over_cdp or "").strip()
@@ -125,6 +129,7 @@ class Bridge:
             "executablePath": str(Path(self.executable_path).expanduser())
             if self.executable_path
             else "",
+            "browserFlavor": self.browser_flavor,
             "headless": bool(self.headless),
             "cdpEndpoint": self.connect_over_cdp,
             "searchMinIntervalMs": self.search_min_interval_ms,

@@ -5,6 +5,7 @@ import base64
 import pytest
 
 from betterwright._display import resolve_headless
+from betterwright.bridge import Bridge
 from betterwright.client import Artifact, RunResult
 
 
@@ -84,3 +85,18 @@ def test_resolve_headless_auto(monkeypatch):
 def test_resolve_headless_rejects_bad_string():
     with pytest.raises(ValueError):
         resolve_headless("maybe")
+
+
+def test_cloak_binary_env_is_opt_in(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLOAKBROWSER_BINARY_PATH", "/opt/cloak/chrome")
+    bridge = Bridge(home=tmp_path)
+    assert bridge.executable_path == "/opt/cloak/chrome"
+    assert bridge.browser_flavor == "cloak"
+    assert bridge._worker_config()["browserFlavor"] == "cloak"
+
+
+def test_explicit_binary_wins_over_cloak_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLOAKBROWSER_BINARY_PATH", "/opt/cloak/chrome")
+    bridge = Bridge(home=tmp_path, executable_path="/opt/chromium")
+    assert bridge.executable_path == "/opt/chromium"
+    assert bridge.browser_flavor == "chromium"
