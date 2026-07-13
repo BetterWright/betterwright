@@ -6,7 +6,7 @@ BetterWright wraps Playwright in a long-lived, sandboxed Node worker that an
 agent drives with ordinary Playwright JavaScript. On top of the raw API it adds
 the parts an autonomous agent needs: a persistent profile, a network policy
 enforced on every request, an encrypted credential vault, screenshot artifacts
-for proof-of-work, and optional CAPTCHA solving.
+for proof-of-work, and native CAPTCHA interaction helpers.
 
 ```python
 from betterwright import BetterWright
@@ -35,7 +35,7 @@ Full docs, the JavaScript client, and runnable examples are in the
 - [The browser API](https://github.com/CuriosityOS/betterwright/blob/main/docs/browser-api.md)
 - [Network policy](https://github.com/CuriosityOS/betterwright/blob/main/docs/network-policy.md)
 - [Credentials](https://github.com/CuriosityOS/betterwright/blob/main/docs/credentials.md)
-- [CAPTCHA solving](https://github.com/CuriosityOS/betterwright/blob/main/docs/captcha.md)
+- [Native CAPTCHA helpers](https://github.com/CuriosityOS/betterwright/blob/main/docs/captcha.md)
 - [Architecture & security model](https://github.com/CuriosityOS/betterwright/blob/main/docs/architecture.md)
 - [Python API reference](https://github.com/CuriosityOS/betterwright/blob/main/docs/python.md)
 

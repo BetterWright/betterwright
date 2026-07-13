@@ -83,7 +83,7 @@ To feed a screenshot straight to a vision model, use the Python client's
 URL); the MCP server already returns screenshots as native image content. Never
 hand a host the non-image artifacts from `RunResult.files()` (downloads, spilled
 output) as images — that is what triggers "unsupported image MIME type" errors.
-The three kinds carry intent:
+The image kinds carry intent:
 
 - **`proof`** — evidence a task reached its visible end state. Capture one before
   claiming success.
@@ -91,6 +91,7 @@ The three kinds carry intent:
   prompt, an ambiguous choice). The session holds its pages open longer while a
   `question` is outstanding.
 - **`debug`** — a look at the current state; no special handling.
+- **`captcha`** — a tightly cropped text challenge from `captcha.readText()`.
 
 `artifactPath(name)` returns a writable path inside the session's artifact
 directory for files you create yourself (a `page.pdf({path})`, for example).
@@ -103,10 +104,20 @@ evicted first, and a warning is recorded when that happens.
 
 Every result envelope includes a `challenges` list. When a page visibly presents
 a CAPTCHA or bot check, BetterWright records its page, provider, URL, and routing
-advice there and repeats the advice in `warnings`. It does not bypass or solve the
-challenge automatically. Agents should not retry the page or rotate through
-public search engines; use a host-provided research tool, navigate directly to a
-first-party site, or ask the user to complete a challenge that is truly required.
+advice there and repeats the advice in `warnings`. It does not act automatically.
+Agents should not retry the page or rotate through public search engines; use a
+host-provided research tool, navigate directly to a first-party site, or make one
+native attempt when that page is truly required.
+
+The `captcha` global provides:
+
+- `captcha.click(bounds)` for a checkbox-style widget.
+- `captcha.drag(from, to, {steps})` for a slider or puzzle handle.
+- `captcha.readText(bounds?)` for a cropped image that the host model can read.
+
+Click and drag return a post-action accessibility snapshot. Always check the
+result envelope's `challenges` list and stop if the challenge remains. See
+[captcha.md](captcha.md) for recipes and limits.
 
 ## State
 

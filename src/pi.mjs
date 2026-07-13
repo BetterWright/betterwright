@@ -1,7 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const SCREENSHOT_KINDS = new Set(["proof", "question", "debug", "screenshot"]);
+const SCREENSHOT_KINDS = new Set([
+  "proof",
+  "question",
+  "debug",
+  "screenshot",
+  "captcha",
+]);
 const IMAGE_MIME_TYPES = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],

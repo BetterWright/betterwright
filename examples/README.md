@@ -13,7 +13,7 @@ python examples/python/quickstart.py
 - [`login_with_vault.py`](python/login_with_vault.py) — store and fill a
   credential without the password reaching your code.
 - [`local_dev.py`](python/local_dev.py) — drive a `localhost` dev server.
-- [`solve_captcha.py`](python/solve_captcha.py) — the detect → solve → inject flow.
+- [`solve_captcha.py`](python/solve_captcha.py) — native checkbox and text-challenge helpers.
 
 ### JavaScript
 

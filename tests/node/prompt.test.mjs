@@ -9,6 +9,10 @@ test("default prompt is permissive", () => {
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
   assert.ok(prompt.includes("Do not repeatedly retry it or rotate through other public search engines"));
+  assert.ok(compact.includes("captcha.click(bounds)"));
+  assert.ok(compact.includes("captcha.drag(from, to)"));
+  assert.ok(compact.includes("captcha.readText(bounds)"));
+  assert.ok(compact.includes("If it remains blocked, stop"));
   assert.ok(compact.includes("Inspect the returned image itself before citing it"));
   assert.ok(compact.includes("fix the page and retake it"));
   assert.ok(!prompt.includes("Guardrails for this session"));

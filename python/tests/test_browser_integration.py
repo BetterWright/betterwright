@@ -55,6 +55,48 @@ def test_visible_bot_challenge_is_reported(browser):
     assert "Do not retry" in result.warnings[0]
 
 
+def test_captcha_click_activates_checkbox_style_challenge(browser):
+    result = browser.run(
+        "await page.setContent('<button id=\"verify\">Verify you are human</button>'); "
+        "await page.locator('#verify').evaluate(element => {"
+        "element.addEventListener('click', () => {element.textContent = 'Verified'});}); "
+        "const bounds = await page.locator('#verify').boundingBox(); "
+        "return captcha.click(bounds)"
+    )
+    assert result.ok, result.error
+    assert "Verified" in result.value
+
+
+def test_captcha_drag_performs_pointer_drag(browser):
+    result = browser.run(
+        "await page.setContent(`<button id=\"handle\" "
+        "style=\"position:absolute;left:40px;top:40px;width:40px;height:40px\">Slide</button>"
+        "<p id=\"status\" aria-live=\"polite\">Waiting</p><script>let started=false;"
+        "document.querySelector('#handle').addEventListener('mousedown',()=>{started=true});"
+        "document.addEventListener('mouseup',event=>{if(started&&event.clientX>200)"
+        "document.querySelector('#status').textContent='Dragged'});<\\/script>`); "
+        "const bounds = await page.locator('#handle').boundingBox(); "
+        "const from = {x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2}; "
+        "return captcha.drag(from, {x: 260, y: from.y}, {steps: 12})"
+    )
+    assert result.ok, result.error
+    assert "Dragged" in result.value
+
+
+def test_captcha_read_text_emits_cropped_image(browser):
+    result = browser.run(
+        "await page.setContent('<div id=\"code\" "
+        "style=\"font:32px monospace;width:220px;height:70px\">A7K9</div>'); "
+        "const bounds = await page.locator('#code').boundingBox(); "
+        "return captcha.readText(bounds)"
+    )
+    assert result.ok, result.error
+    assert result.value["kind"] == "captcha"
+    shots = result.screenshots("captcha")
+    assert len(shots) == 1
+    assert shots[0].read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_sessions_are_isolated(browser):
     browser.run("state.marker = 'a'; return state.marker", session="a")
     other = browser.run("return state.marker ?? 'unset'", session="b")

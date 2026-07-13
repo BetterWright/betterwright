@@ -8,7 +8,7 @@ Playwright gives you a browser automation API. BetterWright is the layer you
 need on top of it when the thing driving the browser is a language model rather
 than a test script: a long-lived session the agent can return to, a network
 policy enforced on every request, an encrypted credential vault, screenshot
-artifacts the agent cites as proof of work, and optional CAPTCHA solving.
+artifacts the agent cites as proof of work, and native CAPTCHA helpers.
 
 It runs the same Node worker whether you drive it from **Python** or
 **JavaScript**, so an agent written in either language gets identical behavior.
@@ -40,7 +40,7 @@ work is, and it is what BetterWright handles for you:
 | **Network scope** | Any URL the code names. | Every request is checked against a policy; cloud metadata and private networks are blocked by default, even against DNS rebinding. |
 | **Secrets** | Passwords live in your script or env. | An encrypted, origin-scoped vault fills credentials into pages without the value entering the model's context. |
 | **Evidence** | You assert; nobody looks. | `screenshot({kind: 'proof'})` produces a tagged artifact the agent returns as proof a task finished. |
-| **CAPTCHAs** | Out of scope. | A provider-agnostic solver for the flows you are authorized to complete. |
+| **CAPTCHAs** | Out of scope. | Native one-shot checkbox, slider, and text-challenge helpers for authorized flows. |
 
 If you are writing a test, use Playwright. If you are handing a browser to an
 agent and need it to stay safe and accountable, that is what this is for.
@@ -143,9 +143,9 @@ claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
 - **[Proof artifacts](docs/browser-api.md#screenshots-and-artifacts)** —
   screenshots tagged `proof`, `question`, or `debug`, returned as
   `MEDIA:<path>` references a host UI can render.
-- **[CAPTCHA solving](docs/captcha.md)** — a 2Captcha-compatible client
-  (2Captcha, CapMonster, CapSolver, RuCaptcha) for authorized flows. The
-  service key is read from the environment and never returned in results.
+- **[Native CAPTCHA helpers](docs/captcha.md)** — checkbox clicks, smooth
+  slider drags, and tightly cropped text-challenge images for the agent's
+  existing vision, with no external solving service or API key.
 - **[Agent guidance](docs/agent-prompt.md)** — drop-in operator instructions
   (`agent_system_prompt()`) that make the model act decisively on authorized
   tasks — logging in, signing up, buying — instead of hedging, with
@@ -163,10 +163,11 @@ metadata floor cannot be lifted, and where it does *not* claim to be a boundary
 ## Scope and responsible use
 
 BetterWright automates a browser under your direction, including signing in and
-completing CAPTCHAs on sites you are authorized to use. It is not built for bulk
-account creation, credential stuffing, or scraping behind anti-bot walls at
-scale, and the CAPTCHA solver exists to unblock a task you legitimately own —
-not to defeat a site that is telling automation to stop. See
+interacting with simple CAPTCHAs on sites you are authorized to use. It is not
+built for bulk account creation, credential stuffing, or scraping behind
+anti-bot walls at scale, and its native helpers exist to unblock a task you
+legitimately own, not to repeatedly defeat a site that is telling automation to
+stop. See
 [docs/architecture.md#security-model](docs/architecture.md#security-model) for
 the boundaries the code does and does not enforce.
 

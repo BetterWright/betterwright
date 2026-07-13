@@ -1,8 +1,8 @@
 const SEARCH_CHALLENGE_ADVICE =
   "A bot challenge is blocking this page. Do not retry it or rotate through other " +
   "public search engines. Use an available web-research/search tool, navigate " +
-  "directly to a likely first-party site, or use the configured CAPTCHA solver once " +
-  "when this specific page is necessary.";
+  "directly to a likely first-party site, or make one native CAPTCHA attempt when " +
+  "this specific page is necessary. Stop and report it if the challenge remains.";
 
 export function isPublicSearchNavigation(url) {
   try {

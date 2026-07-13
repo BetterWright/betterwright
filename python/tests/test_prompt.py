@@ -10,6 +10,10 @@ def test_default_prompt_is_permissive():
     # It explicitly tells the model not to refuse authorized actions.
     assert "do not refuse" in prompt.lower()
     assert "Do not repeatedly retry it or rotate through other public search engines" in prompt
+    assert "captcha.click(bounds)" in compact
+    assert "captcha.drag(from, to)" in compact
+    assert "captcha.readText(bounds)" in compact
+    assert "If it remains blocked, stop" in compact
     assert "Inspect the returned image itself before citing it" in compact
     assert "fix the page and retake it" in compact
     assert "Guardrails for this session" not in prompt

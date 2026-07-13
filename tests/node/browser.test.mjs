@@ -76,3 +76,66 @@ test("visible bot challenges are reported without bypassing them", opts, async (
     await bw.close();
   }
 });
+
+test("captcha.click activates a checkbox-style challenge and returns a fresh snapshot", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<button id="verify">Verify you are human</button>');
+      await page.locator('#verify').evaluate(element => {
+        element.addEventListener('click', () => { element.textContent = 'Verified'; });
+      });
+      const bounds = await page.locator('#verify').boundingBox();
+      return captcha.click(bounds);
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.match(result.result, /Verified/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("captcha.drag performs a smooth pointer drag and returns a fresh snapshot", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <button id="handle" style="position:absolute;left:40px;top:40px;width:40px;height:40px">Slide</button>
+        <p id="status" aria-live="polite">Waiting</p>
+        <script>
+          let started = false;
+          document.querySelector('#handle').addEventListener('mousedown', () => { started = true; });
+          document.addEventListener('mouseup', event => {
+            if (started && event.clientX > 200) document.querySelector('#status').textContent = 'Dragged';
+          });
+        <\/script>
+      \`);
+      const bounds = await page.locator('#handle').boundingBox();
+      const from = {x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2};
+      return captcha.drag(from, {x: 260, y: from.y}, {steps: 12});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.match(result.result, /Dragged/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("captcha.readText emits only a cropped image artifact for Pi vision", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<div id="code" style="font:32px monospace;width:220px;height:70px">A7K9</div>');
+      const bounds = await page.locator('#code').boundingBox();
+      return captcha.readText(bounds);
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.kind, "captcha");
+    assert.match(result.result.instruction, /attached CAPTCHA crop/i);
+    assert.equal(result.artifacts.length, 1);
+    assert.equal(result.artifacts[0].kind, "captcha");
+    assert.deepEqual(fs.readFileSync(result.artifacts[0].path).subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  } finally {
+    await bw.close();
+  }
+});

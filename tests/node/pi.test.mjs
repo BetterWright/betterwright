@@ -27,6 +27,21 @@ test("Pi image blocks use top-level data and mimeType", async () => {
   }
 });
 
+test("Pi image blocks attach captcha text crops", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "betterwright-pi-"));
+  const screenshot = path.join(dir, "captcha-text.png");
+  await fs.writeFile(screenshot, Buffer.from("captcha crop"));
+  try {
+    const content = await piImageContent({
+      artifacts: [{ kind: "captcha", path: screenshot }],
+    });
+    assert.equal(content.length, 1);
+    assert.equal(content[0].mimeType, "image/png");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("Pi image adapter ignores spilled output and oversized images", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "betterwright-pi-"));
   const spill = path.join(dir, "browser-output.json");

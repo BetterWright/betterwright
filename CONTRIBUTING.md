@@ -12,7 +12,7 @@ src/                 The Node runtime (the source of truth)
   policy.mjs         NetworkPolicy (JS)
 bin/betterwright.mjs The Node CLI
 python/              The Python package
-  src/betterwright/  client, bridge, policy, vault, captcha, prompt, cli
+  src/betterwright/  client, bridge, policy, vault, prompt, cli
     integrations/    host adapters (MCP server)
   tests/
 tests/node/          Node tests
@@ -53,7 +53,7 @@ npm install && npm test
 ```
 
 The browser-integration tests skip automatically unless the runtime is installed
-(`betterwright setup`); the policy, vault, and captcha suites run anywhere.
+(`betterwright setup`); the policy, vault, prompt, and challenge suites run anywhere.
 
 ## Style
 

@@ -24,7 +24,7 @@ from betterwright.policy import NetworkPolicy
 from betterwright.vault import CredentialVault
 
 #: Artifact kinds that are images (as opposed to downloads or spilled output).
-IMAGE_KINDS = frozenset({"proof", "question", "debug"})
+IMAGE_KINDS = frozenset({"proof", "question", "debug", "captcha"})
 
 _MIME_BY_EXT = {
     ".png": "image/png",
@@ -101,8 +101,8 @@ class RunResult:
     def screenshots(self, kind: str | None = None) -> list[Artifact]:
         """Return captured screenshots, optionally filtered by ``kind``.
 
-        ``kind`` is one of ``"proof"``, ``"question"``, or ``"debug"`` — the
-        three categories the ``screenshot()`` helper tags images with.
+        ``kind`` is one of ``"proof"``, ``"question"``, ``"debug"``, or
+        ``"captcha"``. The latter is emitted by ``captcha.readText()``.
         """
 
         images = [a for a in self.artifacts if a.is_image]

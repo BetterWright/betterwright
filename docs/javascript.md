@@ -81,20 +81,12 @@ return {
 };
 ```
 
-### CAPTCHA solver
+### Native CAPTCHA helpers
 
-The dependency-free JavaScript solver uses the same 2Captcha-compatible API as
-the Python client and reads the same private key configuration:
-
-```js
-import { CaptchaSolver } from "betterwright/captcha";
-
-const solver = new CaptchaSolver();
-const solution = await solver.recaptchaV2(sitekey, page.url());
-```
-
-Set `CAPTCHA_SOLVER_API_KEY`, or put only the key in the mode-`0600` file
-`~/.betterwright/captcha-api-key`. The key is never included in results.
+Browser snippets receive `captcha.click(bounds)`, `captcha.drag(from, to)`, and
+`captcha.readText(bounds)`. The first two return a fresh accessibility snapshot;
+the last emits a cropped image artifact for the host model's existing vision.
+No solver dependency or API key is required. See [captcha.md](captcha.md).
 
 ## `NetworkPolicy`
 

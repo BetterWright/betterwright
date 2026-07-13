@@ -832,6 +832,45 @@ async function ensureSessionPage(session) {
   return adoptPage(unowned || (await browserContext.newPage()), session.id);
 }
 
+async function snapshotPage(page, options = {}) {
+  const text = await page.locator("body").ariaSnapshot({
+    mode: "ai",
+    timeout: Number(options?.timeout || 10_000),
+  });
+  const limit = Math.max(
+    1_000,
+    Math.min(Number(options?.maxChars || 10_000), 20_000),
+  );
+  return `page ${pageId(page)} ${page.url()}\n${text.length > limit ? `${text.slice(0, limit)}\n[truncated]` : text}`;
+}
+
+function captchaBounds(value, label = "bounds") {
+  const bounds = {
+    x: Number(value?.x),
+    y: Number(value?.y),
+    width: Number(value?.width),
+    height: Number(value?.height),
+  };
+  if (
+    !Object.values(bounds).every(Number.isFinite) ||
+    bounds.width <= 0 ||
+    bounds.height <= 0
+  ) {
+    throw new Error(
+      `captcha ${label} requires finite x, y, width, and height values with positive dimensions.`,
+    );
+  }
+  return bounds;
+}
+
+function captchaPoint(value, label) {
+  const point = { x: Number(value?.x), y: Number(value?.y) };
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    throw new Error(`captcha ${label} requires finite x and y values.`);
+  }
+  return point;
+}
+
 async function installContextGuard(context) {
   await context.route("**/*", async (route) => {
     const request = route.request();
@@ -1441,15 +1480,7 @@ function buildSandbox(session, consoleMessages) {
   });
   sandbox.snapshot = realm.safeFunction(async (options) => {
     const page = await ensureSessionPage(session);
-    const text = await page.locator("body").ariaSnapshot({
-      mode: "ai",
-      timeout: Number(options?.timeout || 10_000),
-    });
-    const limit = Math.max(
-      1_000,
-      Math.min(Number(options?.maxChars || 10_000), 20_000),
-    );
-    return `page ${pageId(page)} ${page.url()}\n${text.length > limit ? `${text.slice(0, limit)}\n[truncated]` : text}`;
+    return snapshotPage(page, options);
   });
   sandbox.artifactPath = realm.safeFunction((requested) =>
     makeArtifactPath(session, requested),
@@ -1489,7 +1520,63 @@ function buildSandbox(session, consoleMessages) {
     session.nextDialog = { action: "dismiss" };
     return { prepared: "dismiss" };
   });
+  const captcha = Object.create(null);
+  captcha.click = realm.safeFunction(async (bounds) => {
+    const page = await ensureSessionPage(session);
+    const target = captchaBounds(bounds);
+    await page.mouse.click(
+      target.x + target.width * 0.15,
+      target.y + target.height / 2,
+    );
+    await page.waitForTimeout(3_000);
+    return snapshotPage(page);
+  });
+  captcha.drag = realm.safeFunction(async (from, to, options = {}) => {
+    const page = await ensureSessionPage(session);
+    const start = captchaPoint(from, "drag start");
+    const end = captchaPoint(to, "drag end");
+    const steps = Math.floor(
+      Math.max(1, Math.min(100, Number(options?.steps) || 20)),
+    );
+    await page.mouse.move(start.x, start.y);
+    await page.waitForTimeout(200);
+    await page.mouse.down();
+    await page.waitForTimeout(200);
+    await page.mouse.move(end.x, end.y, { steps });
+    await page.waitForTimeout(200);
+    await page.mouse.up();
+    await page.waitForTimeout(2_000);
+    return snapshotPage(page);
+  });
+  captcha.readText = realm.safeFunction(async (bounds) => {
+    const page = await ensureSessionPage(session);
+    const clip = bounds == null ? null : captchaBounds(bounds);
+    const file = makeArtifactPath(
+      session,
+      "captcha-text.png",
+      "captcha-text.png",
+      false,
+    );
+    await page.screenshot({
+      path: file,
+      type: "png",
+      animations: "disabled",
+      ...(clip ? { clip } : {}),
+    });
+    const artifact = {
+      kind: "captcha",
+      path: file,
+      media: `MEDIA:${file}`,
+    };
+    session.artifacts.push(artifact);
+    return {
+      ...artifact,
+      instruction:
+        "Read the attached CAPTCHA crop visually and return only its text.",
+    };
+  });
   sandbox.dialogs = Object.freeze(dialogs);
+  sandbox.captcha = Object.freeze(captcha);
   sandbox.credentials = buildCredentials(session, realm);
   realm.installPage(getCurrentPage);
   return { context, realm, sandbox };

@@ -6,7 +6,6 @@ Commands
 ``betterwright doctor``   Report whether the runtime is ready, and why not.
 ``betterwright run``      Execute a Playwright snippet from a file, ``-``, or ``-c``.
 ``betterwright repl``     Read snippets from stdin, one per blank-line-separated block.
-``betterwright captcha``  Solve a CAPTCHA or check the solving-service balance.
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ import sys
 from pathlib import Path
 
 from betterwright import __version__
-from betterwright.captcha import CaptchaError, CaptchaSolver
 from betterwright.client import BetterWright
 from betterwright.policy import NetworkPolicy
 from betterwright.runtime import (
@@ -135,43 +133,6 @@ def _cmd_repl(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_captcha(args: argparse.Namespace) -> int:
-    solver = CaptchaSolver(base_url=args.base_url, timeout=args.timeout)
-    try:
-        if args.balance:
-            print(json.dumps({"ok": True, "balance": solver.balance()}))
-            return 0
-        if not args.type:
-            print(json.dumps({"ok": False, "error": "--type or --balance is required"}))
-            return 1
-        if args.type == "recaptcha_v2":
-            solution = solver.recaptcha_v2(args.sitekey, args.url, invisible=args.invisible)
-        elif args.type == "recaptcha_v3":
-            solution = solver.recaptcha_v3(
-                args.sitekey, args.url, action=args.action or "verify", min_score=args.min_score
-            )
-        elif args.type == "hcaptcha":
-            solution = solver.hcaptcha(args.sitekey, args.url)
-        elif args.type == "turnstile":
-            solution = solver.turnstile(args.sitekey, args.url, action=args.action)
-        else:  # image
-            solution = solver.image(args.image)
-    except CaptchaError as exc:
-        print(json.dumps({"ok": False, "type": args.type, "error": str(exc)}))
-        return 1
-    print(
-        json.dumps(
-            {
-                "ok": True,
-                "type": solution.type,
-                "token": solution.token,
-                "request_id": solution.request_id,
-            }
-        )
-    )
-    return 0
-
-
 def _result_to_dict(result) -> dict:
     return {
         "ok": result.ok,
@@ -221,19 +182,6 @@ def build_parser() -> argparse.ArgumentParser:
     repl = sub.add_parser("repl", help="run snippets from stdin, one blank-line-separated block at a time")
     _add_policy_flags(repl)
     repl.set_defaults(func=_cmd_repl)
-
-    captcha = sub.add_parser("captcha", help="solve a CAPTCHA via a 2Captcha-compatible service")
-    captcha.add_argument("--type", choices=["recaptcha_v2", "recaptcha_v3", "hcaptcha", "turnstile", "image"])
-    captcha.add_argument("--balance", action="store_true", help="check the account balance, then exit")
-    captcha.add_argument("--sitekey")
-    captcha.add_argument("--url")
-    captcha.add_argument("--action")
-    captcha.add_argument("--min-score", type=float, default=0.7)
-    captcha.add_argument("--invisible", action="store_true")
-    captcha.add_argument("--image", help="path to, or base64 of, an image CAPTCHA")
-    captcha.add_argument("--base-url", help="solving-service base URL")
-    captcha.add_argument("--timeout", type=float, default=180.0)
-    captcha.set_defaults(func=_cmd_captcha)
 
     return parser
 

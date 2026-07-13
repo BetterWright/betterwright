@@ -5,7 +5,6 @@ from betterwright import (
     BetterWright, Session, RunResult, Artifact, BrowserError,
     NetworkPolicy, CredentialVault,
 )
-from betterwright.captcha import CaptchaSolver, Solution, CaptchaError
 ```
 
 ## `BetterWright`
@@ -99,16 +98,11 @@ return metadata only; `fetch_for_fill`/`reveal`/`generate` include a `secret`
 for trusted use. `redact(value)` scrubs handled secrets from any JSON-like
 value. See [credentials.md](credentials.md).
 
-## `CaptchaSolver`
+## Native CAPTCHA helpers
 
-```python
-from betterwright.captcha import CaptchaSolver
-CaptchaSolver(api_key=None, *, base_url=None, timeout=180.0)
-```
-
-`recaptcha_v2`, `recaptcha_v3`, `hcaptcha`, `turnstile`, `image`, and `balance`.
-Each solve returns a `Solution(type, token, request_id)` or raises
-`CaptchaError`. See [captcha.md](captcha.md).
+Code passed to `BetterWright.run()` receives `captcha.click(bounds)`,
+`captcha.drag(from, to)`, and `captcha.readText(bounds)`. No separate Python
+solver object or API key is required. See [captcha.md](captcha.md).
 
 ## `agent_system_prompt` and `Guardrails`
 

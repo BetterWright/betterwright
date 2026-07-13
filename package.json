@@ -1,12 +1,11 @@
 {
   "name": "betterwright",
   "version": "0.1.0",
-  "description": "A persistent, policy-guarded Playwright browser for AI agents — with a network policy, an encrypted credential vault, proof screenshots, and CAPTCHA solving.",
+  "description": "A persistent, policy-guarded Playwright browser for AI agents with a network policy, an encrypted credential vault, proof screenshots, and native CAPTCHA helpers.",
   "type": "module",
   "main": "src/index.mjs",
   "exports": {
     ".": "./src/index.mjs",
-    "./captcha": "./src/captcha.mjs",
     "./chrome": "./src/chrome.mjs",
     "./policy": "./src/policy.mjs",
     "./prompt": "./src/prompt.mjs",

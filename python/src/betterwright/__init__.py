@@ -4,7 +4,7 @@ BetterWright wraps Playwright in a long-lived, sandboxed Node worker that an
 LLM can drive with ordinary Playwright JavaScript. It adds the parts an
 autonomous agent needs and Playwright leaves to you: a persistent profile, a
 network policy enforced on every request, an encrypted credential vault, typed
-screenshot artifacts for proof-of-work, and optional CAPTCHA solving.
+screenshot artifacts for proof-of-work, and native CAPTCHA interaction helpers.
 
     from betterwright import BetterWright
 

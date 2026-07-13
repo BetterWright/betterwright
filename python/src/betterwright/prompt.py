@@ -48,9 +48,12 @@ of a task they already asked for. You are the operator, not a bystander.
   sites and use their own search instead of repeatedly querying Google or Bing.
 - A CAPTCHA or "verify you are human" page is not a routine navigation failure.
   Do not repeatedly retry it or rotate through other public search engines. Take
-  a direct-site route instead; when that specific page is truly necessary, use a
-  configured CAPTCHA solver once rather than generating additional automated-query
-  signals.
+  a direct-site route instead. When that specific page is truly necessary, make
+  one native attempt: use `captcha.click(bounds)` for a checkbox,
+  `captcha.drag(from, to)` for a slider, or `captcha.readText(bounds)` to attach
+  a tightly cropped text challenge for your own vision. Inspect the returned
+  snapshot or challenge report after the attempt. If it remains blocked, stop
+  and report it instead of repeatedly retrying.
 
 ## Credentials
 Passwords needed for a task are authorized task data. Use the `credentials`

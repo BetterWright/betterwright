@@ -1,111 +1,79 @@
-# CAPTCHA solving
+# Native CAPTCHA helpers
 
 ![A puzzle piece completing a "verify you are human" challenge](assets/captcha.png)
 
-When a legitimate, authorized flow stalls on a "verify you're human" wall, the
-`captcha` module hands the challenge to a third-party solving service and returns
-the token to inject back into the page. It speaks the `in.php` / `res.php`
-protocol common to every 2Captcha-compatible provider, so the choice of service
-is a base-URL change: **2Captcha, CapMonster, CapSolver, RuCaptcha**, and others.
+BetterWright handles simple, necessary CAPTCHA interactions inside the existing
+browser session. It does not send sitekeys, tokens, screenshots, or API keys to
+a third-party solving service.
 
-> A CAPTCHA is a site asking automation to stop. This is a convenience for
-> finishing a task *you own* — the same category as the credential vault — not a
-> tool for bulk account creation, credential stuffing, or scraping behind
-> anti-bot walls at scale. Use it accordingly.
+> A CAPTCHA is a site asking automation to stop. Use these helpers only for a
+> legitimate flow you are authorized to complete. Make one attempt, verify the
+> result, and stop rather than repeatedly retrying a blocked site.
 
-## Configuration
+## Available helpers
 
-The service key is read from the environment and never returned in a result:
+Every `run()` snippet has a frozen `captcha` global:
 
-```bash
-export CAPTCHA_SOLVER_API_KEY="…"                 # or use the private key file below
-export CAPTCHA_SOLVER_BASE_URL="https://2captcha.com"   # optional; default shown
-```
-
-For long-lived desktop agents, put only the key in
-`$BETTERWRIGHT_HOME/captcha-api-key` (default
-`~/.betterwright/captcha-api-key`) and set its permissions to `0600`. An explicit
-constructor key wins, followed by the environment variable, then this private
-file. `CAPTCHA_SOLVER_API_KEY_FILE` can point to another private file.
-
-Check the key and balance before relying on it:
-
-```bash
-betterwright captcha --balance        # {"ok": true, "balance": "3.50"}
-```
-
-## The three-step flow
-
-Solving a token CAPTCHA (reCAPTCHA, hCaptcha, Turnstile) is always: read the
-sitekey off the page, send it to the service, inject the returned token. The
-first and last steps are ordinary `run()` snippets; the middle step is the
-solver.
-
-```python
-from betterwright import BetterWright
-from betterwright.captcha import CaptchaSolver
-
-bw = BetterWright()
-solver = CaptchaSolver()   # reads the environment or private key file
-
-# 1. Extract the sitekey and page URL
-found = bw.run("""
-  const el = document.querySelector('.g-recaptcha, [data-sitekey]');
-  return { sitekey: el?.getAttribute('data-sitekey'), url: location.href };
-""").value
-
-# 2. Solve
-solution = solver.recaptcha_v2(found["sitekey"], found["url"])
-
-# 3. Inject the token and submit
-bw.run(f"""
-  document.querySelectorAll('textarea[name="g-recaptcha-response"]')
-    .forEach(t => {{ t.value = {solution.token!r}; t.dispatchEvent(new Event('change', {{bubbles:true}})); }});
-  await page.click('button[type=submit]');
-""")
-```
-
-Ready-made detection/extraction/injection snippets for each CAPTCHA type are in
-[browser-recipes.md](browser-recipes.md).
-
-## Supported types
-
-| Method | Needs | Notes |
+| Helper | Purpose | Result |
 | --- | --- | --- |
-| `recaptcha_v2(sitekey, url, invisible=False)` | sitekey, url | Checkbox or invisible. |
-| `recaptcha_v3(sitekey, url, action="verify", min_score=0.7)` | sitekey, url | Score-based. |
-| `hcaptcha(sitekey, url)` | sitekey, url | |
-| `turnstile(sitekey, url, action=None)` | sitekey, url | Cloudflare Turnstile. |
-| `image(path_or_bytes)` | an image | Plain "type the characters" captchas. |
+| `captcha.click(bounds)` | Click a checkbox-style widget | Fresh accessibility snapshot |
+| `captcha.drag(from, to, {steps: 20})` | Smoothly drag a slider or puzzle handle | Fresh accessibility snapshot |
+| `captcha.readText(bounds?)` | Capture only a text challenge for the agent's existing vision | `captcha` image artifact |
 
-Each returns a `Solution(type, token, request_id)`. Failures raise
-`CaptchaError`, whose message is the service's error code
-(`ERROR_ZERO_BALANCE`, `ERROR_CAPTCHA_UNSOLVABLE`, `ERROR_TIMEOUT`, …).
+`bounds` uses CSS pixels: `{x, y, width, height}`. `from` and `to` use
+`{x, y}`. The click helper targets the left side of the supplied widget bounds,
+where checkbox challenges normally place their control.
 
-## Image captchas: try vision first
+## Checkbox challenge
 
-For a plain image/text captcha — "type the wavy characters" — a vision model is
-usually cheaper and faster than a paid solve. Screenshot the captcha element,
-read it with whatever vision model your agent already has, and only fall back to
-`solver.image(...)` when the read is unreadable or low-confidence.
-
-```python
-crop = bw.run("""
-  const img = document.querySelector('img[src*="captcha" i]');
-  const path = artifactPath('captcha.png');
-  await (await page.$('img[src*="captcha" i]')).screenshot({ path });
-  return path;
-""").value
-# → hand `crop` to your vision model; use solver.image(crop) only if it can't read it
+```js
+const frame = page.locator('iframe[title*="challenge" i], iframe[src*="captcha" i]').first();
+const bounds = await frame.boundingBox();
+if (!bounds) throw new Error('CAPTCHA widget is not visible');
+return captcha.click(bounds);
 ```
 
-## From the CLI
+The returned snapshot is captured after the click. The result envelope also
+contains BetterWright's current `challenges` report. If the check did not clear,
+do not loop the helper.
 
-```bash
-betterwright captcha --type recaptcha_v2 --sitekey 6Lc… --url https://example.com
-betterwright captcha --type turnstile --sitekey 0x4… --url https://example.com --action login
-betterwright captcha --type image --image ./captcha.png
+## Slider or puzzle drag
+
+```js
+const handle = page.locator('[role="slider"], .slider-handle').first();
+const bounds = await handle.boundingBox();
+if (!bounds) throw new Error('Slider handle is not visible');
+const from = {x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2};
+return captcha.drag(from, {x: from.x + 280, y: from.y}, {steps: 24});
 ```
 
-Output is a single JSON object; the exit code is `0` on success and `1` on
-failure, so a shell caller can branch on it.
+## Text challenge
+
+```js
+const image = page.locator('img[src*="captcha" i], img[alt*="captcha" i]').first();
+const bounds = await image.boundingBox();
+if (!bounds) throw new Error('CAPTCHA image is not visible');
+return captcha.readText(bounds);
+```
+
+This produces a tightly cropped PNG. Pi attaches that image directly to the
+browser tool result, so its current vision-capable model reads it on the next
+turn without a second model request. Other hosts can read the returned
+`MEDIA:<path>` artifact and pass it to their existing vision input.
+
+After reading the characters, type them with an ordinary Playwright action and
+verify that the challenge disappeared:
+
+```js
+await page.locator('input[name*="captcha" i], input[id*="captcha" i]').fill(text);
+await page.locator('button[type="submit"]').click();
+return snapshot();
+```
+
+## Limits
+
+These helpers reproduce normal mouse interaction and provide a token-efficient
+vision crop. They do not manufacture reCAPTCHA, hCaptcha, or Turnstile tokens,
+and they cannot guarantee that a provider will accept an automated browser. An
+invisible, scored, multi-image, or still-blocked challenge should be reported to
+the user rather than retried.
