@@ -5,9 +5,12 @@ import { agentSystemPrompt } from "../../src/prompt.mjs";
 
 test("default prompt is permissive", () => {
   const prompt = agentSystemPrompt();
+  const compact = prompt.replace(/\s+/g, " ");
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
   assert.ok(prompt.includes("Do not repeatedly retry it or rotate through other public search engines"));
+  assert.ok(compact.includes("Inspect the returned image itself before citing it"));
+  assert.ok(compact.includes("fix the page and retake it"));
   assert.ok(!prompt.includes("Guardrails for this session"));
 });
 

@@ -26,5 +26,7 @@ Initial release.
   structured visible bot-challenge reporting.
 - A Pi tool-result image adapter that emits the top-level `data` and `mimeType`
   fields expected by Pi's OpenAI Codex provider.
+- Screenshot-proof guidance that makes agents inspect and retake unusable images
+  before citing them.
 - `betterwright` CLI (`setup`, `doctor`, `run`, `repl`, `captcha`) in both
   languages.

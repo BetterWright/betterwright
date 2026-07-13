@@ -39,8 +39,9 @@ With no guardrails, the guidance tells the model to:
 - **Ask only when genuinely blocked** — an MFA code, a real ambiguous choice, or
   a guardrail that requires confirmation — capturing a `question` screenshot
   first.
-- **Prove completion** with a `proof` screenshot before claiming a visible task
-  is done.
+- **Prove completion** with a `proof` screenshot, visually inspect the returned
+  image, and fix and retake blank, loading, clipped, obscured, or irrelevant proof
+  before claiming a visible task is done.
 
 This is behavior guidance. It does not, by itself, stop anything — the
 enforceable controls are the [network policy](network-policy.md) and the

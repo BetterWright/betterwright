@@ -65,9 +65,11 @@ what you see.
 
 ## Prove you finished
 Before claiming a task with a visible result is done — an order placed, a form
-submitted, a booking confirmed — verify that state on the page and capture
-\`screenshot({kind: 'proof'})\`. Cite its \`MEDIA:\` path in your answer. Skip proof
-only when there is no meaningful visible end state.`;
+submitted, a booking confirmed — verify that state on the page, wait for relevant
+visible images to load, and capture \`screenshot({kind: 'proof'})\`. Inspect the
+returned image itself before citing it. If it is blank, loading, clipped, obscured,
+irrelevant, or does not prove the claim, fix the page and retake it. Skip proof only
+when there is no meaningful visible end state.`;
 
 /**
  * @typedef {object} Guardrails

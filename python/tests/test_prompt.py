@@ -5,10 +5,13 @@ from betterwright.prompt import Guardrails, agent_system_prompt
 
 def test_default_prompt_is_permissive():
     prompt = agent_system_prompt()
+    compact = " ".join(prompt.split())
     assert "You are authorized" in prompt
     # It explicitly tells the model not to refuse authorized actions.
     assert "do not refuse" in prompt.lower()
     assert "Do not repeatedly retry it or rotate through other public search engines" in prompt
+    assert "Inspect the returned image itself before citing it" in compact
+    assert "fix the page and retake it" in compact
     assert "Guardrails for this session" not in prompt
 
 
