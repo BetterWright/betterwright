@@ -22,6 +22,7 @@ import threading
 import uuid
 from pathlib import Path
 
+from betterwright._display import resolve_headless
 from betterwright._home import betterwright_home
 from betterwright.policy import NetworkPolicy
 from betterwright.runtime import (
@@ -66,15 +67,17 @@ class Bridge:
         policy: NetworkPolicy | None = None,
         vault: CredentialVault | None = None,
         executable_path: str | None = None,
-        headless: bool = True,
+        headless: bool | str = "auto",
         default_timeout: int = _DEFAULT_TIMEOUT_SECONDS,
+        connect_over_cdp: str | None = None,
     ) -> None:
         self.home = Path(home).expanduser().resolve() if home else betterwright_home()
         self.policy = policy if policy is not None else NetworkPolicy()
         self.vault = vault
         self.executable_path = executable_path
-        self.headless = headless
+        self.headless = resolve_headless(headless)
         self.default_timeout = max(int(default_timeout), 5)
+        self.connect_over_cdp = (connect_over_cdp or "").strip()
 
         self._process: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
@@ -121,6 +124,7 @@ class Bridge:
             if self.executable_path
             else "",
             "headless": bool(self.headless),
+            "cdpEndpoint": self.connect_over_cdp,
             "outputLimit": 12_000,
             "maxArtifactBytes": 100 * 1024 * 1024,
             "maxDownloadBytes": 50 * 1024 * 1024,

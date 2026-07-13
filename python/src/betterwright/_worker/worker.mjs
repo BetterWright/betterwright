@@ -54,6 +54,8 @@ export const METADATA_RESOLVER_RULES = [
 ].join(", ");
 
 let browserContext = null;
+let connectedBrowser = null;
+let connectedMode = false;
 let launchPromise = null;
 let launchConfig = null;
 let profileLock = null;
@@ -850,28 +852,38 @@ async function installContextGuard(context) {
       await route.abort("blockedbyclient").catch(() => {});
     }
   });
-  await context.routeWebSocket("**/*", async (webSocket) => {
-    const executeId = activeExecutionSession
-      ? `active:${activeExecutionSession}`
-      : "background";
-    try {
-      const decision = await guardUrl(
-        webSocket.url(),
-        { method: "GET", resourceType: "websocket" },
-        executeId,
-      );
-      if (decision?.allowed) webSocket.connectToServer();
-      else
-        await webSocket.close({
-          code: 1008,
-          reason: "Blocked by browser policy",
-        });
-    } catch {
-      await webSocket
-        .close({ code: 1011, reason: "Browser policy unavailable" })
-        .catch(() => {});
-    }
-  });
+  // WebSocket routing is not supported on every transport (notably some
+  // connectOverCDP targets). It is a best-effort layer on top of the HTTP guard
+  // above, so a target that rejects it must not abort the whole attach.
+  try {
+    await context.routeWebSocket("**/*", async (webSocket) => {
+      const executeId = activeExecutionSession
+        ? `active:${activeExecutionSession}`
+        : "background";
+      try {
+        const decision = await guardUrl(
+          webSocket.url(),
+          { method: "GET", resourceType: "websocket" },
+          executeId,
+        );
+        if (decision?.allowed) webSocket.connectToServer();
+        else
+          await webSocket.close({
+            code: 1008,
+            reason: "Blocked by browser policy",
+          });
+      } catch {
+        await webSocket
+          .close({ code: 1011, reason: "Browser policy unavailable" })
+          .catch(() => {});
+      }
+    });
+  } catch (error) {
+    if (!connectedMode) throw error;
+    process.stderr.write(
+      `WebSocket routing unavailable in attach mode: ${error?.message}\n`,
+    );
+  }
 }
 
 async function ensureBrowser(config) {
@@ -882,8 +894,44 @@ async function ensureBrowser(config) {
   if (launchPromise) return launchPromise;
   launchConfig = { ...config };
   launchPromise = (async () => {
-    mkdirPrivate(launchConfig.runtimeDir);
     mkdirPrivate(launchConfig.artifactsDir);
+
+    // Attach mode: connect to a Chrome/Chromium the user started with
+    // --remote-debugging-port instead of launching our own. This exposes their
+    // real, already-open tabs. The launch-time floor (resolver rules, forced
+    // transport proxy, WebRTC pinning) cannot be applied to a browser we did
+    // not start, so only the per-request policy guard below is in force here.
+    const cdpEndpoint = String(launchConfig.cdpEndpoint || "").trim();
+    if (cdpEndpoint) {
+      connectedMode = true;
+      connectedBrowser = await chromium.connectOverCDP(cdpEndpoint);
+      const contexts = connectedBrowser.contexts();
+      browserContext = contexts.length
+        ? contexts[0]
+        : await connectedBrowser.newContext();
+      const attachedContext = browserContext;
+      profileMode = "attached";
+      profileWarning =
+        "Attached to an external browser over CDP; BetterWright's launch-time " +
+        "network floor (metadata resolver rules and the forced transport proxy) " +
+        "is not active. Only the per-request network policy applies.";
+      attachedContext.on("close", () => {
+        if (browserContext === attachedContext) browserContext = null;
+      });
+      await installContextGuard(attachedContext);
+      attachedContext.on("page", (page) => {
+        const owner = activeExecutionSession || "default";
+        if (!pageToSession.has(page)) adoptPage(page, owner);
+      });
+      // Adopt the tabs that are already open so the agent sees them immediately.
+      for (const page of attachedContext.pages()) {
+        if (!page.isClosed() && !pageToSession.has(page))
+          adoptPage(page, "default");
+      }
+      return attachedContext;
+    }
+
+    mkdirPrivate(launchConfig.runtimeDir);
     profileLock = acquireProfile(
       launchConfig.profileDir,
       launchConfig.runtimeDir,
@@ -893,7 +941,7 @@ async function ensureBrowser(config) {
     const transportProxyPort = await ensureGuardProxy();
 
     const options = {
-      headless: true,
+      headless: launchConfig.headless !== false,
       viewport: { width: 1440, height: 900 },
       acceptDownloads: true,
       serviceWorkers: "block",
@@ -1643,6 +1691,21 @@ async function execute(message) {
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  // Attach mode: we did not launch this browser, so disconnect from it without
+  // closing the user's context or tabs. connectOverCDP's close() detaches the
+  // client; it leaves the externally-started browser running.
+  if (connectedMode) {
+    try {
+      await connectedBrowser?.close();
+    } catch {
+      /* parent/process exit */
+    }
+    browserContext = null;
+    connectedBrowser = null;
+    connectedMode = false;
+    await closeGuardProxy();
+    return;
+  }
   // Chromium can emit BrowserContext.close before its process finishes the
   // final profile writes. Preserve the temporary path so shutdown performs a
   // second removal after close() has fully resolved, even if the close event

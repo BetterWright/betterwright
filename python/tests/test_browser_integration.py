@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def browser(tmp_path):
-    with BetterWright(home=tmp_path, policy=NetworkPolicy()) as bw:
+    with BetterWright(home=tmp_path, policy=NetworkPolicy(), headless=True) as bw:
         yield bw
 
 

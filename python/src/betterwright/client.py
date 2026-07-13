@@ -23,6 +23,16 @@ from betterwright.bridge import Bridge
 from betterwright.policy import NetworkPolicy
 from betterwright.vault import CredentialVault
 
+#: Artifact kinds that are images (as opposed to downloads or spilled output).
+IMAGE_KINDS = frozenset({"proof", "question", "debug"})
+
+_MIME_BY_EXT = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
 
 @dataclass
 class Artifact:
@@ -33,10 +43,43 @@ class Artifact:
     size: int | None = None
 
     @property
+    def is_image(self) -> bool:
+        """Whether this artifact is a screenshot (safe to show a vision model)."""
+
+        return self.kind in IMAGE_KINDS
+
+    @property
     def media_reference(self) -> str:
-        """The ``MEDIA:<path>`` form agents cite so a UI can render the file."""
+        """The ``MEDIA:<path>`` form a host may resolve to render the file."""
 
         return f"MEDIA:{self.path}"
+
+    @property
+    def mime_type(self) -> str:
+        """Best-effort MIME type from the file extension."""
+
+        import os
+
+        return _MIME_BY_EXT.get(os.path.splitext(self.path)[1].lower(), "application/octet-stream")
+
+    def read_bytes(self) -> bytes:
+        """Read the artifact's raw bytes from disk."""
+
+        with open(self.path, "rb") as handle:
+            return handle.read()
+
+    def data_url(self) -> str:
+        """Return the artifact as a ``data:<mime>;base64,...`` URL.
+
+        Use this to hand a screenshot straight to a vision model that expects an
+        image URL (OpenAI/Anthropic/Codex style) — it avoids the file-path and
+        ``MEDIA:`` conventions a generic host does not understand.
+        """
+
+        import base64
+
+        encoded = base64.b64encode(self.read_bytes()).decode("ascii")
+        return f"data:{self.mime_type};base64,{encoded}"
 
 
 @dataclass
@@ -61,8 +104,18 @@ class RunResult:
         three categories the ``screenshot()`` helper tags images with.
         """
 
-        images = [a for a in self.artifacts if a.kind in {"proof", "question", "debug"}]
+        images = [a for a in self.artifacts if a.is_image]
         return [a for a in images if kind is None or a.kind == kind]
+
+    def files(self) -> list[Artifact]:
+        """Return non-image artifacts (downloads, spilled output) as files.
+
+        These must never be handed to a vision model as images — that is what
+        produces "unsupported image MIME type" errors in hosts that attach
+        artifacts automatically.
+        """
+
+        return [a for a in self.artifacts if not a.is_image]
 
     def raise_for_status(self) -> RunResult:
         """Raise :class:`BrowserError` if the snippet failed; else return self."""
@@ -123,9 +176,19 @@ class BetterWright:
     executable_path:
         An explicit Chromium binary to launch instead of the pinned build.
     headless:
-        Whether Chromium runs headless. Defaults to ``True``.
+        ``True``, ``False``, or ``"auto"`` (the default). ``"auto"`` runs a
+        visible browser when a display is available and headless otherwise — so
+        it shows a window on a desktop and stays headless on servers and CI.
     default_timeout:
         Per-snippet timeout in seconds (minimum 5).
+    connect_over_cdp:
+        Attach to an already-running Chrome/Chromium at this CDP endpoint (e.g.
+        ``"http://127.0.0.1:9222"``) instead of launching an isolated browser.
+        The target must have been started with ``--remote-debugging-port``. In
+        this mode BetterWright uses the browser's existing context and tabs, and
+        the launch-time network floor (metadata resolver rules, forced transport
+        proxy) is not active — only the per-request :class:`NetworkPolicy`
+        applies. See ``docs/attach-mode.md``.
     """
 
     def __init__(
@@ -135,8 +198,9 @@ class BetterWright:
         policy: NetworkPolicy | None = None,
         vault: CredentialVault | bool | None = True,
         executable_path: str | None = None,
-        headless: bool = True,
+        headless: bool | str = "auto",
         default_timeout: int = 30,
+        connect_over_cdp: str | None = None,
     ) -> None:
         resolved_vault: CredentialVault | None
         if vault is True:
@@ -155,6 +219,7 @@ class BetterWright:
             executable_path=executable_path,
             headless=headless,
             default_timeout=default_timeout,
+            connect_over_cdp=connect_over_cdp,
         )
 
     @property

@@ -20,6 +20,25 @@ const WORKER_START_TIMEOUT_MS = 15_000;
 
 export class BrowserError extends Error {}
 
+/** Best-effort detection of a graphical display, for headless: "auto". */
+export function displayAvailable() {
+  const forced = (process.env.BETTERWRIGHT_DISPLAY || "").trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(forced)) return true;
+  if (["0", "false", "no", "off"].includes(forced)) return false;
+  if (process.platform === "darwin")
+    return !(process.env.SSH_CONNECTION || process.env.SSH_TTY);
+  if (process.platform === "win32")
+    return (process.env.SESSIONNAME || "").trim().toLowerCase() !== "services";
+  return Boolean(
+    (process.env.DISPLAY || "").trim() || (process.env.WAYLAND_DISPLAY || "").trim(),
+  );
+}
+
+function resolveHeadless(headless) {
+  if (headless === "auto" || headless === undefined) return !displayAvailable();
+  return headless !== false;
+}
+
 function defaultHome() {
   const configured = (process.env.BETTERWRIGHT_HOME || "").trim();
   return configured || path.join(os.homedir(), ".betterwright");
@@ -41,15 +60,21 @@ export class BetterWright {
    * @param {NetworkPolicy} [options.policy] network policy
    * @param {object} [options.vault] optional vault with `handleRequest(action, payload, origin)`
    * @param {string} [options.executablePath] explicit Chromium binary
-   * @param {boolean} [options.headless=true]
+   * @param {boolean|"auto"} [options.headless="auto"] "auto" shows a window when
+   *   a display is available and runs headless otherwise; true/false force it
    * @param {number} [options.defaultTimeout=30] per-snippet timeout, seconds
+   * @param {string} [options.connectOverCdp] attach to a Chrome started with
+   *   --remote-debugging-port at this endpoint (e.g. "http://127.0.0.1:9222")
+   *   instead of launching one; the launch-time network floor is inactive in
+   *   this mode — only the per-request policy applies.
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
     this.policy = options.policy || new NetworkPolicy();
     this.vault = options.vault || null;
     this.executablePath = options.executablePath || "";
-    this.headless = options.headless !== false;
+    this.headless = resolveHeadless(options.headless);
+    this.connectOverCdp = (options.connectOverCdp || "").trim();
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
 
     this._process = null;
@@ -77,6 +102,7 @@ export class BetterWright {
       downloadsDir: downloads,
       executablePath: this.executablePath,
       headless: this.headless,
+      cdpEndpoint: this.connectOverCdp,
       outputLimit: 12_000,
       maxArtifactBytes: 100 * 1024 * 1024,
       maxDownloadBytes: 50 * 1024 * 1024,

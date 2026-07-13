@@ -85,6 +85,8 @@ with BetterWright(policy=NetworkPolicy(allow_loopback=True)) as bw:
 - [The browser API](browser-api.md) — every global available inside a snippet.
 - [Agent guidance](agent-prompt.md) — make a model drive the browser decisively,
   with configurable guardrails.
+- [Attach mode & headed browsing](attach-mode.md) — watch the browser, or drive
+  a Chrome you already have open.
 - [Network policy](network-policy.md) — controlling what the browser can reach.
 - [Credentials](credentials.md) — logging in without leaking passwords.
 - [CAPTCHA solving](captcha.md) — unblocking authorized flows.

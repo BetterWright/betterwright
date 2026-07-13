@@ -78,6 +78,11 @@ normal `page.locator(...)` API.
 
 It returns `{kind, path, media}` where `media` is `MEDIA:<absolute path>`. The
 `MEDIA:` convention lets a host surface render the file when the agent cites it.
+To feed a screenshot straight to a vision model, use the Python client's
+`RunResult.screenshots()` and `Artifact.data_url()` (a `data:image/png;base64,…`
+URL); the MCP server already returns screenshots as native image content. Never
+hand a host the non-image artifacts from `RunResult.files()` (downloads, spilled
+output) as images — that is what triggers "unsupported image MIME type" errors.
 The three kinds carry intent:
 
 - **`proof`** — evidence a task reached its visible end state. Capture one before

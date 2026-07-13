@@ -97,7 +97,10 @@ def run_browser(code: str, session: str = "default", note: str | None = None) ->
         "ok": r.ok,
         "result": r.value,
         "error": r.error,
-        "artifacts": [a.media_reference for a in r.artifacts],  # "MEDIA:/…/proof.png"
+        # Screenshots as data URLs you can hand straight to a vision model.
+        # NEVER attach r.files() (downloads, spilled JSON) as images.
+        "screenshots": [s.data_url() for s in r.screenshots()],
+        "files": [f.path for f in r.files()],
         "warnings": r.warnings,
     }
 
@@ -140,11 +143,15 @@ const browser = new BetterWright({ policy: new NetworkPolicy({ allowLoopback: fa
 
 async function runBrowser({ code, session = "default", note }) {
   const r = await browser.run(code, { session, note });
+  const isImage = (a) => ["proof", "question", "debug"].includes(a.kind);
   return {
     ok: r.ok,
     result: r.result,
     error: r.error,
-    artifacts: (r.artifacts || []).map((a) => a.media),
+    // Image artifacts carry a MEDIA: path; read+encode them if your host needs
+    // a data URL. Never attach non-image files (downloads, spilled JSON).
+    screenshots: (r.artifacts || []).filter(isImage).map((a) => a.media),
+    files: (r.artifacts || []).filter((a) => !isImage(a)).map((a) => a.path),
     warnings: r.warnings,
   };
 }

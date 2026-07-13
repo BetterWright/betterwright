@@ -31,7 +31,7 @@ function tempHome() {
 }
 
 test("navigate and read the title", opts, async () => {
-  const bw = new BetterWright({ home: tempHome(), policy: new NetworkPolicy() });
+  const bw = new BetterWright({ home: tempHome(), policy: new NetworkPolicy(), headless: true });
   try {
     const result = await bw.run("await page.goto('https://example.com'); return page.title()");
     assert.equal(result.ok, true, result.error);
@@ -42,7 +42,7 @@ test("navigate and read the title", opts, async () => {
 });
 
 test("metadata endpoint is blocked", opts, async () => {
-  const bw = new BetterWright({ home: tempHome() });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
     const result = await bw.run("await page.goto('http://169.254.169.254/'); return 'reached'");
     assert.equal(result.ok, false);
@@ -52,7 +52,7 @@ test("metadata endpoint is blocked", opts, async () => {
 });
 
 test("screenshot without an extension still yields a png", opts, async () => {
-  const bw = new BetterWright({ home: tempHome() });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
     await bw.run("await page.goto('https://example.com')");
     const result = await bw.run("return screenshot({kind: 'proof', name: 'home'})");
