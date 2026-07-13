@@ -52,15 +52,33 @@ return { a: await a.title(), b: await b.title() };
 ## Reading the page
 
 `snapshot(options?)` returns an accessibility-tree snapshot of the current page —
-a compact, model-friendly view of the interactive elements, far cheaper than
-full HTML. Options: `maxChars` (default 10000, capped at 20000) and `timeout`.
+a compact, model-friendly view far cheaper than full HTML. Every element carries
+a `[ref=eN]` marker you can act on directly with an `aria-ref` locator, so there
+is no need to reverse-engineer a CSS selector from the snapshot:
 
 ```js
-return await snapshot();      // "page page-1 https://…\n- button \"Sign in\"\n- textbox …"
+return await snapshot({interactive: true}); // "page page-1 https://…\n- button \"Sign in\" [ref=e12]…"
+// then, in a later run:
+await human.click(page.locator('aria-ref=e12'));
 ```
 
-For anything Playwright can read — text, attributes, computed state — use the
-normal `page.locator(...)` API.
+Refs are assigned fresh on every snapshot and go stale when the page changes —
+re-snapshot after navigations or re-renders before using one.
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `interactive` | `false` | Keep only actionable elements (buttons, links, inputs, `cursor: pointer`, …) plus their ancestors. The cheapest way to see what you can do on a page. |
+| `diff` | `false` | Return only the `+`/`-` lines changed since the previous same-shaped snapshot of this page, or `(no changes since previous snapshot)`. |
+| `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
+| `depth` | — | Limit tree depth. |
+| `maxChars` | `10000` | Truncation limit, capped at 20000. |
+| `timeout` | `10000` | Milliseconds. |
+
+Prefer `snapshot({interactive: true})` for deciding what to click and
+`snapshot({diff: true})` for checking what an action changed; take a full
+`snapshot()` only when you need to read page content wholesale. For anything
+Playwright can read — text, attributes, computed state — use the normal
+`page.locator(...)` API.
 
 ## Human-shaped interactions
 

@@ -26,6 +26,7 @@ import {
   scrollWheel,
   typeText,
 } from "./human.mjs";
+import { diffSnapshots, filterInteractive } from "./snapshot.mjs";
 
 const playwrightCoreDir = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "";
 const playwrightModule = playwrightCoreDir
@@ -107,6 +108,11 @@ function sendResult(message) {
     message.console = [];
     message.events = [];
     message.pages = (message.pages || []).slice(0, 4);
+  }
+  // Empty collections carry no information; both clients default them.
+  for (const key of Object.keys(message)) {
+    if (Array.isArray(message[key]) && message[key].length === 0)
+      delete message[key];
   }
   send(message);
 }
@@ -840,16 +846,45 @@ async function ensureSessionPage(session) {
   return adoptPage(unowned || (await browserContext.newPage()), session.id);
 }
 
+// Last snapshot text per page, keyed by the options that shape it, so
+// `diff: true` always compares like against like.
+const lastSnapshots = new WeakMap();
+
 async function snapshotPage(page, options = {}) {
-  const text = await page.locator("body").ariaSnapshot({
+  const depth = Math.floor(Number(options?.depth) || 0);
+  const scope = options?.selector
+    ? page.locator(String(options.selector))
+    : page.locator("body");
+  let text = await scope.ariaSnapshot({
     mode: "ai",
     timeout: Number(options?.timeout || 10_000),
+    ...(depth > 0 ? { depth } : {}),
   });
+  if (options?.interactive) text = filterInteractive(text);
+
+  const key = JSON.stringify([
+    String(options?.selector || ""),
+    Boolean(options?.interactive),
+    depth,
+  ]);
+  const store = lastSnapshots.get(page) || new Map();
+  lastSnapshots.set(page, store);
+  const previous = store.get(key);
+  store.set(key, text);
+
+  const header = `page ${pageId(page)} ${page.url()}`;
+  if (options?.diff && previous !== undefined) {
+    const result = diffSnapshots(previous, text);
+    if (!result.changed)
+      return `${header}\n(no changes since previous snapshot)`;
+    if (!result.tooLarge)
+      text = `diff vs previous snapshot (+${result.additions} -${result.removals})\n${result.diff}`;
+  }
   const limit = Math.max(
     1_000,
     Math.min(Number(options?.maxChars || 10_000), 20_000),
   );
-  return `page ${pageId(page)} ${page.url()}\n${text.length > limit ? `${text.slice(0, limit)}\n[truncated]` : text}`;
+  return `${header}\n${text.length > limit ? `${text.slice(0, limit)}\n[truncated]` : text}`;
 }
 
 function captchaBounds(value, label = "bounds") {

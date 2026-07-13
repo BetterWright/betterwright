@@ -180,3 +180,84 @@ test("human helpers use shaped pointer, keyboard, and wheel events", opts, async
     await bw.close();
   }
 });
+
+test("interactive snapshots expose refs that aria-ref locators can act on", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const snap = await bw.run(`
+      await page.setContent(\`
+        <h1>Title</h1><p>Lots of static prose.</p>
+        <button id="go">Go</button>
+        <script>
+          document.querySelector('#go').addEventListener('click', () => {
+            document.querySelector('h1').textContent = 'Done';
+          });
+        </script>
+      \`);
+      return snapshot({interactive: true});
+    `);
+    assert.equal(snap.ok, true, snap.error);
+    assert.match(snap.result, /button "Go" \[ref=(e\d+)\]/);
+    assert.ok(!snap.result.includes("static prose"), snap.result);
+    const ref = snap.result.match(/button "Go" \[ref=(e\d+)\]/)[1];
+    const clicked = await bw.run(`
+      await page.locator('aria-ref=${ref}').click();
+      return page.locator('h1').textContent();
+    `);
+    assert.equal(clicked.ok, true, clicked.error);
+    assert.equal(clicked.result, "Done");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("snapshot diff returns only what changed", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<button id="go">Go</button><p id="status">Idle</p>');
+      const first = await snapshot({diff: true});
+      const unchanged = await snapshot({diff: true});
+      await page.locator('#status').evaluate(el => { el.textContent = 'Running'; });
+      const changed = await snapshot({diff: true});
+      return {first, unchanged, changed};
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.match(result.result.first, /button "Go"/);
+    assert.match(result.result.unchanged, /no changes since previous snapshot/);
+    assert.match(result.result.changed, /diff vs previous snapshot \(\+\d+ -\d+\)/);
+    assert.match(result.result.changed, /\+.*Running/);
+    assert.ok(!result.result.changed.includes('button "Go"'), result.result.changed);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("snapshot scopes to a selector", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<nav><a href="#x">Away</a></nav><main id="m"><button>In</button></main>');
+      return snapshot({selector: '#m'});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.match(result.result, /button "In"/);
+    assert.ok(!result.result.includes("Away"), result.result);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("empty envelope collections are omitted, not sent as []", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run("return 1 + 1");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 2);
+    assert.ok(!("console" in result), "console should be omitted when empty");
+    assert.ok(!("events" in result), "events should be omitted when empty");
+    assert.ok(!("artifacts" in result), "artifacts should be omitted when empty");
+  } finally {
+    await bw.close();
+  }
+});
