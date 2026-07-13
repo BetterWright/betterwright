@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "betterwright"
+version = "0.1.0"
+description = "A persistent, policy-guarded Playwright browser for AI agents."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "BetterWright contributors" }]
+keywords = ["playwright", "browser", "automation", "agent", "llm", "captcha"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = ["cryptography>=41"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/betterwright/betterwright"
+Documentation = "https://github.com/betterwright/betterwright/tree/main/docs"
+Source = "https://github.com/betterwright/betterwright"
+Issues = "https://github.com/betterwright/betterwright/issues"
+
+[project.scripts]
+betterwright = "betterwright.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/betterwright"]
+# The Node worker is shipped inside the package so a pip-only install is
+# self-contained (it still needs Node on PATH at runtime).
+artifacts = ["src/betterwright/_worker/*.mjs"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/betterwright", "README.md", "LICENSE", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# argparse help strings and inline JSON fixtures read better on one line.
+"src/betterwright/cli.py" = ["E501"]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,50 @@
+{
+  "name": "betterwright",
+  "version": "0.1.0",
+  "description": "A persistent, policy-guarded Playwright browser for AI agents — with a network policy, an encrypted credential vault, proof screenshots, and CAPTCHA solving.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./policy": "./src/policy.mjs",
+    "./prompt": "./src/prompt.mjs",
+    "./worker": "./src/worker.mjs"
+  },
+  "bin": {
+    "betterwright": "bin/betterwright.mjs"
+  },
+  "files": [
+    "src",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node bin/betterwright.mjs setup || true",
+    "test": "node --test 'tests/node/**/*.test.mjs'",
+    "lint": "for f in src/*.mjs bin/*.mjs; do node --check \"$f\" || exit 1; done"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "playwright-core": "1.61.1"
+  },
+  "keywords": [
+    "playwright",
+    "browser",
+    "automation",
+    "agent",
+    "llm",
+    "ai",
+    "captcha",
+    "browser-use",
+    "web-agent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/betterwright/betterwright.git"
+  },
+  "homepage": "https://github.com/betterwright/betterwright#readme"
+}

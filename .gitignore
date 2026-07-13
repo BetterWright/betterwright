@@ -1,0 +1,23 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# BetterWright runtime state (never commit a profile, vault, or artifacts)
+.betterwright/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
