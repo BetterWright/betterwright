@@ -109,6 +109,21 @@ client returns the worker's result envelope directly (`result`, `artifacts`,
 
 ---
 
+## Adding it to an agent
+
+Point your agent (or coding agent) at **[SETUP.md](SETUP.md)** — it's written to
+be followed by an AI agent and walks it through integrating BetterWright into the
+host, whether that's an MCP client (Claude Code, Cursor, …), a Python or
+JavaScript agent, or a shell-only tool. The whole surface is one tool call, so
+the integration is a thin adapter.
+
+For MCP clients specifically, BetterWright ships a server:
+
+```bash
+pip install "betterwright[mcp]" && betterwright setup
+claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
+```
+
 ## What each piece does
 
 - **[Network policy](docs/network-policy.md)** — every navigation, subresource,

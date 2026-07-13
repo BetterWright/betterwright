@@ -23,6 +23,7 @@ dependencies = ["cryptography>=41"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.4"]
+mcp = ["mcp>=1.2"]
 
 [project.urls]
 Homepage = "https://github.com/CuriosityOS/betterwright"
@@ -32,6 +33,7 @@ Issues = "https://github.com/CuriosityOS/betterwright/issues"
 
 [project.scripts]
 betterwright = "betterwright.cli:main"
+betterwright-mcp = "betterwright.integrations.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/betterwright"]

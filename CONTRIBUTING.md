@@ -12,7 +12,8 @@ src/                 The Node runtime (the source of truth)
   policy.mjs         NetworkPolicy (JS)
 bin/betterwright.mjs The Node CLI
 python/              The Python package
-  src/betterwright/  client, bridge, policy, vault, captcha, cli
+  src/betterwright/  client, bridge, policy, vault, captcha, prompt, cli
+    integrations/    host adapters (MCP server)
   tests/
 tests/node/          Node tests
 docs/                Documentation

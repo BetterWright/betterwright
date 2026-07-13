@@ -1,0 +1,243 @@
+# Integrating BetterWright into an agent
+
+**This file is written to be followed by an AI agent.** If a user has asked you
+to add BetterWright to yourself or to a host you maintain, read this top to
+bottom, then carry out **Step 0** and the **one** later section that matches the
+host. Every section is self-contained and copy-pasteable. Do not guess at APIs
+not shown here.
+
+BetterWright gives an agent a persistent, policy-guarded browser it drives with
+ordinary async Playwright JavaScript. The entire tool surface is one call:
+`run(code)`. Integrating means registering one tool that forwards a `code` string
+to that call, and adding the operator guidance to the system prompt.
+
+---
+
+## Step 0 — Prerequisites (do this for every path)
+
+1. **Node.js 18+ must be on `PATH`.** Check with `node --version`. If missing,
+   tell the user to install it from https://nodejs.org — you cannot proceed
+   without it.
+2. **Install BetterWright** for the host's language:
+   - Python host: `pip install betterwright`
+   - JavaScript host: `npm install betterwright`
+   - MCP path (any host): `pip install "betterwright[mcp]"`
+3. **Download the browser** (one-time, ~150 MB): `betterwright setup`
+4. **Verify** it is ready — this must print `BetterWright is ready.`:
+   ```bash
+   betterwright doctor
+   ```
+   If it does not, stop and report exactly what `doctor` printed.
+
+Then go to the matching section:
+
+| Host | Section |
+| --- | --- |
+| An MCP client (Claude Code, Cursor, Windsurf, Cline, …) | **§1 — MCP** |
+| A Python agent you can edit | **§2 — Python** |
+| A JavaScript / TypeScript agent you can edit | **§3 — JavaScript** |
+| A host that can only run shell commands | **§4 — CLI** |
+
+After integrating, do **§5 — Verify** and offer **§6 — Safeguards**.
+
+---
+
+## §1 — MCP client (Claude Code, Cursor, and similar)
+
+BetterWright ships an MCP server that exposes a `browser` tool and a
+`browser_doctor` tool. You register it once; the model then has a first-class
+browser tool.
+
+**Claude Code:**
+```bash
+claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
+```
+
+**Any other MCP client** (Cursor, Windsurf, Cline, …) — add this to the client's
+MCP config file (e.g. `~/.cursor/mcp.json`, or the `mcpServers` block the client
+documents):
+```json
+{
+  "mcpServers": {
+    "betterwright": {
+      "command": "python",
+      "args": ["-m", "betterwright.integrations.mcp_server"],
+      "env": { "BETTERWRIGHT_ALLOW_LOOPBACK": "0" }
+    }
+  }
+}
+```
+
+The server reads its policy from the environment, so the same command works
+everywhere — see **§6** for the variables. Restart the client (or reload its MCP
+servers) and confirm a `browser` tool appears. Then do **§5**.
+
+The server keeps one browser alive for its lifetime, so pages and logins persist
+across tool calls.
+
+---
+
+## §2 — Python agent
+
+Keep **one** `BetterWright` instance alive for the whole process (not one per
+call — that would throw away the persistent session). Register a tool that
+forwards to `run()`, and prepend the operator guidance to your system prompt.
+
+```python
+from betterwright import BetterWright, NetworkPolicy, agent_system_prompt
+
+# 1. One browser for the process. Adjust the policy per §6.
+browser = BetterWright(policy=NetworkPolicy(allow_loopback=False))
+
+# 2. The tool handler. Map `session` to your conversation/thread id so each
+#    conversation gets its own tabs and state.
+def run_browser(code: str, session: str = "default", note: str | None = None) -> dict:
+    r = browser.run(code, session=session, note=note)
+    return {
+        "ok": r.ok,
+        "result": r.value,
+        "error": r.error,
+        "artifacts": [a.media_reference for a in r.artifacts],  # "MEDIA:/…/proof.png"
+        "warnings": r.warnings,
+    }
+
+# 3. The tool schema to advertise to the model.
+BROWSER_TOOL = {
+    "name": "browser",
+    "description": (
+        "Run async Playwright JavaScript in a persistent, policy-guarded browser. "
+        "Globals: page, pages, context, state, openPage, usePage, closePage, "
+        "snapshot, screenshot, artifactPath, dialogs, credentials. A single "
+        "trailing expression returns automatically; a statement block must return."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "description": "Playwright JavaScript to run."},
+            "note": {"type": "string", "description": "Short present-tense status line."},
+        },
+        "required": ["code"],
+    },
+}
+
+# 4. Add the operator guidance to your system prompt so the model acts decisively.
+SYSTEM_PROMPT = MY_EXISTING_SYSTEM_PROMPT + "\n\n" + agent_system_prompt()
+```
+
+Register `BROWSER_TOOL` with your agent's tool registry and route its calls to
+`run_browser`. That is the whole integration. Then do **§5**.
+
+---
+
+## §3 — JavaScript / TypeScript agent
+
+Identical shape. Keep one client alive; forward one tool to `run()`.
+
+```js
+import { BetterWright, NetworkPolicy, agentSystemPrompt } from "betterwright";
+
+const browser = new BetterWright({ policy: new NetworkPolicy({ allowLoopback: false }) });
+
+async function runBrowser({ code, session = "default", note }) {
+  const r = await browser.run(code, { session, note });
+  return {
+    ok: r.ok,
+    result: r.result,
+    error: r.error,
+    artifacts: (r.artifacts || []).map((a) => a.media),
+    warnings: r.warnings,
+  };
+}
+
+const browserTool = {
+  name: "browser",
+  description:
+    "Run async Playwright JavaScript in a persistent, policy-guarded browser. " +
+    "Globals: page, pages, context, state, openPage, usePage, closePage, " +
+    "snapshot, screenshot, artifactPath, dialogs, credentials.",
+  parameters: {
+    type: "object",
+    properties: {
+      code: { type: "string", description: "Playwright JavaScript to run." },
+      note: { type: "string", description: "Short present-tense status line." },
+    },
+    required: ["code"],
+  },
+};
+
+const systemPrompt = `${MY_EXISTING_SYSTEM_PROMPT}\n\n${agentSystemPrompt()}`;
+```
+
+Register `browserTool` and route it to `runBrowser`. Then do **§5**.
+
+---
+
+## §4 — Shell-only host
+
+If you can only run shell commands, use the CLI directly — no integration code.
+It prints a single JSON object and exits `0` on success, `1` on failure.
+
+```bash
+betterwright run -c "await page.goto('https://example.com'); return page.title()"
+```
+
+Pass a multi-line snippet from a file with `betterwright run path/to/snippet.js`,
+or from stdin with `betterwright run -`. Policy flags: `--allow-loopback`,
+`--allow-host HOST`, `--block-host HOST`, `--headed`. This is the quickest path
+but the browser does not persist between separate `run` invocations, so prefer
+§1–§3 for real multi-step work.
+
+---
+
+## §5 — Verify the integration
+
+Do not report success until you have observed the browser actually work through
+the path you just wired. Have the agent (or run yourself) this two-step check:
+
+1. Navigate and read: run
+   `await page.goto('https://example.com'); return page.title()` and confirm the
+   result is `"Example Domain"`.
+2. Capture proof: run `return screenshot({kind: 'proof', name: 'setup-check'})`
+   and confirm you get back a `MEDIA:` path that exists on disk.
+
+If both succeed, the integration is live. If the first fails with a runtime
+error, rerun `betterwright doctor` — the browser is probably not installed.
+
+---
+
+## §6 — Safeguards (configure to taste)
+
+BetterWright is safe by default (cloud metadata and private networks are
+blocked). Tighten or loosen it deliberately. Two independent layers:
+
+**Network — what the browser can reach** (`NetworkPolicy`, or the MCP env vars):
+
+| Goal | Python / JS | MCP env var |
+| --- | --- | --- |
+| Allow a local dev server | `allow_loopback=True` / `allowLoopback: true` | `BETTERWRIGHT_ALLOW_LOOPBACK=1` |
+| Allow the private network | `allow_private_network=True` | `BETTERWRIGHT_ALLOW_PRIVATE_NETWORK=1` |
+| Restrict to specific sites | `allow_hosts=("example.com",)` | `BETTERWRIGHT_ALLOW_HOSTS=example.com` |
+| Block specific sites | `block_hosts=("ads.example.com",)` | `BETTERWRIGHT_BLOCK_HOSTS=ads.example.com` |
+
+Cloud metadata endpoints can never be allowlisted. See
+[docs/network-policy.md](docs/network-policy.md).
+
+**Behavior — how bold the agent is** (`Guardrails`, prompt-level). The default
+guidance makes the agent act on authorized tasks (login, signup, purchase)
+rather than hedge. Re-add friction where you want it:
+
+```python
+from betterwright import agent_system_prompt, Guardrails
+
+SYSTEM_PROMPT += "\n\n" + agent_system_prompt(Guardrails(
+    confirm_before_purchase=True,   # pause + confirm before paying
+    spending_limit="$50",           # confirm any purchase over $50
+    forbid_account_creation=False,  # allow sign-ups
+))
+```
+
+Full list of guardrails and the JS form: [docs/agent-prompt.md](docs/agent-prompt.md).
+
+Prompt guidance persuades a cooperative model; the network policy and the
+[credential vault](docs/credentials.md) are what actually enforce limits. Use
+both.
