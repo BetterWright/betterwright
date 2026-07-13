@@ -15,8 +15,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import vm from "node:vm";
 import { pathToFileURL } from "node:url";
+import vm from "node:vm";
 
 import { detectBotChallenge, isPublicSearchNavigation } from "./challenges.mjs";
 import {
@@ -1725,7 +1725,7 @@ async function summarize(value, seen = new WeakSet(), depth = 0) {
   return redactDeep(output);
 }
 
-function compileCode(code, context) {
+function compileCode(code) {
   const expression = `(async () => (${code}\n))()`;
   try {
     return new vm.Script(expression, {
@@ -1800,7 +1800,7 @@ async function execute(message) {
     await ensureBrowser(message.config);
     await ensureSessionPage(session);
     const { context } = buildSandbox(session, consoleMessages);
-    const script = compileCode(String(message.code || ""), context);
+    const script = compileCode(String(message.code || ""));
     const promise = script.runInContext(context, {
       timeout: SAFE_SYNC_VM_TIMEOUT_MS,
     });

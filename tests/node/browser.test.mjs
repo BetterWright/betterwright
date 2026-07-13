@@ -2,9 +2,9 @@
 // policy suite still runs on machines without the runtime installed.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { test } from "node:test";
 
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
@@ -108,7 +108,7 @@ test("captcha.drag performs a smooth pointer drag and returns a fresh snapshot",
           document.addEventListener('mouseup', event => {
             if (started && event.clientX > 200) document.querySelector('#status').textContent = 'Dragged';
           });
-        <\/script>
+        </script>
       \`);
       const bounds = await page.locator('#handle').boundingBox();
       const from = {x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2};
@@ -157,7 +157,7 @@ test("human helpers use shaped pointer, keyboard, and wheel events", opts, async
           document.querySelector('#go').addEventListener('click', () => {
             document.querySelector('#status').textContent = 'Clicked';
           });
-        <\/script>
+        </script>
       \`);
       await human.click(page.locator('#go'));
       await human.type('#name', 'Ada');
