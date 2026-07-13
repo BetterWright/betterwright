@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "postinstall": "node bin/betterwright.mjs setup || true",
-    "test": "node --test 'tests/node/**/*.test.mjs'",
+    "test": "node --test tests/node/*.test.mjs",
     "lint": "for f in src/*.mjs bin/*.mjs; do node --check \"$f\" || exit 1; done"
   },
   "engines": {
