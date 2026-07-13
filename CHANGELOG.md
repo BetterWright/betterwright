@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `snapshot()` options for cheaper page observation: `interactive` (actionable
+  elements only), `diff` (only the lines changed since the previous snapshot),
+  `selector` (scope to a CSS selector), and `depth` (limit tree depth).
+- Documented that snapshot `[ref=eN]` markers are directly actionable via
+  `page.locator('aria-ref=eN')`.
+
+### Changed
+
+- Result envelopes omit empty `console`/`events`/`artifacts`/`warnings`
+  collections instead of sending empty arrays.
+
 ## [0.1.0] — 2026-07-14
 
 Initial release.
