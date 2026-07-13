@@ -109,6 +109,7 @@ def browser(code: str, session: str = "default", note: str = "") -> list:
         # attach them as images.
         "files": [{"kind": a.kind, "path": a.path} for a in result.files()],
         "pages": result.pages,
+        "challenges": result.challenges,
         "warnings": result.warnings,
         "duration_ms": result.duration_ms,
     }

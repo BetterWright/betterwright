@@ -6,8 +6,10 @@
   "main": "src/index.mjs",
   "exports": {
     ".": "./src/index.mjs",
+    "./chrome": "./src/chrome.mjs",
     "./policy": "./src/policy.mjs",
     "./prompt": "./src/prompt.mjs",
+    "./pi": "./src/pi.mjs",
     "./worker": "./src/worker.mjs"
   },
   "bin": {

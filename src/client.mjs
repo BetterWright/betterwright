@@ -67,6 +67,8 @@ export class BetterWright {
    *   --remote-debugging-port at this endpoint (e.g. "http://127.0.0.1:9222")
    *   instead of launching one; the launch-time network floor is inactive in
    *   this mode — only the per-request policy applies.
+   * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
+   *   top-level Google, Bing, or DuckDuckGo search navigations
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
@@ -75,6 +77,7 @@ export class BetterWright {
     this.executablePath = options.executablePath || "";
     this.headless = resolveHeadless(options.headless);
     this.connectOverCdp = (options.connectOverCdp || "").trim();
+    this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
 
     this._process = null;
@@ -103,6 +106,7 @@ export class BetterWright {
       executablePath: this.executablePath,
       headless: this.headless,
       cdpEndpoint: this.connectOverCdp,
+      searchMinIntervalMs: this.searchMinIntervalMs,
       outputLimit: 12_000,
       maxArtifactBytes: 100 * 1024 * 1024,
       maxDownloadBytes: 50 * 1024 * 1024,

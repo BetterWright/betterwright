@@ -62,3 +62,17 @@ test("screenshot without an extension still yields a png", opts, async () => {
     await bw.close();
   }
 });
+
+test("visible bot challenges are reported without bypassing them", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(
+      "await page.setContent('<h1>One last step</h1><p>Please solve the challenge below to continue</p>'); return 'loaded'",
+    );
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.challenges?.[0]?.type, "bot_challenge");
+    assert.match(result.warnings?.[0] || "", /Do not retry/i);
+  } finally {
+    await bw.close();
+  }
+});

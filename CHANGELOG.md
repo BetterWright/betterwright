@@ -22,5 +22,9 @@ Initial release.
 - Proof/question/debug screenshot artifacts surfaced as `MEDIA:` references.
 - `CaptchaSolver` — provider-agnostic (2Captcha-compatible) solving for
   reCAPTCHA v2/v3, hCaptcha, Turnstile, and image captchas.
+- Managed dedicated-Chrome attach mode, optional public-search pacing, and
+  structured visible bot-challenge reporting.
+- A Pi tool-result image adapter that emits the top-level `data` and `mimeType`
+  fields expected by Pi's OpenAI Codex provider.
 - `betterwright` CLI (`setup`, `doctor`, `run`, `repl`, `captcha`) in both
   languages.

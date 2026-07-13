@@ -70,6 +70,7 @@ class Bridge:
         headless: bool | str = "auto",
         default_timeout: int = _DEFAULT_TIMEOUT_SECONDS,
         connect_over_cdp: str | None = None,
+        search_min_interval_ms: int = 0,
     ) -> None:
         self.home = Path(home).expanduser().resolve() if home else betterwright_home()
         self.policy = policy if policy is not None else NetworkPolicy()
@@ -78,6 +79,7 @@ class Bridge:
         self.headless = resolve_headless(headless)
         self.default_timeout = max(int(default_timeout), 5)
         self.connect_over_cdp = (connect_over_cdp or "").strip()
+        self.search_min_interval_ms = max(int(search_min_interval_ms), 0)
 
         self._process: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
@@ -125,6 +127,7 @@ class Bridge:
             else "",
             "headless": bool(self.headless),
             "cdpEndpoint": self.connect_over_cdp,
+            "searchMinIntervalMs": self.search_min_interval_ms,
             "outputLimit": 12_000,
             "maxArtifactBytes": 100 * 1024 * 1024,
             "maxDownloadBytes": 50 * 1024 * 1024,

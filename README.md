@@ -105,7 +105,13 @@ await bw.close();
 
 The Python client returns a typed [`RunResult`](docs/python.md); the JavaScript
 client returns the worker's result envelope directly (`result`, `artifacts`,
-`console`, `events`, `pages`, `warnings`, `durationMs`).
+`console`, `events`, `pages`, `challenges`, `warnings`, `durationMs`).
+
+Long-lived desktop agents can attach to a dedicated real-Chrome profile with
+`ensureChromeCdp()`. Keeping browser state stable and optionally pacing public
+search navigations avoids needless fresh-session signals; visible bot challenges
+are surfaced in the result envelope so an agent can take a direct-site route
+instead of repeatedly retrying search. See [attach mode](docs/attach-mode.md).
 
 ---
 

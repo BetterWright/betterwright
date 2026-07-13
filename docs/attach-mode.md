@@ -85,6 +85,35 @@ The already-open tabs are adopted into the default session, so `pages`, `page`,
 `usePage`, and `snapshot` work against them immediately. On shutdown BetterWright
 disconnects without closing your browser or its tabs.
 
+### Managed dedicated Chrome
+
+On a desktop integration, BetterWright can start or reuse that dedicated Chrome
+profile for you. This is useful for long-lived agents such as Pi because every
+agent process attaches to the same stable browser state instead of creating a
+fresh automation profile:
+
+```js
+import { BetterWright, ensureChromeCdp } from "betterwright";
+
+const { endpoint, profileDir } = await ensureChromeCdp();
+const bw = new BetterWright({
+  connectOverCdp: endpoint,
+  searchMinIntervalMs: 12_000,
+});
+```
+
+The managed browser uses Google Chrome when installed, binds its debugging port
+to `127.0.0.1`, and stores state under
+`~/.betterwright/chrome-cdp-profile`. Chrome 136 and newer require this separate
+`--user-data-dir`; BetterWright never points remote debugging at your everyday
+Chrome profile. Set `BETTERWRIGHT_HOME` to move the dedicated profile.
+
+`searchMinIntervalMs` is optional and defaults to `0`. A nonzero value spaces
+top-level Google, Bing, and DuckDuckGo search navigations while leaving ordinary
+site browsing untouched. Pacing and a stable profile reduce automated-query
+signals, but no browser setting can guarantee that a search provider will never
+show a CAPTCHA, especially when its decision includes the public IP's history.
+
 ## The security trade-off — read this
 
 Attach mode gives up BetterWright's strongest guarantees, because they are

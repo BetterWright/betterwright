@@ -99,6 +99,15 @@ Writes are confined to that directory.
 Artifacts are subject to a per-session quota (100 MB by default); the oldest are
 evicted first, and a warning is recorded when that happens.
 
+## Bot-challenge detection
+
+Every result envelope includes a `challenges` list. When a page visibly presents
+a CAPTCHA or bot check, BetterWright records its page, provider, URL, and routing
+advice there and repeats the advice in `warnings`. It does not bypass or solve the
+challenge automatically. Agents should not retry the page or rotate through
+public search engines; use a host-provided research tool, navigate directly to a
+first-party site, or ask the user to complete a challenge that is truly required.
+
 ## State
 
 `state` is a plain object that persists across `run()` calls within a session —

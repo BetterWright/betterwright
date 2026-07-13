@@ -41,6 +41,7 @@ There is no context-manager sugar in JS — call `close()` in a `finally`.
 | `events` | Page lifecycle events. |
 | `artifacts` | `[{ kind, path, media, size? }]`. |
 | `pages` | Open pages, each summarized. |
+| `challenges` | Visible CAPTCHA/bot checks with page, provider, URL, and routing advice. |
 | `warnings` | Non-fatal notices. |
 | `durationMs` | Time spent in the worker. |
 
@@ -55,6 +56,29 @@ try {
 } finally {
   await bw.close();
 }
+```
+
+For long-lived desktop agents, `ensureChromeCdp()` starts or reuses a dedicated
+Google Chrome profile. Pair it with `searchMinIntervalMs` to keep public-search
+navigations from occurring in rapid bursts; see [attach mode](attach-mode.md).
+
+### Pi tool-result images
+
+Pi custom tools expect image content as top-level `data` and `mimeType` fields,
+not the `source` wrapper used by Pi user messages. The adapter keeps that detail
+out of extension code and ignores downloads or spilled JSON artifacts:
+
+```js
+import { piImageContent } from "betterwright/pi";
+
+const result = await bw.run("return screenshot({ kind: 'proof' })");
+return {
+  content: [
+    { type: "text", text: JSON.stringify(result) },
+    ...(await piImageContent(result)),
+  ],
+  details: {},
+};
 ```
 
 ## `NetworkPolicy`

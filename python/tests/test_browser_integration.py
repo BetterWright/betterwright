@@ -45,6 +45,16 @@ def test_metadata_endpoint_blocked(browser):
     assert not result.ok
 
 
+def test_visible_bot_challenge_is_reported(browser):
+    result = browser.run(
+        "await page.setContent('<h1>One last step</h1>"
+        "<p>Please solve the challenge below to continue</p>'); return 'loaded'"
+    )
+    assert result.ok, result.error
+    assert result.challenges[0]["type"] == "bot_challenge"
+    assert "Do not retry" in result.warnings[0]
+
+
 def test_sessions_are_isolated(browser):
     browser.run("state.marker = 'a'; return state.marker", session="a")
     other = browser.run("return state.marker ?? 'unset'", session="b")

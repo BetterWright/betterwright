@@ -93,6 +93,7 @@ class RunResult:
     events: list[dict] = field(default_factory=list)
     artifacts: list[Artifact] = field(default_factory=list)
     pages: list[dict] = field(default_factory=list)
+    challenges: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
     truncated: bool = False
@@ -149,6 +150,7 @@ class RunResult:
             events=list(envelope.get("events", [])),
             artifacts=artifacts,
             pages=list(envelope.get("pages", [])),
+            challenges=list(envelope.get("challenges", [])),
             warnings=list(envelope.get("warnings", [])),
             duration_ms=float(envelope.get("durationMs", 0.0) or 0.0),
             truncated=truncated,
@@ -189,6 +191,9 @@ class BetterWright:
         the launch-time network floor (metadata resolver rules, forced transport
         proxy) is not active — only the per-request :class:`NetworkPolicy`
         applies. See ``docs/attach-mode.md``.
+    search_min_interval_ms:
+        Minimum spacing between top-level Google, Bing, or DuckDuckGo search
+        navigations. ``0`` (the default) disables pacing.
     """
 
     def __init__(
@@ -201,6 +206,7 @@ class BetterWright:
         headless: bool | str = "auto",
         default_timeout: int = 30,
         connect_over_cdp: str | None = None,
+        search_min_interval_ms: int = 0,
     ) -> None:
         resolved_vault: CredentialVault | None
         if vault is True:
@@ -220,6 +226,7 @@ class BetterWright:
             headless=headless,
             default_timeout=default_timeout,
             connect_over_cdp=connect_over_cdp,
+            search_min_interval_ms=search_min_interval_ms,
         )
 
     @property

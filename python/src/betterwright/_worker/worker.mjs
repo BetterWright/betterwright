@@ -18,6 +18,8 @@ import readline from "node:readline";
 import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
+import { detectBotChallenge, isPublicSearchNavigation } from "./challenges.mjs";
+
 const playwrightCoreDir = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "";
 const playwrightModule = playwrightCoreDir
   ? await import(pathToFileURL(path.join(playwrightCoreDir, "index.mjs")).href)
@@ -78,6 +80,8 @@ const guardProxySockets = new Set();
 let rpcCounter = 0;
 let pageCounter = 0;
 let executeQueue = Promise.resolve();
+let searchPacingQueue = Promise.resolve();
+let lastPublicSearchAt = 0;
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -844,7 +848,24 @@ async function installContextGuard(context) {
         },
         executeId,
       );
-      if (decision?.allowed) await route.continue();
+      if (decision?.allowed) {
+        const interval = Math.max(Number(launchConfig.searchMinIntervalMs) || 0, 0);
+        if (
+          interval &&
+          request.isNavigationRequest() &&
+          request.resourceType() === "document" &&
+          isPublicSearchNavigation(request.url())
+        ) {
+          const pace = async () => {
+            const waitMs = Math.max(0, lastPublicSearchAt + interval - Date.now());
+            if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+            lastPublicSearchAt = Date.now();
+          };
+          searchPacingQueue = searchPacingQueue.then(pace, pace);
+          await searchPacingQueue;
+        }
+        await route.continue();
+      }
       else await route.abort("blockedbyclient");
     } catch {
       // Policy infrastructure errors fail closed. A broken guard must never
@@ -904,7 +925,10 @@ async function ensureBrowser(config) {
     const cdpEndpoint = String(launchConfig.cdpEndpoint || "").trim();
     if (cdpEndpoint) {
       connectedMode = true;
-      connectedBrowser = await chromium.connectOverCDP(cdpEndpoint);
+      connectedBrowser = await chromium.connectOverCDP(cdpEndpoint, {
+        isLocal: true,
+        noDefaults: true,
+      });
       const contexts = connectedBrowser.contexts();
       browserContext = contexts.length
         ? contexts[0]
@@ -1571,6 +1595,30 @@ async function enforceArtifactQuota(session) {
   }
 }
 
+async function detectSessionChallenges(session) {
+  const challenges = [];
+  for (const page of [...session.pages.values()].slice(0, MAX_RESPONSE_PAGES)) {
+    if (page.isClosed()) continue;
+    let text = "";
+    let title = "";
+    try {
+      [title, text] = await Promise.all([
+        page.title().catch(() => ""),
+        page.locator("body").innerText({ timeout: 750 }).catch(() => ""),
+      ]);
+    } catch {
+      /* a page may close while the result envelope is assembled */
+    }
+    const challenge = detectBotChallenge({
+      url: page.url(),
+      title,
+      text: text.slice(0, 50_000),
+    });
+    if (challenge) challenges.push({ pageId: pageId(page), ...challenge });
+  }
+  return challenges;
+}
+
 async function execute(message) {
   const started = performance.now();
   const session = sessionFor(message.sessionId);
@@ -1604,6 +1652,7 @@ async function execute(message) {
     ]).finally(() => clearTimeout(timer));
     const summarized = await summarize(result);
     await enforceArtifactQuota(session);
+    const challenges = await detectSessionChallenges(session);
 
     let publicResult = summarized;
     const serialized = JSON.stringify(publicResult);
@@ -1653,8 +1702,10 @@ async function execute(message) {
       artifacts: redactDeep(session.artifacts.slice(firstArtifact)),
       warnings: [
         ...(profileWarning ? [profileWarning] : []),
+        ...(challenges.length ? [challenges[0].advice] : []),
         ...session.warnings.splice(0),
       ],
+      challenges: redactDeep(challenges),
       profileMode,
       pages: await Promise.all(
         [...session.pages.values()]

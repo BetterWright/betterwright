@@ -51,6 +51,22 @@ def test_screenshots_and_files_are_disjoint():
     assert all(not a.is_image for a in result.files())
 
 
+def test_challenges_are_preserved_from_worker_envelope():
+    result = RunResult._from_envelope(
+        {
+            "ok": True,
+            "challenges": [
+                {
+                    "type": "bot_challenge",
+                    "provider": "bing",
+                    "url": "https://www.bing.com/search?q=test",
+                }
+            ],
+        }
+    )
+    assert result.challenges[0]["provider"] == "bing"
+
+
 def test_resolve_headless_explicit():
     assert resolve_headless(True) is True
     assert resolve_headless(False) is False

@@ -7,6 +7,7 @@ test("default prompt is permissive", () => {
   const prompt = agentSystemPrompt();
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
+  assert.ok(prompt.includes("Do not repeatedly retry it or rotate through other public search engines"));
   assert.ok(!prompt.includes("Guardrails for this session"));
 });
 

@@ -56,6 +56,7 @@ The typed outcome of a `run()`.
 | `events` | `list[dict]` | Page lifecycle events (downloads, popups, dialogs, crashes). |
 | `artifacts` | `list[Artifact]` | Files produced (screenshots, downloads, spilled output). |
 | `pages` | `list[dict]` | Open pages, each summarized `{type, pageId, url, title, closed}`. |
+| `challenges` | `list[dict]` | Visible CAPTCHA/bot checks with page, provider, URL, and routing advice. |
 | `warnings` | `list[str]` | Non-fatal notices (e.g. artifact-quota evictions). |
 | `duration_ms` | `float` | Wall-clock time in the worker. |
 | `truncated` | `bool` | `True` when the return value was spilled to a file. |
