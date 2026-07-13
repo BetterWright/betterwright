@@ -18,9 +18,15 @@ is a base-URL change: **2Captcha, CapMonster, CapSolver, RuCaptcha**, and others
 The service key is read from the environment and never returned in a result:
 
 ```bash
-export CAPTCHA_SOLVER_API_KEY="…"                 # required
+export CAPTCHA_SOLVER_API_KEY="…"                 # or use the private key file below
 export CAPTCHA_SOLVER_BASE_URL="https://2captcha.com"   # optional; default shown
 ```
+
+For long-lived desktop agents, put only the key in
+`$BETTERWRIGHT_HOME/captcha-api-key` (default
+`~/.betterwright/captcha-api-key`) and set its permissions to `0600`. An explicit
+constructor key wins, followed by the environment variable, then this private
+file. `CAPTCHA_SOLVER_API_KEY_FILE` can point to another private file.
 
 Check the key and balance before relying on it:
 
@@ -40,7 +46,7 @@ from betterwright import BetterWright
 from betterwright.captcha import CaptchaSolver
 
 bw = BetterWright()
-solver = CaptchaSolver()   # reads CAPTCHA_SOLVER_API_KEY
+solver = CaptchaSolver()   # reads the environment or private key file
 
 # 1. Extract the sitekey and page URL
 found = bw.run("""

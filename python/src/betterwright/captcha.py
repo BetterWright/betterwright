@@ -28,7 +28,10 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from betterwright._home import betterwright_home
+
 DEFAULT_BASE_URL = "https://2captcha.com"
+DEFAULT_KEY_FILE = "captcha-api-key"
 _POLL_INTERVAL_S = 5.0
 _FIRST_POLL_DELAY_S = 15.0  # services need ~15s before a token is ready
 _DEFAULT_TIMEOUT_S = 180.0
@@ -60,7 +63,7 @@ class CaptchaSolver:
         base_url: str | None = None,
         timeout: float = _DEFAULT_TIMEOUT_S,
     ) -> None:
-        self.api_key = (api_key or os.environ.get("CAPTCHA_SOLVER_API_KEY", "")).strip()
+        self.api_key = _resolve_api_key(api_key)
         self.base_url = (
             base_url or os.environ.get("CAPTCHA_SOLVER_BASE_URL", DEFAULT_BASE_URL)
         ).rstrip("/")
@@ -208,6 +211,24 @@ class CaptchaSolver:
         return self._solve("image", {"method": "base64", "body": _to_base64(image)})
 
 
+def _resolve_api_key(explicit: str | None) -> str:
+    if explicit is not None:
+        return explicit.strip()
+    configured = os.environ.get("CAPTCHA_SOLVER_API_KEY", "").strip()
+    if configured:
+        return configured
+    key_file = Path(
+        os.environ.get("CAPTCHA_SOLVER_API_KEY_FILE", "")
+        or betterwright_home() / DEFAULT_KEY_FILE
+    ).expanduser()
+    try:
+        if os.name != "nt" and key_file.stat().st_mode & 0o077:
+            raise CaptchaError(f"CAPTCHA solver key file must be private (chmod 600): {key_file}")
+        return key_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return ""
+
+
 def _to_base64(image: str | Path | bytes) -> str:
     if isinstance(image, bytes):
         return base64.b64encode(image).decode()
@@ -228,5 +249,6 @@ __all__ = [
     "CaptchaSolver",
     "CaptchaType",
     "DEFAULT_BASE_URL",
+    "DEFAULT_KEY_FILE",
     "Solution",
 ]

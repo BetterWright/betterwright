@@ -22,6 +22,8 @@ Initial release.
 - Proof/question/debug screenshot artifacts surfaced as `MEDIA:` references.
 - `CaptchaSolver` — provider-agnostic (2Captcha-compatible) solving for
   reCAPTCHA v2/v3, hCaptcha, Turnstile, and image captchas.
+- Dependency-free JavaScript `CaptchaSolver` support and a shared private
+  `$BETTERWRIGHT_HOME/captcha-api-key` fallback for desktop agents.
 - Managed dedicated-Chrome attach mode, optional public-search pacing, and
   structured visible bot-challenge reporting.
 - A Pi tool-result image adapter that emits the top-level `data` and `mimeType`

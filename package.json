@@ -6,6 +6,7 @@
   "main": "src/index.mjs",
   "exports": {
     ".": "./src/index.mjs",
+    "./captcha": "./src/captcha.mjs",
     "./chrome": "./src/chrome.mjs",
     "./policy": "./src/policy.mjs",
     "./prompt": "./src/prompt.mjs",

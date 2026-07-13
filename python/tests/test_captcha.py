@@ -52,6 +52,24 @@ def test_missing_key_raises():
         CaptchaSolver(api_key="").recaptcha_v2("k", "https://example.com")
 
 
+def test_reads_private_key_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("CAPTCHA_SOLVER_API_KEY", raising=False)
+    monkeypatch.setenv("BETTERWRIGHT_HOME", str(tmp_path))
+    key_file = tmp_path / "captcha-api-key"
+    key_file.write_text("stored-key\n")
+    key_file.chmod(0o600)
+    assert CaptchaSolver().api_key == "stored-key"
+
+
+def test_environment_key_beats_key_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("BETTERWRIGHT_HOME", str(tmp_path))
+    monkeypatch.setenv("CAPTCHA_SOLVER_API_KEY", "environment-key")
+    key_file = tmp_path / "captcha-api-key"
+    key_file.write_text("stored-key\n")
+    key_file.chmod(0o600)
+    assert CaptchaSolver().api_key == "environment-key"
+
+
 def test_service_error_propagates(monkeypatch):
     solver = CaptchaSolver(api_key="key", timeout=1)
     monkeypatch.setattr(
