@@ -12,6 +12,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import { findChromeExecutable } from "./chrome.mjs";
 import { normalizeDownloadPolicy } from "./downloads.mjs";
 import { NetworkPolicy } from "./policy.mjs";
 
@@ -50,6 +51,28 @@ function resolveBrowser(browser) {
     throw new TypeError('browser must be "cloak" or "chromium".');
   }
   return value;
+}
+
+/**
+ * Resolve the connect-over-CDP target, including the display-aware default.
+ * Precedence: an explicit option (including `""` to force the launched
+ * sandbox) > the `BETTERWRIGHT_CONNECT_OVER_CDP` env override > the default.
+ * The default tracks the resolved `headless` decision (which already folds in
+ * display detection): when the browser would run headed and a real Google
+ * Chrome is installed, attach to that Chrome over CDP; when headless (a server,
+ * container, CI, or an explicit `headless: true`) or Chrome is absent, launch
+ * the managed sandbox and keep its network floor. `defaulted` marks the
+ * auto-selected case so a Chrome that unexpectedly fails to attach can fall
+ * back to the sandbox instead of failing the browser outright.
+ */
+function resolveConnectOverCdp(value, headless) {
+  if (value != null) return { endpoint: String(value).trim(), defaulted: false };
+  const env = (process.env.BETTERWRIGHT_CONNECT_OVER_CDP || "").trim();
+  if (env) return { endpoint: env, defaulted: false };
+  if (!headless && findChromeExecutable()) {
+    return { endpoint: "auto", defaulted: true };
+  }
+  return { endpoint: "", defaulted: true };
 }
 
 function resolvePublicSearchPolicy(policy) {
@@ -124,7 +147,12 @@ export class BetterWright {
    *   this mode — only the per-request policy applies. Pass "auto" to reuse a
    *   debug Chrome if one is already running, or otherwise launch a real Google
    *   Chrome with a persistent BetterWright profile (where you install and unlock
-   *   a password-manager extension once) and attach to that.
+   *   a password-manager extension once) and attach to that. When omitted, the
+   *   default follows the resolved headless decision: a headed run with Google
+   *   Chrome installed uses "auto" (real Chrome, no launch-time floor), while a
+   *   headless run (server/CI or headless:true) or a machine without Chrome
+   *   launches the managed sandbox with the floor intact. Pass "" to force the
+   *   launched sandbox regardless.
    * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
    *   allowed top-level Google, Bing, or DuckDuckGo search navigations
    * @param {"block"|"allow"} [options.publicSearchPolicy="allow"] set "block"
@@ -145,7 +173,9 @@ export class BetterWright {
       options.executablePath ||
       (this.browserFlavor === "cloak" ? cloakExecutable : "");
     this.headless = resolveHeadless(options.headless);
-    this.connectOverCdp = (options.connectOverCdp || "").trim();
+    const cdp = resolveConnectOverCdp(options.connectOverCdp, this.headless);
+    this.connectOverCdp = cdp.endpoint;
+    this._cdpDefaulted = cdp.defaulted;
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
     this.publicSearchPolicy = resolvePublicSearchPolicy(options.publicSearchPolicy);
     this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
@@ -400,9 +430,16 @@ export class BetterWright {
   async _resolveCdpEndpoint() {
     if (this._cdpResolved) return;
     if (String(this.connectOverCdp || "").trim().toLowerCase() === "auto") {
-      const { ensureChromeCdp } = await import("./chrome.mjs");
-      const { endpoint } = await ensureChromeCdp({ home: this.home });
-      this.connectOverCdp = endpoint;
+      try {
+        const { ensureChromeCdp } = await import("./chrome.mjs");
+        const { endpoint } = await ensureChromeCdp({ home: this.home });
+        this.connectOverCdp = endpoint;
+      } catch (error) {
+        // An explicit "auto" request surfaces the failure; the display-aware
+        // default instead falls back to the launched sandbox (floor intact).
+        if (!this._cdpDefaulted) throw error;
+        this.connectOverCdp = "";
+      }
     }
     this._cdpResolved = true;
   }

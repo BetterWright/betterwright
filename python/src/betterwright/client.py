@@ -225,7 +225,11 @@ class BetterWright:
         applies. Pass ``"auto"`` to reuse a running debug Chrome or otherwise
         launch a real Google Chrome with a persistent BetterWright profile (where
         you install and unlock a password-manager extension once) and attach to
-        it. See ``docs/attach-mode.md``.
+        it. When omitted, the default is display-aware (like ``headless``): a
+        desktop with Google Chrome installed uses ``"auto"`` (real Chrome, no
+        launch-time floor), while headless or Chrome-less environments launch
+        the managed sandbox with the floor intact. Pass ``""`` to force the
+        launched sandbox regardless. See ``docs/attach-mode.md``.
     search_min_interval_ms:
         Minimum spacing between top-level Google, Bing, or DuckDuckGo search
         navigations when public search UI automation is explicitly allowed.
