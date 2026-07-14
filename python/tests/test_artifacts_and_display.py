@@ -104,6 +104,44 @@ def test_cloak_is_the_managed_default(monkeypatch, tmp_path):
     assert bridge._worker_config()["browserFlavor"] == "cloak"
 
 
+def test_connect_over_cdp_default_is_display_aware(monkeypatch, tmp_path):
+    from betterwright.chrome import find_chrome_executable
+
+    monkeypatch.delenv("BETTERWRIGHT_CONNECT_OVER_CDP", raising=False)
+
+    # Headless: always the launched sandbox (network floor intact).
+    monkeypatch.setenv("BETTERWRIGHT_DISPLAY", "0")
+    assert Bridge(home=tmp_path / "headless").connect_over_cdp == ""
+
+    # Headed (desktop): real Chrome over CDP when Chrome is installed.
+    monkeypatch.setenv("BETTERWRIGHT_DISPLAY", "1")
+    chrome_present = bool(find_chrome_executable())
+    expected = "auto" if chrome_present else ""
+    assert Bridge(home=tmp_path / "desktop").connect_over_cdp == expected
+
+    # The default tracks the resolved headless decision, not raw display:
+    # headless=True always uses the sandbox even on a desktop, and headless=False
+    # uses CDP (when Chrome exists) even without a display.
+    assert Bridge(home=tmp_path / "forced_headless", headless=True).connect_over_cdp == ""
+    monkeypatch.setenv("BETTERWRIGHT_DISPLAY", "0")
+    assert (
+        Bridge(home=tmp_path / "forced_headed", headless=False).connect_over_cdp
+        == expected
+    )
+    monkeypatch.setenv("BETTERWRIGHT_DISPLAY", "1")
+
+    # Explicit "" forces the sandbox even on a desktop with Chrome.
+    assert Bridge(home=tmp_path / "forced", connect_over_cdp="").connect_over_cdp == ""
+
+    # An explicit endpoint is used verbatim.
+    explicit = Bridge(home=tmp_path / "explicit", connect_over_cdp="http://127.0.0.1:9222")
+    assert explicit.connect_over_cdp == "http://127.0.0.1:9222"
+
+    # The env override applies only when no argument is passed.
+    monkeypatch.setenv("BETTERWRIGHT_CONNECT_OVER_CDP", "http://127.0.0.1:9333")
+    assert Bridge(home=tmp_path / "env").connect_over_cdp == "http://127.0.0.1:9333"
+
+
 def test_each_flavor_gets_its_own_profile_directory(monkeypatch, tmp_path):
     monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
     # Cloak keeps the historical path so existing saved logins survive.

@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `connectOverCdp` now has a **display-aware default**, mirroring
+  `headless: "auto"`. When both a display and a real Google Chrome are present
+  (a desktop), BetterWright attaches to that Chrome over CDP by default —
+  giving real logins and extensions, with the launch-time network floor
+  inactive (only the per-request policy applies). Headless or Chrome-less
+  environments (servers, containers, CI) continue to launch the managed Cloak
+  sandbox with the floor intact, and a Chrome that fails to attach falls back to
+  the sandbox rather than failing. Pass `connectOverCdp: ""` (or
+  `connect_over_cdp=""`) to force the launched sandbox regardless.
 - `publicSearchPolicy` now defaults to `"allow"` instead of `"block"`. Public
   search-result UIs (Google, Bing, DuckDuckGo) are navigable by default; set
   `publicSearchPolicy: "block"` (or `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block`) to

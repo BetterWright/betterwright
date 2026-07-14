@@ -24,6 +24,7 @@ from pathlib import Path
 
 from betterwright._display import resolve_headless
 from betterwright._home import betterwright_home
+from betterwright.chrome import find_chrome_executable
 from betterwright.policy import NetworkPolicy
 from betterwright.runtime import (
     cloakbrowser_dir,
@@ -70,6 +71,28 @@ def _normalize_public_search_policy(value: str | None) -> str:
     if policy not in _PUBLIC_SEARCH_POLICIES:
         raise ValueError('public_search_policy must be "block" or "allow"')
     return policy
+
+
+def _resolve_connect_over_cdp(value: str | None, headless: bool) -> tuple[str, bool]:
+    """Resolve the connect-over-CDP target, including the display-aware default.
+
+    Precedence: an explicit value (including ``""`` to force the launched
+    sandbox) > the ``BETTERWRIGHT_CONNECT_OVER_CDP`` env override > the default.
+    The default tracks the resolved ``headless`` decision (which already folds in
+    display detection): a headed run with a real Google Chrome installed attaches
+    to that Chrome over CDP; a headless run (server/CI or ``headless=True``) or a
+    machine without Chrome launches the managed sandbox and keeps its network
+    floor. The returned flag marks the auto-selected case so a Chrome that fails
+    to attach can fall back to the sandbox instead of failing the browser.
+    """
+    if value is not None:
+        return value.strip(), False
+    env = os.environ.get("BETTERWRIGHT_CONNECT_OVER_CDP", "").strip()
+    if env:
+        return env, False
+    if not headless and find_chrome_executable():
+        return "auto", True
+    return "", True
 
 
 class WorkerStartError(RuntimeError):
@@ -124,7 +147,9 @@ class Bridge:
         )
         self.headless = resolve_headless(headless)
         self.default_timeout = max(int(default_timeout), 5)
-        self.connect_over_cdp = (connect_over_cdp or "").strip()
+        self.connect_over_cdp, self._cdp_defaulted = _resolve_connect_over_cdp(
+            connect_over_cdp, self.headless
+        )
         self.search_min_interval_ms = max(int(search_min_interval_ms), 0)
         self.public_search_policy = _normalize_public_search_policy(
             public_search_policy
@@ -168,8 +193,16 @@ class Bridge:
         if self.connect_over_cdp.strip().lower() == "auto":
             from betterwright.chrome import ensure_chrome_cdp
 
-            result = ensure_chrome_cdp(home=self.home)
-            self.connect_over_cdp = str(result["endpoint"])
+            try:
+                result = ensure_chrome_cdp(home=self.home)
+                self.connect_over_cdp = str(result["endpoint"])
+            except RuntimeError:
+                # An explicit "auto" request surfaces the failure; the
+                # display-aware default falls back to the launched sandbox
+                # (network floor intact) rather than failing the browser.
+                if not self._cdp_defaulted:
+                    raise
+                self.connect_over_cdp = ""
         self._cdp_resolved = True
 
     def _worker_config(self) -> dict:
