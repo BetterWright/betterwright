@@ -104,7 +104,7 @@ with BetterWright(policy=NetworkPolicy(allow_loopback=True)) as bw:
 - [Attach mode & headed browsing](attach-mode.md) — watch the browser, or drive
   a Chrome you already have open.
 - [Network policy](network-policy.md) — controlling what the browser can reach.
-- [Credentials](credentials.md) — logging in without leaking passwords.
+- [Credentials](credentials.md) — encrypted storage and trusted host-side use.
 - [Native CAPTCHA helpers](captcha.md) — one-shot handling for authorized flows.
 - [Architecture](architecture.md) — how it works and what it does/doesn't secure.
 - [Examples](../examples) — runnable Python and JavaScript scripts.

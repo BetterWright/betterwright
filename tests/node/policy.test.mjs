@@ -31,6 +31,17 @@ test("private ranges blocked by default", () => {
     assert.ok(!allow(policy, url), url);
 });
 
+test("IPv4-mapped IPv6 preserves the embedded IPv4 classification", () => {
+  const policy = new NetworkPolicy();
+  for (const url of [
+    "http://[::ffff:127.0.0.1]/",
+    "http://[::ffff:10.0.0.1]/",
+    "http://[::ffff:169.254.169.254]/",
+  ])
+    assert.ok(!allow(policy, url), url);
+  assert.ok(allow(policy, "https://[::ffff:8.8.8.8]/"));
+});
+
 test("loopback opt-in does not open the private network", () => {
   const policy = new NetworkPolicy({ allowLoopback: true });
   assert.ok(allow(policy, "http://127.0.0.1:3000/"));
