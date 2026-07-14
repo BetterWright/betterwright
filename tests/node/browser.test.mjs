@@ -261,3 +261,49 @@ test("empty envelope collections are omitted, not sent as []", opts, async () =>
     await bw.close();
   }
 });
+
+test("an image-grid challenge is solvable with aria-ref tile clicks and Verify", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    // A synthetic reCAPTCHA-style grid: three "correct" tiles must be selected,
+    // then Verify reveals success. Exercises the documented flow — snapshot for
+    // refs, click tiles by aria-ref, click Verify — without touching a provider.
+    const result = await bw.run(`
+      await page.setContent(\`
+        <div role="dialog" aria-label="Select all images with bicycles">
+          <button aria-label="tile 0" data-correct="1"></button>
+          <button aria-label="tile 1"></button>
+          <button aria-label="tile 2" data-correct="1"></button>
+          <button aria-label="tile 3"></button>
+          <button aria-label="tile 4" data-correct="1"></button>
+          <button id="verify">Verify</button>
+          <p id="status" aria-live="polite">Unsolved</p>
+        </div>
+        <script>
+          const chosen = new Set();
+          for (const b of document.querySelectorAll('button[aria-label^="tile"]')) {
+            b.addEventListener('click', () => { b.dataset.on = '1'; chosen.add(b); });
+          }
+          document.querySelector('#verify').addEventListener('click', () => {
+            const correct = [...document.querySelectorAll('button[data-correct]')];
+            const ok = correct.every(b => b.dataset.on === '1') &&
+              [...chosen].every(b => b.dataset.correct === '1');
+            document.querySelector('#status').textContent = ok ? 'Verified' : 'Try again';
+          });
+        </script>
+      \`);
+      const tree = await snapshot({interactive: true});
+      const refFor = (label) =>
+        (tree.match(new RegExp('"' + label + '" \\\\[ref=(e\\\\d+)\\\\]')) || [])[1];
+      for (const label of ['tile 0', 'tile 2', 'tile 4']) {
+        await human.click(page.locator('aria-ref=' + refFor(label)));
+      }
+      await human.click(page.locator('aria-ref=' + refFor('Verify')));
+      return page.locator('#status').textContent();
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, "Verified");
+  } finally {
+    await bw.close();
+  }
+});
