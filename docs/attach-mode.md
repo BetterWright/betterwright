@@ -127,6 +127,9 @@ it didn't start:
 - **Still active:** the per-request [`NetworkPolicy`](network-policy.md) via
   request interception. It still blocks metadata endpoints and private networks
   by default — but as a single layer, not the defense-in-depth of launch mode.
+- **Downloads:** BetterWright keeps its browser-wide byte limit when the attached
+  Chrome exposes that CDP control. Otherwise it disables downloads for the
+  attached pages instead of allowing unbounded writes to disk.
 
 Every run in attach mode returns a warning saying the floor is inactive.
 

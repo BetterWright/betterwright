@@ -195,6 +195,10 @@ class BetterWright:
     search_min_interval_ms:
         Minimum spacing between top-level Google, Bing, or DuckDuckGo search
         navigations. ``0`` (the default) disables pacing.
+    download_policy:
+        ``"ask"`` (the default) requires a trusted host to mark each download
+        run approved. ``"allow"`` removes that approval gate while retaining
+        byte limits, and ``"deny"`` blocks downloads entirely.
     """
 
     def __init__(
@@ -208,6 +212,7 @@ class BetterWright:
         default_timeout: int = 30,
         connect_over_cdp: str | None = None,
         search_min_interval_ms: int = 0,
+        download_policy: str = "ask",
     ) -> None:
         resolved_vault: CredentialVault | None
         if vault is True:
@@ -228,6 +233,7 @@ class BetterWright:
             default_timeout=default_timeout,
             connect_over_cdp=connect_over_cdp,
             search_min_interval_ms=search_min_interval_ms,
+            download_policy=download_policy,
         )
 
     @property
@@ -245,6 +251,7 @@ class BetterWright:
         session: str = "default",
         note: str | None = None,
         timeout: int | None = None,
+        approved_downloads: bool = False,
     ) -> RunResult:
         """Execute one Playwright snippet and return a :class:`RunResult`.
 
@@ -256,7 +263,12 @@ class BetterWright:
         """
 
         _ = note  # Reserved for host status surfaces; kept out of the sandbox.
-        envelope = self._bridge.execute(code, session, timeout=timeout)
+        envelope = self._bridge.execute(
+            code,
+            session,
+            timeout=timeout,
+            approved_downloads=approved_downloads,
+        )
         return RunResult._from_envelope(envelope)
 
     def session(self, name: str) -> Session:
@@ -282,9 +294,20 @@ class Session:
         self.name = name
 
     def run(
-        self, code: str, *, note: str | None = None, timeout: int | None = None
+        self,
+        code: str,
+        *,
+        note: str | None = None,
+        timeout: int | None = None,
+        approved_downloads: bool = False,
     ) -> RunResult:
-        return self._browser.run(code, session=self.name, note=note, timeout=timeout)
+        return self._browser.run(
+            code,
+            session=self.name,
+            note=note,
+            timeout=timeout,
+            approved_downloads=approved_downloads,
+        )
 
 
 __all__ = ["Artifact", "BetterWright", "BrowserError", "RunResult", "Session"]

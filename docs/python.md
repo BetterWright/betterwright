@@ -18,12 +18,13 @@ BetterWright(
     executable_path: str | None = None,    # explicit binary; otherwise CLOAKBROWSER_BINARY_PATH
     headless: bool = True,
     default_timeout: int = 30,             # per-snippet seconds, min 5
+    download_policy: str = "ask",          # "ask", "allow", or "deny"
 )
 ```
 
 | Method / property | Description |
 | --- | --- |
-| `run(code, *, session="default", note=None, timeout=None) -> RunResult` | Execute one snippet. |
+| `run(code, *, session="default", note=None, timeout=None, approved_downloads=False) -> RunResult` | Execute one snippet. |
 | `session(name) -> Session` | A handle bound to one named session. |
 | `policy -> NetworkPolicy` | The active policy. |
 | `vault -> CredentialVault \| None` | The active vault, if any. |
@@ -33,11 +34,19 @@ BetterWright(
 worker is always closed. `note` is a present-tense status line for host UIs and
 is not interpreted by the browser.
 
+### Download approval
+
+The default `download_policy="ask"` keeps Chromium downloads denied during
+ordinary runs. A trusted host must ask the user first, then set
+`approved_downloads=True` on that one run. Set `download_policy="allow"` to
+remove the approval prompt while retaining size and artifact quotas, or `"deny"`
+to block downloads even from approved runs.
+
 ## `Session`
 
 ```python
 session = bw.session("checkout")
-session.run(code, *, note=None, timeout=None) -> RunResult
+session.run(code, *, note=None, timeout=None, approved_downloads=False) -> RunResult
 ```
 
 A thin handle that forwards to `bw.run(..., session=name)`.

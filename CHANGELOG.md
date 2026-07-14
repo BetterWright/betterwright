@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Approval-gated browser downloads with configurable `ask`, `allow`, and `deny`
+  policies in both clients, plus MCP elicitation through `browser_download`.
 - `snapshot()` options for cheaper page observation: `interactive` (actionable
   elements only), `diff` (only the lines changed since the previous snapshot),
   `selector` (scope to a CSS selector), and `depth` (limit tree depth).
@@ -31,6 +33,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CredentialVault` methods remain available to trusted host code.
 - Cancel oversized downloads through Chromium progress events and bound
   screenshots by pixels and encoded bytes before writing artifact files.
+- Deny downloads before ordinary browser runs and close each approved download
+  window before the next run; attached browsers fail closed when bounded CDP
+  download controls are unavailable.
 
 ## [0.1.0] — 2026-07-14
 
