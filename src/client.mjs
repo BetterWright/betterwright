@@ -69,6 +69,33 @@ function defaultHome() {
   return configured || path.join(os.homedir(), ".betterwright");
 }
 
+/** Translate host-facing fillCredential options into the worker `spec`. */
+function buildFillSpec(options) {
+  const fields = {
+    passwordSelector: options.passwordSelector,
+    usernameSelector: options.usernameSelector,
+    confirmPasswordSelector: options.confirmPasswordSelector,
+    submitSelector: options.submitSelector,
+  };
+  if (options.generate) {
+    return {
+      action: "generate",
+      fields,
+      generate: {
+        username: options.username ?? "",
+        label: options.label ?? null,
+        length: options.length,
+        includeSymbols: options.includeSymbols,
+      },
+    };
+  }
+  return {
+    action: "fill",
+    fields,
+    record: { id: options.id, username: options.username },
+  };
+}
+
 function resolvePlaywrightCore() {
   const override = (process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "").trim();
   if (override) return override;
@@ -94,7 +121,10 @@ export class BetterWright {
    * @param {string} [options.connectOverCdp] attach to a Chrome started with
    *   --remote-debugging-port at this endpoint (e.g. "http://127.0.0.1:9222")
    *   instead of launching one; the launch-time network floor is inactive in
-   *   this mode — only the per-request policy applies.
+   *   this mode — only the per-request policy applies. Pass "auto" to reuse a
+   *   debug Chrome if one is already running, or otherwise launch a real Google
+   *   Chrome with a persistent BetterWright profile (where you install and unlock
+   *   a password-manager extension once) and attach to that.
    * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
    *   allowed top-level Google, Bing, or DuckDuckGo search navigations
    * @param {"block"|"allow"} [options.publicSearchPolicy="block"] route broad
@@ -127,6 +157,7 @@ export class BetterWright {
     this._queue = Promise.resolve();
     this._stderrTail = [];
     this._closed = false;
+    this._cdpResolved = false;
   }
 
   _workerConfig() {
@@ -264,26 +295,120 @@ export class BetterWright {
     return task;
   }
 
+  /**
+   * Fill a stored credential into the current page from trusted host code.
+   *
+   * This never runs model-authored code and never returns the password. The
+   * worker fetches the secret over the vault RPC, types the username, password,
+   * and (optionally) a confirm-password field, and can submit the form — all
+   * outside the model sandbox. Only non-secret metadata comes back.
+   *
+   * @param {object} options
+   * @param {string} options.passwordSelector required password field selector
+   * @param {string} [options.usernameSelector] username/email field selector
+   * @param {string} [options.confirmPasswordSelector] confirm-password selector
+   *   (signup); filled with the same secret and blurred to trigger match checks
+   * @param {string} [options.submitSelector] click this to submit in the same
+   *   trusted call, so no model turn sees the secret sitting in a field
+   * @param {string} [options.id] select the stored record by id
+   * @param {string} [options.username] select the stored record by username
+   * @param {string} [options.session="default"] session name
+   * @param {number} [options.timeout] seconds
+   */
+  fillCredential(options = {}) {
+    const task = this._queue.then(() => this._fillNow(options));
+    this._queue = task.then(
+      () => {},
+      () => {},
+    );
+    return task;
+  }
+
+  /**
+   * Generate a strong password, store it in the vault scoped to the current
+   * origin, and fill it (plus any confirm-password field) — the safe primitive
+   * for signing up. Mirrors {@link fillCredential} options plus `length`,
+   * `includeSymbols`, and `label`.
+   */
+  generateAndFillCredential(options = {}) {
+    return this.fillCredential({ ...options, generate: true });
+  }
+
+  async _fillNow(options) {
+    if (!options || typeof options.passwordSelector !== "string" || !options.passwordSelector.trim())
+      return { ok: false, error: "fillCredential requires a passwordSelector." };
+    const timeoutSeconds = Math.max(Number(options.timeout) || this.defaultTimeout, 5);
+    const config = await this._prepare();
+    return this._dispatch(
+      {
+        type: "credential_fill",
+        sessionId: String(options.session || "default"),
+        timeoutMs: timeoutSeconds * 1000,
+        spec: buildFillSpec(options),
+        config,
+      },
+      timeoutSeconds,
+    );
+  }
+
   async _runNow(code, options) {
     if (typeof code !== "string" || !code.trim())
       return { ok: false, error: "code must be a non-empty string" };
     const timeoutSeconds = Math.max(Number(options.timeout) || this.defaultTimeout, 5);
+    const config = await this._prepare();
+    return this._dispatch(
+      {
+        type: "execute",
+        sessionId: String(options.session || "default"),
+        code,
+        approvedDownloads: options.approvedDownloads === true,
+        timeoutMs: timeoutSeconds * 1000,
+        config,
+      },
+      timeoutSeconds,
+    );
+  }
+
+  /** Resolve a "auto" CDP endpoint (launch/reuse a real Chrome), restart the
+   * worker on a config change, and return the current worker config. */
+  async _prepare() {
+    await this._resolveCdpEndpoint();
     const config = this._workerConfig();
-    if (this._process && this._process.exitCode === null && JSON.stringify(this._lastConfig) !== JSON.stringify(config)) {
+    if (
+      this._process &&
+      this._process.exitCode === null &&
+      JSON.stringify(this._lastConfig) !== JSON.stringify(config)
+    ) {
       await this.close();
       this._closed = false;
     }
     await this._start();
     this._lastConfig = config;
+    return config;
+  }
 
+  async _resolveCdpEndpoint() {
+    if (this._cdpResolved) return;
+    if (String(this.connectOverCdp || "").trim().toLowerCase() === "auto") {
+      const { ensureChromeCdp } = await import("./chrome.mjs");
+      const { endpoint } = await ensureChromeCdp({ home: this.home });
+      this.connectOverCdp = endpoint;
+    }
+    this._cdpResolved = true;
+  }
+
+  /** Send one worker command keyed by a fresh id and await its result envelope,
+   * restarting the worker on timeout and applying vault redaction on the way
+   * out. Shared by run() and fillCredential(). */
+  async _dispatch(message, timeoutSeconds) {
     const id = `${process.pid}-${Math.round(performance.now() * 1000)}-${this._pending.size}`;
     const response = await new Promise((resolve) => {
       let settled = false;
-      const done = (message) => {
+      const done = (result) => {
         if (settled) return;
         settled = true;
         this._pending.delete(id);
-        resolve(message);
+        resolve(result);
       };
       this._pending.set(id, done);
       const timer = setTimeout(async () => {
@@ -292,24 +417,15 @@ export class BetterWright {
         done({ ok: false, error: `Execution timed out after ${timeoutSeconds}s; the worker was restarted.` });
       }, (timeoutSeconds + 5) * 1000);
       try {
-        this._send({
-          type: "execute",
-          id,
-          sessionId: String(options.session || "default"),
-          code,
-          approvedDownloads: options.approvedDownloads === true,
-          timeoutMs: timeoutSeconds * 1000,
-          config,
-        });
+        this._send({ ...message, id });
       } catch (error) {
         clearTimeout(timer);
         done({ ok: false, error: String(error?.message || error) });
         return;
       }
-      const original = done;
-      this._pending.set(id, (message) => {
+      this._pending.set(id, (result) => {
         clearTimeout(timer);
-        original(message);
+        done(result);
       });
     });
 

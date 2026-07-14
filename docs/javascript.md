@@ -174,8 +174,12 @@ new BetterWright({
 
 The method receives the same `action`/`payload`/`origin` the Python
 `CredentialVault.handle_request` does, so the two can share a backend if you
-expose one. Secret-bearing fill methods fail inside `run()`; use them only from
-trusted host code. Omit `vault` to run without credential management helpers.
+expose one. To fill a login or signup form, the vault must handle the `fill`
+(and, for `generateAndFillCredential`, `generate`) action returning a `secret`;
+call `bw.fillCredential({...})` / `bw.generateAndFillCredential({...})` from host
+code, which types the password and any `confirmPasswordSelector` outside the
+sandbox and returns only metadata. Secret-bearing fill methods fail inside
+`run()`. Omit `vault` to run without credential management helpers.
 
 ## Sessions
 

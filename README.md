@@ -145,8 +145,11 @@ claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
   metadata endpoints and private/loopback addresses; open exactly what you need
   with `allow_hosts`, `allow_loopback`, or a `custom` hook.
 - **[Credential vault](docs/credentials.md)** — AES-256-GCM, origin-scoped,
-  stored outside Chromium's profile for trusted host-side credential workflows.
-  Model snippets cannot request a secret-bearing fill.
+  stored outside Chromium's profile. Trusted host code fills logins and signups
+  (including confirm-password) with `fill_credential` / `generate_and_fill_credential`;
+  the secret is typed outside the sandbox and never returned. Model snippets
+  cannot request a secret-bearing fill. In [attach mode](docs/attach-mode.md) the
+  agent can instead drive your own 1Password extension's inline autofill.
 - **[Proof artifacts](docs/browser-api.md#screenshots-and-artifacts)** —
   screenshots tagged `proof`, `question`, or `debug`, returned as
   `MEDIA:<path>` references a host UI can render.
