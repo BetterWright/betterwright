@@ -15,6 +15,8 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("human.click(target)"));
   assert.ok(compact.includes("human.type(target, text)"));
   assert.ok(compact.includes("human.scroll(deltaY)"));
+  assert.ok(compact.includes("host's approval-gated download tool"));
+  assert.ok(compact.includes("before enabling that one bounded download run"));
   assert.ok(compact.includes("If it remains blocked, stop"));
   assert.ok(compact.includes("Inspect the returned image itself before citing it"));
   assert.ok(compact.includes("fix the page and retake it"));

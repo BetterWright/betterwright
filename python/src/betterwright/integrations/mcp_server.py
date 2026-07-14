@@ -1,9 +1,9 @@
 """A Model Context Protocol server exposing BetterWright as a browser tool.
 
 This lets any MCP client — Claude Code, Cursor, Windsurf, and others — drive a
-persistent, policy-guarded browser. It exposes one tool, ``browser``, that runs
-async Playwright JavaScript, plus a ``browser_doctor`` tool that reports whether
-the runtime is installed.
+persistent, policy-guarded browser. It exposes ``browser`` for ordinary runs,
+``browser_download`` for approval-gated downloads, and ``browser_doctor`` for
+runtime diagnostics.
 
 Run it directly (stdio transport):
 
@@ -21,6 +21,7 @@ Configuration is read from the environment so the same command works everywhere:
     BETTERWRIGHT_ALLOW_PRIVATE_NETWORK=1 allow RFC1918 / *.internal hosts
     BETTERWRIGHT_ALLOW_HOSTS=a.com,b.com always-allow list (comma-separated)
     BETTERWRIGHT_BLOCK_HOSTS=ads.com     always-block list (comma-separated)
+    BETTERWRIGHT_DOWNLOAD_POLICY=ask     ask (default), allow, or deny downloads
     BETTERWRIGHT_HEADLESS=0              run Chromium headed (visible window)
     BETTERWRIGHT_CONNECT_OVER_CDP=http://127.0.0.1:9222
                                          attach to an existing Chrome instead of
@@ -41,7 +42,8 @@ from betterwright import BetterWright, NetworkPolicy
 from betterwright.runtime import diagnose
 
 try:
-    from mcp.server.fastmcp import FastMCP, Image
+    from mcp.server.fastmcp import Context, FastMCP, Image
+    from pydantic import BaseModel, Field
 except ImportError as exc:  # pragma: no cover - guidance for a missing extra
     raise SystemExit(
         "The MCP SDK is required. Install it with "
@@ -67,6 +69,15 @@ def _policy_from_env() -> NetworkPolicy:
     )
 
 
+def _download_policy_from_env() -> str:
+    policy = os.environ.get("BETTERWRIGHT_DOWNLOAD_POLICY", "ask").strip().lower()
+    if policy not in {"ask", "allow", "deny"}:
+        raise SystemExit(
+            'BETTERWRIGHT_DOWNLOAD_POLICY must be "ask", "allow", or "deny".'
+        )
+    return policy
+
+
 mcp = FastMCP("betterwright")
 
 # One persistent browser for the life of the server, so pages and logins survive
@@ -77,11 +88,43 @@ _headless: bool | str = "auto"
 if os.environ.get("BETTERWRIGHT_HEADLESS", "").strip():
     _headless = _bool_env("BETTERWRIGHT_HEADLESS")
 
+_download_policy = _download_policy_from_env()
+
 _browser = BetterWright(
     policy=_policy_from_env(),
     headless=_headless,
     connect_over_cdp=os.environ.get("BETTERWRIGHT_CONNECT_OVER_CDP", "").strip() or None,
+    download_policy=_download_policy,
 )
+
+
+class DownloadApproval(BaseModel):
+    """Explicit user decision for one proposed browser download run."""
+
+    approved: bool = Field(description="Approve this browser download?")
+
+
+def _content_for_result(result) -> list:
+    summary = {
+        "ok": result.ok,
+        "result": result.value,
+        "error": result.error,
+        "console": result.console,
+        # Screenshots are returned as image content below, not as paths. Other
+        # files (downloads, spilled output) are listed here as paths only.
+        "files": [{"kind": a.kind, "path": a.path} for a in result.files()],
+        "pages": result.pages,
+        "challenges": result.challenges,
+        "warnings": result.warnings,
+        "duration_ms": result.duration_ms,
+    }
+    content: list = [json.dumps(summary, default=str, ensure_ascii=False)]
+    for shot in result.screenshots():
+        try:
+            content.append(Image(path=shot.path))
+        except OSError:
+            pass
+    return content
 
 
 @mcp.tool()
@@ -102,30 +145,55 @@ def browser(code: str, session: str = "default", note: str = "") -> list:
     """
 
     result = _browser.run(code, session=session, note=note or None)
-    summary = {
-        "ok": result.ok,
-        "result": result.value,
-        "error": result.error,
-        "console": result.console,
-        # Screenshots are returned as image content below, not as paths. Other
-        # files (downloads, spilled output) are listed here as paths only — never
-        # attach them as images.
-        "files": [{"kind": a.kind, "path": a.path} for a in result.files()],
-        "pages": result.pages,
-        "challenges": result.challenges,
-        "warnings": result.warnings,
-        "duration_ms": result.duration_ms,
-    }
-    # Return the JSON summary as text plus each screenshot as native MCP image
-    # content, so the client renders images without guessing MIME types from a
-    # path. This is what prevents "unsupported image MIME type" errors.
-    content: list = [json.dumps(summary, default=str, ensure_ascii=False)]
-    for shot in result.screenshots():
+    return _content_for_result(result)
+
+
+@mcp.tool()
+async def browser_download(
+    code: str,
+    ctx: Context,
+    session: str = "default",
+    note: str = "",
+) -> list:
+    """Run browser code that may download a file, with user approval first.
+
+    Use this instead of ``browser`` whenever the Playwright code will click a
+    download link or otherwise save a remote file. In the default ``ask`` mode,
+    the MCP client presents a confirmation before any browser code runs. Set
+    ``BETTERWRIGHT_DOWNLOAD_POLICY=allow`` to remove that prompt, or ``deny`` to
+    disable all downloads.
+    """
+
+    if _download_policy == "deny":
+        raise RuntimeError("Downloads are disabled by BETTERWRIGHT_DOWNLOAD_POLICY=deny.")
+    if _download_policy == "ask":
         try:
-            content.append(Image(path=shot.path))
-        except OSError:
-            pass
-    return content
+            decision = await ctx.elicit(
+                message=(
+                    "Allow BetterWright to run browser code that may download a file?"
+                    + (f" Requested action: {note}" if note else "")
+                ),
+                schema=DownloadApproval,
+            )
+        except Exception as exc:  # noqa: BLE001 - unsupported clients fail closed
+            raise RuntimeError(
+                "This MCP client cannot present download approval; the download was blocked."
+            ) from exc
+        approved = (
+            decision.action == "accept"
+            and decision.data is not None
+            and decision.data.approved is True
+        )
+        if not approved:
+            raise RuntimeError("The user declined or cancelled the download.")
+
+    result = _browser.run(
+        code,
+        session=session,
+        note=note or None,
+        approved_downloads=True,
+    )
+    return _content_for_result(result)
 
 
 @mcp.tool()

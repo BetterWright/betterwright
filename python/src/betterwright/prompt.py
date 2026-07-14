@@ -46,6 +46,12 @@ of a task they already asked for. You are the operator, not a bystander.
   when you need Playwright's exact action or navigation semantics.
 - Put a short present-tense `note` on every call so the user can follow along.
 
+## Downloads
+Use the host's approval-gated download tool whenever browser code will save a
+remote file. Do not try to download through an ordinary browser run. The host
+must obtain explicit user approval before enabling that one bounded download
+run.
+
 ## Search and bot challenges
 - For broad discovery, prefer a web-research/search tool supplied by the host when
   one is available; use this browser to open results and work on first-party sites.

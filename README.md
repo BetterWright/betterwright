@@ -121,8 +121,8 @@ instead of repeatedly retrying search. See [attach mode](docs/attach-mode.md).
 Point your agent (or coding agent) at **[SETUP.md](SETUP.md)** — it's written to
 be followed by an AI agent and walks it through integrating BetterWright into the
 host, whether that's an MCP client (Claude Code, Cursor, …), a Python or
-JavaScript agent, or a shell-only tool. The whole surface is one tool call, so
-the integration is a thin adapter.
+JavaScript agent, or a shell-only tool. Browser work stays on one main tool;
+downloads use a separate approval-gated tool by default.
 
 For MCP clients specifically, BetterWright ships a server:
 
@@ -143,6 +143,9 @@ claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
 - **[Proof artifacts](docs/browser-api.md#screenshots-and-artifacts)** —
   screenshots tagged `proof`, `question`, or `debug`, returned as
   `MEDIA:<path>` references a host UI can render.
+- **Download approval** — ordinary browser runs deny downloads. A trusted host
+  approves one download run at a time; deployments can configure `ask`, `allow`,
+  or `deny` without weakening the byte and artifact quotas.
 - **[Native CAPTCHA helpers](docs/captcha.md)** — checkbox clicks, smooth
   slider drags, and tightly cropped text-challenge images for the agent's
   existing vision, with no external solving service or API key.

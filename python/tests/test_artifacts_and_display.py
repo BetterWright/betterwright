@@ -100,3 +100,13 @@ def test_explicit_binary_wins_over_cloak_env(monkeypatch, tmp_path):
     bridge = Bridge(home=tmp_path, executable_path="/opt/chromium")
     assert bridge.executable_path == "/opt/chromium"
     assert bridge.browser_flavor == "chromium"
+
+
+def test_download_policy_defaults_to_ask_and_is_configurable(tmp_path):
+    guarded = Bridge(home=tmp_path / "guarded")
+    allowed = Bridge(home=tmp_path / "allowed", download_policy="allow")
+    assert guarded.download_policy == "ask"
+    assert guarded._worker_config()["downloadPolicy"] == "ask"
+    assert allowed.download_policy == "allow"
+    with pytest.raises(ValueError, match="download_policy"):
+        Bridge(home=tmp_path / "invalid", download_policy="sometimes")

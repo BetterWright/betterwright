@@ -17,16 +17,36 @@ new BetterWright({
   executablePath,   // explicit Chromium binary; otherwise CLOAKBROWSER_BINARY_PATH
   headless = true,
   defaultTimeout = 30,   // per-snippet seconds, min 5
+  downloadPolicy = "ask", // "ask" (default), "allow", or "deny"
 });
 ```
 
 | Method | Description |
 | --- | --- |
-| `run(code, { session, note, timeout }) => Promise<envelope>` | Execute one snippet. Calls are queued and run one at a time. |
+| `run(code, { session, note, timeout, approvedDownloads }) => Promise<envelope>` | Execute one snippet. Calls are queued and run one at a time. |
 | `close() => Promise<void>` | Shut the worker down. Idempotent. |
 | `policy` | The active `NetworkPolicy`. |
 
 There is no context-manager sugar in JS — call `close()` in a `finally`.
+
+### Download approval
+
+`downloadPolicy: "ask"` is the default. Ordinary `run()` calls execute while
+Chromium downloads are denied. A trusted host must obtain explicit user approval
+first and then mark only that run with `{ approvedDownloads: true }`:
+
+```js
+if (await hostUi.confirm("Allow this download?")) {
+  await bw.run("await page.locator('#download').click()", {
+    approvedDownloads: true,
+  });
+}
+```
+
+Use `downloadPolicy: "allow"` to remove the approval gate while keeping byte and
+artifact quotas. Use `"deny"` to block downloads even from approved runs. The
+approval bit is worker transport metadata; model-authored browser code cannot set
+it from inside the sandbox.
 
 ### The result envelope
 

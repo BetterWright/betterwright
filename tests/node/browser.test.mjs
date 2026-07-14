@@ -10,6 +10,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
 
@@ -86,6 +87,45 @@ async function closeExternalChromium(runtime) {
   fs.rmSync(runtime.profileDir, { recursive: true, force: true });
 }
 
+function unsupportedDownloadGuardModule() {
+  const actualDir =
+    process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH ||
+    path.dirname(require.resolve("playwright-core"));
+  const actualUrl = pathToFileURL(path.join(actualDir, "index.mjs")).href;
+  const wrapperDir = tempHome();
+  fs.writeFileSync(
+    path.join(wrapperDir, "index.mjs"),
+    `import * as actual from ${JSON.stringify(actualUrl)};
+export * from ${JSON.stringify(actualUrl)};
+export const chromium = new Proxy(actual.chromium, {
+  get(target, property) {
+    if (property !== "connectOverCDP") return Reflect.get(target, property);
+    return async (...args) => {
+      const browser = await target.connectOverCDP(...args);
+      const original = browser.newBrowserCDPSession.bind(browser);
+      browser.newBrowserCDPSession = async () => {
+        const session = await original();
+        const send = session.send.bind(session);
+        session.send = async (method, params) => {
+          if (method === "Browser.setDownloadBehavior") {
+            throw new Error(
+              "Protocol error (Browser.setDownloadBehavior): " +
+              "Browser context management is not supported.",
+            );
+          }
+          return send(method, params);
+        };
+        return session;
+      };
+      return browser;
+    };
+  },
+});
+`,
+  );
+  return wrapperDir;
+}
+
 function tempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-test-"));
 }
@@ -140,20 +180,71 @@ test("navigate and read the title", opts, async () => {
 
 test("attach mode can drive an externally launched Chromium", opts, async () => {
   const runtime = await externalChromium();
+  const wrapperDir = unsupportedDownloadGuardModule();
+  const previousCorePath = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH;
+  process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = wrapperDir;
+  let downloadRequests = 0;
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", "text/html");
+    if (request.url === "/popup") {
+      response.end("<title>Guarded Popup</title><h1>Popup</h1>");
+      return;
+    }
+    if (request.url === "/report.txt") {
+      downloadRequests += 1;
+      response.setHeader("content-type", "text/plain");
+      response.setHeader(
+        "content-disposition",
+        'attachment; filename="report.txt"',
+      );
+      response.end("must not be saved");
+      return;
+    }
+    response.end(
+      '<title>Attach Host</title>' +
+        '<a id="popup" href="/popup" target="_blank">Open</a>' +
+        '<a id="download" href="/report.txt" download>Download</a>',
+    );
+  });
   const bw = new BetterWright({
     home: path.join(runtime.profileDir, "betterwright"),
     connectOverCdp: runtime.endpoint,
+    policy: new NetworkPolicy({ allowLoopback: true }),
   });
   try {
-    const result = await bw.run(
-      "await page.goto('https://example.com'); return page.title()",
-    );
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      const host = page;
+      const popupPromise = host.waitForEvent('popup');
+      await host.locator('#popup').click();
+      const popup = await popupPromise;
+      await popup.waitForLoadState();
+      await host.evaluate(() => {
+        setTimeout(() => document.querySelector('#download').click(), 0);
+      });
+      await host.waitForTimeout(100);
+      return {hostTitle: await host.title(), popupTitle: await popup.title()};
+    `);
     assert.equal(result.ok, true, result.error);
-    assert.equal(result.result, "Example Domain");
+    assert.deepEqual(result.result, {
+      hostTitle: "Attach Host",
+      popupTitle: "Guarded Popup",
+    });
     assert.equal(result.profileMode, "attached");
+    assert.match(result.warnings.join(" "), /downloads are disabled while attached/);
+    assert.equal(
+      (result.artifacts || []).filter((item) => item.kind === "download").length,
+      0,
+    );
+    assert.equal(downloadRequests, 1);
   } finally {
     await bw.close();
+    await server.close();
     await closeExternalChromium(runtime);
+    fs.rmSync(wrapperDir, { recursive: true, force: true });
+    if (previousCorePath === undefined)
+      delete process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH;
+    else process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = previousCorePath;
   }
 });
 
@@ -365,6 +456,7 @@ test("downloads are canceled while crossing the byte limit", opts, async () => {
     {
       home,
       headless: true,
+      downloadPolicy: "allow",
       policy: new NetworkPolicy({ allowLoopback: true }),
     },
     { maxArtifactBytes: maxDownloadBytes, maxDownloadBytes },
@@ -395,6 +487,77 @@ test("downloads are canceled while crossing the byte limit", opts, async () => {
     clearInterval(observer);
     await bw.close();
     await server.close();
+  }
+});
+
+test("downloads require a trusted per-run approval by default", opts, async () => {
+  const body = Buffer.from("approved download contents");
+  const server = await listen((request, response) => {
+    if (request.url === "/") {
+      response.setHeader("content-type", "text/html");
+      response.end('<a id="download" href="/report.txt" download>Download</a>');
+      return;
+    }
+    response.setHeader("content-type", "text/plain");
+    response.setHeader(
+      "content-disposition",
+      'attachment; filename="report.txt"',
+    );
+    response.end(body);
+  });
+  const home = tempHome();
+  const bw = new BetterWright({
+    home,
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  const code = `
+    await page.goto(${JSON.stringify(server.origin)});
+    await page.locator('#download').click();
+    await page.waitForTimeout(100);
+    return 'done';
+  `;
+  try {
+    const blocked = await bw.run(code);
+    assert.equal(blocked.ok, true, blocked.error);
+    assert.equal(
+      directorySize(path.join(home, "artifacts", "downloads")),
+      0,
+    );
+    assert.equal(
+      (blocked.artifacts || []).filter((item) => item.kind === "download").length,
+      0,
+    );
+
+    const approved = await bw.run(code, { approvedDownloads: true });
+    assert.equal(approved.ok, true, approved.error);
+    const downloads = (approved.artifacts || []).filter(
+      (item) => item.kind === "download",
+    );
+    assert.equal(downloads.length, 1, JSON.stringify(approved.events));
+    assert.deepEqual(fs.readFileSync(downloads[0].path), body);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("downloadPolicy deny rejects even trusted approval", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    downloadPolicy: "deny",
+  });
+  try {
+    const result = await bw.run("state.executed = true; return 'ran'", {
+      approvedDownloads: true,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error || "", /downloadPolicy=deny/);
+    const state = await bw.run("return state.executed ?? false");
+    assert.equal(state.result, false);
+  } finally {
+    await bw.close();
   }
 });
 
