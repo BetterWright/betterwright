@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-14
+
 ### Added
 
 - Trusted credential fill: `fill_credential` / `fillCredential` and
