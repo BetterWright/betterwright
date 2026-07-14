@@ -1,13 +1,16 @@
 // End-to-end Node tests. Skipped unless a Chromium build is resolvable, so the
 // policy suite still runs on machines without the runtime installed.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
 
@@ -27,6 +30,124 @@ function runtimeReady() {
 
 const ready = runtimeReady();
 const opts = { skip: ready ? false : "browser runtime not installed" };
+
+async function unusedPort() {
+  const server = net.createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+async function externalChromium() {
+  const core = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH
+    ? path.join(process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH, "index.js")
+    : "playwright-core";
+  const { chromium } = require(core);
+  const port = await unusedPort();
+  const profileDir = tempHome();
+  const child = spawn(
+    chromium.executablePath(),
+    [
+      `--remote-debugging-port=${port}`,
+      "--remote-debugging-address=127.0.0.1",
+      `--user-data-dir=${profileDir}`,
+      "--headless=new",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "about:blank",
+    ],
+    {
+      stdio: "ignore",
+      detached: process.platform !== "win32",
+    },
+  );
+  const endpoint = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${endpoint}/json/version`);
+      if (response.ok) return { child, endpoint, profileDir };
+    } catch {
+      // Chrome is still starting.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  signalExternalChromium(child, "SIGTERM");
+  throw new Error(`External Chromium did not start at ${endpoint}.`);
+}
+
+function signalExternalChromium(child, signal) {
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // The process group may already have exited; fall back to the parent.
+    }
+  }
+  if (child.exitCode === null) child.kill(signal);
+}
+
+async function closeExternalChromium(runtime) {
+  signalExternalChromium(runtime.child, "SIGTERM");
+  if (runtime.child.exitCode === null)
+    await Promise.race([
+      once(runtime.child, "exit"),
+      new Promise((resolve) => setTimeout(resolve, 3_000)),
+    ]);
+  // Chrome may fork profile-writing children before the tracked parent exits.
+  signalExternalChromium(runtime.child, "SIGKILL");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  fs.rmSync(runtime.profileDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
+}
+
+function unsupportedDownloadGuardModule() {
+  const actualDir =
+    process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH ||
+    path.dirname(require.resolve("playwright-core"));
+  const actualUrl = pathToFileURL(path.join(actualDir, "index.mjs")).href;
+  const wrapperDir = tempHome();
+  fs.writeFileSync(
+    path.join(wrapperDir, "index.mjs"),
+    `import * as actual from ${JSON.stringify(actualUrl)};
+export * from ${JSON.stringify(actualUrl)};
+export const chromium = new Proxy(actual.chromium, {
+  get(target, property) {
+    if (property !== "connectOverCDP") return Reflect.get(target, property);
+    return async (...args) => {
+      const browser = await target.connectOverCDP(...args);
+      const original = browser.newBrowserCDPSession.bind(browser);
+      browser.newBrowserCDPSession = async () => {
+        const session = await original();
+        const send = session.send.bind(session);
+        session.send = async (method, params) => {
+          if (method === "Browser.setDownloadBehavior") {
+            throw new Error(
+              "Protocol error (Browser.setDownloadBehavior): " +
+              "Browser context management is not supported.",
+            );
+          }
+          return send(method, params);
+        };
+        return session;
+      };
+      return browser;
+    };
+  },
+});
+`,
+  );
+  return wrapperDir;
+}
 
 function tempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-test-"));
@@ -77,6 +198,76 @@ test("navigate and read the title", opts, async () => {
     assert.equal(result.result, "Example Domain");
   } finally {
     await bw.close();
+  }
+});
+
+test("attach mode can drive an externally launched Chromium", opts, async () => {
+  const runtime = await externalChromium();
+  const wrapperDir = unsupportedDownloadGuardModule();
+  const previousCorePath = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH;
+  process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = wrapperDir;
+  let downloadRequests = 0;
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", "text/html");
+    if (request.url === "/popup") {
+      response.end("<title>Guarded Popup</title><h1>Popup</h1>");
+      return;
+    }
+    if (request.url === "/report.txt") {
+      downloadRequests += 1;
+      response.setHeader("content-type", "text/plain");
+      response.setHeader(
+        "content-disposition",
+        'attachment; filename="report.txt"',
+      );
+      response.end("must not be saved");
+      return;
+    }
+    response.end(
+      '<title>Attach Host</title>' +
+        '<a id="popup" href="/popup" target="_blank">Open</a>' +
+        '<a id="download" href="/report.txt" download>Download</a>',
+    );
+  });
+  const bw = new BetterWright({
+    home: path.join(runtime.profileDir, "betterwright"),
+    connectOverCdp: runtime.endpoint,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      const host = page;
+      const popupPromise = host.waitForEvent('popup');
+      await host.locator('#popup').click();
+      const popup = await popupPromise;
+      await popup.waitForLoadState();
+      await host.evaluate(() => {
+        setTimeout(() => document.querySelector('#download').click(), 0);
+      });
+      await host.waitForTimeout(100);
+      return {hostTitle: await host.title(), popupTitle: await popup.title()};
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result, {
+      hostTitle: "Attach Host",
+      popupTitle: "Guarded Popup",
+    });
+    assert.equal(result.profileMode, "attached");
+    assert.match(result.warnings.join(" "), /downloads are disabled while attached/);
+    assert.equal(
+      (result.artifacts || []).filter((item) => item.kind === "download").length,
+      0,
+    );
+    assert.equal(downloadRequests, 1);
+  } finally {
+    await bw.close();
+    await server.close();
+    await closeExternalChromium(runtime);
+    fs.rmSync(wrapperDir, { recursive: true, force: true });
+    if (previousCorePath === undefined)
+      delete process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH;
+    else process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = previousCorePath;
   }
 });
 
@@ -288,6 +479,7 @@ test("downloads are canceled while crossing the byte limit", opts, async () => {
     {
       home,
       headless: true,
+      downloadPolicy: "allow",
       policy: new NetworkPolicy({ allowLoopback: true }),
     },
     { maxArtifactBytes: maxDownloadBytes, maxDownloadBytes },
@@ -318,6 +510,77 @@ test("downloads are canceled while crossing the byte limit", opts, async () => {
     clearInterval(observer);
     await bw.close();
     await server.close();
+  }
+});
+
+test("downloads require a trusted per-run approval by default", opts, async () => {
+  const body = Buffer.from("approved download contents");
+  const server = await listen((request, response) => {
+    if (request.url === "/") {
+      response.setHeader("content-type", "text/html");
+      response.end('<a id="download" href="/report.txt" download>Download</a>');
+      return;
+    }
+    response.setHeader("content-type", "text/plain");
+    response.setHeader(
+      "content-disposition",
+      'attachment; filename="report.txt"',
+    );
+    response.end(body);
+  });
+  const home = tempHome();
+  const bw = new BetterWright({
+    home,
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  const code = `
+    await page.goto(${JSON.stringify(server.origin)});
+    await page.locator('#download').click();
+    await page.waitForTimeout(100);
+    return 'done';
+  `;
+  try {
+    const blocked = await bw.run(code);
+    assert.equal(blocked.ok, true, blocked.error);
+    assert.equal(
+      directorySize(path.join(home, "artifacts", "downloads")),
+      0,
+    );
+    assert.equal(
+      (blocked.artifacts || []).filter((item) => item.kind === "download").length,
+      0,
+    );
+
+    const approved = await bw.run(code, { approvedDownloads: true });
+    assert.equal(approved.ok, true, approved.error);
+    const downloads = (approved.artifacts || []).filter(
+      (item) => item.kind === "download",
+    );
+    assert.equal(downloads.length, 1, JSON.stringify(approved.events));
+    assert.deepEqual(fs.readFileSync(downloads[0].path), body);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("downloadPolicy deny rejects even trusted approval", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    downloadPolicy: "deny",
+  });
+  try {
+    const result = await bw.run("state.executed = true; return 'ran'", {
+      approvedDownloads: true,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error || "", /downloadPolicy=deny/);
+    const state = await bw.run("return state.executed ?? false");
+    assert.equal(state.result, false);
+  } finally {
+    await bw.close();
   }
 });
 

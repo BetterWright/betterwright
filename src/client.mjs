@@ -12,6 +12,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import { normalizeDownloadPolicy } from "./downloads.mjs";
 import { NetworkPolicy } from "./policy.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./worker.mjs", import.meta.url));
@@ -70,6 +71,9 @@ export class BetterWright {
    *   this mode — only the per-request policy applies.
    * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
    *   top-level Google, Bing, or DuckDuckGo search navigations
+   * @param {"ask"|"allow"|"deny"} [options.downloadPolicy="ask"] require a
+   *   trusted host to mark an individual run approved, allow every run, or
+   *   deny downloads entirely
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
@@ -81,6 +85,7 @@ export class BetterWright {
     this.headless = resolveHeadless(options.headless);
     this.connectOverCdp = (options.connectOverCdp || "").trim();
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
+    this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
 
     this._process = null;
@@ -110,6 +115,7 @@ export class BetterWright {
       headless: this.headless,
       cdpEndpoint: this.connectOverCdp,
       searchMinIntervalMs: this.searchMinIntervalMs,
+      downloadPolicy: this.downloadPolicy,
       outputLimit: 12_000,
       maxArtifactBytes: 100 * 1024 * 1024,
       maxDownloadBytes: 50 * 1024 * 1024,
@@ -213,7 +219,7 @@ export class BetterWright {
   /**
    * Execute one Playwright snippet and resolve with a result object.
    * @param {string} code asynchronous Playwright JavaScript
-   * @param {object} [options] { session, note, timeout }
+   * @param {object} [options] { session, note, timeout, approvedDownloads }
    */
   run(code, options = {}) {
     const task = this._queue.then(() => this._runNow(code, options));
@@ -258,6 +264,7 @@ export class BetterWright {
           id,
           sessionId: String(options.session || "default"),
           code,
+          approvedDownloads: options.approvedDownloads === true,
           timeoutMs: timeoutSeconds * 1000,
           config,
         });
