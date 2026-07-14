@@ -2,7 +2,7 @@
 
 **A persistent, policy-guarded Playwright browser for AI agents.**
 
-![BetterWright — an agent operating a browser](https://raw.githubusercontent.com/CuriosityOS/betterwright/main/docs/assets/hero.png)
+![BetterWright logo — a browser path ending at a verified checkpoint](https://raw.githubusercontent.com/CuriosityOS/betterwright/main/docs/assets/hero.png)
 
 Playwright gives you a browser automation API. BetterWright is the layer you
 need on top of it when the thing driving the browser is a language model rather
