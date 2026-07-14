@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-07-15
+
+### Added
+
+- First-class npm distribution with typed conditional exports for the public
+  JavaScript API and subpath modules.
+- Release checks for synchronized versions, worker copies, TypeScript
+  declarations, npm tarball contents, clean installation, imports, and CLI use.
+- Provenance-ready npm publishing through GitHub Actions after the initial
+  package bootstrap.
+
+### Changed
+
+- Browser installation is now an explicit `betterwright setup` step instead of
+  a hidden ~200 MB npm `postinstall` download.
+- npm CI uses a committed lockfile and reproducible `npm ci` installs.
+- `doctor` reports the resolved Cloak browser binary version and tier separately
+  from the pinned wrapper version.
+- Public npm subpaths now resolve through explicit runtime and declaration
+  conditions, including the existing worker entry point.
+
 ## [0.3.0] — 2026-07-14
 
 ### Added

@@ -67,13 +67,20 @@ betterwright doctor       # confirms everything resolves
 ### JavaScript
 
 ```bash
-npm install betterwright  # postinstall downloads the managed Cloak browser
+npm install betterwright
+npx betterwright setup     # downloads the managed Cloak browser (~200 MB, once)
 npx betterwright doctor
 ```
 
-Both packages ship the identical worker and pin the same Playwright and
-CloakBrowser wrapper versions. The browser binary is fetched and signature
-verified by the official CloakBrowser wrapper, then cached outside this package.
+BetterWright never downloads a browser as a hidden npm lifecycle side effect,
+so installs remain predictable and work with `--ignore-scripts`. Both packages
+ship the identical worker and pin the same Playwright and CloakBrowser wrapper
+versions. The browser binary is fetched and signature verified by the official
+CloakBrowser wrapper, then cached outside this package.
+
+Update the JavaScript package with `npm update betterwright` (or
+`npm install betterwright@latest`). Run `npx betterwright setup` again after an
+update only when `doctor` reports that the managed runtime is missing.
 
 ---
 
