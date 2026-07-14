@@ -64,7 +64,7 @@ def _normalize_public_search_policy(value: str | None) -> str:
     raw = (
         value
         if value is not None
-        else os.environ.get("BETTERWRIGHT_PUBLIC_SEARCH_POLICY", "block")
+        else os.environ.get("BETTERWRIGHT_PUBLIC_SEARCH_POLICY", "allow")
     )
     policy = str(raw).strip().lower()
     if policy not in _PUBLIC_SEARCH_POLICIES:

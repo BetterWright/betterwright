@@ -231,8 +231,8 @@ class BetterWright:
         navigations when public search UI automation is explicitly allowed.
         ``0`` (the default) disables pacing.
     public_search_policy:
-        ``"block"`` (the default) routes discovery through the host search tool;
-        ``"allow"`` permits public search-result UI navigation.
+        ``"allow"`` (the default) permits public search-result UI navigation;
+        ``"block"`` routes discovery through the host search tool instead.
     download_policy:
         ``"ask"`` (the default) requires a trusted host to mark each download
         run approved. ``"allow"`` removes that approval gate while retaining
