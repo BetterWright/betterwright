@@ -109,6 +109,9 @@ when there is no meaningful visible end state.`;
  * @property {boolean} [forbidAccountCreation] never create new accounts
  * @property {string} [spendingLimit] per-purchase cap included verbatim, e.g. "$50"
  * @property {string[]} [extraRules] additional rules appended verbatim
+ * @property {string} [passwordManager] name of a password-manager extension
+ *   present and unlocked in this browser (e.g. "1Password"); adds a short
+ *   inline-menu how-to only when set, so it costs no tokens otherwise
  */
 
 function guardrailClauses(g) {
@@ -145,19 +148,43 @@ function guardrailClauses(g) {
   return rules;
 }
 
+function passwordManagerSection(name) {
+  const display = ["1password", "1 password"].includes(
+    String(name).trim().toLowerCase(),
+  )
+    ? "1Password"
+    : String(name).trim();
+  return (
+    "## Password manager\n" +
+    `A ${display} extension is installed and unlocked in this browser. Prefer ` +
+    "it for logging in and signing up: focus the field with `human.click`, " +
+    `click the ${display} badge at the right edge of the field to open its ` +
+    "inline menu, then click the matching entry in the small menu that drops " +
+    "below the field. Click that entry by its on-screen position — it is not " +
+    "an ordinary DOM element, so CSS selectors and keyboard shortcuts do not " +
+    `reach it. ${display} fills the secret; you never see or type it. If it ` +
+    "is locked or has no entry for the site, fall back to the trusted " +
+    "host-side fill."
+  );
+}
+
 /**
  * Operator guidance to include in a browser agent's system prompt.
  * @param {Guardrails} [guardrails]
  * @returns {string}
  */
 export function agentSystemPrompt(guardrails = {}) {
+  const sections = [BASE_GUIDANCE];
+  if (guardrails.passwordManager)
+    sections.push(passwordManagerSection(guardrails.passwordManager));
   const clauses = guardrailClauses(guardrails);
-  if (!clauses.length) return BASE_GUIDANCE;
-  const body = clauses.map((clause) => `- ${clause}`).join("\n");
-  return (
-    `${BASE_GUIDANCE}\n\n` +
-    "## Guardrails for this session\n" +
-    "These limits override the autonomy above where they conflict:\n" +
-    body
-  );
+  if (clauses.length) {
+    const body = clauses.map((clause) => `- ${clause}`).join("\n");
+    sections.push(
+      "## Guardrails for this session\n" +
+        "These limits override the autonomy above where they conflict:\n" +
+        body,
+    );
+  }
+  return sections.join("\n\n");
 }

@@ -94,6 +94,7 @@ const systemPrompt = agentSystemPrompt({
 | `forbid_account_creation` / `forbidAccountCreation` | Never create accounts; use existing credentials only. |
 | `spending_limit` / `spendingLimit` | A per-purchase cap, included verbatim (e.g. `"$50"`). |
 | `extra_rules` / `extraRules` | Extra lines appended verbatim. |
+| `password_manager` / `passwordManager` | Name of a password-manager extension present and unlocked in this browser (e.g. `"1Password"`). Adds a short inline-menu how-to **only when set**, so it costs no tokens otherwise. Pair with attach mode. |
 
 When any guardrail is set, the guidance gains a **"Guardrails for this session"**
 section that overrides the autonomy above where they conflict.
