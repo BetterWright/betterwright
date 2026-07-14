@@ -26,6 +26,34 @@ from betterwright.vault import CredentialVault
 #: Artifact kinds that are images (as opposed to downloads or spilled output).
 IMAGE_KINDS = frozenset({"proof", "question", "debug", "captcha"})
 
+
+def _build_fill_spec(
+    *,
+    password_selector: str,
+    username_selector: str | None = None,
+    confirm_password_selector: str | None = None,
+    submit_selector: str | None = None,
+    record_id: str | None = None,
+    username: str | None = None,
+    generate: dict | None = None,
+) -> dict:
+    """Translate host-facing fill options into the worker credential-fill spec."""
+
+    fields = {
+        "passwordSelector": password_selector,
+        "usernameSelector": username_selector,
+        "confirmPasswordSelector": confirm_password_selector,
+        "submitSelector": submit_selector,
+    }
+    if generate is not None:
+        return {"action": "generate", "fields": fields, "generate": generate}
+    record: dict[str, str] = {}
+    if record_id is not None:
+        record["id"] = record_id
+    if username is not None:
+        record["username"] = username
+    return {"action": "fill", "fields": fields, "record": record}
+
 _MIME_BY_EXT = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -194,7 +222,10 @@ class BetterWright:
         this mode BetterWright uses the browser's existing context and tabs, and
         the launch-time network floor (metadata resolver rules, forced transport
         proxy) is not active — only the per-request :class:`NetworkPolicy`
-        applies. See ``docs/attach-mode.md``.
+        applies. Pass ``"auto"`` to reuse a running debug Chrome or otherwise
+        launch a real Google Chrome with a persistent BetterWright profile (where
+        you install and unlock a password-manager extension once) and attach to
+        it. See ``docs/attach-mode.md``.
     search_min_interval_ms:
         Minimum spacing between top-level Google, Bing, or DuckDuckGo search
         navigations when public search UI automation is explicitly allowed.
@@ -282,6 +313,76 @@ class BetterWright:
         )
         return RunResult._from_envelope(envelope)
 
+    def fill_credential(
+        self,
+        *,
+        password_selector: str,
+        username_selector: str | None = None,
+        confirm_password_selector: str | None = None,
+        submit_selector: str | None = None,
+        record_id: str | None = None,
+        username: str | None = None,
+        session: str = "default",
+        timeout: int | None = None,
+    ) -> RunResult:
+        """Fill a stored credential into the current page from trusted host code.
+
+        The password is fetched, typed, and (optionally) submitted by the worker
+        without ever entering a model ``run()`` snippet or coming back to this
+        process. ``confirm_password_selector`` receives the same secret for
+        signup forms. Provide ``submit_selector`` to submit in the same trusted
+        call so no model turn observes the secret sitting in a field. Select the
+        record with ``record_id`` or ``username`` (newest match otherwise).
+        Only non-secret metadata is returned.
+        """
+
+        spec = _build_fill_spec(
+            password_selector=password_selector,
+            username_selector=username_selector,
+            confirm_password_selector=confirm_password_selector,
+            submit_selector=submit_selector,
+            record_id=record_id,
+            username=username,
+        )
+        envelope = self._bridge.fill_credential(spec, session, timeout=timeout)
+        return RunResult._from_envelope(envelope)
+
+    def generate_and_fill_credential(
+        self,
+        *,
+        password_selector: str,
+        confirm_password_selector: str | None = None,
+        username_selector: str | None = None,
+        submit_selector: str | None = None,
+        username: str = "",
+        label: str | None = None,
+        length: int = 24,
+        include_symbols: bool = True,
+        session: str = "default",
+        timeout: int | None = None,
+    ) -> RunResult:
+        """Generate a strong password, store it for the current origin, and fill
+        it (plus any confirm-password field) — the safe primitive for signing up.
+
+        The generated secret is never returned to this process; only non-secret
+        metadata (including the new record id) comes back.
+        """
+
+        spec = _build_fill_spec(
+            password_selector=password_selector,
+            username_selector=username_selector,
+            confirm_password_selector=confirm_password_selector,
+            submit_selector=submit_selector,
+            generate={
+                "username": username,
+                "label": label,
+                "length": length,
+                "includeSymbols": include_symbols,
+            },
+        )
+        envelope = self._bridge.fill_credential(spec, session, timeout=timeout)
+        return RunResult._from_envelope(envelope)
+
     def session(self, name: str) -> Session:
         """Return a handle bound to one named browser session."""
 
@@ -319,6 +420,18 @@ class Session:
             timeout=timeout,
             approved_downloads=approved_downloads,
         )
+
+    def fill_credential(self, **kwargs: Any) -> RunResult:
+        """Fill a stored credential into this session's current page."""
+
+        kwargs.setdefault("session", self.name)
+        return self._browser.fill_credential(**kwargs)
+
+    def generate_and_fill_credential(self, **kwargs: Any) -> RunResult:
+        """Generate, store, and fill a signup password in this session."""
+
+        kwargs.setdefault("session", self.name)
+        return self._browser.generate_and_fill_credential(**kwargs)
 
 
 __all__ = ["Artifact", "BetterWright", "BrowserError", "RunResult", "Session"]

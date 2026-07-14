@@ -128,6 +128,37 @@ return metadata only; `fetch_for_fill`/`reveal`/`generate` include a `secret`
 for trusted use. `redact(value)` scrubs handled secrets from any JSON-like
 value. See [credentials.md](credentials.md).
 
+## Trusted credential fill
+
+```python
+BetterWright.fill_credential(*, password_selector, username_selector=None,
+    confirm_password_selector=None, submit_selector=None, record_id=None,
+    username=None, session="default", timeout=None) -> RunResult
+BetterWright.generate_and_fill_credential(*, password_selector,
+    confirm_password_selector=None, username_selector=None, submit_selector=None,
+    username="", label=None, length=24, include_symbols=True,
+    session="default", timeout=None) -> RunResult
+```
+
+Fill a stored (or freshly generated) credential into the current page from
+trusted host code. The worker fetches the secret, types the fields, and can
+submit — all outside the model sandbox — and returns only non-secret metadata
+(`filled`, `submitted`, record `id`). The password never reaches this process.
+`generate_and_fill_credential` is the safe primitive for signing up. Also
+available on a named `Session`. See [credentials.md](credentials.md).
+
+## `ensure_chrome_cdp`
+
+```python
+from betterwright import ensure_chrome_cdp
+ensure_chrome_cdp(*, home=None, port=None, executable_path="", timeout=None)
+    -> {"endpoint": str, "profile_dir": str, "started": bool}
+```
+
+Reuse a running debug Chrome or launch a real Google Chrome with a persistent
+profile and return its CDP endpoint. `BetterWright(connect_over_cdp="auto")` does
+this for you. See [attach-mode.md](attach-mode.md).
+
 ## Native CAPTCHA helpers
 
 Code passed to `BetterWright.run()` receives `captcha.inspect(bounds?)`,

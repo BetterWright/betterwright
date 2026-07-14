@@ -143,6 +143,7 @@ class Bridge:
         self._stderr_tail: list[str] = []
         self._last_config: dict | None = None
         self._closed = False
+        self._cdp_resolved = False
         atexit.register(self.close)
 
     # -- configuration ----------------------------------------------------
@@ -157,6 +158,19 @@ class Bridge:
         if cloak is not None:
             env["BETTERWRIGHT_CLOAKBROWSER_PATH"] = str(cloak)
         return env
+
+    def _resolve_cdp_endpoint(self) -> None:
+        """Turn ``connect_over_cdp="auto"`` into a concrete endpoint, launching a
+        real Google Chrome with a persistent profile if none is already up."""
+
+        if self._cdp_resolved:
+            return
+        if self.connect_over_cdp.strip().lower() == "auto":
+            from betterwright.chrome import ensure_chrome_cdp
+
+            result = ensure_chrome_cdp(home=self.home)
+            self.connect_over_cdp = str(result["endpoint"])
+        self._cdp_resolved = True
 
     def _worker_config(self) -> dict:
         root = self.home / "browser"
@@ -378,6 +392,7 @@ class Bridge:
 
         timeout_seconds = max(int(timeout or self.default_timeout), 5)
         with self._execute_lock:
+            self._resolve_cdp_endpoint()
             config = self._worker_config()
             if (
                 self._process is not None
@@ -421,6 +436,74 @@ class Bridge:
                 with self._pending_lock:
                     self._pending.pop(request_id, None)
 
+        return self._finish_envelope(response)
+
+    def fill_credential(
+        self,
+        spec: dict,
+        session_id: str = "default",
+        *,
+        timeout: int | None = None,
+    ) -> dict:
+        """Fill a vault credential into the current page via the trusted worker.
+
+        Reachable only from host code (never a model ``run()`` snippet). The
+        worker fetches the secret, types the username/password/confirm-password
+        fields, and optionally submits — all outside the sandbox — and returns
+        only non-secret metadata.
+        """
+
+        if self.vault is None:
+            return {"ok": False, "error": "No credential vault is configured."}
+
+        timeout_seconds = max(int(timeout or self.default_timeout), 5)
+        with self._execute_lock:
+            self._resolve_cdp_endpoint()
+            config = self._worker_config()
+            if (
+                self._process is not None
+                and self._process.poll() is None
+                and self._last_config != config
+            ):
+                self.close()
+                self._closed = False
+            self._start()
+            self._last_config = config
+
+            request_id = uuid.uuid4().hex
+            waiter: queue.Queue = queue.Queue(maxsize=1)
+            with self._pending_lock:
+                self._pending[request_id] = waiter
+            try:
+                self._send(
+                    {
+                        "type": "credential_fill",
+                        "id": request_id,
+                        "sessionId": str(session_id or "default"),
+                        "timeoutMs": timeout_seconds * 1000,
+                        "spec": spec,
+                        "config": config,
+                    }
+                )
+                try:
+                    response = waiter.get(timeout=timeout_seconds + 5)
+                except queue.Empty:
+                    self.close()
+                    self._closed = False
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"Credential fill timed out after {timeout_seconds}s; "
+                            "the worker was restarted."
+                        ),
+                    }
+            finally:
+                with self._pending_lock:
+                    self._pending.pop(request_id, None)
+
+        return self._finish_envelope(response)
+
+    def _finish_envelope(self, response: dict) -> dict:
         response.pop("type", None)
         response.pop("id", None)
         restart = bool(response.pop("restartWorker", False))

@@ -91,22 +91,38 @@ The already-open tabs are adopted into the default session, so `pages`, `page`,
 `usePage`, and `snapshot` work against them immediately. On shutdown BetterWright
 disconnects without closing your browser or its tabs.
 
-### Managed dedicated Chrome
+### Managed dedicated Chrome — attach, or launch if none is open
 
-On a desktop integration, BetterWright can start or reuse that dedicated Chrome
-profile for you. This is useful for long-lived agents such as Pi because every
-agent process attaches to the same stable browser state instead of creating a
-fresh automation profile:
+You usually don't want to launch Chrome by hand. Pass `connect_over_cdp="auto"`
+and BetterWright reuses a debug Chrome if one is already listening, or otherwise
+launches a real Google Chrome with a persistent dedicated profile and attaches to
+that:
+
+```python
+from betterwright import BetterWright
+
+bw = BetterWright(connect_over_cdp="auto")   # reuse or launch a real Chrome
+```
+
+```js
+const bw = new BetterWright({ connectOverCdp: "auto" });
+```
+
+For explicit control (e.g. long-lived agents such as Pi that all attach to the
+same stable state), call the helper yourself:
 
 ```js
 import { BetterWright, ensureChromeCdp } from "betterwright";
 
 const { endpoint, profileDir } = await ensureChromeCdp();
-const bw = new BetterWright({
-  connectOverCdp: endpoint,
-  publicSearchPolicy: "allow",
-  searchMinIntervalMs: 12_000,
-});
+const bw = new BetterWright({ connectOverCdp: endpoint });
+```
+
+```python
+from betterwright import BetterWright, ensure_chrome_cdp
+
+info = ensure_chrome_cdp()          # {"endpoint", "profile_dir", "started"}
+bw = BetterWright(connect_over_cdp=info["endpoint"])
 ```
 
 The managed browser uses Google Chrome when installed, binds its debugging port
@@ -114,6 +130,32 @@ to `127.0.0.1`, and stores state under
 `~/.betterwright/chrome-cdp-profile`. Chrome 136 and newer require this separate
 `--user-data-dir`; BetterWright never points remote debugging at your everyday
 Chrome profile. Set `BETTERWRIGHT_HOME` to move the dedicated profile.
+
+### Password managers (1Password) in attach mode
+
+Because the dedicated profile is persistent, it is the place to install a
+password-manager extension once and let the agent fill logins through it — so the
+secret stays in the extension and never reaches BetterWright:
+
+1. Start the browser once (`connect_over_cdp="auto"`), install the 1Password
+   extension in the window that opens, sign in, and **unlock** it. The agent
+   cannot type your master password or pass biometrics, so it must already be
+   unlocked (the desktop-app integration keeps it unlocked across restarts).
+2. Keep 1Password's "Show autofill menu on field focus" setting on.
+3. The agent focuses a login field and clicks the matching entry in 1Password's
+   inline menu. BetterWright's clicks emit real `isTrusted` events, which the
+   extension requires, so the fill works.
+
+This only works in attach mode — the managed Cloak browser does not carry your
+extensions. When the extension is missing or locked, fall back to the trusted
+[vault fill](credentials.md) (`bw.fill_credential` / `generate_and_fill_credential`).
+See [`examples/python/onepassword_attach.py`](../examples/python/onepassword_attach.py).
+
+Note the trade-off: extension autofill puts the secret into the page DOM, where a
+later model snippet could read it (redaction still scrubs run output). That is
+acceptable for your own credentials under the "guard against accidental leakage"
+model, but it is a weaker guarantee than the vault fill, which never lets a model
+snippet near the value.
 
 For broad discovery, use a web-search tool supplied by the host, then open the
 returned result or first-party page in BetterWright. Do not automate Google or
