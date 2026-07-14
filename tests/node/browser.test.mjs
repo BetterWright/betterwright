@@ -60,7 +60,10 @@ async function externalChromium() {
       "--no-default-browser-check",
       "about:blank",
     ],
-    { stdio: "ignore" },
+    {
+      stdio: "ignore",
+      detached: process.platform !== "win32",
+    },
   );
   const endpoint = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 10_000;
@@ -73,17 +76,32 @@ async function externalChromium() {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  child.kill("SIGTERM");
+  signalExternalChromium(child, "SIGTERM");
   throw new Error(`External Chromium did not start at ${endpoint}.`);
 }
 
+function signalExternalChromium(child, signal) {
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // The process group may already have exited; fall back to the parent.
+    }
+  }
+  if (child.exitCode === null) child.kill(signal);
+}
+
 async function closeExternalChromium(runtime) {
-  if (runtime.child.exitCode === null) runtime.child.kill("SIGTERM");
+  signalExternalChromium(runtime.child, "SIGTERM");
   if (runtime.child.exitCode === null)
     await Promise.race([
       once(runtime.child, "exit"),
       new Promise((resolve) => setTimeout(resolve, 3_000)),
     ]);
+  // Chrome may fork profile-writing children before the tracked parent exits.
+  signalExternalChromium(runtime.child, "SIGKILL");
+  await new Promise((resolve) => setTimeout(resolve, 250));
   fs.rmSync(runtime.profileDir, {
     recursive: true,
     force: true,
