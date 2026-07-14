@@ -1,10 +1,12 @@
 // End-to-end Node tests. Skipped unless a Chromium build is resolvable, so the
 // policy suite still runs on machines without the runtime installed.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -27,6 +29,60 @@ function runtimeReady() {
 
 const ready = runtimeReady();
 const opts = { skip: ready ? false : "browser runtime not installed" };
+
+async function unusedPort() {
+  const server = net.createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+async function externalChromium() {
+  const core = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH
+    ? path.join(process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH, "index.js")
+    : "playwright-core";
+  const { chromium } = require(core);
+  const port = await unusedPort();
+  const profileDir = tempHome();
+  const child = spawn(
+    chromium.executablePath(),
+    [
+      `--remote-debugging-port=${port}`,
+      "--remote-debugging-address=127.0.0.1",
+      `--user-data-dir=${profileDir}`,
+      "--headless=new",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "about:blank",
+    ],
+    { stdio: "ignore" },
+  );
+  const endpoint = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${endpoint}/json/version`);
+      if (response.ok) return { child, endpoint, profileDir };
+    } catch {
+      // Chrome is still starting.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  child.kill("SIGTERM");
+  throw new Error(`External Chromium did not start at ${endpoint}.`);
+}
+
+async function closeExternalChromium(runtime) {
+  if (runtime.child.exitCode === null) runtime.child.kill("SIGTERM");
+  if (runtime.child.exitCode === null)
+    await Promise.race([
+      once(runtime.child, "exit"),
+      new Promise((resolve) => setTimeout(resolve, 3_000)),
+    ]);
+  fs.rmSync(runtime.profileDir, { recursive: true, force: true });
+}
 
 function tempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-test-"));
@@ -77,6 +133,25 @@ test("navigate and read the title", opts, async () => {
     assert.equal(result.result, "Example Domain");
   } finally {
     await bw.close();
+  }
+});
+
+test("attach mode can drive an externally launched Chromium", opts, async () => {
+  const runtime = await externalChromium();
+  const bw = new BetterWright({
+    home: path.join(runtime.profileDir, "betterwright"),
+    connectOverCdp: runtime.endpoint,
+  });
+  try {
+    const result = await bw.run(
+      "await page.goto('https://example.com'); return page.title()",
+    );
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, "Example Domain");
+    assert.equal(result.profileMode, "attached");
+  } finally {
+    await bw.close();
+    await closeExternalChromium(runtime);
   }
 });
 

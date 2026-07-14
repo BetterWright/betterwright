@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 import { detectBotChallenge, isPublicSearchNavigation } from "./challenges.mjs";
+import { isUnsupportedBrowserDownloadGuard } from "./downloads.mjs";
 import {
   movePointer,
   pointInside,
@@ -78,6 +79,9 @@ let guardProxyServer = null;
 let guardProxyPort = null;
 let downloadCdpSession = null;
 let downloadGuardReady = false;
+let attachedDownloadsDenied = false;
+let pageDownloadGuards = new WeakMap();
+const pageDownloadCdpSessions = new Set();
 
 const sessions = new Map();
 const pageToSession = new WeakMap();
@@ -611,24 +615,78 @@ async function installDownloadGuard(context) {
     if (!oversized || event?.state !== "inProgress") return;
     void session.send("Browser.cancelDownload", { guid: event.guid }).catch(() => {});
   });
-  await session.send("Browser.setDownloadBehavior", {
-    behavior: "allow",
-    downloadPath: launchConfig.downloadsDir,
-    eventsEnabled: true,
-  });
+  try {
+    await session.send("Browser.setDownloadBehavior", {
+      behavior: "allow",
+      downloadPath: launchConfig.downloadsDir,
+      eventsEnabled: true,
+    });
+  } catch (error) {
+    await session.detach().catch(() => {});
+    if (!connectedMode || !isUnsupportedBrowserDownloadGuard(error))
+      throw error;
+    attachedDownloadsDenied = true;
+    await Promise.all(
+      context.pages().map((page) => denyAttachedPageDownloads(context, page)),
+    );
+    profileWarning +=
+      " This Chrome does not expose browser-wide bounded download controls, " +
+      "so downloads are disabled while attached.";
+    return;
+  }
   downloadCdpSession = session;
   downloadGuardReady = true;
+}
+
+async function denyAttachedPageDownloads(context, page) {
+  if (!attachedDownloadsDenied || page.isClosed()) return;
+  const existing = pageDownloadGuards.get(page);
+  if (existing) return existing;
+  const guard = (async () => {
+    const session = await context.newCDPSession(page);
+    try {
+      await session.send("Page.setDownloadBehavior", { behavior: "deny" });
+    } catch (error) {
+      await session.detach().catch(() => {});
+      throw error;
+    }
+    pageDownloadCdpSessions.add(session);
+    page.once("close", () => {
+      pageDownloadCdpSessions.delete(session);
+      void session.detach().catch(() => {});
+    });
+  })();
+  pageDownloadGuards.set(page, guard);
+  try {
+    await guard;
+  } catch (error) {
+    pageDownloadGuards.delete(page);
+    throw error;
+  }
 }
 
 async function closeDownloadGuard() {
   const session = downloadCdpSession;
   downloadCdpSession = null;
   downloadGuardReady = false;
-  if (!session) return;
-  await session
-    .send("Browser.setDownloadBehavior", { behavior: "default" })
-    .catch(() => {});
-  await session.detach().catch(() => {});
+  attachedDownloadsDenied = false;
+  if (session) {
+    await session
+      .send("Browser.setDownloadBehavior", { behavior: "default" })
+      .catch(() => {});
+    await session.detach().catch(() => {});
+  }
+  const pageSessions = [...pageDownloadCdpSessions];
+  pageDownloadCdpSessions.clear();
+  pageDownloadGuards = new WeakMap();
+  await Promise.all(
+    pageSessions.map(async (pageSession) => {
+      await pageSession
+        .send("Page.setDownloadBehavior", { behavior: "default" })
+        .catch(() => {});
+      await pageSession.detach().catch(() => {});
+    }),
+  );
 }
 
 function redactText(value) {
@@ -1007,10 +1065,14 @@ async function ensureSessionPage(session) {
   const selected = session.currentId
     ? session.pages.get(session.currentId)
     : null;
-  if (selected && !selected.isClosed()) return selected;
+  if (selected && !selected.isClosed()) {
+    await denyAttachedPageDownloads(browserContext, selected);
+    return selected;
+  }
   for (const [id, page] of session.pages) {
     if (!page.isClosed()) {
       session.currentId ||= id;
+      await denyAttachedPageDownloads(browserContext, page);
       return page;
     }
   }
@@ -1024,7 +1086,9 @@ async function ensureSessionPage(session) {
       `Browser page limit (${MAX_PAGES_PER_SESSION}) reached for this session.`,
     );
   }
-  return adoptPage(unowned || (await browserContext.newPage()), session.id);
+  const page = unowned || (await browserContext.newPage());
+  await denyAttachedPageDownloads(browserContext, page);
+  return adoptPage(page, session.id);
 }
 
 // Last snapshot text per page, keyed by the options that shape it, so
@@ -1247,7 +1311,11 @@ async function ensureBrowser(config) {
       await installDownloadGuard(attachedContext);
       attachedContext.on("page", (page) => {
         const owner = activeExecutionSession || "default";
-        if (!pageToSession.has(page)) adoptPage(page, owner);
+        void denyAttachedPageDownloads(attachedContext, page)
+          .then(() => {
+            if (!pageToSession.has(page)) adoptPage(page, owner);
+          })
+          .catch(() => page.close().catch(() => {}));
       });
       // Adopt the tabs that are already open so the agent sees them immediately.
       for (const page of attachedContext.pages()) {
@@ -1680,7 +1748,9 @@ function buildSandbox(session, consoleMessages) {
         `Browser page limit (${MAX_PAGES_PER_SESSION}) reached for this session.`,
       );
     }
-    const page = adoptPage(await browserContext.newPage(), session.id);
+    const rawPage = await browserContext.newPage();
+    await denyAttachedPageDownloads(browserContext, rawPage);
+    const page = adoptPage(rawPage, session.id);
     if (url) await page.goto(String(url), options);
     return wrap(page, realm);
   });
