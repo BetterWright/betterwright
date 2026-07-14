@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   package-integrity:
-    name: Package integrity
+    # Keep this display name stable because main branch protection requires it.
+    name: Worker copies in sync
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +28,8 @@ jobs:
       - run: npm run check:package
 
   node:
-    name: Node browser tests
+    # Keep this display name stable because main branch protection requires it.
+    name: Node tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
