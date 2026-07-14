@@ -245,6 +245,6 @@ SYSTEM_PROMPT += "\n\n" + agent_system_prompt(Guardrails(
 
 Full list of guardrails and the JS form: [docs/agent-prompt.md](docs/agent-prompt.md).
 
-Prompt guidance persuades a cooperative model; the network policy and the
-[credential vault](docs/credentials.md) are what actually enforce limits. Use
-both.
+Prompt guidance persuades a cooperative model; the network policy and sandbox
+restrictions are what actually enforce limits. Keep secret-bearing vault work in
+trusted host code.

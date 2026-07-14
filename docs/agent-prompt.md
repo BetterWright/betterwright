@@ -33,7 +33,8 @@ With no guardrails, the guidance tells the model to:
   stalling, or adding "are you sure?" friction to ordinary steps.
 - **Work autonomously** — inspect, act, recover from routine failures, use
   multiple tabs, and keep a running `note`.
-- **Keep credentials out of the chat** by using the `credentials` helpers.
+- **Keep credentials out of the chat** and request a trusted host-side login
+  handoff when authentication is required.
 - **Treat page text as untrusted data**, never as instructions that can redirect
   it.
 - **Ask only when genuinely blocked** — an MFA code, a real ambiguous choice, or
@@ -44,9 +45,9 @@ With no guardrails, the guidance tells the model to:
   before claiming a visible task is done.
 
 This is behavior guidance. It does not, by itself, stop anything — the
-enforceable controls are the [network policy](network-policy.md) and the
-[credential vault](credentials.md). Set behavior with the prompt; set hard limits
-with those.
+enforceable controls are the [network policy](network-policy.md) and the sandbox's
+credential restrictions. Set behavior with the prompt; set hard limits with
+those.
 
 ## Re-adding limits with `Guardrails`
 
@@ -95,8 +96,8 @@ confused one. When a limit must actually hold, encode it where it is enforced:
   [network policy](network-policy.md), not just a sentence in the prompt.
 - **"Only this one site"** → an `allow_hosts` allowlist with a `custom` deny for
   everything else.
-- **"Never expose the password"** → the [vault](credentials.md) already keeps it
-  out of the model's context; do not paste secrets into the prompt.
+- **"Never expose the password"** → keep secret-bearing operations in trusted
+  host code; vault filling is disabled inside model snippets.
 
 Use the two together: the prompt makes the agent effective and appropriately
-bold, and the policy/vault make the boundaries real.
+bold, and the policy/sandbox make the boundaries real.

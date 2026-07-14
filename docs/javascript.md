@@ -113,13 +113,14 @@ policy exactly; see [network-policy.md](network-policy.md).
 
 ## Providing a vault
 
-The JS client has no built-in credential store. To enable the `credentials`
-helpers inside snippets, pass an object implementing the vault RPC contract:
+The JS client has no built-in credential store. To enable non-secret
+`credentials` management helpers inside snippets, pass an object implementing
+the vault RPC contract:
 
 ```js
 new BetterWright({
   vault: {
-    async handleRequest(action, payload, origin) { /* list|save|fill|… */ },
+    async handleRequest(action, payload, origin) { /* list|save|update|remove */ },
     redact(value) { return value; },   // optional: scrub secrets from output
   },
 });
@@ -127,8 +128,8 @@ new BetterWright({
 
 The method receives the same `action`/`payload`/`origin` the Python
 `CredentialVault.handle_request` does, so the two can share a backend if you
-expose one. Omit `vault` to run without credentials — the helpers then report
-that no vault is configured.
+expose one. Secret-bearing fill methods fail inside `run()`; use them only from
+trusted host code. Omit `vault` to run without credential management helpers.
 
 ## Sessions
 

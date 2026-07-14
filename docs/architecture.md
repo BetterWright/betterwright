@@ -90,11 +90,11 @@ full.
 ### Secrets
 
 The [credential vault](credentials.md) stores passwords encrypted, scoped to an
-origin, outside Chromium's profile. Passwords are typed into pages by the trusted
-worker and never returned to the model. As a last line, every value the vault has
-handled is redacted from `run()` output. The vault's stated limit: it defends
-against accidental disclosure, not against an attacker who can already read your
-files.
+origin, outside Chromium's profile. Secret-bearing fill operations are not
+available to model-authored snippets because arbitrary DOM access would make the
+filled value readable. As a last line, values the vault has handled are redacted
+from `run()` output. The vault's stated limit: it defends against accidental
+disclosure, not against an attacker who can already read your files.
 
 ### Untrusted page content
 

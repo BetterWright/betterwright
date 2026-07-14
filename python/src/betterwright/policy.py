@@ -33,19 +33,23 @@ GuardDecision = dict[str, Any]
 #: Hostnames that resolve to cloud instance-metadata services. These are
 #: blocked regardless of ``allow_private_network`` because credentials for the
 #: machine's cloud identity are never legitimate browsing targets.
-METADATA_HOSTNAMES = frozenset({
-    "metadata.google.internal",
-    "metadata.goog",
-})
+METADATA_HOSTNAMES = frozenset(
+    {
+        "metadata.google.internal",
+        "metadata.goog",
+    }
+)
 
 #: Literal addresses of instance-metadata services (AWS/GCP/Azure link-local,
 #: Alibaba Cloud, AWS ECS task metadata, EC2 IPv6 metadata).
-METADATA_ADDRESSES = frozenset({
-    "169.254.169.254",
-    "169.254.170.2",
-    "100.100.100.200",
-    "fd00:ec2::254",
-})
+METADATA_ADDRESSES = frozenset(
+    {
+        "169.254.169.254",
+        "169.254.170.2",
+        "100.100.100.200",
+        "fd00:ec2::254",
+    }
+)
 
 
 def _parse_address(hostname: str) -> ipaddress._BaseAddress | None:
@@ -59,9 +63,9 @@ def _parse_address(hostname: str) -> ipaddress._BaseAddress | None:
 def _address_category(address: ipaddress._BaseAddress) -> str:
     """Classify an IP literal as ``metadata``, ``loopback``, ``private``, or ``public``."""
 
-    if str(address) in METADATA_ADDRESSES or address in ipaddress.ip_network(
-        "fd00:ec2::/32"
-    ):
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return _address_category(address.ipv4_mapped)
+    if str(address) in METADATA_ADDRESSES or address in ipaddress.ip_network("fd00:ec2::/32"):
         return "metadata"
     if address.is_loopback:
         return "loopback"
@@ -117,9 +121,7 @@ class NetworkPolicy:
     #: Optional final hook: ``custom(url, details) -> Optional[GuardDecision]``.
     #: Return ``None`` to keep the decision made so far, or a decision dict
     #: (``{"allowed": bool, "reason": str}``) to override it.
-    custom: Callable[[str, dict], GuardDecision | None] | None = field(
-        default=None, repr=False
-    )
+    custom: Callable[[str, dict], GuardDecision | None] | None = field(default=None, repr=False)
 
     def _host_matches(self, entry: str, hostname: str, port: int | None) -> bool:
         entry = entry.lower().strip()
@@ -204,9 +206,7 @@ class NetworkPolicy:
         address = _parse_address(hostname)
         if address is not None:
             category = _address_category(address)
-            if category == "loopback" and not (
-                self.allow_loopback or self.allow_private_network
-            ):
+            if category == "loopback" and not (self.allow_loopback or self.allow_private_network):
                 return {
                     "allowed": False,
                     "reason": "loopback address (set allow_loopback for local dev)",
