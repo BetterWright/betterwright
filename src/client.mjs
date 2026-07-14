@@ -40,6 +40,30 @@ function resolveHeadless(headless) {
   return headless !== false;
 }
 
+function resolveBrowser(browser) {
+  const value = String(
+    browser ?? process.env.BETTERWRIGHT_BROWSER ?? "cloak",
+  )
+    .trim()
+    .toLowerCase();
+  if (!["cloak", "chromium"].includes(value)) {
+    throw new TypeError('browser must be "cloak" or "chromium".');
+  }
+  return value;
+}
+
+function resolvePublicSearchPolicy(policy) {
+  const value = String(
+    policy ?? process.env.BETTERWRIGHT_PUBLIC_SEARCH_POLICY ?? "block",
+  )
+    .trim()
+    .toLowerCase();
+  if (!["block", "allow"].includes(value)) {
+    throw new TypeError('publicSearchPolicy must be "block" or "allow".');
+  }
+  return value;
+}
+
 function defaultHome() {
   const configured = (process.env.BETTERWRIGHT_HOME || "").trim();
   return configured || path.join(os.homedir(), ".betterwright");
@@ -60,8 +84,10 @@ export class BetterWright {
    * @param {string} [options.home] state directory (default ~/.betterwright)
    * @param {NetworkPolicy} [options.policy] network policy
    * @param {object} [options.vault] optional vault with `handleRequest(action, payload, origin)`
-   * @param {string} [options.executablePath] explicit Chromium binary; when
-   *   omitted, CLOAKBROWSER_BINARY_PATH is used if set
+   * @param {"cloak"|"chromium"} [options.browser="cloak"] managed browser;
+   *   stock Chromium is an explicit degraded fallback
+   * @param {string} [options.executablePath] explicit Chromium binary; selecting
+   *   one also selects the Chromium fallback
    * @param {boolean|"auto"} [options.headless="auto"] "auto" shows a window when
    *   a display is available and runs headless otherwise; true/false force it
    * @param {number} [options.defaultTimeout=30] per-snippet timeout, seconds
@@ -70,7 +96,9 @@ export class BetterWright {
    *   instead of launching one; the launch-time network floor is inactive in
    *   this mode — only the per-request policy applies.
    * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
-   *   top-level Google, Bing, or DuckDuckGo search navigations
+   *   allowed top-level Google, Bing, or DuckDuckGo search navigations
+   * @param {"block"|"allow"} [options.publicSearchPolicy="block"] route broad
+   *   discovery through the host search tool instead of a public search UI
    * @param {"ask"|"allow"|"deny"} [options.downloadPolicy="ask"] require a
    *   trusted host to mark an individual run approved, allow every run, or
    *   deny downloads entirely
@@ -79,12 +107,16 @@ export class BetterWright {
     this.home = options.home || defaultHome();
     this.policy = options.policy || new NetworkPolicy();
     this.vault = options.vault || null;
+    const requestedBrowser = resolveBrowser(options.browser);
+    this.browserFlavor = options.executablePath ? "chromium" : requestedBrowser;
     const cloakExecutable = (process.env.CLOAKBROWSER_BINARY_PATH || "").trim();
-    this.executablePath = options.executablePath || cloakExecutable;
-    this.browserFlavor = !options.executablePath && cloakExecutable ? "cloak" : "chromium";
+    this.executablePath =
+      options.executablePath ||
+      (this.browserFlavor === "cloak" ? cloakExecutable : "");
     this.headless = resolveHeadless(options.headless);
     this.connectOverCdp = (options.connectOverCdp || "").trim();
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
+    this.publicSearchPolicy = resolvePublicSearchPolicy(options.publicSearchPolicy);
     this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
 
@@ -115,6 +147,7 @@ export class BetterWright {
       headless: this.headless,
       cdpEndpoint: this.connectOverCdp,
       searchMinIntervalMs: this.searchMinIntervalMs,
+      publicSearchPolicy: this.publicSearchPolicy,
       downloadPolicy: this.downloadPolicy,
       outputLimit: 12_000,
       maxArtifactBytes: 100 * 1024 * 1024,

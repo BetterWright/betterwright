@@ -16,6 +16,11 @@ import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
 
 const require = createRequire(import.meta.url);
 
+// The broad deterministic suite exercises BetterWright's worker contract with
+// Playwright's pinned test browser. A separate opt-in E2E test covers the real
+// managed Cloak binary.
+process.env.BETTERWRIGHT_BROWSER = "chromium";
+
 function runtimeReady() {
   try {
     const core = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH
@@ -201,6 +206,45 @@ test("navigate and read the title", opts, async () => {
   }
 });
 
+test("public search UIs route agents to the host search tool", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const direct = await bw.run(
+      "await page.goto('https://www.google.com/search?q=betterwright'); return 'loaded'",
+    );
+    assert.equal(direct.ok, false);
+    assert.match(direct.error, /host web-search\/research tool/i);
+
+    const clicked = await bw.run(`
+      await page.setContent(
+        '<a id="search" href="https://www.bing.com/search?q=betterwright">Search</a>'
+      );
+      await page.locator('#search').click();
+      return page.url();
+    `);
+    assert.equal(clicked.ok, false);
+    assert.ok(
+      clicked.events?.some((event) => event.type === "public-search-blocked"),
+      JSON.stringify(clicked.events),
+    );
+
+    for (const url of [
+      "https://www.bing.com/images/search?q=betterwright",
+      "https://www.bing.com/videos/search?q=betterwright",
+      "https://www.bing.com/news/search?q=betterwright",
+      "https://lite.duckduckgo.com/lite/?q=betterwright",
+    ]) {
+      const variant = await bw.run(
+        `await page.goto(${JSON.stringify(url)}); return 'loaded'`,
+      );
+      assert.equal(variant.ok, false, url);
+      assert.match(variant.error, /host web-search\/research tool/i, url);
+    }
+  } finally {
+    await bw.close();
+  }
+});
+
 test("attach mode can drive an externally launched Chromium", opts, async () => {
   const runtime = await externalChromium();
   const wrapperDir = unsupportedDownloadGuardModule();
@@ -268,6 +312,26 @@ test("attach mode can drive an externally launched Chromium", opts, async () => 
     if (previousCorePath === undefined)
       delete process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH;
     else process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = previousCorePath;
+  }
+});
+
+test("attach failures do not expose the trusted CDP endpoint to model output", opts, async () => {
+  const port = await unusedPort();
+  const secret = "TOPSECRET-CDP-TOKEN";
+  const endpoint = `http://127.0.0.1:${port}/json?token=${secret}`;
+  const bw = new BetterWright({
+    home: tempHome(),
+    browser: "chromium",
+    connectOverCdp: endpoint,
+  });
+  try {
+    const result = await bw.run("return page.url()", { timeout: 5 });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /REDACTED_CDP_ENDPOINT/);
+    assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+    assert.doesNotMatch(JSON.stringify(result), new RegExp(String(port)));
+  } finally {
+    await bw.close();
   }
 });
 
@@ -565,6 +629,68 @@ test("downloads require a trusted per-run approval by default", opts, async () =
   }
 });
 
+test("download approval cannot be borrowed by a different browser session", opts, async () => {
+  const body = Buffer.from("cross-session download must stay blocked");
+  let downloadRequests = 0;
+  const server = await listen((request, response) => {
+    if (request.url === "/") {
+      response.setHeader("content-type", "text/html");
+      response.end('<a id="download" href="/report.txt" download>Download</a>');
+      return;
+    }
+    downloadRequests += 1;
+    response.setHeader("content-type", "text/plain");
+    response.setHeader(
+      "content-disposition",
+      'attachment; filename="report.txt"',
+    );
+    response.end(body);
+  });
+  const home = tempHome();
+  const bw = new BetterWright({
+    home,
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const armed = await bw.run(
+      `
+        await page.goto(${JSON.stringify(server.origin)});
+        await page.evaluate(() => {
+          setTimeout(() => {
+            window.downloadAttempted = true;
+            document.querySelector('#download').click();
+          }, 750);
+        });
+        return 'armed';
+      `,
+      { session: "attacker" },
+    );
+    assert.equal(armed.ok, true, armed.error);
+
+    const approvedVictim = await bw.run(
+      "await page.waitForTimeout(1800); return 'victim complete'",
+      { session: "victim", approvedDownloads: true },
+    );
+    assert.equal(approvedVictim.ok, true, approvedVictim.error);
+    assert.equal(
+      (approvedVictim.artifacts || []).some((item) => item.kind === "download"),
+      false,
+    );
+
+    const attempted = await bw.run(
+      "return page.evaluate(() => window.downloadAttempted === true)",
+      { session: "attacker" },
+    );
+    assert.equal(attempted.result, true, attempted.error);
+    assert.equal(downloadRequests, 1);
+    assert.equal(directorySize(path.join(home, "artifacts")), 0);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
 test("downloadPolicy deny rejects even trusted approval", opts, async () => {
   const bw = new BetterWright({
     home: tempHome(),
@@ -596,7 +722,7 @@ test("screenshot without an extension still yields a png", opts, async () => {
   }
 });
 
-test("visible bot challenges are reported without bypassing them", opts, async () => {
+test("visible bot challenges include actionable state and a vision artifact", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
     const result = await bw.run(
@@ -604,7 +730,102 @@ test("visible bot challenges are reported without bypassing them", opts, async (
     );
     assert.equal(result.ok, true, result.error);
     assert.equal(result.challenges?.[0]?.type, "bot_challenge");
-    assert.match(result.warnings?.[0] || "", /Do not retry/i);
+    assert.equal(result.challenges?.[0]?.solve?.maxAttempts, 3);
+    assert.ok(result.warnings?.some((warning) => /solve it before retrying/i.test(warning)));
+    assert.ok(result.artifacts?.some((artifact) => artifact.kind === "captcha"));
+  } finally {
+    await bw.close();
+  }
+});
+
+test("iframe-only bot challenges are detected", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<iframe srcdoc="<h1>Verify you are human</h1>"></iframe>');
+      return 'loaded';
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.challenges?.[0]?.detectedIn, "frame");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("a completed provider response clears the challenge and resumes", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const unresolved = await bw.run(`
+      await page.setContent(
+        "<p>I'm not a robot</p>" +
+        "<textarea hidden name='g-recaptcha-response'></textarea>" +
+        "<textarea hidden name='g-recaptcha-response'></textarea>"
+      );
+      return 'waiting';
+    `);
+    assert.equal(unresolved.ok, true, unresolved.error);
+    assert.equal(unresolved.challenges?.[0]?.provider, "recaptcha");
+
+    const partial = await bw.run(`
+      await page.locator('[name="g-recaptcha-response"]').first().evaluate(
+        element => { element.value = 'first-provider-response'; }
+      );
+      return 'one widget remains';
+    `);
+    assert.equal(partial.challenges?.[0]?.provider, "recaptcha");
+
+    const solved = await bw.run(`
+      await page.locator('[name="g-recaptcha-response"]').evaluateAll(
+        elements => elements.forEach(
+          (element, index) => { element.value = 'provider-response-' + index; }
+        )
+      );
+      return 'continue original task';
+    `);
+    assert.equal(solved.ok, true, solved.error);
+    assert.equal(solved.result, "continue original task");
+    assert.equal(solved.challenges, undefined);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("failed snippets preserve bot-challenge evidence for recovery", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<h1>Verify you are human to continue</h1>');
+      throw new Error('blocked action');
+    `);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /blocked action/);
+    assert.equal(result.challenges?.[0]?.type, "bot_challenge");
+    assert.ok(result.artifacts?.some((artifact) => artifact.kind === "captcha"));
+    assert.ok(Array.isArray(result.pages));
+  } finally {
+    await bw.close();
+  }
+});
+
+test("timed-out challenge runs report that the page must be reopened", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(
+      `
+        await page.setContent('<h1>Verify you are human to continue</h1>');
+        await new Promise(() => {});
+      `,
+      { timeout: 5 },
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /timed out/i);
+    assert.equal(result.challenges?.[0]?.solve?.resumeOnClear, false);
+    assert.equal(result.challenges?.[0]?.solve?.reopenRequired, true);
+    assert.equal(result.challenges?.[0]?.recovery?.pagePreserved, false);
+    assert.match(result.warnings?.join(" ") || "", /next browser call, reopen/i);
+
+    const restarted = await bw.run("return page.url()");
+    assert.equal(restarted.ok, true, restarted.error);
   } finally {
     await bw.close();
   }
@@ -614,15 +835,44 @@ test("captcha.click activates a checkbox-style challenge and returns a fresh sna
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
     const result = await bw.run(`
-      await page.setContent('<button id="verify">Verify you are human</button>');
+      await page.setContent('<button id="verify" style="width:300px;height:80px;padding:0">Verify you are human</button><script>window.pointerMoves=0;document.addEventListener("pointermove",()=>window.pointerMoves++);</script>');
       await page.locator('#verify').evaluate(element => {
-        element.addEventListener('click', () => { element.textContent = 'Verified'; });
+        element.addEventListener('click', event => {
+          const rect = element.getBoundingClientRect();
+          window.clickRatio = (event.clientX - rect.left) / rect.width;
+          if (window.clickRatio <= 0.2) element.textContent = 'Verified';
+        });
       });
       const bounds = await page.locator('#verify').boundingBox();
-      return captcha.click(bounds);
+      await captcha.click(bounds);
+      return {
+        text: await page.locator('#verify').textContent(),
+        pointerMoves: await page.evaluate(() => window.pointerMoves),
+        clickRatio: await page.evaluate(() => window.clickRatio),
+      };
     `);
     assert.equal(result.ok, true, result.error);
-    assert.match(result.result, /Verified/);
+    assert.equal(result.result.text, "Verified");
+    assert.ok(result.result.pointerMoves >= 18, result.result.pointerMoves);
+    assert.ok(result.result.clickRatio >= 0.12, result.result.clickRatio);
+    assert.ok(result.result.clickRatio <= 0.18, result.result.clickRatio);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("captcha.inspect emits a challenge image for model vision", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<div id="challenge" style="width:300px;height:180px">Select every bus</div>');
+      const bounds = await page.locator('#challenge').boundingBox();
+      return captcha.inspect(bounds);
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.kind, "captcha");
+    assert.match(result.result.instruction, /inspect the attached challenge/i);
+    assert.equal(result.artifacts?.[0]?.kind, "captcha");
   } finally {
     await bw.close();
   }
@@ -790,6 +1040,83 @@ test("empty envelope collections are omitted, not sent as []", opts, async () =>
     assert.ok(!("console" in result), "console should be omitted when empty");
     assert.ok(!("events" in result), "events should be omitted when empty");
     assert.ok(!("artifacts" in result), "artifacts should be omitted when empty");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("model code cannot reach CDP or Playwright private channels", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      return {
+        pageContext: typeof page.context,
+        contextCdp: typeof context.newCDPSession,
+        pageChannel: typeof page._channel,
+        contextBrowser: typeof context.browser,
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result, {
+      pageContext: "undefined",
+      contextCdp: "undefined",
+      pageChannel: "undefined",
+      contextBrowser: "undefined",
+    });
+  } finally {
+    await bw.close();
+  }
+});
+
+test("returned Playwright objects cannot serialize host internals", opts, async () => {
+  const variable = "BETTERWRIGHT_SERIALIZER_SENTINEL";
+  const sentinel = `serializer-secret-${Date.now()}`;
+  const previous = process.env[variable];
+  process.env[variable] = sentinel;
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const contextResult = await bw.run("return context");
+    assert.equal(contextResult.ok, true, contextResult.error);
+    assert.deepEqual(contextResult.result, { type: "BrowserContext" });
+
+    const consoleResult = await bw.run(`
+      const pending = page.waitForEvent('console');
+      await page.evaluate(() => console.log('safe-console-event'));
+      return pending;
+    `);
+    assert.equal(consoleResult.ok, true, consoleResult.error);
+    assert.equal(consoleResult.result.type, "ConsoleMessage");
+    assert.equal(consoleResult.result.level, "log");
+    assert.equal(consoleResult.result.text, "safe-console-event");
+
+    const serialized = JSON.stringify([contextResult, consoleResult]);
+    assert.ok(!serialized.includes(sentinel), serialized);
+    assert.doesNotMatch(
+      serialized,
+      /_connection|_channel|newCDPSession|executablePath|process\.env/,
+    );
+  } finally {
+    await bw.close();
+    if (previous === undefined) delete process.env[variable];
+    else process.env[variable] = previous;
+  }
+});
+
+test("model navigation cannot open browser-internal control pages", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const chrome = await bw.run(
+      "await page.goto('chrome://version'); return page.locator('body').innerText()",
+    );
+    assert.equal(chrome.ok, false);
+    assert.match(chrome.error, /scheme is not available: chrome:/);
+    assert.doesNotMatch(JSON.stringify(chrome), /remote-debugging|fingerprint=/i);
+
+    const devtools = await bw.run(
+      "await openPage('devtools://devtools/bundled/inspector.html'); return 'opened'",
+    );
+    assert.equal(devtools.ok, false);
+    assert.match(devtools.error, /scheme is not available: devtools:/);
   } finally {
     await bw.close();
   }

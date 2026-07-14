@@ -26,6 +26,7 @@ from betterwright._display import resolve_headless
 from betterwright._home import betterwright_home
 from betterwright.policy import NetworkPolicy
 from betterwright.runtime import (
+    cloakbrowser_dir,
     node_executable,
     playwright_core_dir,
     worker_path,
@@ -37,6 +38,8 @@ logger = logging.getLogger("betterwright")
 _DEFAULT_TIMEOUT_SECONDS = 30
 _WORKER_START_TIMEOUT_SECONDS = 15
 _DOWNLOAD_POLICIES = frozenset({"ask", "allow", "deny"})
+_BROWSERS = frozenset({"cloak", "chromium"})
+_PUBLIC_SEARCH_POLICIES = frozenset({"block", "allow"})
 
 
 def _normalize_download_policy(value: str) -> str:
@@ -46,6 +49,26 @@ def _normalize_download_policy(value: str) -> str:
             'download_policy must be "ask", "allow", or "deny"; '
             f"received {value!r}"
         )
+    return policy
+
+
+def _normalize_browser(value: str | None) -> str:
+    raw = value if value is not None else os.environ.get("BETTERWRIGHT_BROWSER", "cloak")
+    browser = str(raw).strip().lower()
+    if browser not in _BROWSERS:
+        raise ValueError('browser must be "cloak" or "chromium"')
+    return browser
+
+
+def _normalize_public_search_policy(value: str | None) -> str:
+    raw = (
+        value
+        if value is not None
+        else os.environ.get("BETTERWRIGHT_PUBLIC_SEARCH_POLICY", "block")
+    )
+    policy = str(raw).strip().lower()
+    if policy not in _PUBLIC_SEARCH_POLICIES:
+        raise ValueError('public_search_policy must be "block" or "allow"')
     return policy
 
 
@@ -67,8 +90,10 @@ class Bridge:
     vault:
         Credential store, or ``None`` to disable the ``credentials`` helpers.
     executable_path:
-        Explicit Chromium binary. When unset, ``CLOAKBROWSER_BINARY_PATH`` is
-        honored before falling back to the pinned Playwright Chromium.
+        Explicit Chromium binary. Supplying one selects the Chromium fallback.
+    browser:
+        ``"cloak"`` (the managed default) or the explicit, degraded
+        ``"chromium"`` fallback.
     """
 
     def __init__(
@@ -78,24 +103,32 @@ class Bridge:
         policy: NetworkPolicy | None = None,
         vault: CredentialVault | None = None,
         executable_path: str | None = None,
+        browser: str | None = None,
         headless: bool | str = "auto",
         default_timeout: int = _DEFAULT_TIMEOUT_SECONDS,
         connect_over_cdp: str | None = None,
         search_min_interval_ms: int = 0,
+        public_search_policy: str | None = None,
         download_policy: str = "ask",
     ) -> None:
         self.home = Path(home).expanduser().resolve() if home else betterwright_home()
         self.policy = policy if policy is not None else NetworkPolicy()
         self.vault = vault
+        requested_browser = _normalize_browser(browser)
+        self.browser_flavor = "chromium" if executable_path else requested_browser
         cloak_executable = os.environ.get("CLOAKBROWSER_BINARY_PATH", "").strip()
-        self.executable_path = executable_path or cloak_executable or None
-        self.browser_flavor = (
-            "cloak" if executable_path is None and cloak_executable else "chromium"
+        self.executable_path = (
+            executable_path
+            or (cloak_executable if self.browser_flavor == "cloak" else "")
+            or None
         )
         self.headless = resolve_headless(headless)
         self.default_timeout = max(int(default_timeout), 5)
         self.connect_over_cdp = (connect_over_cdp or "").strip()
         self.search_min_interval_ms = max(int(search_min_interval_ms), 0)
+        self.public_search_policy = _normalize_public_search_policy(
+            public_search_policy
+        )
         self.download_policy = _normalize_download_policy(download_policy)
 
         self._process: subprocess.Popen[str] | None = None
@@ -120,6 +153,9 @@ class Bridge:
         core = playwright_core_dir()
         if core is not None:
             env["BETTERWRIGHT_PLAYWRIGHT_CORE_PATH"] = str(core)
+        cloak = cloakbrowser_dir()
+        if cloak is not None:
+            env["BETTERWRIGHT_CLOAKBROWSER_PATH"] = str(cloak)
         return env
 
     def _worker_config(self) -> dict:
@@ -145,6 +181,7 @@ class Bridge:
             "headless": bool(self.headless),
             "cdpEndpoint": self.connect_over_cdp,
             "searchMinIntervalMs": self.search_min_interval_ms,
+            "publicSearchPolicy": self.public_search_policy,
             "downloadPolicy": self.download_policy,
             "outputLimit": 12_000,
             "maxArtifactBytes": 100 * 1024 * 1024,
@@ -163,7 +200,7 @@ class Bridge:
             node = node_executable()
             if not node:
                 raise WorkerStartError(
-                    "Node.js was not found on PATH. Install Node 18+ and rerun "
+                    "Node.js was not found on PATH. Install Node 22+ and rerun "
                     "`betterwright setup`."
                 )
             worker = worker_path()

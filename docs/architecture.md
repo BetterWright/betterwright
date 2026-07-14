@@ -3,27 +3,29 @@
 ## The shape of it
 
 ```
-┌─────────────────────────┐         JSON lines over stdio        ┌──────────────────────────┐
-│  Client (Python or JS)  │  ─────────  execute  ──────────────▶ │   Node worker            │
-│                         │                                      │                          │
-│  • owns the worker      │  ◀──────  guard / vault RPC  ──────  │  • persistent Chromium   │
-│  • NetworkPolicy        │  ─────────  rpc_response  ─────────▶ │  • sandbox (node:vm)     │
-│  • CredentialVault      │                                      │  • per-session pages     │
-│  • RunResult            │  ◀──────────  result  ────────────── │  • transport SOCKS proxy │
-└─────────────────────────┘                                      └──────────────────────────┘
+┌─────────────────────────────┐       JSON lines over stdio       ┌──────────────────────────┐
+│ Client (Python or JavaScript)│  ────────  execute  ───────────▶ │ Bundled Node worker      │
+│                             │                                   │                          │
+│ • owns the worker           │  ◀────  guard / vault RPC  ─────  │ • managed Cloak browser  │
+│ • NetworkPolicy            │  ───────  rpc_response  ────────▶ │ • sandbox (node:vm)      │
+│ • CredentialVault          │                                   │ • per-session pages      │
+│ • RunResult                │  ◀─────────  result  ───────────── │ • transport SOCKS proxy  │
+└─────────────────────────────┘                                   └──────────────────────────┘
 ```
 
 The client and the worker are separate processes. The client owns the worker's
 lifetime, sends it snippets to run, and answers the two kinds of callback the
 worker makes: `guard` (is this request allowed?) and `vault` (a credential
-operation). The worker owns Chromium and the sandbox the model's code runs in.
+operation). The worker owns the browser and the sandbox the model's code runs in.
 
-Python and JavaScript clients are interchangeable because both drive the *same*
-`worker.mjs`. The runtime lives once, in Node; the two clients are thin.
+Python and JavaScript clients share the same Node worker implementation. The npm
+package loads `src/worker.mjs`; the Python wheel bundles a synchronized copy at
+`betterwright/_worker/worker.mjs`. `scripts/sync-worker.mjs` keeps the worker and
+its helper modules byte-for-byte aligned, while both client layers stay thin.
 
 ## Why a separate worker process
 
-Playwright is a Node library, and Chromium is heavy and long-lived. Running it
+Playwright is a Node library, and a browser is heavy and long-lived. Running it
 in its own process means:
 
 - The browser survives across many `run()` calls — an agent opens a tab in one
@@ -62,6 +64,10 @@ in proxies that remove the escape-hatch surface: request interception (`route`,
 and any method that could read BetterWright's own profile or vault or write
 outside the artifact directory. There is no `process`, `require`, or `fs`.
 
+The raw browser handle, CDP sessions, and Playwright private properties remain
+inside the worker. `connectOverCdp` / `connect_over_cdp` is trusted host launch
+configuration, never a snippet global or model-controlled browser-tool option.
+
 We do **not** claim `node:vm` is a security boundary — it isn't, and the
 documentation says so in the worker itself. The sandbox raises the cost of
 misusing the API and removes the obvious footguns. The controls that are
@@ -71,7 +77,8 @@ actually relied upon are below it, at the browser and network layer.
 
 The controls that hold even if a snippet found a way around the JS facades:
 
-1. **Chromium resolver rules.** Launched with `--host-resolver-rules` mapping
+1. **Browser resolver rules.** The Chromium-derived managed browser is launched
+   with `--host-resolver-rules` mapping
    cloud-metadata hostnames and link-local ranges to `NOTFOUND`. WebRTC is
    pinned to the proxy path so it can't send UDP around it.
 2. **A mandatory transport proxy.** All traffic — including localhost — is
@@ -111,20 +118,30 @@ Everything lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`):
 ```
 ~/.betterwright/
 ├── browser/
-│   ├── profile/        persistent Chromium profile (cookies, logins)
+│   ├── profile/        persistent browser profile (cookies, logins)
 │   └── runtime/        ephemeral profiles when the main one is locked
 ├── artifacts/          screenshots, downloads, spilled output (quota-managed)
 │   └── downloads/
 ├── vault/              credentials.enc, vault.key, audit.jsonl
-└── node/               playwright-core + Chromium, if installed via `betterwright setup`
+└── node/               pinned Playwright + CloakBrowser wrappers for pip installs
 ```
+
+The separately licensed CloakBrowser binary is cached by its official wrapper,
+not copied into BetterWright's package or home directory. `betterwright setup`
+downloads it directly from CloakHQ's release source and verifies the wrapper's
+pinned Ed25519 signature before extraction.
 
 Delete the directory to reset everything; delete `vault/` to drop stored
 credentials; delete `browser/profile/` to sign out everywhere.
 
-## The pinned Playwright version
+## Pinned browser integration
 
-The worker, the JS facades it builds, and the downloaded Chromium revision all
-have to agree, so the Playwright version is pinned (currently `1.61.1`) in both
-packages. `betterwright setup` installs exactly that build. Bumping it is a
-deliberate, tested change — not a range that floats underneath you.
+The worker, the JS facades it builds, Playwright, and the CloakBrowser wrapper
+have to agree, so both wrapper versions are pinned in the Python and JavaScript
+packages. `betterwright setup` installs those exact integrations and asks the
+official CloakBrowser wrapper for its signed browser build. Bumping either
+wrapper is a deliberate, tested change, not a range that floats underneath you.
+
+Managed CloakBrowser reduces common browser-fingerprint false positives but
+does not guarantee undetectability. Stock Chromium remains an explicit
+compatibility/test fallback and may expose obvious automation signals.

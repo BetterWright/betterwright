@@ -17,7 +17,12 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def browser(tmp_path):
-    with BetterWright(home=tmp_path, policy=NetworkPolicy(), headless=True) as bw:
+    with BetterWright(
+        home=tmp_path,
+        policy=NetworkPolicy(),
+        browser="chromium",
+        headless=True,
+    ) as bw:
         yield bw
 
 
@@ -52,7 +57,33 @@ def test_visible_bot_challenge_is_reported(browser):
     )
     assert result.ok, result.error
     assert result.challenges[0]["type"] == "bot_challenge"
-    assert "Do not retry" in result.warnings[0]
+    assert result.challenges[0]["solve"]["maxAttempts"] == 3
+    assert any("solve it before retrying" in warning for warning in result.warnings)
+    assert any(artifact.kind == "captcha" for artifact in result.artifacts)
+
+
+def test_iframe_only_bot_challenge_is_reported(browser):
+    result = browser.run(
+        "await page.setContent('<iframe srcdoc=\"<h1>Verify you are human</h1>\"></iframe>'); "
+        "return 'loaded'"
+    )
+    assert result.ok, result.error
+    assert any(
+        challenge["type"] == "bot_challenge"
+        and challenge["detectedIn"] == "frame"
+        for challenge in result.challenges
+    )
+
+
+def test_failed_run_preserves_bot_challenge_evidence(browser):
+    result = browser.run(
+        "await page.setContent('<h1>Verify you are human to continue</h1>'); "
+        "throw new Error('blocked action')"
+    )
+    assert not result.ok
+    assert "blocked action" in (result.error or "")
+    assert result.challenges[0]["type"] == "bot_challenge"
+    assert any(artifact.kind == "captcha" for artifact in result.artifacts)
 
 
 def test_captcha_click_activates_checkbox_style_challenge(browser):
@@ -95,6 +126,18 @@ def test_captcha_read_text_emits_cropped_image(browser):
     shots = result.screenshots("captcha")
     assert len(shots) == 1
     assert shots[0].read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_captcha_inspect_emits_challenge_image(browser):
+    result = browser.run(
+        "await page.setContent('<div id=\"challenge\" "
+        "style=\"width:300px;height:180px\">Select every bus</div>'); "
+        "const bounds = await page.locator('#challenge').boundingBox(); "
+        "return captcha.inspect(bounds)"
+    )
+    assert result.ok, result.error
+    assert result.value["kind"] == "captcha"
+    assert "Inspect the attached challenge" in result.value["instruction"]
 
 
 def test_human_helpers_drive_pointer_keyboard_and_wheel(browser):

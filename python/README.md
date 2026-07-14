@@ -18,13 +18,19 @@ with BetterWright() as bw:
 
 ## Install
 
-Requires **Node.js 18+** on `PATH`. Chromium is downloaded once by `setup`.
+Requires **Node.js 22+** on `PATH`. The managed Cloak browser is downloaded
+once by `setup`; its wrapper and Playwright runtime stay pinned by BetterWright.
 
 ```bash
 pip install betterwright
-betterwright setup     # installs the pinned Playwright runtime + Chromium
+betterwright setup     # installs Playwright + Cloak and verifies the signed binary
 betterwright doctor    # confirms the runtime resolves
 ```
+
+Stock Playwright Chromium remains an explicit compatibility/test fallback:
+run `betterwright setup --chromium` and construct the client with
+`browser="chromium"`. Cloak's wrapper is open source, while its downloaded
+browser binary is separately licensed and is not redistributed in the wheel.
 
 ## Documentation
 

@@ -8,7 +8,7 @@ runtime diagnostics.
 Run it directly (stdio transport):
 
     pip install "betterwright[mcp]"     # or: pip install betterwright mcp
-    betterwright setup                  # one-time Chromium download
+    betterwright setup                  # one-time managed browser download
     python -m betterwright.integrations.mcp_server
 
 Then register it with your MCP client. For Claude Code:
@@ -22,12 +22,13 @@ Configuration is read from the environment so the same command works everywhere:
     BETTERWRIGHT_ALLOW_HOSTS=a.com,b.com always-allow list (comma-separated)
     BETTERWRIGHT_BLOCK_HOSTS=ads.com     always-block list (comma-separated)
     BETTERWRIGHT_DOWNLOAD_POLICY=ask     ask (default), allow, or deny downloads
-    BETTERWRIGHT_HEADLESS=0              run Chromium headed (visible window)
+    BETTERWRIGHT_HEADLESS=0              run the managed browser headed
+    BETTERWRIGHT_BROWSER=chromium         explicit degraded Chromium fallback
     BETTERWRIGHT_CONNECT_OVER_CDP=http://127.0.0.1:9222
                                          attach to an existing Chrome instead of
                                          launching one (see docs/attach-mode.md)
     CLOAKBROWSER_BINARY_PATH=/path/to/chrome
-                                         use an explicitly installed CloakBrowser
+                                         override the managed CloakBrowser binary
 
 Screenshots are returned as native MCP image content, so a client renders them
 directly — you never hand it a file path or guess a MIME type.
@@ -137,6 +138,13 @@ def browser(code: str, session: str = "default", note: str = "") -> list:
     block must return.
     Capture `screenshot({kind: 'proof'})` before claiming a visible task is done —
     the image is returned inline; you do not need to open any file path.
+    When `challenges` is returned, preserve the page and use `captcha.inspect`,
+    `captcha.click`, `captcha.drag`, `captcha.readText`, and `human.click` to work
+    through at most three distinct challenge stages. If the same stage rejects an
+    action, stop native challenge attempts immediately and use an alternate source
+    or human handoff. When the challenge clears, verify current application state;
+    replay the original action only if it is idempotent or state proves it did not
+    already complete. Never duplicate a submission, purchase, or message.
 
     Args:
         code: The Playwright JavaScript to execute.

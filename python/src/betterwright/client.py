@@ -176,8 +176,11 @@ class BetterWright:
         A :class:`CredentialVault`, ``True`` to enable the default file-backed
         vault, or ``None``/``False`` to disable the ``credentials`` helpers.
     executable_path:
-        An explicit Chromium binary to launch instead of the pinned build.
-        When unset, ``CLOAKBROWSER_BINARY_PATH`` is honored if present.
+        An explicit Chromium binary. Supplying one selects the degraded Chromium
+        backend instead of the managed Cloak browser.
+    browser:
+        ``"cloak"`` (the default) or ``"chromium"`` for the explicit stock
+        fallback.
     headless:
         ``True``, ``False``, or ``"auto"`` (the default). ``"auto"`` runs a
         visible browser when a display is available and headless otherwise — so
@@ -194,7 +197,11 @@ class BetterWright:
         applies. See ``docs/attach-mode.md``.
     search_min_interval_ms:
         Minimum spacing between top-level Google, Bing, or DuckDuckGo search
-        navigations. ``0`` (the default) disables pacing.
+        navigations when public search UI automation is explicitly allowed.
+        ``0`` (the default) disables pacing.
+    public_search_policy:
+        ``"block"`` (the default) routes discovery through the host search tool;
+        ``"allow"`` permits public search-result UI navigation.
     download_policy:
         ``"ask"`` (the default) requires a trusted host to mark each download
         run approved. ``"allow"`` removes that approval gate while retaining
@@ -208,10 +215,12 @@ class BetterWright:
         policy: NetworkPolicy | None = None,
         vault: CredentialVault | bool | None = True,
         executable_path: str | None = None,
+        browser: str | None = None,
         headless: bool | str = "auto",
         default_timeout: int = 30,
         connect_over_cdp: str | None = None,
         search_min_interval_ms: int = 0,
+        public_search_policy: str | None = None,
         download_policy: str = "ask",
     ) -> None:
         resolved_vault: CredentialVault | None
@@ -229,10 +238,12 @@ class BetterWright:
             policy=policy,
             vault=resolved_vault,
             executable_path=executable_path,
+            browser=browser,
             headless=headless,
             default_timeout=default_timeout,
             connect_over_cdp=connect_over_cdp,
             search_min_interval_ms=search_min_interval_ms,
+            public_search_policy=public_search_policy,
             download_policy=download_policy,
         )
 
