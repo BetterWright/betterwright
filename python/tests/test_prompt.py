@@ -65,3 +65,28 @@ def test_extra_rules_appended():
 def test_forbid_account_creation():
     prompt = agent_system_prompt(Guardrails(forbid_account_creation=True))
     assert "Do not create new accounts" in prompt
+
+
+def test_password_manager_section_omitted_by_default():
+    assert "## Password manager" not in agent_system_prompt()
+
+
+def test_password_manager_section_added_when_set():
+    prompt = agent_system_prompt(Guardrails(password_manager="1Password"))
+    assert "## Password manager" in prompt
+    assert "1Password badge" in prompt
+    assert "on-screen position" in prompt
+
+
+def test_password_manager_name_normalized():
+    prompt = agent_system_prompt(Guardrails(password_manager="1password"))
+    assert "A 1Password extension" in prompt
+
+
+def test_password_manager_precedes_guardrails():
+    prompt = agent_system_prompt(
+        Guardrails(password_manager="1Password", confirm_before_purchase=True)
+    )
+    assert prompt.index("## Password manager") < prompt.index(
+        "## Guardrails for this session"
+    )
