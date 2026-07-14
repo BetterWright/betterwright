@@ -24,6 +24,7 @@ import {
   PUBLIC_SEARCH_BLOCK_ADVICE,
 } from "./challenges.mjs";
 import {
+  assertProfileNotNewer,
   cloakBinaryInfo,
   launchCloakPersistentContext,
   managedCloakViewport,
@@ -1529,6 +1530,12 @@ async function ensureBrowser(config) {
       // the only model-facing interaction layer.
       args.push(`--fingerprint=${fingerprintSeedForProfile(profileLock.profileDir)}`);
       const binaryInfo = await cloakBinaryInfo();
+      // Cloak ships an older Chromium than the stock fallback; fail clearly if
+      // this persistent profile was already upgraded by a newer binary rather
+      // than crashing opaquely on launch.
+      if (!profileLock.ephemeral) {
+        assertProfileNotNewer(profileLock.profileDir, binaryInfo?.version);
+      }
       // Patched Cloak builds can report stale lifecycle events to Playwright's
       // protocol-level setContent implementation. The document-write fallback
       // below preserves Page/Frame setContent semantics across Cloak versions.

@@ -1,7 +1,40 @@
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 let cloakModulePromise = null;
+
+/**
+ * Guard against opening a profile that a newer Chromium already upgraded.
+ * Chromium records its version in a "Last Version" file and does not downgrade
+ * the profile format; an older binary that opens a newer profile crashes during
+ * startup (on macOS the crash surfaces deep in the AppKit window/session-restore
+ * path as an opaque SIGTRAP). Cloak ships an older Chromium than the stock
+ * fallback, so this turns that latent crash into a clear, actionable error.
+ * `runningVersion` is a dotted version like "145.0.7632.109"; a missing or
+ * unparseable version, or a fresh profile, is a no-op.
+ */
+export function assertProfileNotNewer(profileDir, runningVersion) {
+  const major = (value) => Number.parseInt(String(value || "").split(".")[0], 10);
+  const runningMajor = major(runningVersion);
+  if (!Number.isFinite(runningMajor)) return;
+  let stored;
+  try {
+    stored = fs.readFileSync(path.join(profileDir, "Last Version"), "utf8").trim();
+  } catch {
+    return; /* fresh profile, or Chromium has not written the marker yet */
+  }
+  const profileMajor = major(stored);
+  if (Number.isFinite(profileMajor) && profileMajor > runningMajor) {
+    throw new Error(
+      `Browser profile at ${profileDir} was upgraded by a newer Chromium ` +
+        `(${stored}) than the one launching now (${runningVersion}); a newer ` +
+        "profile cannot be opened by an older browser. Reset it by removing " +
+        "that directory (saved logins there are lost), or launch the matching " +
+        "browser version.",
+    );
+  }
+}
 
 function isFreeDarwinV145(binaryInfo) {
   return (

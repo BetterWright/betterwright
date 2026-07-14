@@ -169,7 +169,16 @@ export class BetterWright {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     return {
-      profileDir: path.join(root, "profile"),
+      // Each browser flavor gets its own profile directory. Cloak and the
+      // stock-Chromium fallback ship different Chromium versions; sharing one
+      // profile lets the newer binary silently upgrade it out from under the
+      // older one, after which the older binary crashes on launch (a newer
+      // profile is not downgrade-safe). Cloak keeps the historical "profile"
+      // path so existing saved logins survive an upgrade.
+      profileDir: path.join(
+        root,
+        this.browserFlavor === "chromium" ? "profile-chromium" : "profile",
+      ),
       runtimeDir: runtime,
       artifactsDir: artifacts,
       downloadsDir: downloads,
