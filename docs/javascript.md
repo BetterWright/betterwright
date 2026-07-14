@@ -202,4 +202,5 @@ agentSystemPrompt(guardrails?) => string
 Operator guidance for a browser agent's system prompt — identical text to the
 Python `agent_system_prompt`. Guardrail fields: `confirmBeforePurchase`,
 `confirmBeforeIrreversible`, `forbidPurchases`, `forbidAccountCreation`,
-`spendingLimit`, `extraRules`. See [agent-prompt.md](agent-prompt.md).
+`spendingLimit`, `extraRules`, and `passwordManager`. See
+[agent-prompt.md](agent-prompt.md).

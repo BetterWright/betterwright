@@ -184,3 +184,34 @@ def test_runtime_discovery_matches_node_ancestor_lookup(monkeypatch, tmp_path):
 
     assert runtime.playwright_core_dir() == (node_modules / "playwright-core").resolve()
     assert runtime.cloakbrowser_dir() == (node_modules / "cloakbrowser").resolve()
+
+
+def test_diagnose_reports_cloak_binary_identity(monkeypatch, tmp_path):
+    worker = tmp_path / "worker.mjs"
+    worker.write_text("", encoding="utf-8")
+    core = tmp_path / "playwright-core"
+    cloak = tmp_path / "cloakbrowser"
+    core.mkdir()
+    cloak.mkdir()
+
+    monkeypatch.setattr(runtime, "node_executable", lambda: "/usr/bin/node")
+    monkeypatch.setattr(runtime, "worker_path", lambda: worker)
+    monkeypatch.setattr(runtime, "playwright_core_dir", lambda: core)
+    monkeypatch.setattr(runtime, "cloakbrowser_dir", lambda: cloak)
+    monkeypatch.setattr(
+        runtime,
+        "_cloak_binary_info",
+        lambda _node, _cloak: {
+            "version": "145.0.7632.109.2",
+            "tier": "free",
+            "binaryPath": "/cache/cloak/chrome",
+            "installed": True,
+        },
+    )
+    monkeypatch.delenv("BETTERWRIGHT_BROWSER", raising=False)
+
+    report = runtime.diagnose()
+
+    assert report["cloakbrowser_binary_version"] == "145.0.7632.109.2"
+    assert report["cloakbrowser_binary_tier"] == "free"
+    assert report["ready"] is True
