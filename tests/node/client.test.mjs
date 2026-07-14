@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { findChromeExecutable } from "../../src/chrome.mjs";
 import { BetterWright } from "../../src/index.mjs";
 
 test("download approval is required by default and configurable", async () => {
@@ -66,6 +67,58 @@ test("each browser flavor gets its own profile directory", async () => {
     await cloak.close();
     await chromium.close();
     await custom.close();
+  }
+});
+
+test("connectOverCdp default is display-aware and explicit values win", async () => {
+  const prevDisplay = process.env.BETTERWRIGHT_DISPLAY;
+  const prevEnv = process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
+  delete process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
+  const made = [];
+  const mk = (opts) => {
+    const bw = new BetterWright(opts);
+    made.push(bw);
+    return bw;
+  };
+  try {
+    // Headless: always the launched sandbox (network floor intact).
+    process.env.BETTERWRIGHT_DISPLAY = "0";
+    assert.equal(mk().connectOverCdp, "");
+
+    // Headed (desktop): real Chrome over CDP when Chrome is installed.
+    process.env.BETTERWRIGHT_DISPLAY = "1";
+    const chromePresent = Boolean(findChromeExecutable());
+    assert.equal(mk().connectOverCdp, chromePresent ? "auto" : "");
+
+    // The default tracks the resolved headless decision, not raw display:
+    // an explicit headless:true always uses the sandbox even on a desktop.
+    assert.equal(mk({ headless: true }).connectOverCdp, "");
+    // ...and headless:false uses CDP (when Chrome exists) even without a display.
+    process.env.BETTERWRIGHT_DISPLAY = "0";
+    assert.equal(
+      mk({ headless: false }).connectOverCdp,
+      chromePresent ? "auto" : "",
+    );
+    process.env.BETTERWRIGHT_DISPLAY = "1";
+
+    // Explicit "" forces the sandbox even on a desktop with Chrome.
+    assert.equal(mk({ connectOverCdp: "" }).connectOverCdp, "");
+
+    // An explicit endpoint is used verbatim.
+    assert.equal(
+      mk({ connectOverCdp: "http://127.0.0.1:9222" }).connectOverCdp,
+      "http://127.0.0.1:9222",
+    );
+
+    // The env override applies only when no option is passed.
+    process.env.BETTERWRIGHT_CONNECT_OVER_CDP = "http://127.0.0.1:9333";
+    assert.equal(mk().connectOverCdp, "http://127.0.0.1:9333");
+  } finally {
+    for (const bw of made) await bw.close();
+    if (prevDisplay === undefined) delete process.env.BETTERWRIGHT_DISPLAY;
+    else process.env.BETTERWRIGHT_DISPLAY = prevDisplay;
+    if (prevEnv === undefined) delete process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
+    else process.env.BETTERWRIGHT_CONNECT_OVER_CDP = prevEnv;
   }
 });
 

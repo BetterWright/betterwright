@@ -1,9 +1,20 @@
 # Attaching to an existing Chrome (and headed mode)
 
-By default BetterWright launches its **own managed Cloak browser** with an
-isolated persistent profile. There are two ways to change that: run it
-**headed** so you can watch it, and **attach** it to a Chrome you already have
-open.
+`connectOverCdp` chooses between two worlds: BetterWright's **own managed Cloak
+browser** (isolated persistent profile, full launch-time network floor) and
+**attaching to a real Chrome** you have open. The default is *display-aware*,
+mirroring `headless: "auto"`:
+
+- **Desktop with Google Chrome installed** → attaches to a real Chrome
+  (`"auto"`). You get real logins and extensions, but the launch-time network
+  floor is inactive (only the per-request policy applies).
+- **Headless / no Chrome** (servers, containers, CI) → launches the managed
+  Cloak sandbox with the network floor intact.
+
+Pass `connectOverCdp: ""` to force the launched sandbox regardless, an explicit
+endpoint to attach to a specific Chrome, or `"auto"` to force the real-Chrome
+path even where the default would not choose it. The rest of this document
+covers **headed** mode and the **attach** details.
 
 ## Headed vs. headless
 
