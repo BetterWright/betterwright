@@ -53,6 +53,8 @@ async function externalChromium() {
       "--remote-debugging-address=127.0.0.1",
       `--user-data-dir=${profileDir}`,
       "--headless=new",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
       "--no-first-run",
       "--no-default-browser-check",
       "about:blank",
