@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `publicSearchPolicy` now defaults to `"allow"` instead of `"block"`. Public
+  search-result UIs (Google, Bing, DuckDuckGo) are navigable by default; set
+  `publicSearchPolicy: "block"` (or `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block`) to
+  restore routing broad discovery through a host-supplied search tool. Trade-off:
+  automating public search UIs is more exposed to bot detection, so hosts that
+  rely on the guard should opt back in explicitly.
+
 ### Fixed
 
 - The stock-Chromium fallback now uses its own `profile-chromium` directory

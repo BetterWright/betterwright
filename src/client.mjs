@@ -54,7 +54,7 @@ function resolveBrowser(browser) {
 
 function resolvePublicSearchPolicy(policy) {
   const value = String(
-    policy ?? process.env.BETTERWRIGHT_PUBLIC_SEARCH_POLICY ?? "block",
+    policy ?? process.env.BETTERWRIGHT_PUBLIC_SEARCH_POLICY ?? "allow",
   )
     .trim()
     .toLowerCase();
@@ -127,8 +127,9 @@ export class BetterWright {
    *   a password-manager extension once) and attach to that.
    * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
    *   allowed top-level Google, Bing, or DuckDuckGo search navigations
-   * @param {"block"|"allow"} [options.publicSearchPolicy="block"] route broad
-   *   discovery through the host search tool instead of a public search UI
+   * @param {"block"|"allow"} [options.publicSearchPolicy="allow"] set "block"
+   *   to route broad discovery through the host search tool instead of letting
+   *   the browser use a public search UI (e.g. Google, Bing)
    * @param {"ask"|"allow"|"deny"} [options.downloadPolicy="ask"] require a
    *   trusted host to mark an individual run approved, allow every run, or
    *   deny downloads entirely

@@ -122,9 +122,10 @@ client returns the worker's result envelope directly (`result`, `artifacts`,
 
 Long-lived desktop agents can attach to a dedicated real-Chrome profile with
 `ensureChromeCdp()`, but that host-only mode gives up part of the managed launch
-boundary. For broad discovery, use the host's web-search tool and open its
-results in BetterWright instead of automating Google or Bing's public search UI;
-the managed worker blocks public search-result UIs by default.
+boundary. For broad discovery, you can use the host's web-search tool and open
+its results in BetterWright instead of automating Google or Bing's public search
+UI; set `publicSearchPolicy: "block"` to have the managed worker enforce that
+(it is permitted by default).
 Visible bot challenges are surfaced as resumable state. See
 [attach mode](docs/attach-mode.md).
 

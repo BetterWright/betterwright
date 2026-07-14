@@ -20,7 +20,7 @@ BetterWright(
     headless: bool | str = "auto",
     default_timeout: int = 30,             # per-snippet seconds, min 5
     connect_over_cdp: str | None = None,   # trusted host attach mode only
-    public_search_policy: str | None = None, # "block" default; "allow" opt-in
+    public_search_policy: str | None = None, # "allow" default; "block" opt-in
     search_min_interval_ms: int = 0,
     download_policy: str = "ask",          # "ask", "allow", or "deny"
 )

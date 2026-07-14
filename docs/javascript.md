@@ -18,7 +18,7 @@ new BetterWright({
   executablePath,   // explicit binary; also selects the Chromium fallback
   headless: "auto", // visible with a display, headless on servers/CI
   connectOverCdp,   // host-only attach endpoint; see attach mode
-  publicSearchPolicy: "block", // "allow" is an explicit host opt-in
+  publicSearchPolicy: "allow", // default; set "block" to force host-tool search
   searchMinIntervalMs: 0,
   defaultTimeout: 30,   // per-snippet seconds, min 5
   downloadPolicy: "ask", // "ask" (default), "allow", or "deny"
