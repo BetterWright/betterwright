@@ -70,10 +70,39 @@ await page.locator('button[type="submit"]').click();
 return snapshot();
 ```
 
+## Image-grid challenge (reCAPTCHA)
+
+A checkbox click frequently escalates to an image grid — "select all images with
+bicycles". There is no separate helper for this: the grid is solved with the
+primitives you already have — a screenshot for your own vision, and tile clicks
+by `[ref=eN]`. Treat the escalation as part of the same single attempt, not a
+dead end.
+
+```js
+// 1. See the grid. snapshot() gives every tile a [ref=eN]; a screenshot gives
+//    your vision the actual images to judge.
+const shot = await screenshot({name: 'captcha-grid'});
+const tree = await snapshot();   // rows of button [ref=…] tiles + a Verify button
+```
+
+On the next turn, having looked at the screenshot, click each matching tile and
+submit in one pass:
+
+```js
+for (const ref of ['f4e14', 'f4e30', 'f4e37']) {   // the tiles your vision picked
+  await human.click(page.locator(`aria-ref=${ref}`));
+}
+await human.click(page.getByRole('button', {name: 'Verify'}));
+return snapshot();               // confirm it cleared, or report if still blocked
+```
+
+Solve the whole grid before clicking Verify, make one honest pass, and stop and
+report if it stays blocked rather than looping through fresh challenges.
+
 ## Limits
 
 These helpers reproduce normal mouse interaction and provide a token-efficient
 vision crop. They do not manufacture reCAPTCHA, hCaptcha, or Turnstile tokens,
 and they cannot guarantee that a provider will accept an automated browser. An
-invisible, scored, multi-image, or still-blocked challenge should be reported to
-the user rather than retried.
+invisible or scored challenge, or one still blocked after an honest attempt,
+should be reported to the user rather than retried in a loop.
