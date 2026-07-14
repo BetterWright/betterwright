@@ -18,7 +18,16 @@ import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
-import { detectBotChallenge, isPublicSearchNavigation } from "./challenges.mjs";
+import {
+  detectBotChallenge,
+  isPublicSearchNavigation,
+  PUBLIC_SEARCH_BLOCK_ADVICE,
+} from "./challenges.mjs";
+import {
+  cloakBinaryInfo,
+  launchCloakPersistentContext,
+  managedCloakViewport,
+} from "./cloak.mjs";
 import {
   downloadBehaviorParams,
   isUnsupportedBrowserDownloadGuard,
@@ -77,6 +86,7 @@ let launchConfig = null;
 let profileLock = null;
 let profileMode = "persistent";
 let profileWarning = "";
+let useSetContentCompatibility = false;
 let shuttingDown = false;
 let activeExecutionSession = null;
 let guardProxyServer = null;
@@ -84,6 +94,7 @@ let guardProxyPort = null;
 let downloadCdpSession = null;
 let downloadGuardReady = false;
 let currentDownloadBehavior = "deny";
+let approvedDownloadSession = null;
 let attachedDownloadsDenied = false;
 let pageDownloadGuards = new WeakMap();
 const pageDownloadCdpSessions = new Set();
@@ -157,6 +168,23 @@ function writePrivateBytes(file, content) {
   } catch {
     /* best effort on Windows */
   }
+}
+
+function fingerprintSeedForProfile(profileDir) {
+  const seedFile = path.join(profileDir, ".betterwright-fingerprint-seed");
+  try {
+    const stored = fs.readFileSync(seedFile, "utf8").trim();
+    if (/^[1-9][0-9]{4}$/.test(stored)) return stored;
+  } catch {
+    /* first launch for this profile */
+  }
+  const seed = String(crypto.randomInt(10_000, 100_000));
+  writePrivate(seedFile, `${seed}\n`);
+  return seed;
+}
+
+function hostDelay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function safeName(value, fallback = "artifact") {
@@ -731,6 +759,21 @@ async function closeDownloadGuard() {
 
 function redactText(value) {
   let text = String(value ?? "");
+  const cdpEndpoint = String(launchConfig?.cdpEndpoint || "").trim();
+  if (cdpEndpoint) {
+    const candidates = new Set([cdpEndpoint]);
+    try {
+      const parsed = new URL(cdpEndpoint);
+      candidates.add(parsed.href);
+      candidates.add(parsed.origin);
+      candidates.add(parsed.host);
+    } catch {
+      /* invalid endpoints are still redacted by their exact configured value */
+    }
+    for (const candidate of candidates) {
+      if (candidate) text = text.split(candidate).join("[REDACTED_CDP_ENDPOINT]");
+    }
+  }
   for (const secret of activeSecrets) {
     if (!secret || secret.length < 4) continue;
     text = text.split(secret).join("[REDACTED_PASSWORD]");
@@ -946,7 +989,8 @@ async function captureScreenshot(page, session, requested, fallback, options) {
 }
 
 async function handleDownload(page, download) {
-  const sid = pageToSession.get(page) || activeExecutionSession || "default";
+  const ownerSid = pageToSession.get(page);
+  const sid = ownerSid || "default";
   const session = sessionFor(sid);
   const target = makeArtifactPath(
     session,
@@ -957,7 +1001,14 @@ async function handleDownload(page, download) {
   const limit = downloadByteLimit();
   let releaseReservation = null;
   try {
-    if (currentDownloadBehavior !== "allow") {
+    const policyAllowsAll =
+      normalizeDownloadPolicy(launchConfig?.downloadPolicy) === "allow";
+    const runApprovalMatchesOwner =
+      currentDownloadBehavior === "allow" &&
+      ownerSid != null &&
+      approvedDownloadSession === ownerSid &&
+      activeExecutionSession === ownerSid;
+    if (!policyAllowsAll && !runApprovalMatchesOwner) {
       await download.cancel();
       await download.delete().catch(() => {});
       pushEvent(session, {
@@ -1286,6 +1337,29 @@ async function installContextGuard(context) {
       ? `active:${activeExecutionSession}`
       : "background";
     try {
+      const publicSearch =
+        request.isNavigationRequest() &&
+        request.resourceType() === "document" &&
+        isPublicSearchNavigation(request.url());
+      if (
+        publicSearch &&
+        String(launchConfig.publicSearchPolicy || "block") !== "allow"
+      ) {
+        try {
+          const owner =
+            pageToSession.get(request.frame().page()) || activeExecutionSession;
+          if (owner) {
+            pushEvent(sessionFor(owner), {
+              type: "public-search-blocked",
+              advice: PUBLIC_SEARCH_BLOCK_ADVICE,
+            });
+          }
+        } catch {
+          /* the direct navigation error still explains the policy */
+        }
+        await route.abort("blockedbyclient").catch(() => {});
+        return;
+      }
       const decision = await guardUrl(
         request.url(),
         {
@@ -1301,7 +1375,7 @@ async function installContextGuard(context) {
           interval &&
           request.isNavigationRequest() &&
           request.resourceType() === "document" &&
-          isPublicSearchNavigation(request.url())
+          publicSearch
         ) {
           const pace = async () => {
             const waitMs = Math.max(0, lastPublicSearchAt + interval - Date.now());
@@ -1355,6 +1429,19 @@ async function installContextGuard(context) {
 }
 
 async function ensureBrowser(config) {
+  const browserFlavor = String(config.browserFlavor || "cloak")
+    .trim()
+    .toLowerCase();
+  if (browserFlavor !== "cloak" && browserFlavor !== "chromium") {
+    throw new Error('browserFlavor must be "cloak" or "chromium".');
+  }
+  const publicSearchPolicy = String(config.publicSearchPolicy || "block")
+    .trim()
+    .toLowerCase();
+  if (!["block", "allow"].includes(publicSearchPolicy)) {
+    throw new Error('publicSearchPolicy must be "block" or "allow".');
+  }
+  config = { ...config, browserFlavor, publicSearchPolicy };
   if (browserContext) {
     launchConfig = { ...launchConfig, ...config };
     return browserContext;
@@ -1417,41 +1504,77 @@ async function ensureBrowser(config) {
     profileWarning = profileLock.warning;
     const transportProxyPort = await ensureGuardProxy();
 
-    const options = {
-      headless: launchConfig.headless !== false,
-      viewport: { width: 1440, height: 900 },
-      acceptDownloads: true,
-      serviceWorkers: "block",
-      downloadsPath: launchConfig.downloadsDir,
-      args: [
-        `--host-resolver-rules=${METADATA_RESOLVER_RULES}`,
-        // WebRTC is not represented by Playwright request routing and can
-        // otherwise send STUN/data-channel UDP directly around a TCP proxy.
-        // Force it onto the configured proxy/TCP path instead.
-        "--webrtc-ip-handling-policy=disable_non_proxied_udp",
-      ],
-      proxy: {
-        server: `socks5://127.0.0.1:${transportProxyPort}`,
-        // Chromium otherwise bypasses the proxy for localhost/link-local
-        // destinations. The guard proxy must see those requests to enforce
-        // the configured private-network policy on every connection.
-        bypass: "<-loopback>",
-      },
+    const headless = launchConfig.headless !== false;
+    const args = [
+      `--host-resolver-rules=${METADATA_RESOLVER_RULES}`,
+      // WebRTC is not represented by Playwright request routing and can
+      // otherwise send STUN/data-channel UDP directly around a TCP proxy.
+      // Force it onto the configured proxy/TCP path instead.
+      "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ];
+    const proxy = {
+      server: `socks5://127.0.0.1:${transportProxyPort}`,
+      // Chromium otherwise bypasses the proxy for localhost/link-local
+      // destinations. The guard proxy must see those requests to enforce
+      // the configured private-network policy on every connection.
+      bypass: "<-loopback>",
     };
-    if (launchConfig.executablePath)
-      options.executablePath = launchConfig.executablePath;
-    else options.channel = "chromium";
-    if (launchConfig.browserFlavor === "cloak") {
-      options.ignoreDefaultArgs = [
-        "--enable-automation",
-        "--enable-unsafe-swiftshader",
-      ];
-    }
 
-    browserContext = await chromium.launchPersistentContext(
-      profileLock.profileDir,
-      options,
-    );
+    if (launchConfig.browserFlavor === "cloak") {
+      // Cloak's wrapper supplies its source-level fingerprint flags, coherent
+      // viewport defaults, and automation-safe Chromium arguments. BetterWright
+      // pins one random seed to the persistent profile so the same identity does
+      // not appear to change hardware on every restart. Its blanket humanizer is
+      // intentionally disabled; BetterWright's frame-safe human helpers remain
+      // the only model-facing interaction layer.
+      args.push(`--fingerprint=${fingerprintSeedForProfile(profileLock.profileDir)}`);
+      const binaryInfo = await cloakBinaryInfo();
+      // Patched Cloak builds can report stale lifecycle events to Playwright's
+      // protocol-level setContent implementation. The document-write fallback
+      // below preserves Page/Frame setContent semantics across Cloak versions.
+      useSetContentCompatibility = true;
+      const viewport = managedCloakViewport(binaryInfo, headless);
+      browserContext = await launchCloakPersistentContext({
+        userDataDir: profileLock.profileDir,
+        headless,
+        humanize: false,
+        ...(viewport ? { viewport } : {}),
+        proxy,
+        args,
+        contextOptions: {
+          acceptDownloads: true,
+          serviceWorkers: "block",
+        },
+        launchOptions: {
+          downloadsPath: launchConfig.downloadsDir,
+        },
+      });
+    } else {
+      useSetContentCompatibility = false;
+      profileWarning = [
+        profileWarning,
+        "Using the explicit Chromium fallback, which exposes automation signals; " +
+          "use the default Cloak backend for managed agent browsing.",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const options = {
+        headless,
+        viewport: { width: 1440, height: 900 },
+        acceptDownloads: true,
+        serviceWorkers: "block",
+        downloadsPath: launchConfig.downloadsDir,
+        args,
+        proxy,
+      };
+      if (launchConfig.executablePath)
+        options.executablePath = launchConfig.executablePath;
+      else options.channel = "chromium";
+      browserContext = await chromium.launchPersistentContext(
+        profileLock.profileDir,
+        options,
+      );
+    }
     const launchedContext = browserContext;
     launchedContext.on("close", () => {
       if (browserContext === launchedContext) browserContext = null;
@@ -1513,7 +1636,9 @@ const BROWSER_SERIALIZED_CALLBACK_METHODS = new Set([
 
 function objectKind(value) {
   try {
-    return String(value?.constructor?.name || "").replace(/^_+/, "");
+    return String(value?.constructor?.name || "")
+      .replace(/^_+/, "")
+      .replace(/\d+$/, "");
   } catch {
     return "";
   }
@@ -1621,6 +1746,115 @@ function validateMethodPaths(kind, property, args) {
       if (typeof file === "string") assertReadableBrowserPath(file);
     }
   }
+  if (["Page", "Frame"].includes(kind) && property === "goto") {
+    assertModelNavigationUrl(args[0]);
+  }
+}
+
+async function setContentCompatible(target, html, options = {}) {
+  if (typeof html !== "string") {
+    throw new TypeError("setContent requires an HTML string.");
+  }
+  const waitUntil = String(options?.waitUntil || "load");
+  if (!["commit", "domcontentloaded", "load", "networkidle"].includes(waitUntil)) {
+    throw new TypeError(`Unsupported setContent waitUntil value: ${waitUntil}`);
+  }
+  const frame = objectKind(target) === "Frame" ? target : target.mainFrame();
+  const page = frame.page();
+  const timeout = frame._navigationTimeout(options || {});
+  const deadline = timeout === 0 ? Number.POSITIVE_INFINITY : Date.now() + timeout;
+  const inflight = new Set();
+  let lastNetworkActivity = Date.now();
+  const belongsToFrame = (request) => {
+    try {
+      let current = request.frame();
+      while (current) {
+        if (current === frame) return true;
+        current = current.parentFrame();
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+  const onRequest = (request) => {
+    if (!belongsToFrame(request)) return;
+    inflight.add(request);
+    lastNetworkActivity = Date.now();
+  };
+  const onRequestDone = (request) => {
+    if (!inflight.delete(request)) return;
+    lastNetworkActivity = Date.now();
+  };
+  if (waitUntil === "networkidle") {
+    page.on("request", onRequest);
+    page.on("requestfinished", onRequestDone);
+    page.on("requestfailed", onRequestDone);
+  }
+  const remaining = () => {
+    if (timeout === 0) return 0;
+    const value = deadline - Date.now();
+    if (value <= 0) {
+      throw new Error(`setContent: Timeout ${timeout}ms exceeded.`);
+    }
+    return value;
+  };
+  try {
+    await frame.evaluate((markup) => {
+      document.open();
+      document.write(markup);
+      document.close();
+    }, html);
+    if (waitUntil === "commit") return;
+    await frame.waitForFunction(
+      (expected) =>
+        expected === "domcontentloaded"
+          ? document.readyState !== "loading"
+          : document.readyState === "complete",
+      waitUntil,
+      { timeout: remaining() },
+    );
+    if (waitUntil !== "networkidle") return;
+    while (inflight.size > 0 || Date.now() - lastNetworkActivity < 500) {
+      remaining();
+      await hostDelay(Math.min(50, Math.max(1, deadline - Date.now())));
+    }
+  } catch (error) {
+    if (timeout !== 0 && Date.now() >= deadline) {
+      throw new Error(`setContent: Timeout ${timeout}ms exceeded.`);
+    }
+    throw error;
+  } finally {
+    if (waitUntil === "networkidle") {
+      page.off("request", onRequest);
+      page.off("requestfinished", onRequestDone);
+      page.off("requestfailed", onRequestDone);
+    }
+  }
+}
+
+function assertModelNavigationUrl(value) {
+  const url = String(value || "");
+  let scheme;
+  try {
+    scheme = new URL(url).protocol.toLowerCase();
+  } catch {
+    throw new Error("Browser navigation requires a valid URL.");
+  }
+  const safeSpecial =
+    (scheme === "about:" && url.toLowerCase() === "about:blank") ||
+    scheme === "data:" ||
+    scheme === "blob:";
+  if (!safeSpecial && !["http:", "https:"].includes(scheme)) {
+    throw new Error(`Browser navigation scheme is not available: ${scheme}`);
+  }
+  if (
+    ["http:", "https:"].includes(scheme) &&
+    String(launchConfig?.publicSearchPolicy || "block") !== "allow" &&
+    isPublicSearchNavigation(url)
+  ) {
+    throw new Error(PUBLIC_SEARCH_BLOCK_ADVICE);
+  }
 }
 
 function createRealm(context) {
@@ -1702,8 +1936,14 @@ function wrap(value, realm) {
         const prepared = args.map((arg) =>
           prepareArgument(arg, property, realm),
         );
-        validateMethodPaths(objectKind(value), property, prepared);
-        const result = member.apply(value, prepared);
+        const kind = objectKind(value);
+        validateMethodPaths(kind, property, prepared);
+        const result =
+          useSetContentCompatibility &&
+          ["Page", "Frame"].includes(kind) &&
+          property === "setContent"
+            ? setContentCompatible(value, prepared[0], prepared[1])
+            : member.apply(value, prepared);
         if (result && typeof result.then === "function") {
           return result.then(async (item) => {
             await guardReturnedPages(item);
@@ -1846,7 +2086,10 @@ function buildSandbox(session, consoleMessages) {
     const rawPage = await browserContext.newPage();
     await denyAttachedPageDownloads(browserContext, rawPage);
     const page = adoptPage(rawPage, session.id);
-    if (url) await page.goto(String(url), options);
+    if (url) {
+      assertModelNavigationUrl(url);
+      await page.goto(String(url), options);
+    }
     return wrap(page, realm);
   });
   sandbox.usePage = realm.safeFunction(async (selector) => {
@@ -1925,11 +2168,13 @@ function buildSandbox(session, consoleMessages) {
   captcha.click = realm.safeFunction(async (bounds) => {
     const page = await ensureSessionPage(session);
     const target = captchaBounds(bounds);
-    await page.mouse.click(
-      target.x + target.width * 0.15,
-      target.y + target.height / 2,
-    );
-    await page.waitForTimeout(3_000);
+    const point = {
+      x: Math.round(target.x + target.width * (0.13 + Math.random() * 0.04)),
+      y: Math.round(target.y + target.height * (0.44 + Math.random() * 0.12)),
+    };
+    await movePointer(page.mouse, session.cursor, point, { stepDivisor: 8 });
+    await pressPointer(page.mouse);
+    await hostDelay(2_000 + Math.random() * 1_500);
     return snapshotPage(page);
   });
   captcha.drag = realm.safeFunction(async (from, to, options = {}) => {
@@ -1939,24 +2184,26 @@ function buildSandbox(session, consoleMessages) {
     const steps = Math.floor(
       Math.max(1, Math.min(100, Number(options?.steps) || 20)),
     );
-    await page.mouse.move(start.x, start.y);
-    await page.waitForTimeout(200);
+    await movePointer(page.mouse, session.cursor, start, { stepDivisor: 8 });
+    await hostDelay(120 + Math.random() * 180);
     await page.mouse.down();
-    await page.waitForTimeout(200);
-    await page.mouse.move(end.x, end.y, { steps });
-    await page.waitForTimeout(200);
+    await hostDelay(90 + Math.random() * 150);
+    await movePointer(page.mouse, session.cursor, end, {
+      stepDivisor: Math.max(3, Math.hypot(end.x - start.x, end.y - start.y) / steps),
+    });
+    await hostDelay(100 + Math.random() * 180);
     await page.mouse.up();
-    await page.waitForTimeout(2_000);
+    await hostDelay(1_500 + Math.random() * 1_000);
     return snapshotPage(page);
   });
-  captcha.readText = realm.safeFunction(async (bounds) => {
+  async function captureCaptcha(bounds, requested, instruction) {
     const page = await ensureSessionPage(session);
     const clip = bounds == null ? null : captchaBounds(bounds);
     const file = await captureScreenshot(
       page,
       session,
-      "captcha-text.png",
-      "captcha-text.png",
+      requested,
+      requested,
       {
         type: "png",
         animations: "disabled",
@@ -1971,9 +2218,24 @@ function buildSandbox(session, consoleMessages) {
     session.artifacts.push(artifact);
     return {
       ...artifact,
-      instruction:
-        "Read the attached CAPTCHA crop visually and return only its text.",
+      instruction,
     };
+  }
+  captcha.inspect = realm.safeFunction(async (bounds) => {
+    return captureCaptcha(
+      bounds,
+      "captcha-challenge.png",
+      "Inspect the attached challenge visually, choose the matching native " +
+        "CAPTCHA or human helper, then verify that the challenge cleared and " +
+        "resume the original task.",
+    );
+  });
+  captcha.readText = realm.safeFunction(async (bounds) => {
+    return captureCaptcha(
+      bounds,
+      "captcha-text.png",
+      "Read the attached CAPTCHA crop visually and return only its text.",
+    );
   });
   const human = Object.create(null);
   human.click = realm.safeFunction(async (target, options = {}) => {
@@ -2010,6 +2272,105 @@ function buildSandbox(session, consoleMessages) {
   sandbox.credentials = buildCredentials(session, realm);
   realm.installPage(getCurrentPage);
   return { context, realm, sandbox };
+}
+
+function summaryText(value, maxLength = 4_000) {
+  return redactText(String(value ?? "")).slice(0, maxLength);
+}
+
+async function callSummaryMethod(value, method, fallback = null) {
+  try {
+    if (typeof value?.[method] !== "function") return fallback;
+    return await value[method]();
+  } catch {
+    return fallback;
+  }
+}
+
+async function summarizePlaywrightObject(raw, kind) {
+  if (kind === "Frame") {
+    return {
+      type: "Frame",
+      name: summaryText(await callSummaryMethod(raw, "name", "")),
+      url: summaryText(await callSummaryMethod(raw, "url", "")),
+      detached: Boolean(await callSummaryMethod(raw, "isDetached", true)),
+    };
+  }
+  if (kind === "ConsoleMessage") {
+    const location = await callSummaryMethod(raw, "location", {});
+    return {
+      type: "ConsoleMessage",
+      level: summaryText(await callSummaryMethod(raw, "type", ""), 80),
+      text: summaryText(await callSummaryMethod(raw, "text", "")),
+      location: {
+        url: summaryText(location?.url || ""),
+        lineNumber: Number(location?.lineNumber) || 0,
+        columnNumber: Number(location?.columnNumber) || 0,
+      },
+    };
+  }
+  if (kind === "Request") {
+    return {
+      type: "Request",
+      url: summaryText(await callSummaryMethod(raw, "url", "")),
+      method: summaryText(await callSummaryMethod(raw, "method", ""), 40),
+      resourceType: summaryText(
+        await callSummaryMethod(raw, "resourceType", ""),
+        80,
+      ),
+      navigation: Boolean(
+        await callSummaryMethod(raw, "isNavigationRequest", false),
+      ),
+    };
+  }
+  if (kind === "Response") {
+    return {
+      type: "Response",
+      url: summaryText(await callSummaryMethod(raw, "url", "")),
+      status: Number(await callSummaryMethod(raw, "status", 0)) || 0,
+      statusText: summaryText(
+        await callSummaryMethod(raw, "statusText", ""),
+        200,
+      ),
+      ok: Boolean(await callSummaryMethod(raw, "ok", false)),
+    };
+  }
+  if (kind === "Dialog") {
+    return {
+      type: "Dialog",
+      dialogType: summaryText(await callSummaryMethod(raw, "type", ""), 80),
+      message: summaryText(await callSummaryMethod(raw, "message", "")),
+      defaultValue: summaryText(
+        await callSummaryMethod(raw, "defaultValue", ""),
+      ),
+    };
+  }
+  if (kind === "Download") {
+    return {
+      type: "Download",
+      url: summaryText(await callSummaryMethod(raw, "url", "")),
+      suggestedFilename: summaryText(
+        await callSummaryMethod(raw, "suggestedFilename", ""),
+        300,
+      ),
+    };
+  }
+  if (kind === "WebSocket" || kind === "Worker") {
+    return {
+      type: kind,
+      url: summaryText(await callSummaryMethod(raw, "url", "")),
+    };
+  }
+  if (kind === "FileChooser") {
+    return {
+      type: "FileChooser",
+      multiple: Boolean(await callSummaryMethod(raw, "isMultiple", false)),
+    };
+  }
+  // Handles, contexts, sessions, routes, videos, and future Playwright classes
+  // fail closed. Their enumerable fields include transport channels and host
+  // process state that must never cross the model boundary.
+  return { type: kind || "PlaywrightObject" };
 }
 
 async function summarize(value, seen = new WeakSet(), depth = 0) {
@@ -2063,6 +2424,9 @@ async function summarize(value, seen = new WeakSet(), depth = 0) {
     return Promise.all(
       [...raw].slice(0, 200).map((item) => summarize(item, seen, depth + 1)),
     );
+  if (kind !== "Object" && kind !== "") {
+    return summarizePlaywrightObject(raw, kind);
+  }
   const output = {};
   for (const key of Object.keys(raw).slice(0, 200)) {
     try {
@@ -2098,22 +2462,119 @@ async function detectSessionChallenges(session) {
     if (page.isClosed()) continue;
     let text = "";
     let title = "";
+    let frames = [];
+    let solvedProviders = [];
     try {
-      [title, text] = await Promise.all([
+      [title, text, frames, solvedProviders] = await Promise.all([
         page.title().catch(() => ""),
         page.locator("body").innerText({ timeout: 750 }).catch(() => ""),
+        Promise.all(
+          page
+            .frames()
+            .filter((frame) => frame !== page.mainFrame())
+            .slice(0, 24)
+            .map(async (frame) => {
+              const frameText = (
+                await frame
+                  .locator("body")
+                  .innerText({ timeout: 500 })
+                  .catch(() => "")
+              ).slice(0, 10_000);
+              const checked = await frame
+                .locator(
+                  '[aria-checked="true"], input[type="checkbox"]:checked, .recaptcha-checkbox-checked',
+                )
+                .count()
+                .then((count) => count > 0)
+                .catch(() => false);
+              return {
+                url: frame.url(),
+                text: frameText,
+                completed:
+                  checked ||
+                  /verification (?:complete|successful)|success!|you are verified/i.test(
+                    frameText,
+                  ),
+              };
+            }),
+        ),
+        page
+          .evaluate(() => {
+            const hasResponse = (name) => {
+              const fields = [
+                ...document.querySelectorAll(`[name="${name}"]`),
+              ];
+              return (
+                fields.length > 0 &&
+                fields.every(
+                  (element) =>
+                    typeof element.value === "string" &&
+                    element.value.trim().length > 0,
+                )
+              );
+            };
+            return [
+              ...(hasResponse("g-recaptcha-response") ? ["recaptcha"] : []),
+              ...(hasResponse("h-captcha-response") ? ["hcaptcha"] : []),
+              ...(hasResponse("cf-turnstile-response") ? ["turnstile"] : []),
+            ];
+          })
+          .catch(() => []),
       ]);
     } catch {
       /* a page may close while the result envelope is assembled */
     }
     const challenge = detectBotChallenge({
-      url: page.url(),
-      title,
-      text: text.slice(0, 50_000),
+      main: {
+        url: page.url(),
+        title,
+        text: text.slice(0, 50_000),
+      },
+      frames,
+      solvedProviders,
     });
-    if (challenge) challenges.push({ pageId: pageId(page), ...challenge });
+    if (challenge) {
+      const reported = { pageId: pageId(page), ...challenge };
+      try {
+        const file = await captureScreenshot(
+          page,
+          session,
+          "captcha-detected.png",
+          "captcha-detected.png",
+          { type: "png", animations: "disabled" },
+        );
+        const artifact = { kind: "captcha", path: file, media: `MEDIA:${file}` };
+        session.artifacts.push(artifact);
+        reported.artifact = artifact;
+      } catch {
+        // Challenge reporting must survive pages that close or cannot be captured.
+      }
+      challenges.push(reported);
+    }
   }
   return challenges;
+}
+
+function markChallengesForWorkerRestart(challenges) {
+  return challenges.map((challenge) => ({
+    ...challenge,
+    solve: {
+      ...challenge.solve,
+      resumeOnClear: false,
+      reopenRequired: true,
+    },
+    recovery: {
+      pagePreserved: false,
+      reopenUrl: challenge.url,
+    },
+    advice:
+      "A bot challenge was visible when the browser run had to be restarted, so " +
+      "this page cannot be preserved. In the next browser call, reopen the reported " +
+      "URL, inspect the attached challenge image and fresh snapshot, solve up to " +
+      "three distinct stages with the native CAPTCHA or human helpers, then resume " +
+      "the original task. Use a host web-research tool, first-party route, or human " +
+      "handoff if it remains unresolved.",
+  }));
 }
 
 async function execute(message) {
@@ -2138,6 +2599,10 @@ async function execute(message) {
       downloadPolicy === "allow" ||
       (downloadPolicy === "ask" && message.approvedDownloads === true);
     await setDownloadPermission(downloadsAllowed);
+    approvedDownloadSession =
+      downloadPolicy === "ask" && message.approvedDownloads === true
+        ? session.id
+        : null;
     downloadRunConfigured = true;
     await ensureSessionPage(session);
     const { context } = buildSandbox(session, consoleMessages);
@@ -2161,11 +2626,19 @@ async function execute(message) {
       }),
     ]).finally(() => clearTimeout(timer));
     await waitForPendingDownloads(downloadDeadline - Date.now());
+    approvedDownloadSession = null;
     await setDownloadPermission(downloadPolicy === "allow");
     downloadRunConfigured = false;
+    if (
+      session.events
+        .slice(firstEvent)
+        .some((event) => event.type === "public-search-blocked")
+    ) {
+      throw new Error(PUBLIC_SEARCH_BLOCK_ADVICE);
+    }
     const summarized = await summarize(result);
-    await enforceArtifactQuota(session);
     const challenges = await detectSessionChallenges(session);
+    await enforceArtifactQuota(session);
 
     let publicResult = summarized;
     const serialized = JSON.stringify(publicResult);
@@ -2231,6 +2704,7 @@ async function execute(message) {
   } catch (error) {
     let failure = error;
     if (downloadRunConfigured) {
+      approvedDownloadSession = null;
       try {
         // Close the approval window before waiting on a failed or timed-out
         // download. This prevents background page work from starting another.
@@ -2242,6 +2716,11 @@ async function execute(message) {
       }
     }
     restartWorker = ["BW_TIMEOUT", "BW_DOWNLOAD_GUARD"].includes(failure?.code);
+    let challenges = await detectSessionChallenges(session).catch(() => []);
+    if (restartWorker && challenges.length) {
+      challenges = markChallengesForWorkerRestart(challenges);
+    }
+    await enforceArtifactQuota(session).catch(() => {});
     sendResult({
       type: "result",
       id: message.id,
@@ -2250,12 +2729,23 @@ async function execute(message) {
       console: redactDeep(consoleMessages),
       events: redactDeep(session.events.slice(firstEvent)),
       artifacts: redactDeep(session.artifacts.slice(firstArtifact)),
-      warnings: profileWarning ? [profileWarning] : [],
+      warnings: [
+        ...(profileWarning ? [profileWarning] : []),
+        ...(challenges.length ? [challenges[0].advice] : []),
+      ],
+      challenges: redactDeep(challenges),
       profileMode,
+      pages: await Promise.all(
+        [...session.pages.values()]
+          .filter((page) => !page.isClosed())
+          .slice(0, MAX_RESPONSE_PAGES)
+          .map((page) => summarize(page)),
+      ),
       restartWorker,
       durationMs: Math.round((performance.now() - started) * 10) / 10,
     });
   } finally {
+    if (approvedDownloadSession === session.id) approvedDownloadSession = null;
     activeExecutionSession = null;
     if (restartWorker)
       setImmediate(() => {

@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const files = [
   "worker.mjs",
   "challenges.mjs",
+  "cloak.mjs",
   "downloads.mjs",
   "human.mjs",
   "snapshot.mjs",

@@ -25,8 +25,10 @@ jobs:
         with:
           node-version: "22"
       - run: npm install
+      - name: Install deterministic Chromium test backend
+        run: node bin/betterwright.mjs setup --chromium
       - run: npm run lint
-      # The postinstall step downloads Chromium, so the browser tests run too.
+      # The broad suite uses explicit Chromium; Cloak has a separate opt-in E2E.
       - run: npm test
 
   python:
@@ -47,7 +49,7 @@ jobs:
         working-directory: python
         run: pip install -e '.[dev]'
       - name: Install browser runtime
-        run: betterwright setup
+        run: betterwright setup --chromium
       - name: Lint
         working-directory: python
         run: ruff check .
