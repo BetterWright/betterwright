@@ -183,8 +183,17 @@ class Bridge:
                 directory.chmod(0o700)
             except OSError:
                 pass
+        # Each browser flavor gets its own profile directory. Cloak and the
+        # stock-Chromium fallback ship different Chromium versions; sharing one
+        # profile lets the newer binary silently upgrade it out from under the
+        # older one, after which the older binary crashes on launch (a newer
+        # profile is not downgrade-safe). Cloak keeps the historical "profile"
+        # path so existing saved logins survive an upgrade.
+        profile_name = (
+            "profile-chromium" if self.browser_flavor == "chromium" else "profile"
+        )
         return {
-            "profileDir": str(root / "profile"),
+            "profileDir": str(root / profile_name),
             "runtimeDir": str(runtime),
             "artifactsDir": str(artifacts),
             "downloadsDir": str(downloads),

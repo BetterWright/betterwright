@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The stock-Chromium fallback now uses its own `profile-chromium` directory
+  instead of sharing the Cloak `profile`. Because the fallback ships a newer
+  Chromium than Cloak, a single shared profile let it silently upgrade the
+  profile format, after which the older Cloak binary crashed on launch (an
+  opaque `SIGTRAP` in the AppKit window/session-restore path — "the browser
+  opens then instantly closes"). Cloak keeps the historical `profile` path so
+  existing saved logins survive the upgrade.
+- Launching Cloak against a profile already upgraded by a newer Chromium now
+  fails with a clear, actionable error (naming the offending version and how to
+  reset) instead of crashing during startup.
+
 ## [0.3.1] — 2026-07-15
 
 ### Added

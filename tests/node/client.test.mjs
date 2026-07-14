@@ -47,6 +47,28 @@ test("CloakBrowser is the managed default", async () => {
   }
 });
 
+test("each browser flavor gets its own profile directory", async () => {
+  const cloak = new BetterWright();
+  const chromium = new BetterWright({ browser: "chromium" });
+  const custom = new BetterWright({ executablePath: "/opt/chromium" });
+  try {
+    // Cloak keeps the historical path so existing saved logins survive.
+    assert.match(cloak._workerConfig().profileDir, /[/\\]profile$/);
+    // The stock-Chromium fallback (explicit or via executablePath) is isolated
+    // so its newer Chromium can never upgrade cloak's profile out from under it.
+    assert.match(chromium._workerConfig().profileDir, /[/\\]profile-chromium$/);
+    assert.match(custom._workerConfig().profileDir, /[/\\]profile-chromium$/);
+    assert.notEqual(
+      cloak._workerConfig().profileDir,
+      chromium._workerConfig().profileDir,
+    );
+  } finally {
+    await cloak.close();
+    await chromium.close();
+    await custom.close();
+  }
+});
+
 test("CLOAKBROWSER_BINARY_PATH overrides the managed Cloak binary", async () => {
   const previous = process.env.CLOAKBROWSER_BINARY_PATH;
   process.env.CLOAKBROWSER_BINARY_PATH = "/opt/cloak/chrome";
