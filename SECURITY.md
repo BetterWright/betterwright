@@ -9,9 +9,10 @@ threat model and the controls that enforce it are documented in
   closed.
 - **The sandbox** removes the escape-hatch APIs from model code as defense in
   depth. It is not, and does not claim to be, a `node:vm` security boundary.
-- **The credential vault** keeps passwords out of the model's context and
-  encrypts them at rest; it does not defend against an attacker who can already
-  read your files as the same OS user.
+- **The credential vault** encrypts passwords at rest for trusted host code.
+  Secret-bearing fill operations are disabled in model-authored snippets; the
+  store does not defend against an attacker who can already read your files as
+  the same OS user.
 
 Please read those sections before deploying BetterWright somewhere it can be
 driven by untrusted input.

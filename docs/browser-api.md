@@ -181,14 +181,12 @@ await page.click («the button that opens the dialog»);
 
 ## Credentials
 
-The `credentials` helpers read and write the [encrypted vault](credentials.md).
-Passwords are filled into the page by the trusted worker; the value is never
-returned to your code.
+The `credentials` helpers manage non-secret metadata in the
+[encrypted vault](credentials.md). Secret-bearing fill operations are disabled
+inside model-authored `run()` snippets.
 
 ```js
 await credentials.save({ username: "alice", password: "…" });
-await credentials.generateAndFill({ username: "alice", length: 24 });
-await credentials.fill({ username: "alice" });     // or fill({ id })
 await credentials.list();                          // metadata only, no passwords
 await credentials.update({ id, label: "work" });
 await credentials.remove({ id });
@@ -218,9 +216,10 @@ it escape the policy or read the host. These are absent by design and return
   `context.storageState`, `context.close`, `context.tracing`. Use `openPage`.
 - **`page.screenshot`** — use the `screenshot()` helper so captures are tracked
   as artifacts.
-- **Filesystem reach** — `setInputFiles`, `addScriptTag({path})`,
-  `page.pdf({path})` and similar are validated so they cannot read BetterWright's
-  own profile or vault, and can only write inside the artifact directory.
+- **Filesystem reach** — `setInputFiles`, `FileChooser.setFiles`,
+  `addInitScript({path})`, and tag helpers can only read existing files inside
+  BetterWright's artifact directory. Browser-created files can only be written
+  there.
 - **Node internals** — there is no `process`, `require`, `import`, or `fs`. The
   snippet runs in a `node:vm` context with code generation disabled.
 

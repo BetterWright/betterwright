@@ -1,7 +1,9 @@
 // End-to-end Node tests. Skipped unless a Chromium build is resolvable, so the
 // policy suite still runs on machines without the runtime installed.
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import fs from "node:fs";
+import http from "node:http";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -30,6 +32,43 @@ function tempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-test-"));
 }
 
+async function listen(handler) {
+  const server = http.createServer(handler);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address();
+  return {
+    origin: `http://127.0.0.1:${port}`,
+    port,
+    async close() {
+      server.closeAllConnections?.();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+class LimitedBetterWright extends BetterWright {
+  constructor(options, limits) {
+    super(options);
+    this.limits = limits;
+  }
+
+  _workerConfig() {
+    return { ...super._workerConfig(), ...this.limits };
+  }
+}
+
+function directorySize(root) {
+  if (!fs.existsSync(root)) return 0;
+  let total = 0;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const target = path.join(root, entry.name);
+    if (entry.isDirectory()) total += directorySize(target);
+    else total += fs.statSync(target).size;
+  }
+  return total;
+}
+
 test("navigate and read the title", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), policy: new NetworkPolicy(), headless: true });
   try {
@@ -48,6 +87,237 @@ test("metadata endpoint is blocked", opts, async () => {
     assert.equal(result.ok, false);
   } finally {
     await bw.close();
+  }
+});
+
+test("IPv4-mapped IPv6 cannot reach an IPv4 loopback service", opts, async () => {
+  let hits = 0;
+  const server = await listen((_request, response) => {
+    hits += 1;
+    response.end("loopback reached");
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(
+      `await page.goto('http://[::ffff:127.0.0.1]:${server.port}/'); return 'reached'`,
+    );
+    assert.equal(result.ok, false);
+    assert.equal(hits, 0);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("setInputFiles only reads files from the artifact root", opts, async () => {
+  const home = tempHome();
+  const outside = path.join(home, "host-secret.txt");
+  const outsideScript = path.join(home, "host-secret.js");
+  const allowed = path.join(home, "artifacts", "upload.txt");
+  const linkedOutside = path.join(home, "artifacts", "linked-secret.txt");
+  fs.mkdirSync(path.dirname(allowed), { recursive: true });
+  fs.writeFileSync(outside, "host-secret-value");
+  fs.writeFileSync(outsideScript, "globalThis.hostSecret = 'read';");
+  fs.writeFileSync(allowed, "allowed-artifact-value");
+  if (process.platform !== "win32") fs.symlinkSync(outside, linkedOutside);
+  const bw = new BetterWright({ home, headless: true });
+  try {
+    const denied = await bw.run(`
+      await page.setContent('<input type="file">');
+      await page.locator('input').setInputFiles(${JSON.stringify(outside)});
+      return page.locator('input').evaluate(element => element.files[0].text());
+    `);
+    assert.equal(denied.ok, false);
+    assert.match(denied.error || "", /artifact directory/i);
+
+    const accepted = await bw.run(`
+      await page.setContent('<input type="file">');
+      await page.locator('input').setInputFiles(${JSON.stringify(allowed)});
+      return page.locator('input').evaluate(element => element.files[0].text());
+    `);
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.equal(accepted.result, "allowed-artifact-value");
+
+    const chooserDenied = await bw.run(`
+      await page.setContent('<input type="file">');
+      const chooserPromise = page.waitForEvent('filechooser');
+      await page.locator('input').click();
+      const chooser = await chooserPromise;
+      await chooser.setFiles(${JSON.stringify(outside)});
+      return 'read';
+    `);
+    assert.equal(chooserDenied.ok, false);
+    assert.match(chooserDenied.error || "", /artifact directory/i);
+
+    const initScriptDenied = await bw.run(`
+      await page.addInitScript({path: ${JSON.stringify(outsideScript)}});
+      return 'read';
+    `);
+    assert.equal(initScriptDenied.ok, false);
+    assert.match(initScriptDenied.error || "", /artifact directory/i);
+
+    if (process.platform !== "win32") {
+      const symlinkDenied = await bw.run(`
+        await page.setContent('<input type="file">');
+        await page.locator('input').setInputFiles(${JSON.stringify(linkedOutside)});
+        return 'read';
+      `);
+      assert.equal(symlinkDenied.ok, false);
+      assert.match(symlinkDenied.error || "", /artifact directory/i);
+    }
+  } finally {
+    await bw.close();
+  }
+});
+
+test("vault fills are unavailable to model-authored snippets", opts, async () => {
+  const secret = "vault-secret-value";
+  const server = await listen((_request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end('<input type="password">');
+  });
+  const vault = {
+    async handleRequest(action, _payload, origin) {
+      assert.equal(action, "fill");
+      return { secret, origin, username: "alice" };
+    },
+  };
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+    vault,
+  });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      await credentials.fill({username: 'alice'});
+      return page.locator('input[type=password]').evaluate(element => btoa(element.value));
+    `);
+    assert.equal(result.ok, false);
+    assert.match(result.error || "", /disabled.*untrusted|untrusted.*disabled/i);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("guard decisions are not reused across request methods", opts, async () => {
+  let deleteRequests = 0;
+  const server = await listen((request, response) => {
+    if (request.method === "DELETE") deleteRequests += 1;
+    response.setHeader("content-type", request.url === "/" ? "text/html" : "text/plain");
+    response.end(request.url === "/" ? "<h1>cache test</h1>" : "ok");
+  });
+  const policy = new NetworkPolicy({
+    allowLoopback: true,
+    custom: (_url, details) =>
+      details.method === "DELETE" ? { allowed: false, reason: "DELETE denied" } : null,
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true, policy });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      return page.evaluate(async () => {
+        await fetch('/api');
+        try {
+          await fetch('/api', {method: 'DELETE'});
+          return 'allowed';
+        } catch {
+          return 'blocked';
+        }
+      });
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, "blocked");
+    assert.equal(deleteRequests, 0);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("screenshots are rejected before an oversized file is written", opts, async () => {
+  const home = tempHome();
+  const bw = new LimitedBetterWright(
+    { home, headless: true },
+    { maxScreenshotBytes: 512 },
+  );
+  try {
+    const result = await bw.run(`
+      await page.setContent('<main style="width:1000px;height:1000px;background:red"></main>');
+      return screenshot({kind: 'proof', name: 'oversized.png'});
+    `);
+    assert.equal(result.ok, false);
+    assert.match(result.error || "", /screenshot.*limit/i);
+    assert.equal(directorySize(path.join(home, "artifacts")), 0);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("downloads are canceled while crossing the byte limit", opts, async () => {
+  const chunk = Buffer.alloc(4096, 0x61);
+  const chunkCount = 64;
+  const server = await listen((request, response) => {
+    if (request.url === "/") {
+      response.setHeader("content-type", "text/html");
+      response.end(`
+        <a id="download-1" href="/large-1.bin" download>Download one</a>
+        <a id="download-2" href="/large-2.bin" download>Download two</a>
+      `);
+      return;
+    }
+    response.setHeader("content-type", "application/octet-stream");
+    response.setHeader("content-disposition", 'attachment; filename="large.bin"');
+    let sent = 0;
+    const timer = setInterval(() => {
+      if (sent >= chunkCount || response.destroyed) {
+        clearInterval(timer);
+        if (!response.destroyed) response.end();
+        return;
+      }
+      response.write(chunk);
+      sent += 1;
+    }, 50);
+    response.on("close", () => clearInterval(timer));
+  });
+  const home = tempHome();
+  const maxDownloadBytes = 32 * 1024;
+  const bw = new LimitedBetterWright(
+    {
+      home,
+      headless: true,
+      policy: new NetworkPolicy({ allowLoopback: true }),
+    },
+    { maxArtifactBytes: maxDownloadBytes, maxDownloadBytes },
+  );
+  let maxObserved = 0;
+  const observer = setInterval(() => {
+    maxObserved = Math.max(maxObserved, directorySize(path.join(home, "artifacts")));
+  }, 10);
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      await page.locator('#download-1').click();
+      await page.waitForTimeout(100);
+      await page.locator('#download-2').click();
+      await page.waitForTimeout(1500);
+      return 'done';
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.ok(
+      maxObserved <= maxDownloadBytes + chunk.length * 4,
+      `download grew to ${maxObserved} bytes before cancellation`,
+    );
+    const rejected = (result.events || []).filter(
+      event => event.type === "download-rejected",
+    );
+    assert.equal(rejected.length, 2, JSON.stringify(result.events));
+  } finally {
+    clearInterval(observer);
+    await bw.close();
+    await server.close();
   }
 });
 

@@ -1,27 +1,17 @@
 # Credential vault
 
-![A password flows from the vault into a login field without being exposed](assets/credentials.png)
-
-Agents that complete real tasks have to log in. Putting passwords in the
-prompt, in the model's context, or in the automation script is how they leak.
-The vault lets an agent fill a login form without the password ever being
-returned to the model: the agent asks for a fill by origin, and the trusted
-worker types the stored value into the page.
+The vault is an encrypted, origin-scoped store for trusted host code. A model
+snippet with arbitrary DOM access can read any password typed into a page, so
+BetterWright intentionally does not expose vault-backed filling inside `run()`.
 
 ## The model-facing contract
 
-Inside a `run()` snippet, the `credentials` helpers operate on the current
-page's origin (which must be `http(s)`):
+Inside a `run()` snippet, the non-secret management helpers operate on the
+current page's origin (which must be `http(s)`):
 
 ```js
 // Store a password you were given for this task
 await credentials.save({ username: "alice", password: "…" });
-
-// Generate a strong password and type it straight into the form
-await credentials.generateAndFill({ username: "alice", length: 24 });
-
-// Fill a stored password into the visible password field
-await credentials.fill({ username: "alice" });      // or fill({ id: "cred_…" })
 
 // Inspect what is stored for this origin — metadata only, never the password
 await credentials.list();
@@ -31,15 +21,10 @@ await credentials.remove({ id: "cred_…" });
 ```
 
 `save`, `list`, `update`, and `remove` return only metadata — `id`, `origin`,
-`username`, `label`, timestamps. `fill` and `generateAndFill` return
-`{filled: true, origin, username, passwordFields}`. **No method returns the
-password to the snippet.** `generateAndFill` never exposes the value it created;
-it exists so an agent can set a fresh password without ever seeing it.
-
-`fill` locates the username and password fields with sensible default selectors;
-pass `usernameSelector` / `passwordSelector` when a page needs them. The fill is
-aborted if the page navigates to a different origin partway through, so a
-credential for one site cannot be typed into another.
+`username`, `label`, timestamps. `fill` and `generateAndFill` fail explicitly in
+`run()` because filling a normal DOM input would let the same snippet read,
+encode, or transmit the secret. Use `CredentialVault` directly from trusted host
+code when integrating a future trusted login handoff.
 
 ## What the store guarantees
 
@@ -53,8 +38,8 @@ credential for one site cannot be typed into another.
 - **Audited.** Each operation appends `{timestamp, action, origin, record_id}`
   to `audit.jsonl` — enough to see what happened, with no secret in the log.
 - **Redacted on the way out.** Every value the vault has handled is scrubbed from
-  `run()` output as a final safety net, so a password that ends up in page text
-  or an error message is replaced with `[REDACTED]` before it reaches the model.
+  `run()` output as a final safety net. Redaction is not treated as authorization
+  and is not used to make DOM filling safe.
 
 ## What it is not
 
@@ -81,4 +66,6 @@ for record in vault.list_credentials("https://example.com"):
 ```
 
 Pass a `vault=` instance to `BetterWright(...)` to share one store, or
-`vault=False` to disable the `credentials` helpers entirely.
+`vault=False` to disable the model-facing management helpers entirely. Trusted
+host code can call `fetch_for_fill`, `reveal`, or `generate` directly, but must
+not return those secret-bearing results to model-authored code.

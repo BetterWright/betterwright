@@ -19,6 +19,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Result envelopes omit empty `console`/`events`/`artifacts`/`warnings`
   collections instead of sending empty arrays.
 
+### Security
+
+- Normalize IPv4-mapped IPv6 literals to their embedded IPv4 address before
+  policy classification in both clients.
+- Evaluate every network authorization independently so method-, path-, and
+  request-detail policy decisions cannot reuse an unrelated cached allow.
+- Restrict every file-input and path-based script API to canonical files inside
+  the artifact directory.
+- Disable vault-backed credential filling in model-authored snippets; direct
+  `CredentialVault` methods remain available to trusted host code.
+- Cancel oversized downloads through Chromium progress events and bound
+  screenshots by pixels and encoded bytes before writing artifact files.
+
 ## [0.1.0] — 2026-07-14
 
 Initial release.

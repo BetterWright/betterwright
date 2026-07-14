@@ -7,8 +7,9 @@
 Playwright gives you a browser automation API. BetterWright is the layer you
 need on top of it when the thing driving the browser is a language model rather
 than a test script: a long-lived session the agent can return to, a network
-policy enforced on every request, an encrypted credential vault, screenshot
-artifacts the agent cites as proof of work, and native CAPTCHA helpers.
+policy enforced on every request, an encrypted credential store for trusted
+host code, screenshot artifacts the agent cites as proof of work, and native
+CAPTCHA helpers.
 
 It runs the same Node worker whether you drive it from **Python** or
 **JavaScript**, so an agent written in either language gets identical behavior.
@@ -38,7 +39,7 @@ work is, and it is what BetterWright handles for you:
 | **Session lifetime** | You open and close a browser per script. | One persistent Chromium with a real profile; the agent runs snippets against it across many turns. |
 | **Untrusted control** | The script is trusted; it gets the full API. | Model code runs in a sandbox with the file, process, and network-routing APIs removed. |
 | **Network scope** | Any URL the code names. | Every request is checked against a policy; cloud metadata and private networks are blocked by default, even against DNS rebinding. |
-| **Secrets** | Passwords live in your script or env. | An encrypted, origin-scoped vault fills credentials into pages without the value entering the model's context. |
+| **Secrets** | Passwords live in your script or env. | An encrypted, origin-scoped vault is available to trusted host code; secret-bearing fill operations are not exposed to model snippets. |
 | **Evidence** | You assert; nobody looks. | `screenshot({kind: 'proof'})` produces a tagged artifact the agent returns as proof a task finished. |
 | **CAPTCHAs** | Out of scope. | Native one-shot checkbox, slider, and text-challenge helpers for authorized flows. |
 
@@ -137,9 +138,8 @@ claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
   metadata endpoints and private/loopback addresses; open exactly what you need
   with `allow_hosts`, `allow_loopback`, or a `custom` hook.
 - **[Credential vault](docs/credentials.md)** — AES-256-GCM, origin-scoped,
-  stored outside Chromium's profile. The agent calls `credentials.fill({...})`
-  and the password is typed into the page without ever being returned to the
-  model.
+  stored outside Chromium's profile for trusted host-side credential workflows.
+  Model snippets cannot request a secret-bearing fill.
 - **[Proof artifacts](docs/browser-api.md#screenshots-and-artifacts)** —
   screenshots tagged `proof`, `question`, or `debug`, returned as
   `MEDIA:<path>` references a host UI can render.
