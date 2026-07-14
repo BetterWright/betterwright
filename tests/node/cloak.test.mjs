@@ -5,7 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { managedCloakViewport } from "../../src/cloak.mjs";
+import { assertProfileNotNewer, managedCloakViewport } from "../../src/cloak.mjs";
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
 
 const enabled = process.env.BETTERWRIGHT_CLOAK_E2E === "1";
@@ -47,6 +47,28 @@ test("managed Cloak viewports stay coherent on affected builds", () => {
     ),
     undefined,
   );
+});
+
+test("assertProfileNotNewer rejects a profile upgraded by a newer Chromium", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-profver-"));
+  try {
+    // Fresh profile (no marker): no-op regardless of running version.
+    assert.doesNotThrow(() => assertProfileNotNewer(dir, "145.0.7632.109"));
+
+    fs.writeFileSync(path.join(dir, "Last Version"), "149.0.7827.55\n");
+    // Older binary opening a newer profile is the crash we prevent.
+    assert.throws(
+      () => assertProfileNotNewer(dir, "145.0.7632.109"),
+      /upgraded by a newer Chromium \(149\.0\.7827\.55\)/,
+    );
+    // Same or newer binary is fine.
+    assert.doesNotThrow(() => assertProfileNotNewer(dir, "149.0.7827.55"));
+    assert.doesNotThrow(() => assertProfileNotNewer(dir, "150.0.0.0"));
+    // Unknown running version is a no-op (cannot compare safely).
+    assert.doesNotThrow(() => assertProfileNotNewer(dir, ""));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("managed Cloak browser hides test-browser signals and keeps one profile identity", opts, async () => {

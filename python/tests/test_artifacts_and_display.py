@@ -1,6 +1,7 @@
 """Tests for artifact handling, image data URLs, and display resolution."""
 
 import base64
+import os
 
 import pytest
 
@@ -101,6 +102,24 @@ def test_cloak_is_the_managed_default(monkeypatch, tmp_path):
     assert bridge.executable_path is None
     assert bridge.browser_flavor == "cloak"
     assert bridge._worker_config()["browserFlavor"] == "cloak"
+
+
+def test_each_flavor_gets_its_own_profile_directory(monkeypatch, tmp_path):
+    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
+    # Cloak keeps the historical path so existing saved logins survive.
+    cloak_profile = Bridge(home=tmp_path, browser="cloak")._worker_config()["profileDir"]
+    # The stock-Chromium fallback is isolated so its newer Chromium can never
+    # upgrade cloak's profile out from under it.
+    chromium_profile = Bridge(home=tmp_path, browser="chromium")._worker_config()[
+        "profileDir"
+    ]
+    custom_profile = Bridge(home=tmp_path, executable_path="/opt/chromium")._worker_config()[
+        "profileDir"
+    ]
+    assert os.path.basename(cloak_profile) == "profile"
+    assert os.path.basename(chromium_profile) == "profile-chromium"
+    assert os.path.basename(custom_profile) == "profile-chromium"
+    assert cloak_profile != chromium_profile
 
 
 def test_cloak_binary_env_overrides_managed_binary(monkeypatch, tmp_path):
