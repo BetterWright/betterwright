@@ -1,7 +1,9 @@
 # Browser recipes for CAPTCHA interactions
 
 Each block is the body of a `run()` snippet. BetterWright exposes `captcha`
-alongside `page`, `snapshot`, and `screenshot`.
+alongside `page`, `snapshot`, and `screenshot`. A detected challenge normally
+arrives with a `captcha` image already attached; use `captcha.inspect(bounds?)`
+when you need a fresh or tighter view.
 
 ## Find likely widgets
 
@@ -50,7 +52,7 @@ return captcha.readText(bounds);
 ```
 
 The browser result contains only the crop, not a redundant full-page image.
-After the model reads it, fill the answer normally:
+After the model reads the text, fill that text challenge's answer normally:
 
 ```js
 await page.locator('input[name*="captcha" i], input[id*="captcha" i]').fill(text);
@@ -58,5 +60,22 @@ await page.locator('button[type="submit"]').click();
 return snapshot();
 ```
 
-Always inspect the returned snapshot and `challenges` list. Stop if one native
-attempt does not clear the challenge.
+## Inspect a non-text widget
+
+For a checkbox, image grid, or other non-text challenge, capture the visible
+region for visual inspection. Do not run the text-fill recipe against it:
+
+```js
+const widget = page.locator('iframe[title*="challenge" i], .cf-turnstile').first();
+const bounds = await widget.boundingBox();
+return captcha.inspect(bounds || undefined);
+```
+
+Always inspect the returned snapshot and `challenges` list. If the challenge
+changes form, handle that as the next distinct stage rather than repeating the
+same action. If the same stage rejects an action, stop native challenge attempts
+immediately and use an alternate first-party source or request human help.
+Otherwise, continue through at most three distinct stages before taking that
+handoff. When the challenge clears, verify the current application state first.
+Replay the original action only if it is idempotent or the state proves it did
+not already complete; never duplicate a submission, purchase, or message.

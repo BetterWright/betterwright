@@ -9,7 +9,9 @@ need on top of it when the thing driving the browser is a language model rather
 than a test script: a long-lived session the agent can return to, a network
 policy enforced on every request, an encrypted credential store for trusted
 host code, screenshot artifacts the agent cites as proof of work, and native
-CAPTCHA helpers.
+CAPTCHA helpers. Managed sessions use CloakBrowser by default to reduce common
+automation false positives while keeping BetterWright's policy and tool
+boundaries in place.
 
 It runs the same Node worker whether you drive it from **Python** or
 **JavaScript**, so an agent written in either language gets identical behavior.
@@ -36,12 +38,12 @@ work is, and it is what BetterWright handles for you:
 
 | Concern | Playwright | BetterWright |
 | --- | --- | --- |
-| **Session lifetime** | You open and close a browser per script. | One persistent Chromium with a real profile; the agent runs snippets against it across many turns. |
+| **Session lifetime** | You open and close a browser per script. | One persistent managed browser with a real profile; the agent runs snippets against it across many turns. |
 | **Untrusted control** | The script is trusted; it gets the full API. | Model code runs in a sandbox with the file, process, and network-routing APIs removed. |
 | **Network scope** | Any URL the code names. | Every request is checked against a policy; cloud metadata and private networks are blocked by default, even against DNS rebinding. |
 | **Secrets** | Passwords live in your script or env. | An encrypted, origin-scoped vault is available to trusted host code; secret-bearing fill operations are not exposed to model snippets. |
 | **Evidence** | You assert; nobody looks. | `screenshot({kind: 'proof'})` produces a tagged artifact the agent returns as proof a task finished. |
-| **CAPTCHAs** | Out of scope. | Native one-shot checkbox, slider, and text-challenge helpers for authorized flows. |
+| **CAPTCHAs** | Out of scope. | Resumable challenge state, an attached image, and native checkbox, slider, text, and inspection helpers for authorized flows. |
 
 If you are writing a test, use Playwright. If you are handing a browser to an
 agent and need it to stay safe and accountable, that is what this is for.
@@ -50,25 +52,28 @@ agent and need it to stay safe and accountable, that is what this is for.
 
 ## Install
 
-BetterWright needs **Node.js 18+** on `PATH`. Chromium is downloaded on setup.
+BetterWright needs **Node.js 22+** on `PATH`. Setup downloads CloakBrowser's
+signed binary directly from its official release source. BetterWright does not
+redistribute that binary.
 
 ### Python
 
 ```bash
 pip install betterwright
-betterwright setup        # installs the pinned Playwright runtime + Chromium
+betterwright setup        # installs the managed Cloak browser
 betterwright doctor       # confirms everything resolves
 ```
 
 ### JavaScript
 
 ```bash
-npm install betterwright  # postinstall downloads Chromium
+npm install betterwright  # postinstall downloads the managed Cloak browser
 npx betterwright doctor
 ```
 
-Both packages ship the identical worker and pin the same Playwright version, so
-`betterwright setup` is a one-time download of the matching browser build.
+Both packages ship the identical worker and pin the same Playwright and
+CloakBrowser wrapper versions. The browser binary is fetched and signature
+verified by the official CloakBrowser wrapper, then cached outside this package.
 
 ---
 
@@ -109,10 +114,12 @@ client returns the worker's result envelope directly (`result`, `artifacts`,
 `console`, `events`, `pages`, `challenges`, `warnings`, `durationMs`).
 
 Long-lived desktop agents can attach to a dedicated real-Chrome profile with
-`ensureChromeCdp()`. Keeping browser state stable and optionally pacing public
-search navigations avoids needless fresh-session signals; visible bot challenges
-are surfaced in the result envelope so an agent can take a direct-site route
-instead of repeatedly retrying search. See [attach mode](docs/attach-mode.md).
+`ensureChromeCdp()`, but that host-only mode gives up part of the managed launch
+boundary. For broad discovery, use the host's web-search tool and open its
+results in BetterWright instead of automating Google or Bing's public search UI;
+the managed worker blocks public search-result UIs by default.
+Visible bot challenges are surfaced as resumable state. See
+[attach mode](docs/attach-mode.md).
 
 ---
 
@@ -146,15 +153,16 @@ claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
 - **Download approval** — ordinary browser runs deny downloads. A trusted host
   approves one download run at a time; deployments can configure `ask`, `allow`,
   or `deny` without weakening the byte and artifact quotas.
-- **[Native CAPTCHA helpers](docs/captcha.md)** — checkbox clicks, smooth
-  slider drags, and tightly cropped text-challenge images for the agent's
-  existing vision, with no external solving service or API key.
+- **[Native CAPTCHA helpers](docs/captcha.md)** — automatic challenge images,
+  explicit inspection, checkbox clicks, smooth slider drags, and tightly
+  cropped text challenges for the agent's existing vision, with no external
+  solving service or API key.
 - **[Human-shaped actions](docs/browser-api.md#human-shaped-interactions)** —
   curved pointer movement, paced typing, and eased wheel events without another
   runtime dependency.
-- **[Optional CloakBrowser binary](docs/getting-started.md#optional-cloakbrowser-binary)** —
-  use an explicitly installed binary without bundling its separate license or
-  changing BetterWright's Node requirement.
+- **[Managed CloakBrowser backend](docs/getting-started.md#managed-cloakbrowser-backend)** —
+  the default backend reduces common browser-fingerprint false positives;
+  stock Chromium remains an explicit fallback for compatibility and testing.
 - **[Agent guidance](docs/agent-prompt.md)** — drop-in operator instructions
   (`agent_system_prompt()`) that make the model act decisively on authorized
   tasks — logging in, signing up, buying — instead of hedging, with
@@ -163,11 +171,13 @@ claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
 ## How it works
 
 A Python or JavaScript client owns one long-lived Node worker. The worker holds
-a persistent Chromium context and exposes a sandboxed set of globals to the
+a persistent browser context and exposes a sandboxed set of globals to the
 model's code; it calls back to the client to authorize each request and to
-handle credentials. The security model — what the sandbox removes, why the
-metadata floor cannot be lifted, and where it does *not* claim to be a boundary
-— is written up in [docs/architecture.md](docs/architecture.md).
+handle credentials. CDP and the underlying browser/context handles remain
+worker internals and are not exposed to model-authored snippets. The security
+model — what the sandbox removes, why the metadata floor cannot be lifted, and
+where it does *not* claim to be a boundary — is written up in
+[docs/architecture.md](docs/architecture.md).
 
 ## Scope and responsible use
 
@@ -176,7 +186,8 @@ interacting with simple CAPTCHAs on sites you are authorized to use. It is not
 built for bulk account creation, credential stuffing, or scraping behind
 anti-bot walls at scale, and its native helpers exist to unblock a task you
 legitimately own, not to repeatedly defeat a site that is telling automation to
-stop. See
+stop. Managed CloakBrowser and human-shaped actions reduce false positives; no
+browser configuration can guarantee undetectability or challenge acceptance. See
 [docs/architecture.md#security-model](docs/architecture.md#security-model) for
 the boundaries the code does and does not enforce.
 

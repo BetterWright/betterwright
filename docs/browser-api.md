@@ -97,9 +97,11 @@ the field by default; pass `{clear: false}` to append, or set `minDelay` and
 `maxDelay`. `human.scroll(deltaY, options?)` accepts `steps`, while the object
 form also accepts `deltaX`.
 
-These helpers reduce behavioral false positives; they do not make stock
-Chromium undetectable. Keep one stable persistent profile, avoid bursty public
-search traffic, and respect a site's rate limits.
+These helpers and the default managed Cloak backend reduce behavioral and
+browser-fingerprint false positives; they do not guarantee undetectability.
+Keep one stable persistent profile and respect a site's rate limits. For broad
+discovery, use the host's web-search tool and open returned results here rather
+than automating Google or Bing's public search UI.
 
 ## Screenshots and artifacts
 
@@ -130,7 +132,8 @@ The image kinds carry intent:
   prompt, an ambiguous choice). The session holds its pages open longer while a
   `question` is outstanding.
 - **`debug`** — a look at the current state; no special handling.
-- **`captcha`** — a tightly cropped text challenge from `captcha.readText()`.
+- **`captcha`** — an automatically captured challenge image or a capture from
+  `captcha.inspect()` / `captcha.readText()`.
 
 `artifactPath(name)` returns a writable path inside the session's artifact
 directory for files you create yourself (a `page.pdf({path})`, for example).
@@ -142,21 +145,34 @@ evicted first, and a warning is recorded when that happens.
 ## Bot-challenge detection
 
 Every result envelope includes a `challenges` list. When a page visibly presents
-a CAPTCHA or bot check, BetterWright records its page, provider, URL, and routing
-advice there and repeats the advice in `warnings`. It does not act automatically.
-Agents should not retry the page or rotate through public search engines; use a
-host-provided research tool, navigate directly to a first-party site, or make one
-native attempt when that page is truly required.
+a CAPTCHA or bot check, including one inside a child frame, BetterWright records
+its page, provider, URL, and routing advice there and repeats the advice in
+`warnings`. It also attaches a `captcha` image when the page can be captured.
+Challenge reporting survives a failed snippet so the next turn can continue
+from the same page and profile.
+
+Treat a challenge as resumable state, not a generic navigation error. Inspect
+the attached image and current snapshot, choose the appropriate helper, and
+check the fresh result after every action. If the same stage rejects an action,
+stop native challenge attempts immediately and use a host-provided research
+tool, an alternate first-party source, or human help. Otherwise, continue
+through at most three distinct stages before taking that handoff; never repeat a
+failed action or rotate identities. When the challenge clears, verify the
+current application state. Replay the original action only if it is idempotent
+or the state proves it did not already complete; never duplicate a submission,
+purchase, or message.
 
 The `captcha` global provides:
 
+- `captcha.inspect(bounds?)` for a challenge image the host model can inspect.
 - `captcha.click(bounds)` for a checkbox-style widget.
 - `captcha.drag(from, to, {steps})` for a slider or puzzle handle.
 - `captcha.readText(bounds?)` for a cropped image that the host model can read.
 
-Click and drag return a post-action accessibility snapshot. Always check the
-result envelope's `challenges` list and stop if the challenge remains. See
-[captcha.md](captcha.md) for recipes and limits.
+Click and drag use shaped pointer movement and return a post-action
+accessibility snapshot. Always check the result envelope's `challenges` list
+before choosing the next distinct stage. See [captcha.md](captcha.md) for
+recipes and limits.
 
 ## State
 
@@ -212,6 +228,9 @@ it escape the policy or read the host. These are absent by design and return
   `once`, `addListener`, `exposeFunction`, `exposeBinding`, `newCDPSession`.
   Request routing is how the policy is enforced; handing it to model code would
   defeat it.
+- **Browser and CDP internals** — the raw browser object, private Playwright
+  properties, and CDP sessions stay inside the worker. Attach-mode endpoints
+  are trusted host configuration and are not exposed as snippet globals.
 - **Context mutation** — `context.newPage`, `context.cookies`,
   `context.storageState`, `context.close`, `context.tracing`. Use `openPage`.
 - **`page.screenshot`** — use the `screenshot()` helper so captures are tracked

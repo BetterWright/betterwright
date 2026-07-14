@@ -20,7 +20,34 @@ test("download approval is required by default and configurable", async () => {
   }
 });
 
-test("CLOAKBROWSER_BINARY_PATH opts into an installed Cloak binary", async () => {
+test("public search result UIs are blocked by default and opt-in", async () => {
+  const guarded = new BetterWright();
+  const allowed = new BetterWright({ publicSearchPolicy: "allow" });
+  try {
+    assert.equal(guarded.publicSearchPolicy, "block");
+    assert.equal(guarded._workerConfig().publicSearchPolicy, "block");
+    assert.equal(allowed._workerConfig().publicSearchPolicy, "allow");
+    assert.throws(
+      () => new BetterWright({ publicSearchPolicy: "pace" }),
+      /publicSearchPolicy must be "block" or "allow"/,
+    );
+  } finally {
+    await guarded.close();
+    await allowed.close();
+  }
+});
+
+test("CloakBrowser is the managed default", async () => {
+  const browser = new BetterWright();
+  try {
+    assert.equal(browser.browserFlavor, "cloak");
+    assert.equal(browser._workerConfig().browserFlavor, "cloak");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("CLOAKBROWSER_BINARY_PATH overrides the managed Cloak binary", async () => {
   const previous = process.env.CLOAKBROWSER_BINARY_PATH;
   process.env.CLOAKBROWSER_BINARY_PATH = "/opt/cloak/chrome";
   const browser = new BetterWright();
@@ -46,5 +73,16 @@ test("an explicit executable wins over CLOAKBROWSER_BINARY_PATH", async () => {
     await browser.close();
     if (previous === undefined) delete process.env.CLOAKBROWSER_BINARY_PATH;
     else process.env.CLOAKBROWSER_BINARY_PATH = previous;
+  }
+});
+
+test("stock Chromium must be selected explicitly", async () => {
+  const browser = new BetterWright({ browser: "chromium" });
+  try {
+    assert.equal(browser.executablePath, "");
+    assert.equal(browser.browserFlavor, "chromium");
+    assert.throws(() => new BetterWright({ browser: "other" }), /cloak.*chromium/i);
+  } finally {
+    await browser.close();
   }
 });

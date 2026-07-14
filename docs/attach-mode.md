@@ -1,8 +1,9 @@
 # Attaching to an existing Chrome (and headed mode)
 
-By default BetterWright launches its **own** Chromium with an isolated profile.
-There are two ways to change that: run it **headed** so you can watch it, and
-**attach** it to a Chrome you already have open.
+By default BetterWright launches its **own managed Cloak browser** with an
+isolated persistent profile. There are two ways to change that: run it
+**headed** so you can watch it, and **attach** it to a Chrome you already have
+open.
 
 ## Headed vs. headless
 
@@ -39,6 +40,11 @@ Chrome's DevTools protocol, which has one hard requirement: the browser must
 have been launched with `--remote-debugging-port`. You cannot attach to a normal
 Chrome that is already running without that flag — Chrome only opens the debug
 port when it starts.
+
+CDP remains a trusted host transport. The endpoint is supplied when the client
+is constructed; it is not included in the model's browser tool, and
+model-authored snippets cannot access `newCDPSession`, the raw browser object,
+or private Playwright handles.
 
 ### 1. Launch Chrome with the debug port
 
@@ -98,6 +104,7 @@ import { BetterWright, ensureChromeCdp } from "betterwright";
 const { endpoint, profileDir } = await ensureChromeCdp();
 const bw = new BetterWright({
   connectOverCdp: endpoint,
+  publicSearchPolicy: "allow",
   searchMinIntervalMs: 12_000,
 });
 ```
@@ -108,17 +115,23 @@ to `127.0.0.1`, and stores state under
 `--user-data-dir`; BetterWright never points remote debugging at your everyday
 Chrome profile. Set `BETTERWRIGHT_HOME` to move the dedicated profile.
 
-`searchMinIntervalMs` is optional and defaults to `0`. A nonzero value spaces
-top-level Google, Bing, and DuckDuckGo search navigations while leaving ordinary
-site browsing untouched. Pacing and a stable profile reduce automated-query
-signals, but no browser setting can guarantee that a search provider will never
-show a CAPTCHA, especially when its decision includes the public IP's history.
+For broad discovery, use a web-search tool supplied by the host, then open the
+returned result or first-party page in BetterWright. Do not automate Google or
+Bing's public search UI. The example's `publicSearchPolicy: "allow"` is an
+explicit trusted-host escape hatch; without it, those result pages are blocked.
+`searchMinIntervalMs` then spaces top-level public-search navigations, but
+pacing is not a substitute for the host search route and cannot guarantee that
+a provider will accept the traffic.
 
 ## The security trade-off — read this
 
 Attach mode gives up BetterWright's strongest guarantees, because they are
 applied when BetterWright launches the browser and it can't set them on a browser
 it didn't start:
+
+- **Browser signals:** attach mode uses the Chrome instance you launched, not
+  BetterWright's managed Cloak backend. It therefore gives up Cloak's reduction
+  of common stock automation signals.
 
 - **Gone in attach mode:** the launch-time network floor — the Chromium
   `--host-resolver-rules` that NXDOMAIN cloud-metadata endpoints, the forced
@@ -144,5 +157,6 @@ deliberately, not your primary Chrome profile.
 - **Just want to watch it work?** Use `headless=False` (or `"auto"`) — that keeps
   the full security floor and still shows a window.
 - **Need your existing logins in a browser you can see?** Prefer logging into
-  BetterWright's own persistent profile once (it survives across runs). Reach for
-  attach mode only when you specifically need the *same* browser you already use.
+  BetterWright's own managed persistent profile once (it survives across runs).
+  Reach for attach mode only when you specifically need the *same* browser you
+  already use.

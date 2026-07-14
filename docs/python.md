@@ -15,12 +15,33 @@ BetterWright(
     home: Path | None = None,          # state dir; default $BETTERWRIGHT_HOME or ~/.betterwright
     policy: NetworkPolicy | None = None,   # default: safe policy
     vault: CredentialVault | bool | None = True,   # True → default vault; False/None → disabled
-    executable_path: str | None = None,    # explicit binary; otherwise CLOAKBROWSER_BINARY_PATH
-    headless: bool = True,
+    browser: str | None = None,        # "cloak" default; "chromium" fallback
+    executable_path: str | None = None,    # explicit binary selects Chromium fallback
+    headless: bool | str = "auto",
     default_timeout: int = 30,             # per-snippet seconds, min 5
+    connect_over_cdp: str | None = None,   # trusted host attach mode only
+    public_search_policy: str | None = None, # "block" default; "allow" opt-in
+    search_min_interval_ms: int = 0,
     download_policy: str = "ask",          # "ask", "allow", or "deny"
 )
 ```
+
+The managed Cloak backend is the default. It keeps BetterWright's stable profile
+and policy while reducing common stock-browser automation signals; it cannot
+guarantee undetectability. Choose `browser="chromium"` for compatibility or
+deterministic tests, with the caveat that stock Chromium exposes more automation
+signals. `BETTERWRIGHT_BROWSER` sets the process-wide default.
+
+`connect_over_cdp` is trusted host configuration, not a model tool parameter.
+Model-authored snippets cannot access CDP, the raw browser object, or
+`newCDPSession`.
+
+For broad discovery, use the host's web-search tool and open its returned
+results in BetterWright rather than automating Google or Bing's public search
+UI.
+The default is enforced by the worker. Trusted hosts can opt in with
+`public_search_policy="allow"` or
+`BETTERWRIGHT_PUBLIC_SEARCH_POLICY=allow`; pacing applies only after that opt-in.
 
 | Method / property | Description |
 | --- | --- |
@@ -36,7 +57,7 @@ is not interpreted by the browser.
 
 ### Download approval
 
-The default `download_policy="ask"` keeps Chromium downloads denied during
+The default `download_policy="ask"` keeps browser downloads denied during
 ordinary runs. A trusted host must ask the user first, then set
 `approved_downloads=True` on that one run. Set `download_policy="allow"` to
 remove the approval prompt while retaining size and artifact quotas, or `"deny"`
@@ -71,12 +92,12 @@ The typed outcome of a `run()`.
 
 | Method | Description |
 | --- | --- |
-| `screenshots(kind=None) -> list[Artifact]` | Captured screenshots, optionally filtered by `"proof"`/`"question"`/`"debug"`. |
+| `screenshots(kind=None) -> list[Artifact]` | Captured screenshots, optionally filtered by `"proof"`/`"question"`/`"debug"`/`"captcha"`. |
 | `raise_for_status() -> RunResult` | Raise `BrowserError` if `not ok`; else return self. |
 
 ### `Artifact`
 
-`kind` (`"proof"`, `"question"`, `"debug"`, `"download"`, `"artifact"`), `path`,
+`kind` (`"proof"`, `"question"`, `"debug"`, `"captcha"`, `"download"`, `"artifact"`), `path`,
 `size`, and `media_reference` (`"MEDIA:<path>"`).
 
 ## `NetworkPolicy`
@@ -109,9 +130,14 @@ value. See [credentials.md](credentials.md).
 
 ## Native CAPTCHA helpers
 
-Code passed to `BetterWright.run()` receives `captcha.click(bounds)`,
-`captcha.drag(from, to)`, and `captcha.readText(bounds)`. No separate Python
-solver object or API key is required. See [captcha.md](captcha.md).
+Code passed to `BetterWright.run()` receives `captcha.inspect(bounds?)`,
+`captcha.click(bounds)`, `captcha.drag(from, to)`, and
+`captcha.readText(bounds)`. Detected challenges attach a `captcha` image to the
+result automatically. Work through at most three distinct stages, checking the
+fresh result after each action, and resume the original action when the
+challenge clears. After three unresolved stages, use an alternate first-party
+source or request human help. No separate Python solver object or API key is
+required. See [captcha.md](captcha.md).
 
 ## Human-shaped actions
 

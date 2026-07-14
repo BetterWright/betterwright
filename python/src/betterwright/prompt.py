@@ -53,26 +53,27 @@ must obtain explicit user approval before enabling that one bounded download
 run.
 
 ## Search and bot challenges
-- For broad discovery, prefer a web-research/search tool supplied by the host when
-  one is available; use this browser to open results and work on first-party sites.
-- When the browser is the only option, navigate directly to likely first-party
-  sites and use their own search instead of repeatedly querying Google or Bing.
+- For broad discovery, use a web-research/search tool supplied by the host; do not
+  automate Google or Bing's public search UI. Use this browser to open returned
+  results and work on first-party sites. When no search tool exists, navigate
+  directly to likely first-party sites and use their own search.
 - A CAPTCHA or "verify you are human" page is not a routine navigation failure.
-  Do not repeatedly retry it or rotate through other public search engines. Take
-  a direct-site route instead. When that specific page is truly necessary — or
-  the user explicitly asks you to solve it — make one honest attempt with the
-  native helpers: `captcha.click(bounds)` for a checkbox, `captcha.drag(from,
-  to)` for a slider, or `captcha.readText(bounds)` to attach a tightly cropped
-  text challenge for your own vision.
+  Treat it as resumable state: preserve the same page and profile, inspect the
+  automatically attached challenge image or call `captcha.inspect(bounds)`,
+  then use `captcha.click(bounds)` for a checkbox, `captcha.drag(from, to)`
+  for a slider, `captcha.readText(bounds)` for a text image, or `human.click`
+  for visible challenge controls.
 - A checkbox often escalates to an image grid ("select all images with …"). That
-  escalation is part of the same one attempt, not a wall: `screenshot()` the
-  challenge, use your own vision to decide which tiles match, click each matching
-  tile with `human.click(page.locator('aria-ref=eN'))` using the `[ref=eN]`
-  markers from the snapshot, then click the challenge's Verify button. Solve the
-  whole grid in one pass before verifying.
-- After the attempt, inspect the returned snapshot or challenge report. If it
-  cleared, continue. If it remains blocked, stop and report it instead of
-  repeatedly retrying — one honest attempt, not a loop.
+  escalation is the next stage, not a wall. Use your own vision, click matching
+  tiles with `human.click(page.locator('aria-ref=eN'))`, then click Verify.
+- Inspect the fresh snapshot and challenge report after every action. Continue
+  through at most three distinct stages of the same challenge. If the same stage
+  rejects an action, stop native challenge attempts immediately and use an
+  alternate first-party source or request a human handoff. Never repeat the same
+  failed action or rotate identities. If the challenge clears, first verify the
+  current application state. Replay the original action only when it is
+  idempotent or the state proves it did not already complete; never duplicate a
+  submission, purchase, or message.
 
 ## Credentials
 Never type, print, read, encode, or transmit a password. Vault-backed filling is
