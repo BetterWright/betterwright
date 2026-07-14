@@ -19,7 +19,11 @@ import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 import { detectBotChallenge, isPublicSearchNavigation } from "./challenges.mjs";
-import { isUnsupportedBrowserDownloadGuard } from "./downloads.mjs";
+import {
+  downloadBehaviorParams,
+  isUnsupportedBrowserDownloadGuard,
+  normalizeDownloadPolicy,
+} from "./downloads.mjs";
 import {
   movePointer,
   pointInside,
@@ -79,6 +83,7 @@ let guardProxyServer = null;
 let guardProxyPort = null;
 let downloadCdpSession = null;
 let downloadGuardReady = false;
+let currentDownloadBehavior = "deny";
 let attachedDownloadsDenied = false;
 let pageDownloadGuards = new WeakMap();
 const pageDownloadCdpSessions = new Set();
@@ -89,6 +94,7 @@ const pageIds = new WeakMap();
 const facadeToRaw = new WeakMap();
 const pendingRpc = new Map();
 const activeSecrets = new Set();
+const pendingDownloadTasks = new Set();
 const guardProxySockets = new Set();
 let rpcCounter = 0;
 let pageCounter = 0;
@@ -615,12 +621,12 @@ async function installDownloadGuard(context) {
     if (!oversized || event?.state !== "inProgress") return;
     void session.send("Browser.cancelDownload", { guid: event.guid }).catch(() => {});
   });
+  const allowed = normalizeDownloadPolicy(launchConfig.downloadPolicy) === "allow";
   try {
-    await session.send("Browser.setDownloadBehavior", {
-      behavior: "allow",
-      downloadPath: launchConfig.downloadsDir,
-      eventsEnabled: true,
-    });
+    await session.send(
+      "Browser.setDownloadBehavior",
+      downloadBehaviorParams(allowed, launchConfig.downloadsDir),
+    );
   } catch (error) {
     await session.detach().catch(() => {});
     if (!connectedMode || !isUnsupportedBrowserDownloadGuard(error))
@@ -636,6 +642,39 @@ async function installDownloadGuard(context) {
   }
   downloadCdpSession = session;
   downloadGuardReady = true;
+  currentDownloadBehavior = allowed ? "allow" : "deny";
+}
+
+async function setDownloadPermission(allowed) {
+  if (attachedDownloadsDenied) {
+    if (allowed) {
+      throw new Error(
+        "Downloads cannot be approved because this attached Chrome does not " +
+          "provide bounded browser-wide download controls.",
+      );
+    }
+    currentDownloadBehavior = "deny";
+    return;
+  }
+  if (!downloadCdpSession || !downloadGuardReady) {
+    if (!allowed) return;
+    throw new Error("Bounded download controls are unavailable.");
+  }
+  const behavior = allowed ? "allow" : "deny";
+  if (currentDownloadBehavior === behavior) return;
+  try {
+    await downloadCdpSession.send(
+      "Browser.setDownloadBehavior",
+      downloadBehaviorParams(allowed, launchConfig.downloadsDir),
+    );
+    currentDownloadBehavior = behavior;
+  } catch (error) {
+    downloadGuardReady = false;
+    const failure =
+      error instanceof Error ? error : new Error(String(error || "Unknown error"));
+    failure.code = "BW_DOWNLOAD_GUARD";
+    throw failure;
+  }
 }
 
 async function denyAttachedPageDownloads(context, page) {
@@ -669,6 +708,7 @@ async function closeDownloadGuard() {
   const session = downloadCdpSession;
   downloadCdpSession = null;
   downloadGuardReady = false;
+  currentDownloadBehavior = "deny";
   attachedDownloadsDenied = false;
   if (session) {
     await session
@@ -917,6 +957,16 @@ async function handleDownload(page, download) {
   const limit = downloadByteLimit();
   let releaseReservation = null;
   try {
+    if (currentDownloadBehavior !== "allow") {
+      await download.cancel();
+      await download.delete().catch(() => {});
+      pushEvent(session, {
+        type: "download-rejected",
+        name: download.suggestedFilename(),
+        reason: "explicit user approval required",
+      });
+      return;
+    }
     if (!downloadGuardReady) {
       await download.cancel();
       await download.delete().catch(() => {});
@@ -986,6 +1036,35 @@ async function handleDownload(page, download) {
   }
 }
 
+function trackDownload(page, download) {
+  const task = handleDownload(page, download);
+  pendingDownloadTasks.add(task);
+  void task.finally(() => pendingDownloadTasks.delete(task));
+}
+
+async function waitForPendingDownloads(timeoutMs) {
+  const deadline = Date.now() + Math.max(1, Number(timeoutMs) || 1);
+  while (pendingDownloadTasks.size) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      const error = new Error("Browser download timed out before completion.");
+      error.code = "BW_TIMEOUT";
+      throw error;
+    }
+    let timer;
+    await Promise.race([
+      Promise.allSettled([...pendingDownloadTasks]),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error("Browser download timed out before completion.");
+          error.code = "BW_TIMEOUT";
+          reject(error);
+        }, remaining);
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
+}
+
 async function handleDialog(page, dialog) {
   const sid = pageToSession.get(page) || activeExecutionSession || "default";
   const session = sessionFor(sid);
@@ -1042,7 +1121,7 @@ function adoptPage(page, sessionId) {
         pushEvent(owner, { type: "page-crash", pageId: id, url: page.url() });
     });
     page.on("download", (download) => {
-      void handleDownload(page, download);
+      trackDownload(page, download);
     });
     page.on("dialog", (dialog) => {
       void handleDialog(page, dialog);
@@ -1050,12 +1129,16 @@ function adoptPage(page, sessionId) {
     page.on("popup", (popup) => {
       const owner =
         pageToSession.get(page) || activeExecutionSession || session.id;
-      adoptPage(popup, owner);
-      pushEvent(sessionFor(owner), {
-        type: "popup",
-        pageId: pageId(popup),
-        openerPageId: id,
-      });
+      void denyAttachedPageDownloads(browserContext, popup)
+        .then(() => {
+          adoptPage(popup, owner);
+          pushEvent(sessionFor(owner), {
+            type: "popup",
+            pageId: pageId(popup),
+            openerPageId: id,
+          });
+        })
+        .catch(() => popup.close().catch(() => {}));
     });
   }
   return page;
@@ -1622,7 +1705,10 @@ function wrap(value, realm) {
         validateMethodPaths(objectKind(value), property, prepared);
         const result = member.apply(value, prepared);
         if (result && typeof result.then === "function") {
-          return result.then((item) => wrap(item, realm));
+          return result.then(async (item) => {
+            await guardReturnedPages(item);
+            return wrap(item, realm);
+          });
         }
         return wrap(result, realm);
       });
@@ -1648,6 +1734,15 @@ function wrap(value, realm) {
   realm.cache.set(value, facade);
   facadeToRaw.set(facade, value);
   return facade;
+}
+
+async function guardReturnedPages(value) {
+  if (Array.isArray(value)) {
+    await Promise.all(value.map((item) => guardReturnedPages(item)));
+    return;
+  }
+  if (objectKind(value) === "Page")
+    await denyAttachedPageDownloads(browserContext, value);
 }
 
 async function currentOrigin(session) {
@@ -2029,9 +2124,21 @@ async function execute(message) {
   const firstEvent = session.events.length;
   const firstArtifact = session.artifacts.length;
   let restartWorker = false;
+  let downloadRunConfigured = false;
+  let downloadPolicy = "ask";
+  let downloadDeadline = 0;
   activeExecutionSession = session.id;
   try {
     await ensureBrowser(message.config);
+    downloadPolicy = normalizeDownloadPolicy(message.config.downloadPolicy);
+    if (downloadPolicy === "deny" && message.approvedDownloads === true) {
+      throw new Error("Downloads are disabled by downloadPolicy=deny.");
+    }
+    const downloadsAllowed =
+      downloadPolicy === "allow" ||
+      (downloadPolicy === "ask" && message.approvedDownloads === true);
+    await setDownloadPermission(downloadsAllowed);
+    downloadRunConfigured = true;
     await ensureSessionPage(session);
     const { context } = buildSandbox(session, consoleMessages);
     const script = compileCode(String(message.code || ""));
@@ -2039,6 +2146,7 @@ async function execute(message) {
       timeout: SAFE_SYNC_VM_TIMEOUT_MS,
     });
     const timeoutMs = Math.max(1_000, Number(message.timeoutMs || 30_000));
+    downloadDeadline = Date.now() + timeoutMs;
     let timer;
     const result = await Promise.race([
       Promise.resolve(promise),
@@ -2052,6 +2160,9 @@ async function execute(message) {
         }, timeoutMs);
       }),
     ]).finally(() => clearTimeout(timer));
+    await waitForPendingDownloads(downloadDeadline - Date.now());
+    await setDownloadPermission(downloadPolicy === "allow");
+    downloadRunConfigured = false;
     const summarized = await summarize(result);
     await enforceArtifactQuota(session);
     const challenges = await detectSessionChallenges(session);
@@ -2118,12 +2229,24 @@ async function execute(message) {
       durationMs: Math.round((performance.now() - started) * 10) / 10,
     });
   } catch (error) {
-    restartWorker = error?.code === "BW_TIMEOUT";
+    let failure = error;
+    if (downloadRunConfigured) {
+      try {
+        // Close the approval window before waiting on a failed or timed-out
+        // download. This prevents background page work from starting another.
+        await setDownloadPermission(downloadPolicy === "allow");
+        downloadRunConfigured = false;
+        await waitForPendingDownloads(2_000);
+      } catch (resetError) {
+        failure = resetError;
+      }
+    }
+    restartWorker = ["BW_TIMEOUT", "BW_DOWNLOAD_GUARD"].includes(failure?.code);
     sendResult({
       type: "result",
       id: message.id,
       ok: false,
-      error: redactText(error?.message || String(error)),
+      error: redactText(failure?.message || String(failure)),
       console: redactDeep(consoleMessages),
       events: redactDeep(session.events.slice(firstEvent)),
       artifacts: redactDeep(session.artifacts.slice(firstArtifact)),

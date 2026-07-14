@@ -8,8 +8,9 @@ not shown here.
 
 BetterWright gives an agent a persistent, policy-guarded browser it drives with
 ordinary async Playwright JavaScript. The entire tool surface is one call:
-`run(code)`. Integrating means registering one tool that forwards a `code` string
-to that call, and adding the operator guidance to the system prompt.
+`run(code)`. Integrating means registering a browser tool plus a separate
+approval-gated download tool, and adding the operator guidance to the system
+prompt.
 
 ---
 
@@ -44,9 +45,10 @@ After integrating, do **§5 — Verify** and offer **§6 — Safeguards**.
 
 ## §1 — MCP client (Claude Code, Cursor, and similar)
 
-BetterWright ships an MCP server that exposes a `browser` tool and a
-`browser_doctor` tool. You register it once; the model then has a first-class
-browser tool.
+BetterWright ships an MCP server that exposes `browser`, `browser_download`, and
+`browser_doctor`. `browser_download` uses MCP elicitation to ask the user before
+any download-capable code runs. You register the server once; the model then has
+a first-class browser tool.
 
 **Claude Code:**
 ```bash
@@ -75,13 +77,18 @@ servers) and confirm a `browser` tool appears. Then do **§5**.
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
+The default `BETTERWRIGHT_DOWNLOAD_POLICY=ask` fails closed when an MCP client
+cannot present elicitation. Set it to `allow` to remove approval prompts or
+`deny` to disable downloads completely.
+
 ---
 
 ## §2 — Python agent
 
 Keep **one** `BetterWright` instance alive for the whole process (not one per
-call — that would throw away the persistent session). Register a tool that
-forwards to `run()`, and prepend the operator guidance to your system prompt.
+call — that would throw away the persistent session). Register an ordinary
+browser tool and an approval-gated download tool, and prepend the operator
+guidance to your system prompt.
 
 ```python
 from betterwright import BetterWright, NetworkPolicy, agent_system_prompt
@@ -128,13 +135,18 @@ SYSTEM_PROMPT = MY_EXISTING_SYSTEM_PROMPT + "\n\n" + agent_system_prompt()
 ```
 
 Register `BROWSER_TOOL` with your agent's tool registry and route its calls to
-`run_browser`. That is the whole integration. Then do **§5**.
+`run_browser`. Register a second `browser_download` tool with the same model
+parameters. Its trusted host handler must apply the configured policy: confirm
+through the host UI in `ask` mode, skip the prompt in `allow` mode, and refuse in
+`deny` mode. Only after approval should it call
+`browser.run(..., approved_downloads=True)`. Never expose `approved_downloads`
+as a model-controlled tool parameter. Then do **§5**.
 
 ---
 
 ## §3 — JavaScript / TypeScript agent
 
-Identical shape. Keep one client alive; forward one tool to `run()`.
+Identical shape. Keep one client alive and expose ordinary and download tools.
 
 ```js
 import { BetterWright, NetworkPolicy, agentSystemPrompt } from "betterwright";
@@ -175,7 +187,11 @@ const browserTool = {
 const systemPrompt = `${MY_EXISTING_SYSTEM_PROMPT}\n\n${agentSystemPrompt()}`;
 ```
 
-Register `browserTool` and route it to `runBrowser`. Then do **§5**.
+Register `browserTool` and route it to `runBrowser`. Add `browser_download` with
+the same model parameters; its trusted handler confirms in `ask`, skips the
+prompt in `allow`, refuses in `deny`, and only then calls
+`browser.run(code, { approvedDownloads: true })`. Never expose
+`approvedDownloads` as a model-controlled tool parameter. Then do **§5**.
 
 ---
 
@@ -225,6 +241,9 @@ blocked). Tighten or loosen it deliberately. Two independent layers:
 | Allow the private network | `allow_private_network=True` | `BETTERWRIGHT_ALLOW_PRIVATE_NETWORK=1` |
 | Restrict to specific sites | `allow_hosts=("example.com",)` | `BETTERWRIGHT_ALLOW_HOSTS=example.com` |
 | Block specific sites | `block_hosts=("ads.example.com",)` | `BETTERWRIGHT_BLOCK_HOSTS=ads.example.com` |
+| Ask before each download | `download_policy="ask"` / `downloadPolicy: "ask"` | `BETTERWRIGHT_DOWNLOAD_POLICY=ask` |
+| Remove download approval | `download_policy="allow"` / `downloadPolicy: "allow"` | `BETTERWRIGHT_DOWNLOAD_POLICY=allow` |
+| Disable all downloads | `download_policy="deny"` / `downloadPolicy: "deny"` | `BETTERWRIGHT_DOWNLOAD_POLICY=deny` |
 
 Cloud metadata endpoints can never be allowlisted. See
 [docs/network-policy.md](docs/network-policy.md).

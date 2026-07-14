@@ -36,6 +36,17 @@ logger = logging.getLogger("betterwright")
 
 _DEFAULT_TIMEOUT_SECONDS = 30
 _WORKER_START_TIMEOUT_SECONDS = 15
+_DOWNLOAD_POLICIES = frozenset({"ask", "allow", "deny"})
+
+
+def _normalize_download_policy(value: str) -> str:
+    policy = str(value or "ask").strip().lower()
+    if policy not in _DOWNLOAD_POLICIES:
+        raise ValueError(
+            'download_policy must be "ask", "allow", or "deny"; '
+            f"received {value!r}"
+        )
+    return policy
 
 
 class WorkerStartError(RuntimeError):
@@ -71,6 +82,7 @@ class Bridge:
         default_timeout: int = _DEFAULT_TIMEOUT_SECONDS,
         connect_over_cdp: str | None = None,
         search_min_interval_ms: int = 0,
+        download_policy: str = "ask",
     ) -> None:
         self.home = Path(home).expanduser().resolve() if home else betterwright_home()
         self.policy = policy if policy is not None else NetworkPolicy()
@@ -84,6 +96,7 @@ class Bridge:
         self.default_timeout = max(int(default_timeout), 5)
         self.connect_over_cdp = (connect_over_cdp or "").strip()
         self.search_min_interval_ms = max(int(search_min_interval_ms), 0)
+        self.download_policy = _normalize_download_policy(download_policy)
 
         self._process: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
@@ -132,6 +145,7 @@ class Bridge:
             "headless": bool(self.headless),
             "cdpEndpoint": self.connect_over_cdp,
             "searchMinIntervalMs": self.search_min_interval_ms,
+            "downloadPolicy": self.download_policy,
             "outputLimit": 12_000,
             "maxArtifactBytes": 100 * 1024 * 1024,
             "maxDownloadBytes": 50 * 1024 * 1024,
@@ -311,7 +325,12 @@ class Bridge:
     # -- execution --------------------------------------------------------
 
     def execute(
-        self, code: str, session_id: str = "default", *, timeout: int | None = None
+        self,
+        code: str,
+        session_id: str = "default",
+        *,
+        timeout: int | None = None,
+        approved_downloads: bool = False,
     ) -> dict:
         """Run one Playwright snippet and return the worker's result envelope."""
 
@@ -344,6 +363,7 @@ class Bridge:
                         "id": request_id,
                         "sessionId": str(session_id or "default"),
                         "code": code,
+                        "approvedDownloads": approved_downloads is True,
                         "timeoutMs": timeout_seconds * 1000,
                         "config": config,
                     }

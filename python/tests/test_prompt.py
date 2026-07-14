@@ -16,6 +16,8 @@ def test_default_prompt_is_permissive():
     assert "human.click(target)" in compact
     assert "human.type(target, text)" in compact
     assert "human.scroll(deltaY)" in compact
+    assert "host's approval-gated download tool" in compact
+    assert "before enabling that one bounded download run" in compact
     assert "If it remains blocked, stop" in compact
     assert "Inspect the returned image itself before citing it" in compact
     assert "fix the page and retake it" in compact

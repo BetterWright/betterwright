@@ -3,6 +3,23 @@ import { test } from "node:test";
 
 import { BetterWright } from "../../src/index.mjs";
 
+test("download approval is required by default and configurable", async () => {
+  const guarded = new BetterWright();
+  const allowed = new BetterWright({ downloadPolicy: "allow" });
+  try {
+    assert.equal(guarded.downloadPolicy, "ask");
+    assert.equal(guarded._workerConfig().downloadPolicy, "ask");
+    assert.equal(allowed.downloadPolicy, "allow");
+    assert.throws(
+      () => new BetterWright({ downloadPolicy: "sometimes" }),
+      /downloadPolicy must be "ask", "allow", or "deny"/,
+    );
+  } finally {
+    await guarded.close();
+    await allowed.close();
+  }
+});
+
 test("CLOAKBROWSER_BINARY_PATH opts into an installed Cloak binary", async () => {
   const previous = process.env.CLOAKBROWSER_BINARY_PATH;
   process.env.CLOAKBROWSER_BINARY_PATH = "/opt/cloak/chrome";
