@@ -162,13 +162,13 @@ def test_download_policy_defaults_to_ask_and_is_configurable(tmp_path):
         Bridge(home=tmp_path / "invalid", download_policy="sometimes")
 
 
-def test_public_search_ui_is_blocked_by_default_and_opt_in(tmp_path):
-    guarded = Bridge(home=tmp_path / "guarded")
-    allowed = Bridge(
-        home=tmp_path / "allowed", public_search_policy="allow"
+def test_public_search_ui_is_allowed_by_default_and_block_is_opt_in(tmp_path):
+    relaxed = Bridge(home=tmp_path / "relaxed")
+    blocked = Bridge(
+        home=tmp_path / "blocked", public_search_policy="block"
     )
-    assert guarded._worker_config()["publicSearchPolicy"] == "block"
-    assert allowed._worker_config()["publicSearchPolicy"] == "allow"
+    assert relaxed._worker_config()["publicSearchPolicy"] == "allow"
+    assert blocked._worker_config()["publicSearchPolicy"] == "block"
     with pytest.raises(ValueError, match="public_search_policy"):
         Bridge(home=tmp_path / "invalid", public_search_policy="pace")
 

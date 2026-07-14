@@ -20,20 +20,20 @@ test("download approval is required by default and configurable", async () => {
   }
 });
 
-test("public search result UIs are blocked by default and opt-in", async () => {
-  const guarded = new BetterWright();
-  const allowed = new BetterWright({ publicSearchPolicy: "allow" });
+test("public search result UIs are allowed by default and block is opt-in", async () => {
+  const relaxed = new BetterWright();
+  const blocked = new BetterWright({ publicSearchPolicy: "block" });
   try {
-    assert.equal(guarded.publicSearchPolicy, "block");
-    assert.equal(guarded._workerConfig().publicSearchPolicy, "block");
-    assert.equal(allowed._workerConfig().publicSearchPolicy, "allow");
+    assert.equal(relaxed.publicSearchPolicy, "allow");
+    assert.equal(relaxed._workerConfig().publicSearchPolicy, "allow");
+    assert.equal(blocked._workerConfig().publicSearchPolicy, "block");
     assert.throws(
       () => new BetterWright({ publicSearchPolicy: "pace" }),
       /publicSearchPolicy must be "block" or "allow"/,
     );
   } finally {
-    await guarded.close();
-    await allowed.close();
+    await relaxed.close();
+    await blocked.close();
   }
 });
 

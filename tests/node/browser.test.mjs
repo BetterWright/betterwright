@@ -207,7 +207,12 @@ test("navigate and read the title", opts, async () => {
 });
 
 test("public search UIs route agents to the host search tool", opts, async () => {
-  const bw = new BetterWright({ home: tempHome(), headless: true });
+  // Public search is allowed by default now, so opt into the block routing.
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    publicSearchPolicy: "block",
+  });
   try {
     const direct = await bw.run(
       "await page.goto('https://www.google.com/search?q=betterwright'); return 'loaded'",
