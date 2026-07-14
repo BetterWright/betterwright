@@ -84,7 +84,12 @@ async function closeExternalChromium(runtime) {
       once(runtime.child, "exit"),
       new Promise((resolve) => setTimeout(resolve, 3_000)),
     ]);
-  fs.rmSync(runtime.profileDir, { recursive: true, force: true });
+  fs.rmSync(runtime.profileDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
 }
 
 function unsupportedDownloadGuardModule() {
