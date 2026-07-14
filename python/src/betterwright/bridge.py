@@ -114,7 +114,6 @@ class Bridge:
         artifacts = self.home / "artifacts"
         downloads = artifacts / "downloads"
         runtime = root / "runtime"
-        vault_dir = self.home / "vault"
         for directory in (root, artifacts, downloads, runtime):
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             try:
@@ -137,11 +136,6 @@ class Bridge:
             "maxArtifactBytes": 100 * 1024 * 1024,
             "maxDownloadBytes": 50 * 1024 * 1024,
             "pageIdleTimeoutMs": 1_800 * 1000,
-            "privateRoots": [
-                str(root / "profile"),
-                str(vault_dir),
-                str(runtime),
-            ],
         }
 
     # -- lifecycle --------------------------------------------------------
@@ -288,9 +282,7 @@ class Bridge:
                 result = self.policy.check(url, details)
             elif method == "vault":
                 if self.vault is None:
-                    raise RuntimeError(
-                        "No credential vault is configured for this browser."
-                    )
+                    raise RuntimeError("No credential vault is configured for this browser.")
                 result = self.vault.handle_request(
                     str(payload.get("action", "")),
                     payload.get("payload") or {},

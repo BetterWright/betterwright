@@ -35,6 +35,16 @@ def test_private_ranges_blocked_by_default():
         assert not allowed(NetworkPolicy(), url), url
 
 
+def test_ipv4_mapped_ipv6_preserves_embedded_ipv4_classification():
+    for url in (
+        "http://[::ffff:127.0.0.1]/",
+        "http://[::ffff:10.0.0.1]/",
+        "http://[::ffff:169.254.169.254]/",
+    ):
+        assert not allowed(NetworkPolicy(), url), url
+    assert allowed(NetworkPolicy(), "https://[::ffff:8.8.8.8]/")
+
+
 def test_loopback_opt_in():
     policy = NetworkPolicy(allow_loopback=True)
     assert allowed(policy, "http://127.0.0.1:3000/")

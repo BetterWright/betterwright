@@ -52,26 +52,65 @@ function inCidr4(value, base, bits) {
   return (value & mask) === (base & mask);
 }
 
-function categorizeIp(host) {
-  const family = net.isIP(host.replace(/^\[|\]$/g, ""));
-  if (family === 4) {
-    const value = ipv4ToInt(host);
-    if (value === null) return "public";
-    if (METADATA_ADDRESSES.has(host)) return "metadata";
-    if (inCidr4(value, ipv4ToInt("127.0.0.0"), 8)) return "loopback";
-    if (
-      inCidr4(value, ipv4ToInt("10.0.0.0"), 8) ||
-      inCidr4(value, ipv4ToInt("172.16.0.0"), 12) ||
-      inCidr4(value, ipv4ToInt("192.168.0.0"), 16) ||
-      inCidr4(value, ipv4ToInt("169.254.0.0"), 16) ||
-      inCidr4(value, ipv4ToInt("100.64.0.0"), 10) ||
-      inCidr4(value, ipv4ToInt("0.0.0.0"), 8)
-    )
-      return "private";
-    return "public";
+function ipv4FromMappedIpv6(host) {
+  let bare = host.replace(/^\[|\]$/g, "").toLowerCase();
+  const dottedIndex = bare.lastIndexOf(":");
+  const dottedTail = bare.slice(dottedIndex + 1);
+  if (dottedTail.includes(".")) {
+    const value = ipv4ToInt(dottedTail);
+    if (value === null) return null;
+    bare = `${bare.slice(0, dottedIndex)}:${(value >>> 16).toString(16)}:${(
+      value & 0xffff
+    ).toString(16)}`;
   }
+
+  const halves = bare.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1))
+    return null;
+  const groups = [
+    ...left,
+    ...Array.from({ length: Math.max(0, missing) }, () => "0"),
+    ...right,
+  ];
+  if (
+    groups.length !== 8 ||
+    groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))
+  )
+    return null;
+  const values = groups.map((group) => Number.parseInt(group, 16));
+  if (!values.slice(0, 5).every((value) => value === 0) || values[5] !== 0xffff)
+    return null;
+  return `${values[6] >>> 8}.${values[6] & 0xff}.${values[7] >>> 8}.${values[7] & 0xff}`;
+}
+
+function categorizeIpv4(host) {
+  const value = ipv4ToInt(host);
+  if (value === null) return "public";
+  if (METADATA_ADDRESSES.has(host)) return "metadata";
+  if (inCidr4(value, ipv4ToInt("127.0.0.0"), 8)) return "loopback";
+  if (
+    inCidr4(value, ipv4ToInt("10.0.0.0"), 8) ||
+    inCidr4(value, ipv4ToInt("172.16.0.0"), 12) ||
+    inCidr4(value, ipv4ToInt("192.168.0.0"), 16) ||
+    inCidr4(value, ipv4ToInt("169.254.0.0"), 16) ||
+    inCidr4(value, ipv4ToInt("100.64.0.0"), 10) ||
+    inCidr4(value, ipv4ToInt("0.0.0.0"), 8)
+  )
+    return "private";
+  return "public";
+}
+
+function categorizeIp(host) {
+  const bare = host.replace(/^\[|\]$/g, "");
+  const family = net.isIP(bare);
+  if (family === 4) return categorizeIpv4(bare);
   if (family === 6) {
-    const bare = host.replace(/^\[|\]$/g, "").toLowerCase();
+    const mapped = ipv4FromMappedIpv6(bare);
+    if (mapped) return categorizeIpv4(mapped);
     if (METADATA_ADDRESSES.has(bare) || bare.startsWith("fd00:ec2:"))
       return "metadata";
     if (bare === "::1") return "loopback";

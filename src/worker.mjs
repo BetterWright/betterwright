@@ -46,7 +46,8 @@ const QUESTION_PAGE_HOLD_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_OUTPUT_LIMIT = 12_000;
 const DEFAULT_ARTIFACT_QUOTA = 100 * 1024 * 1024;
 const DEFAULT_DOWNLOAD_LIMIT = 50 * 1024 * 1024;
-const GUARD_CACHE_TTL_MS = 30_000;
+const DEFAULT_SCREENSHOT_LIMIT = 10 * 1024 * 1024;
+const DEFAULT_SCREENSHOT_PIXEL_LIMIT = 40_000_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const SOCKS_HANDSHAKE_TIMEOUT_MS = 15_000;
 const SOCKS_CONNECT_TIMEOUT_MS = 10_000;
@@ -75,14 +76,14 @@ let shuttingDown = false;
 let activeExecutionSession = null;
 let guardProxyServer = null;
 let guardProxyPort = null;
+let downloadCdpSession = null;
+let downloadGuardReady = false;
 
 const sessions = new Map();
 const pageToSession = new WeakMap();
 const pageIds = new WeakMap();
 const facadeToRaw = new WeakMap();
 const pendingRpc = new Map();
-const guardCache = new Map();
-const guardInFlight = new Map();
 const activeSecrets = new Set();
 const guardProxySockets = new Set();
 let rpcCounter = 0;
@@ -132,6 +133,15 @@ function mkdirPrivate(dir) {
 
 function writePrivate(file, content) {
   fs.writeFileSync(file, content, { encoding: "utf8", mode: 0o600 });
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    /* best effort on Windows */
+  }
+}
+
+function writePrivateBytes(file, content) {
+  fs.writeFileSync(file, content, { mode: 0o600 });
   try {
     fs.chmodSync(file, 0o600);
   } catch {
@@ -273,17 +283,6 @@ function urlOrigin(url) {
   }
 }
 
-function guardCacheKey(url, fullUrl) {
-  try {
-    const parsed = new URL(url);
-    return fullUrl
-      ? `url:${parsed.href}`
-      : `host:${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return `url:${url}`;
-  }
-}
-
 async function guardUrl(url, details, executeId) {
   let scheme = "";
   try {
@@ -306,20 +305,7 @@ async function guardUrl(url, details, executeId) {
     scheme === "ws:" ||
     scheme === "wss:",
   );
-  const key = guardCacheKey(url, fullUrl);
-  const cached = guardCache.get(key);
-  const now = Date.now();
-  if (cached && now - cached.at < GUARD_CACHE_TTL_MS) return cached.result;
-  const existing = guardInFlight.get(key);
-  if (existing) return existing;
-  const pending = rpc("guard", { url, ...details, fullUrl }, executeId)
-    .then((result) => {
-      guardCache.set(key, { at: Date.now(), result });
-      return result;
-    })
-    .finally(() => guardInFlight.delete(key));
-  guardInFlight.set(key, pending);
-  return pending;
+  return rpc("guard", { url, ...details, fullUrl }, executeId);
 }
 
 function transportExecuteId() {
@@ -608,6 +594,43 @@ async function closeGuardProxy() {
   });
 }
 
+async function installDownloadGuard(context) {
+  await closeDownloadGuard();
+  const browser = context.browser?.() || connectedBrowser;
+  if (!browser || typeof browser.newBrowserCDPSession !== "function") {
+    throw new Error("Chromium download byte limits require a browser CDP session.");
+  }
+  const session = await browser.newBrowserCDPSession();
+  const limit = downloadByteLimit();
+  session.on("Browser.downloadProgress", (event) => {
+    const total = Number(event?.totalBytes);
+    const received = Number(event?.receivedBytes);
+    const oversized =
+      (Number.isFinite(total) && total > limit) ||
+      (Number.isFinite(received) && received > limit);
+    if (!oversized || event?.state !== "inProgress") return;
+    void session.send("Browser.cancelDownload", { guid: event.guid }).catch(() => {});
+  });
+  await session.send("Browser.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: launchConfig.downloadsDir,
+    eventsEnabled: true,
+  });
+  downloadCdpSession = session;
+  downloadGuardReady = true;
+}
+
+async function closeDownloadGuard() {
+  const session = downloadCdpSession;
+  downloadCdpSession = null;
+  downloadGuardReady = false;
+  if (!session) return;
+  await session
+    .send("Browser.setDownloadBehavior", { behavior: "default" })
+    .catch(() => {});
+  await session.detach().catch(() => {});
+}
+
 function redactText(value) {
   let text = String(value ?? "");
   for (const secret of activeSecrets) {
@@ -641,6 +664,7 @@ function sessionFor(id) {
       events: [],
       artifacts: [],
       warnings: [],
+      reservedArtifactBytes: 0,
       lastActivity: Date.now(),
       nextDialog: null,
       awaitingAnswerSince: null,
@@ -689,6 +713,74 @@ function artifactDir(session) {
   return dir;
 }
 
+function configuredLimit(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function downloadByteLimit() {
+  return Math.min(
+    configuredLimit(launchConfig.maxDownloadBytes, DEFAULT_DOWNLOAD_LIMIT),
+    configuredLimit(launchConfig.maxArtifactBytes, DEFAULT_ARTIFACT_QUOTA),
+  );
+}
+
+function pruneArtifactQuota(session, incomingBytes = 0) {
+  const root = artifactDir(session);
+  const limit = configuredLimit(
+    launchConfig.maxArtifactBytes,
+    DEFAULT_ARTIFACT_QUOTA,
+  );
+  if (incomingBytes > limit) {
+    throw new Error(`Browser artifact exceeds the ${limit}-byte artifact limit.`);
+  }
+  let total = Number(session.reservedArtifactBytes) || 0;
+  const files = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const file = path.join(root, entry.name);
+    const stat = fs.statSync(file);
+    total += stat.size;
+    files.push({ file, size: stat.size, mtime: stat.mtimeMs });
+  }
+  if (total + incomingBytes <= limit) return;
+  files.sort((left, right) => left.mtime - right.mtime);
+  for (const item of files) {
+    if (total + incomingBytes <= limit) break;
+    fs.rmSync(item.file, { force: true });
+    total -= item.size;
+    session.warnings.push(
+      `Artifact quota removed ${path.basename(item.file)}.`,
+    );
+  }
+  if (total + incomingBytes > limit) {
+    throw new Error(`Browser artifact quota cannot reserve ${incomingBytes} bytes.`);
+  }
+}
+
+function reserveArtifactQuota(session, bytes) {
+  pruneArtifactQuota(session, bytes);
+  session.reservedArtifactBytes += bytes;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    session.reservedArtifactBytes = Math.max(
+      0,
+      session.reservedArtifactBytes - bytes,
+    );
+  };
+}
+
+function writeBoundedArtifact(session, file, content, perFileLimit, label) {
+  if (!Buffer.isBuffer(content)) throw new Error(`${label} did not produce bytes.`);
+  if (content.length > perFileLimit) {
+    throw new Error(`${label} exceeds the ${perFileLimit}-byte limit.`);
+  }
+  pruneArtifactQuota(session, content.length);
+  writePrivateBytes(file, content);
+}
+
 function makeArtifactPath(
   session,
   requested,
@@ -706,6 +798,55 @@ function makeArtifactPath(
   return file;
 }
 
+async function assertScreenshotPixelLimit(page, options) {
+  const scale = await page
+    .evaluate(() => window.devicePixelRatio || 1)
+    .catch(() => 1);
+  const metrics = options.clip
+    ? {
+        width: Number(options.clip.width),
+        height: Number(options.clip.height),
+      }
+    : options.fullPage
+      ? await page.evaluate(() => ({
+          width: Math.max(
+            document.documentElement.scrollWidth,
+            document.body?.scrollWidth || 0,
+          ),
+          height: Math.max(
+            document.documentElement.scrollHeight,
+            document.body?.scrollHeight || 0,
+          ),
+        }))
+      : {
+          ...(page.viewportSize() || { width: 1440, height: 900 }),
+        };
+  const pixels =
+    Math.ceil(metrics.width * scale) * Math.ceil(metrics.height * scale);
+  const limit = configuredLimit(
+    launchConfig.maxScreenshotPixels,
+    DEFAULT_SCREENSHOT_PIXEL_LIMIT,
+  );
+  if (!Number.isFinite(pixels) || pixels <= 0 || pixels > limit) {
+    throw new Error(`Screenshot pixel limit (${limit}) exceeded.`);
+  }
+}
+
+async function captureScreenshot(page, session, requested, fallback, options) {
+  await assertScreenshotPixelLimit(page, options);
+  const content = await page.screenshot(options);
+  const perFileLimit = configuredLimit(
+    launchConfig.maxScreenshotBytes,
+    DEFAULT_SCREENSHOT_LIMIT,
+  );
+  if (content.length > perFileLimit) {
+    throw new Error(`Screenshot exceeds the ${perFileLimit}-byte limit.`);
+  }
+  const file = makeArtifactPath(session, requested, fallback, false);
+  writeBoundedArtifact(session, file, content, perFileLimit, "Screenshot");
+  return file;
+}
+
 async function handleDownload(page, download) {
   const sid = pageToSession.get(page) || activeExecutionSession || "default";
   const session = sessionFor(sid);
@@ -715,13 +856,35 @@ async function handleDownload(page, download) {
     "download.bin",
     false,
   );
+  const limit = downloadByteLimit();
+  let releaseReservation = null;
   try {
-    await download.saveAs(target);
-    const size = fs.statSync(target).size;
-    if (
-      size > Number(launchConfig.maxDownloadBytes || DEFAULT_DOWNLOAD_LIMIT)
-    ) {
-      fs.rmSync(target, { force: true });
+    if (!downloadGuardReady) {
+      await download.cancel();
+      await download.delete().catch(() => {});
+      pushEvent(session, {
+        type: "download-rejected",
+        name: download.suggestedFilename(),
+        reason: "bounded download guard unavailable",
+      });
+      return;
+    }
+    try {
+      releaseReservation = reserveArtifactQuota(session, limit);
+    } catch (error) {
+      await download.cancel();
+      await download.delete().catch(() => {});
+      pushEvent(session, {
+        type: "download-rejected",
+        name: download.suggestedFilename(),
+        reason: error?.message || "artifact quota unavailable",
+      });
+      return;
+    }
+    const source = await download.path();
+    const size = fs.statSync(source).size;
+    if (size > limit) {
+      await download.delete().catch(() => {});
       pushEvent(session, {
         type: "download-rejected",
         name: download.suggestedFilename(),
@@ -730,6 +893,11 @@ async function handleDownload(page, download) {
       });
       return;
     }
+    releaseReservation();
+    releaseReservation = null;
+    pruneArtifactQuota(session, size);
+    await download.saveAs(target);
+    await download.delete().catch(() => {});
     const artifact = {
       kind: "download",
       path: target,
@@ -739,11 +907,24 @@ async function handleDownload(page, download) {
     session.artifacts.push(artifact);
     pushEvent(session, { type: "download", ...artifact });
   } catch (error) {
+    fs.rmSync(target, { force: true });
+    const failure = await download.failure().catch(() => null);
+    await download.delete().catch(() => {});
+    if (failure === "canceled") {
+      pushEvent(session, {
+        type: "download-rejected",
+        name: download.suggestedFilename(),
+        reason: "download size limit exceeded",
+      });
+      return;
+    }
     pushEvent(session, {
       type: "download-failed",
       name: download.suggestedFilename(),
       error: error?.message || String(error),
     });
+  } finally {
+    releaseReservation?.();
   }
 }
 
@@ -1060,8 +1241,10 @@ async function ensureBrowser(config) {
         "is not active. Only the per-request network policy applies.";
       attachedContext.on("close", () => {
         if (browserContext === attachedContext) browserContext = null;
+        downloadGuardReady = false;
       });
       await installContextGuard(attachedContext);
+      await installDownloadGuard(attachedContext);
       attachedContext.on("page", (page) => {
         const owner = activeExecutionSession || "default";
         if (!pageToSession.has(page)) adoptPage(page, owner);
@@ -1121,9 +1304,11 @@ async function ensureBrowser(config) {
     const launchedContext = browserContext;
     launchedContext.on("close", () => {
       if (browserContext === launchedContext) browserContext = null;
+      downloadGuardReady = false;
       releaseProfileLock();
     });
     await installContextGuard(launchedContext);
+    await installDownloadGuard(launchedContext);
     launchedContext.on("page", (page) => {
       const owner = activeExecutionSession || "default";
       if (!pageToSession.has(page)) adoptPage(page, owner);
@@ -1133,6 +1318,7 @@ async function ensureBrowser(config) {
   try {
     return await launchPromise;
   } catch (error) {
+    await closeDownloadGuard();
     releaseProfileLock();
     browserContext = null;
     throw error;
@@ -1220,12 +1406,20 @@ function isWithin(candidate, root) {
 
 function assertReadableBrowserPath(candidate) {
   if (typeof candidate !== "string" || !candidate) return;
-  for (const root of launchConfig.privateRoots || []) {
-    if (isWithin(candidate, root))
-      throw new Error(
-        "Browser code cannot read BetterWright credentials or profile state.",
-      );
+  let resolved;
+  let root;
+  try {
+    resolved = fs.realpathSync(candidate);
+    root = fs.realpathSync(launchConfig.artifactsDir);
+  } catch {
+    throw new Error(
+      "Browser file inputs must reference an existing file inside the artifact directory.",
+    );
   }
+  if (!isWithin(resolved, root))
+    throw new Error(
+      "Browser file inputs may only read files inside the artifact directory.",
+    );
 }
 
 function assertArtifactWritePath(candidate) {
@@ -1260,12 +1454,17 @@ function prepareArgument(value, property, realm) {
 function validateMethodPaths(kind, property, args) {
   if (kind === "Page" && property === "pdf" && args[0]?.path)
     assertArtifactWritePath(args[0].path);
-  if (["addScriptTag", "addStyleTag"].includes(property) && args[0]?.path) {
+  if (
+    ["addInitScript", "addScriptTag", "addStyleTag"].includes(property) &&
+    args[0]?.path
+  ) {
     assertReadableBrowserPath(args[0].path);
   }
-  if (property === "setInputFiles") {
+  if (property === "setInputFiles" || property === "setFiles") {
     const supplied =
-      kind === "Locator" || kind === "ElementHandle" ? args[0] : args[1];
+      property === "setFiles" || ["Locator", "ElementHandle"].includes(kind)
+        ? args[0]
+        : args[1];
     const files = Array.isArray(supplied) ? supplied : [supplied];
     for (const file of files) {
       if (typeof file === "string") assertReadableBrowserPath(file);
@@ -1404,52 +1603,6 @@ async function vaultCall(session, action, payload = {}) {
   return response;
 }
 
-async function fillCredential(session, response, options = {}) {
-  const page = await ensureSessionPage(session);
-  const secret = String(response?.secret || "");
-  if (!secret) throw new Error("Credential vault returned no password.");
-  const expectedOrigin = String(response?.origin || "");
-  const assertOrigin = () => {
-    if (!expectedOrigin || urlOrigin(page.url()) !== expectedOrigin) {
-      throw new Error(
-        "Credential fill stopped because the page changed to a different origin.",
-      );
-    }
-  };
-  assertOrigin();
-  activeSecrets.add(secret);
-  const username = String(response?.username || options.username || "");
-  const usernameLocator = options.usernameSelector
-    ? page.locator(options.usernameSelector).first()
-    : page
-        .locator(
-          'input[autocomplete="username"], input[autocomplete="email"], input[type="email"], input[name*="user" i], input[name*="email" i]',
-        )
-        .first();
-  if (username && (await usernameLocator.count())) {
-    assertOrigin();
-    await usernameLocator.fill(username);
-  }
-
-  const passwordLocator = options.passwordSelector
-    ? page.locator(options.passwordSelector)
-    : page.locator('input[type="password"]:visible');
-  const count = await passwordLocator.count();
-  if (!count)
-    throw new Error("No visible password field found; pass passwordSelector.");
-  for (let index = 0; index < count; index += 1) {
-    assertOrigin();
-    await passwordLocator.nth(index).fill(secret);
-  }
-  assertOrigin();
-  return {
-    filled: true,
-    origin: response.origin,
-    username,
-    passwordFields: count,
-  };
-}
-
 function buildCredentials(session, realm) {
   const credentials = Object.create(null);
   credentials.list = realm.safeFunction(async () => {
@@ -1473,20 +1626,13 @@ function buildCredentials(session, realm) {
   credentials.remove = realm.safeFunction(async (options) =>
     vaultCall(session, "remove", options || {}),
   );
-  credentials.fill = realm.safeFunction(async (options) =>
-    fillCredential(
-      session,
-      await vaultCall(session, "fill", options || {}),
-      options || {},
-    ),
-  );
-  credentials.generateAndFill = realm.safeFunction(async (options) =>
-    fillCredential(
-      session,
-      await vaultCall(session, "generate", options || {}),
-      options || {},
-    ),
-  );
+  const disabledFill = realm.safeFunction(() => {
+    throw new Error(
+      "Credential filling is disabled in untrusted run() snippets; use the vault from trusted host code.",
+    );
+  });
+  credentials.fill = disabledFill;
+  credentials.generateAndFill = disabledFill;
   return Object.freeze(credentials);
 }
 
@@ -1584,14 +1730,18 @@ function buildSandbox(session, consoleMessages) {
     // pass `type` explicitly so the two can never disagree.
     let requested = settings.name || `${kind}.${type}`;
     if (!/\.(png|jpe?g)$/i.test(requested)) requested = `${requested}.${type}`;
-    const file = makeArtifactPath(session, requested, `${kind}.${type}`, false);
-    await page.screenshot({
-      path: file,
-      type,
-      fullPage: Boolean(settings.fullPage),
-      animations: "disabled",
-      ...(type === "jpeg" ? { quality: Number(settings.quality) || 80 } : {}),
-    });
+    const file = await captureScreenshot(
+      page,
+      session,
+      requested,
+      `${kind}.${type}`,
+      {
+        type,
+        fullPage: Boolean(settings.fullPage),
+        animations: "disabled",
+        ...(type === "jpeg" ? { quality: Number(settings.quality) || 80 } : {}),
+      },
+    );
     const artifact = { kind, path: file, media: `MEDIA:${file}` };
     session.artifacts.push(artifact);
     if (kind === "question") session.awaitingAnswerSince = Date.now();
@@ -1637,18 +1787,17 @@ function buildSandbox(session, consoleMessages) {
   captcha.readText = realm.safeFunction(async (bounds) => {
     const page = await ensureSessionPage(session);
     const clip = bounds == null ? null : captchaBounds(bounds);
-    const file = makeArtifactPath(
+    const file = await captureScreenshot(
+      page,
       session,
       "captcha-text.png",
       "captcha-text.png",
-      false,
+      {
+        type: "png",
+        animations: "disabled",
+        ...(clip ? { clip } : {}),
+      },
     );
-    await page.screenshot({
-      path: file,
-      type: "png",
-      animations: "disabled",
-      ...(clip ? { clip } : {}),
-    });
     const artifact = {
       kind: "captcha",
       path: file,
@@ -1775,27 +1924,7 @@ function compileCode(code) {
 }
 
 async function enforceArtifactQuota(session) {
-  const root = artifactDir(session);
-  const limit = Number(launchConfig.maxArtifactBytes || DEFAULT_ARTIFACT_QUOTA);
-  let total = 0;
-  const files = [];
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    const file = path.join(root, entry.name);
-    const stat = fs.statSync(file);
-    total += stat.size;
-    files.push({ file, size: stat.size, mtime: stat.mtimeMs });
-  }
-  if (total <= limit) return;
-  files.sort((left, right) => left.mtime - right.mtime);
-  for (const item of files) {
-    if (total <= limit) break;
-    fs.rmSync(item.file, { force: true });
-    total -= item.size;
-    session.warnings.push(
-      `Artifact quota removed ${path.basename(item.file)}.`,
-    );
-  }
+  pruneArtifactQuota(session);
 }
 
 async function detectSessionChallenges(session) {
@@ -1949,6 +2078,7 @@ async function shutdown() {
   // closing the user's context or tabs. connectOverCDP's close() detaches the
   // client; it leaves the externally-started browser running.
   if (connectedMode) {
+    await closeDownloadGuard();
     try {
       await connectedBrowser?.close();
     } catch {
@@ -1967,6 +2097,7 @@ async function shutdown() {
   const ephemeralProfileDir = profileLock?.ephemeral
     ? profileLock.profileDir
     : null;
+  await closeDownloadGuard();
   try {
     await browserContext?.close();
   } catch {

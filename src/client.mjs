@@ -97,7 +97,6 @@ export class BetterWright {
     const artifacts = path.join(this.home, "artifacts");
     const downloads = path.join(artifacts, "downloads");
     const runtime = path.join(root, "runtime");
-    const vault = path.join(this.home, "vault");
     for (const dir of [root, artifacts, downloads, runtime]) {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
@@ -115,7 +114,6 @@ export class BetterWright {
       maxArtifactBytes: 100 * 1024 * 1024,
       maxDownloadBytes: 50 * 1024 * 1024,
       pageIdleTimeoutMs: 1_800 * 1000,
-      privateRoots: [path.join(root, "profile"), vault, runtime],
     };
   }
 
