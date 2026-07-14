@@ -1,16 +1,42 @@
 {
   "name": "betterwright",
-  "version": "0.3.0",
-  "description": "A persistent, policy-guarded Playwright browser for AI agents with a network policy, an encrypted credential vault, proof screenshots, and native CAPTCHA helpers.",
+  "version": "0.3.1",
+  "description": "A persistent, policy-guarded Playwright browser for AI agents with network controls, trusted credential filling, proof screenshots, and CAPTCHA helpers.",
   "type": "module",
   "main": "src/index.mjs",
+  "types": "types/index.d.ts",
   "exports": {
-    ".": "./src/index.mjs",
-    "./chrome": "./src/chrome.mjs",
-    "./policy": "./src/policy.mjs",
-    "./prompt": "./src/prompt.mjs",
-    "./pi": "./src/pi.mjs",
-    "./worker": "./src/worker.mjs"
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.mjs",
+      "default": "./src/index.mjs"
+    },
+    "./chrome": {
+      "types": "./types/chrome.d.ts",
+      "import": "./src/chrome.mjs",
+      "default": "./src/chrome.mjs"
+    },
+    "./policy": {
+      "types": "./types/policy.d.ts",
+      "import": "./src/policy.mjs",
+      "default": "./src/policy.mjs"
+    },
+    "./prompt": {
+      "types": "./types/prompt.d.ts",
+      "import": "./src/prompt.mjs",
+      "default": "./src/prompt.mjs"
+    },
+    "./pi": {
+      "types": "./types/pi.d.ts",
+      "import": "./src/pi.mjs",
+      "default": "./src/pi.mjs"
+    },
+    "./worker": {
+      "types": "./types/worker.d.ts",
+      "import": "./src/worker.mjs",
+      "default": "./src/worker.mjs"
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
     "betterwright": "bin/betterwright.mjs"
@@ -18,16 +44,31 @@
   "files": [
     "src",
     "bin",
+    "types",
+    "examples/javascript",
+    "CHANGELOG.md",
+    "SETUP.md",
+    "SECURITY.md",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node bin/betterwright.mjs setup || true",
     "test": "node --test tests/node/*.test.mjs",
-    "lint": "biome ci src bin scripts tests"
+    "test:unit": "node scripts/run-unit-tests.mjs",
+    "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
+    "lint": "biome ci src bin scripts tests",
+    "check:worker": "node scripts/sync-worker.mjs --check",
+    "check:versions": "node scripts/check-versions.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "release:check": "npm run check:worker && npm run check:versions && npm run lint && npm run test:unit && npm run test:types && npm run check:package",
+    "prepublishOnly": "npm run release:check"
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "packageManager": "npm@11.5.1",
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "cloakbrowser": "0.4.10",
@@ -55,6 +96,7 @@
   },
   "homepage": "https://github.com/CuriosityOS/betterwright#readme",
   "devDependencies": {
-    "@biomejs/biome": "^2.5.3"
+    "@biomejs/biome": "^2.5.3",
+    "typescript": "^5.9.3"
   }
 }

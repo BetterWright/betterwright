@@ -140,7 +140,13 @@ The worker, the JS facades it builds, Playwright, and the CloakBrowser wrapper
 have to agree, so both wrapper versions are pinned in the Python and JavaScript
 packages. `betterwright setup` installs those exact integrations and asks the
 official CloakBrowser wrapper for its signed browser build. Bumping either
-wrapper is a deliberate, tested change, not a range that floats underneath you.
+wrapper is a deliberate, tested BetterWright change.
+
+The external browser binary has a separate lifecycle: by default it follows the
+pinned wrapper's signed stable channel and can advance without a BetterWright
+package release. `betterwright doctor` reports the resolved binary version and
+tier. Reproducible deployments can set a full `CLOAKBROWSER_VERSION`, while
+`CLOAKBROWSER_AUTO_UPDATE=false` freezes update checks for an installed build.
 
 Managed CloakBrowser reduces common browser-fingerprint false positives but
 does not guarantee undetectability. Stock Chromium remains an explicit

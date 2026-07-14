@@ -150,6 +150,8 @@ def diagnose() -> dict:
         "playwright_ok": core is not None,
         "cloakbrowser": str(cloak) if cloak else None,
         "cloakbrowser_version": PINNED_CLOAKBROWSER_VERSION,
+        "cloakbrowser_binary_version": cloak_binary.get("version") if cloak_binary else None,
+        "cloakbrowser_binary_tier": cloak_binary.get("tier") if cloak_binary else None,
         "cloakbrowser_binary": cloak_binary.get("binaryPath") if cloak_binary else None,
         "cloakbrowser_ok": bool(cloak_binary and cloak_binary.get("installed")),
         "browser": browser,

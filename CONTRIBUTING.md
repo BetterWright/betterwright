@@ -49,7 +49,7 @@ the other and update both suites.
 cd python && pip install -e '.[dev]' && pytest
 
 # Node
-npm install && npm test
+npm ci && npm test
 ```
 
 The browser-integration tests skip automatically unless the runtime is installed
@@ -58,8 +58,9 @@ The browser-integration tests skip automatically unless the runtime is installed
 ## Style
 
 - Python: `ruff` (config in `pyproject.toml`). Type hints on public functions.
-- JavaScript: ESM, no build step, no runtime dependencies beyond
-  `playwright-core`. `npm run lint` syntax-checks the sources.
+- JavaScript: ESM, no build step, and exact runtime dependency pins.
+  `npm run lint` syntax-checks the sources and `npm run test:types` verifies the
+  published declarations.
 - Comments explain *why*, not *what*. Match the surrounding code.
 
 ## Scope
@@ -75,3 +76,34 @@ The Playwright version is pinned in three places: `package.json`,
 `python/src/betterwright/runtime.py` (`PINNED_PLAYWRIGHT_VERSION`), and
 `bin/betterwright.mjs`. A bump changes all three and is tested against the
 matching Chromium build.
+
+## Releasing
+
+### One-time npm bootstrap
+
+Trusted Publishing can only be attached after the package exists. For the first
+release only:
+
+1. Merge the release commit to `main`, run `npm ci` and
+   `npm run release:check`, then sign in with `npm login`.
+2. Claim the package with `npm publish --access public` before creating the
+   GitHub release.
+3. In the npm package settings, add the GitHub Trusted Publisher for owner
+   `CuriosityOS`, repository `betterwright`, workflow `publish-npm.yml`, and
+   environment `npm`.
+4. Protect release tags and the repository's `npm` environment before enabling
+   future maintainers to create releases.
+
+### Normal releases
+
+1. Update `CHANGELOG.md` and keep the npm/Python versions aligned.
+2. Run `npm ci` followed by `npm run release:check`.
+3. Merge the release commit, create the matching `vX.Y.Z` tag from `main`, and
+   publish a GitHub Release for that tag.
+4. `publish-npm.yml` verifies that the release commit belongs to `main`, runs
+   the complete Node suite against the pinned Chromium build, and publishes
+   through npm Trusted Publishing with provenance.
+
+The npm tarball intentionally excludes browser binaries, profiles, Python
+artifacts, tests, documentation images, and repository caches. Browser
+installation remains an explicit setup step.
