@@ -23,14 +23,17 @@ prompt.
    - Python host: `pip install betterwright`
    - JavaScript host: `npm install betterwright`
    - MCP path (any host): `pip install "betterwright[mcp]"`
-3. **Download the managed browser** (one-time, ~200 MB): `betterwright setup`.
+3. **Download the managed browser** (one-time, ~200 MB):
+   - Python/MCP install: `betterwright setup`
+   - JavaScript install: `npx betterwright setup`
+
    The official CloakBrowser wrapper downloads its signed binary directly from
    CloakHQ and verifies it before extraction; BetterWright does not redistribute
-   that separately licensed binary.
-4. **Verify** it is ready — this must print `BetterWright is ready.`:
-   ```bash
-   betterwright doctor
-   ```
+   that separately licensed binary. npm installation itself has no hidden
+   browser-download lifecycle script.
+4. **Verify** it is ready and must print `BetterWright is ready.`:
+   - Python/MCP install: `betterwright doctor`
+   - JavaScript install: `npx betterwright doctor`
    If it does not, stop and report exactly what `doctor` printed.
 
 Then go to the matching section:
@@ -83,7 +86,8 @@ across tool calls.
 Managed launches use CloakBrowser by default to reduce common automation false
 positives. This is not a guarantee of undetectability. Set
 `BETTERWRIGHT_BROWSER=chromium` only for the explicit stock-browser fallback;
-run `betterwright setup --chromium` once before selecting it.
+run `betterwright setup --chromium` (Python) or
+`npx betterwright setup --chromium` (JavaScript) once before selecting it.
 
 Public search-result UIs are blocked by default. Broad discovery should use the
 host's web-search tool, then open selected first-party pages in BetterWright.
@@ -251,7 +255,8 @@ the path you just wired. Have the agent (or run yourself) this two-step check:
    and confirm you get back a `MEDIA:` path that exists on disk.
 
 If both succeed, the integration is live. If the first fails with a runtime
-error, rerun `betterwright doctor` — the browser is probably not installed.
+error, rerun `betterwright doctor` (Python) or `npx betterwright doctor`
+(JavaScript); the browser is probably not installed.
 
 For an agent research check, give it a broad discovery task and confirm it uses
 the host's web-search tool, then opens returned results or first-party pages in

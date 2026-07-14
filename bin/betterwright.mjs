@@ -44,7 +44,15 @@ function resolveCloakDir() {
 
 async function cloakRuntime() {
   const dir = resolveCloakDir();
-  if (!dir) return { dir: null, version: null, binary: null, installed: false };
+  if (!dir)
+    return {
+      dir: null,
+      version: null,
+      binaryVersion: null,
+      tier: null,
+      binary: null,
+      installed: false,
+    };
   let version = null;
   try {
     version = require(path.join(dir, "package.json")).version;
@@ -57,11 +65,20 @@ async function cloakRuntime() {
     return {
       dir,
       version,
+      binaryVersion: info.version || null,
+      tier: info.tier || null,
       binary: info.binaryPath,
       installed: Boolean(info.installed),
     };
   } catch {
-    return { dir, version, binary: null, installed: false };
+    return {
+      dir,
+      version,
+      binaryVersion: null,
+      tier: null,
+      binary: null,
+      installed: false,
+    };
   }
 }
 
@@ -109,6 +126,8 @@ async function cmdDoctor() {
     cloakbrowser: cloak.dir,
     cloakbrowser_version: cloak.version,
     cloakbrowser_pinned: PINNED_CLOAKBROWSER_VERSION,
+    cloakbrowser_binary_version: cloak.binaryVersion,
+    cloakbrowser_binary_tier: cloak.tier,
     cloakbrowser_binary: cloak.binary,
     cloakbrowser_ok:
       cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed,

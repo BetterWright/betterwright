@@ -1,0 +1,60 @@
+name: Publish npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish trusted package
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.14.0"
+          registry-url: "https://registry.npmjs.org"
+      - name: Install Trusted Publishing capable npm
+        run: npm install --global npm@11.5.1
+      - name: Verify release source and tag
+        shell: bash
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main
+          node scripts/check-versions.mjs --tag "${{ github.event.release.tag_name }}"
+      - name: Check whether this version already exists
+        id: existing
+        shell: bash
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VERSION is already published; nothing to do."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install locked dependencies
+        if: steps.existing.outputs.published != 'true'
+        run: npm ci --ignore-scripts
+      - name: Install deterministic Chromium test backend
+        if: steps.existing.outputs.published != 'true'
+        run: node node_modules/playwright-core/cli.js install chromium --no-shell
+      - name: Run browser integration suite
+        if: steps.existing.outputs.published != 'true'
+        run: npm test
+      - name: Publish to npm with provenance
+        if: steps.existing.outputs.published != 'true'
+        run: npm publish --access public

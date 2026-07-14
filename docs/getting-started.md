@@ -17,12 +17,18 @@ betterwright doctor     # prints what resolved; should end with "BetterWright is
 ### JavaScript
 
 ```bash
-npm install betterwright   # postinstall downloads the managed browser
+npm install betterwright
+npx betterwright setup     # downloads the signed managed browser (~200 MB, once)
 npx betterwright doctor
 ```
 
 If `doctor` reports Node missing, install it from <https://nodejs.org> and rerun
-`setup`. If it reports CloakBrowser missing, rerun `betterwright setup`.
+`setup`. If a JavaScript install reports CloakBrowser missing, rerun
+`npx betterwright setup`; Python installs use `betterwright setup`.
+
+Upgrade with `npm update betterwright` or `npm install betterwright@latest`.
+Package updates are intentional rather than automatic, so application lockfiles
+continue to control when a new BetterWright version is adopted.
 
 ### Managed CloakBrowser backend
 
@@ -43,6 +49,12 @@ The managed backend keeps one stable fingerprint seed and persistent profile.
 That removes several stock automation signals and can reduce false positives;
 it cannot guarantee that a site will accept the session or never issue a
 challenge.
+
+BetterWright pins the CloakBrowser npm wrapper, while the separately cached
+browser binary follows CloakBrowser's signed stable channel. `betterwright
+doctor` reports both versions. For a reproducible deployment, set a full
+`CLOAKBROWSER_VERSION`; to keep an already installed build from checking for a
+newer stable build, set `CLOAKBROWSER_AUTO_UPDATE=false`.
 
 ### Explicit Chromium fallback
 

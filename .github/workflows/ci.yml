@@ -5,30 +5,40 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  worker-sync:
-    name: Worker copies in sync
+  package-integrity:
+    name: Package integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: node scripts/sync-worker.mjs --check
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check:worker
+      - run: npm run check:versions
+      - run: npm run lint
+      - run: npm run test:unit
+      - run: npm run test:types
+      - run: npm run check:package
 
   node:
-    name: Node tests
+    name: Node browser tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install
+          cache: npm
+      - run: npm ci --ignore-scripts
       - name: Install deterministic Chromium test backend
-        run: node bin/betterwright.mjs setup --chromium
-      - run: npm run lint
-      # The broad suite uses explicit Chromium; Cloak has a separate opt-in E2E.
+        run: node node_modules/playwright-core/cli.js install chromium --no-shell
+      # The broad suite selects explicit Chromium; Cloak has a separate opt-in E2E.
       - run: npm test
 
   python:
