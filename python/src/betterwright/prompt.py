@@ -134,6 +134,11 @@ class Guardrails:
     spending_limit: str | None = None
     #: Additional rules appended verbatim as bullet points.
     extra_rules: tuple[str, ...] = field(default_factory=tuple)
+    #: Name of a password-manager extension present and unlocked in this browser
+    #: (e.g. "1Password"). When set, the prompt gains a short section telling the
+    #: model to fill logins through the manager's inline menu. Leave ``None`` to
+    #: spend no tokens on it.
+    password_manager: str | None = None
 
     def clauses(self) -> list[str]:
         """Return the guardrail lines implied by this configuration."""
@@ -172,27 +177,51 @@ class Guardrails:
         return rules
 
 
+def _password_manager_section(name: str) -> str:
+    display = (
+        "1Password"
+        if name.strip().lower() in {"1password", "1 password"}
+        else name.strip()
+    )
+    return (
+        "## Password manager\n"
+        f"A {display} extension is installed and unlocked in this browser. Prefer "
+        "it for logging in and signing up: focus the field with `human.click`, "
+        f"click the {display} badge at the right edge of the field to open its "
+        "inline menu, then click the matching entry in the small menu that drops "
+        "below the field. Click that entry by its on-screen position — it is not "
+        "an ordinary DOM element, so CSS selectors and keyboard shortcuts do not "
+        f"reach it. {display} fills the secret; you never see or type it. If it "
+        "is locked or has no entry for the site, fall back to the trusted "
+        "host-side fill."
+    )
+
+
 def agent_system_prompt(guardrails: Guardrails | None = None) -> str:
     """Return operator guidance to include in a browser agent's system prompt.
 
     With no ``guardrails`` (or the default :class:`Guardrails`), the agent is told
     to act on what the user asks — including logging in, signing up, and buying —
-    and to ask only for genuine blockers. Passing a configured
-    :class:`Guardrails` appends a "Guardrails for this session" section with the
-    limits you chose.
+    and to ask only for genuine blockers. A configured :class:`Guardrails` appends
+    a "Guardrails for this session" section with the limits you chose; setting
+    ``password_manager`` adds a short section on filling logins through that
+    extension. Sections are added only when relevant, so the base prompt stays
+    lean.
     """
 
     guardrails = guardrails or Guardrails()
+    sections = [_BASE_GUIDANCE]
+    if guardrails.password_manager:
+        sections.append(_password_manager_section(guardrails.password_manager))
     clauses = guardrails.clauses()
-    if not clauses:
-        return _BASE_GUIDANCE
-    body = "\n".join(f"- {clause}" for clause in clauses)
-    return (
-        f"{_BASE_GUIDANCE}\n\n"
-        "## Guardrails for this session\n"
-        "These limits override the autonomy above where they conflict:\n"
-        f"{body}"
-    )
+    if clauses:
+        body = "\n".join(f"- {clause}" for clause in clauses)
+        sections.append(
+            "## Guardrails for this session\n"
+            "These limits override the autonomy above where they conflict:\n"
+            f"{body}"
+        )
+    return "\n\n".join(sections)
 
 
 __all__ = ["Guardrails", "agent_system_prompt"]
