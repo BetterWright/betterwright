@@ -4,8 +4,10 @@ import base64
 
 import pytest
 
+from betterwright import runtime
 from betterwright._display import resolve_headless
 from betterwright.bridge import Bridge
+from betterwright.cli import _result_to_dict
 from betterwright.client import Artifact, RunResult
 
 
@@ -68,6 +70,12 @@ def test_challenges_are_preserved_from_worker_envelope():
     assert result.challenges[0]["provider"] == "bing"
 
 
+def test_cli_serialization_includes_resumable_challenges():
+    challenge = {"type": "bot_challenge", "solve": {"maxAttempts": 3}}
+    serialized = _result_to_dict(RunResult(ok=True, challenges=[challenge]))
+    assert serialized["challenges"] == [challenge]
+
+
 def test_resolve_headless_explicit():
     assert resolve_headless(True) is True
     assert resolve_headless(False) is False
@@ -87,7 +95,15 @@ def test_resolve_headless_rejects_bad_string():
         resolve_headless("maybe")
 
 
-def test_cloak_binary_env_is_opt_in(monkeypatch, tmp_path):
+def test_cloak_is_the_managed_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
+    bridge = Bridge(home=tmp_path)
+    assert bridge.executable_path is None
+    assert bridge.browser_flavor == "cloak"
+    assert bridge._worker_config()["browserFlavor"] == "cloak"
+
+
+def test_cloak_binary_env_overrides_managed_binary(monkeypatch, tmp_path):
     monkeypatch.setenv("CLOAKBROWSER_BINARY_PATH", "/opt/cloak/chrome")
     bridge = Bridge(home=tmp_path)
     assert bridge.executable_path == "/opt/cloak/chrome"
@@ -102,6 +118,21 @@ def test_explicit_binary_wins_over_cloak_env(monkeypatch, tmp_path):
     assert bridge.browser_flavor == "chromium"
 
 
+def test_stock_chromium_must_be_selected_explicitly(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLOAKBROWSER_BINARY_PATH", "/opt/cloak/chrome")
+    bridge = Bridge(home=tmp_path, browser="chromium")
+    assert bridge.executable_path is None
+    assert bridge.browser_flavor == "chromium"
+    with pytest.raises(ValueError, match="cloak.*chromium"):
+        Bridge(home=tmp_path, browser="other")
+
+
+def test_explicit_empty_browser_does_not_inherit_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("BETTERWRIGHT_BROWSER", "chromium")
+    with pytest.raises(ValueError, match="browser"):
+        Bridge(home=tmp_path, browser="")
+
+
 def test_download_policy_defaults_to_ask_and_is_configurable(tmp_path):
     guarded = Bridge(home=tmp_path / "guarded")
     allowed = Bridge(home=tmp_path / "allowed", download_policy="allow")
@@ -110,3 +141,46 @@ def test_download_policy_defaults_to_ask_and_is_configurable(tmp_path):
     assert allowed.download_policy == "allow"
     with pytest.raises(ValueError, match="download_policy"):
         Bridge(home=tmp_path / "invalid", download_policy="sometimes")
+
+
+def test_public_search_ui_is_blocked_by_default_and_opt_in(tmp_path):
+    guarded = Bridge(home=tmp_path / "guarded")
+    allowed = Bridge(
+        home=tmp_path / "allowed", public_search_policy="allow"
+    )
+    assert guarded._worker_config()["publicSearchPolicy"] == "block"
+    assert allowed._worker_config()["publicSearchPolicy"] == "allow"
+    with pytest.raises(ValueError, match="public_search_policy"):
+        Bridge(home=tmp_path / "invalid", public_search_policy="pace")
+
+
+def test_explicit_empty_public_search_policy_does_not_inherit_environment(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("BETTERWRIGHT_PUBLIC_SEARCH_POLICY", "allow")
+    with pytest.raises(ValueError, match="public_search_policy"):
+        Bridge(home=tmp_path, public_search_policy="")
+
+
+def test_runtime_discovery_matches_node_ancestor_lookup(monkeypatch, tmp_path):
+    package_dir = tmp_path / "project" / "python" / "src" / "betterwright"
+    package_dir.mkdir(parents=True)
+    node_modules = tmp_path / "project" / "node_modules"
+    versions = {
+        "playwright-core": runtime.PINNED_PLAYWRIGHT_VERSION,
+        "cloakbrowser": runtime.PINNED_CLOAKBROWSER_VERSION,
+    }
+    for package, version in versions.items():
+        target = node_modules / package
+        target.mkdir(parents=True)
+        (target / "package.json").write_text(
+            f'{{"version":"{version}"}}', encoding="utf-8"
+        )
+
+    monkeypatch.setattr(runtime, "__file__", str(package_dir / "runtime.py"))
+    monkeypatch.setattr(runtime, "betterwright_home", lambda: tmp_path / "home")
+    monkeypatch.delenv("BETTERWRIGHT_PLAYWRIGHT_CORE_PATH", raising=False)
+    monkeypatch.delenv("BETTERWRIGHT_CLOAKBROWSER_PATH", raising=False)
+
+    assert runtime.playwright_core_dir() == (node_modules / "playwright-core").resolve()
+    assert runtime.cloakbrowser_dir() == (node_modules / "cloakbrowser").resolve()

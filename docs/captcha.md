@@ -6,9 +6,15 @@ BetterWright handles simple, necessary CAPTCHA interactions inside the existing
 browser session. It does not send sitekeys, tokens, screenshots, or API keys to
 a third-party solving service.
 
-> A CAPTCHA is a site asking automation to stop. Use these helpers only for a
-> legitimate flow you are authorized to complete. Make one attempt, verify the
-> result, and stop rather than repeatedly retrying a blocked site.
+> Use these helpers only for a legitimate flow you are authorized to complete.
+> Never rotate identities or repeat a failed action. A rejected repeat of the
+> same stage requires an immediate alternate source or human handoff; otherwise,
+> work through at most three distinct stages before taking that handoff.
+
+When BetterWright detects a visible challenge, the result contains a structured
+`challenges` entry and, when capture succeeds, an attached `captcha` image. This
+also happens when the browser snippet itself failed. Keep the same page and
+profile, inspect that state, and continue on the next turn.
 
 ## Available helpers
 
@@ -16,6 +22,7 @@ Every `run()` snippet has a frozen `captcha` global:
 
 | Helper | Purpose | Result |
 | --- | --- | --- |
+| `captcha.inspect(bounds?)` | Capture the whole page or a challenge region for the agent's vision | `captcha` image artifact |
 | `captcha.click(bounds)` | Click a checkbox-style widget | Fresh accessibility snapshot |
 | `captcha.drag(from, to, {steps: 20})` | Smoothly drag a slider or puzzle handle | Fresh accessibility snapshot |
 | `captcha.readText(bounds?)` | Capture only a text challenge for the agent's existing vision | `captcha` image artifact |
@@ -34,8 +41,9 @@ return captcha.click(bounds);
 ```
 
 The returned snapshot is captured after the click. The result envelope also
-contains BetterWright's current `challenges` report. If the check did not clear,
-do not loop the helper.
+contains BetterWright's current `challenges` report. If the checkbox opens an
+image grid, that is a new stage; inspect it rather than clicking the checkbox
+again.
 
 ## Slider or puzzle drag
 
@@ -73,16 +81,16 @@ return snapshot();
 ## Image-grid challenge (reCAPTCHA)
 
 A checkbox click frequently escalates to an image grid — "select all images with
-bicycles". There is no separate helper for this: the grid is solved with the
-primitives you already have — a screenshot for your own vision, and tile clicks
-by `[ref=eN]`. Treat the escalation as part of the same single attempt, not a
-dead end.
+bicycles". There is no separate solver dependency: use the existing vision
+capture and click primitives. Treat the escalation as the next distinct stage,
+not a dead end.
 
 ```js
-// 1. See the grid. snapshot() gives every tile a [ref=eN]; a screenshot gives
-//    your vision the actual images to judge.
-const shot = await screenshot({name: 'captcha-grid'});
+// 1. See the grid. snapshot() gives interactive elements a [ref=eN], while
+//    captcha.inspect() attaches the actual images for your vision.
+const shot = await captcha.inspect();
 const tree = await snapshot();   // rows of button [ref=…] tiles + a Verify button
+return tree;
 ```
 
 On the next turn, having looked at the screenshot, click each matching tile and
@@ -93,16 +101,23 @@ for (const ref of ['f4e14', 'f4e30', 'f4e37']) {   // the tiles your vision pick
   await human.click(page.locator(`aria-ref=${ref}`));
 }
 await human.click(page.getByRole('button', {name: 'Verify'}));
-return snapshot();               // confirm it cleared, or report if still blocked
+return snapshot();               // confirm it cleared or inspect the next stage
 ```
 
-Solve the whole grid before clicking Verify, make one honest pass, and stop and
-report if it stays blocked rather than looping through fresh challenges.
+Inspect the fresh `challenges` report after Verify. A replacement set of tiles
+or another prompt is a new stage; a rejected repeat of the same grid is not.
+If the same stage rejects an action, stop native challenge attempts immediately
+and use an alternate first-party source or request human help. Otherwise,
+continue through no more than three distinct stages before taking that handoff.
+When the challenge clears, verify the current application state before resuming.
+Replay the original action only if it is idempotent or the state proves it did
+not already complete; never duplicate a submission, purchase, or message.
 
 ## Limits
 
 These helpers reproduce normal mouse interaction and provide a token-efficient
 vision crop. They do not manufacture reCAPTCHA, hCaptcha, or Turnstile tokens,
-and they cannot guarantee that a provider will accept an automated browser. An
-invisible or scored challenge, or one still blocked after an honest attempt,
-should be reported to the user rather than retried in a loop.
+send challenges to a third-party solver, or guarantee that a provider will
+accept the managed browser. An invisible or scored challenge may have no native
+interaction to perform; preserve the page and request human help instead of
+looping or changing identity.

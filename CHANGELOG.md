@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-14
+
 ### Added
 
 - Approval-gated browser downloads with configurable `ask`, `allow`, and `deny`
@@ -15,11 +17,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `selector` (scope to a CSS selector), and `depth` (limit tree depth).
 - Documented that snapshot `[ref=eN]` markers are directly actionable via
   `page.locator('aria-ref=eN')`.
+- `captcha.inspect(bounds?)` plus automatic challenge-image artifacts for
+  visible bot checks, including checks detected inside child frames and after a
+  failed browser snippet.
 
 ### Changed
 
 - Result envelopes omit empty `console`/`events`/`artifacts`/`warnings`
   collections instead of sending empty arrays.
+- Managed CloakBrowser launches are now the default. Setup downloads the
+  separately licensed binary directly through the pinned official wrapper and
+  its mandatory signature verification; BetterWright does not redistribute it.
+  Stock Chromium remains an explicit compatibility/test fallback.
+- Bot challenges are treated as resumable state. Agent guidance now works
+  through at most three distinct stages, resumes the original action when the
+  challenge clears, and then chooses a human handoff or alternate first-party
+  source instead of looping.
+- Broad discovery is routed through a host-provided web-search tool rather than
+  automated Google or Bing public-search pages. Public result UIs are blocked
+  by default, with an explicit trusted-host opt-in.
+- Provider response fields and completed widget frames now clear solved
+  reCAPTCHA, hCaptcha, and Turnstile state so the original action can resume.
 
 ### Security
 
@@ -31,6 +49,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the artifact directory.
 - Disable vault-backed credential filling in model-authored snippets; direct
   `CredentialVault` methods remain available to trusted host code.
+- Keep CDP sessions, raw browser handles, and private Playwright properties
+  internal to the worker; model snippets continue to receive only guarded
+  facades and helpers.
+- Redact trusted CDP endpoints from attach failures and block browser-internal
+  pages that could reveal debugging pipes, proxy ports, paths, or fingerprint
+  flags.
 - Cancel oversized downloads through Chromium progress events and bound
   screenshots by pixels and encoded bytes before writing artifact files.
 - Deny downloads before ordinary browser runs and close each approved download

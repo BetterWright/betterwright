@@ -14,12 +14,31 @@ new BetterWright({
   home,             // state dir; default $BETTERWRIGHT_HOME or ~/.betterwright
   policy,           // a NetworkPolicy; default: safe policy
   vault,            // optional { handleRequest(action, payload, origin), redact? }
-  executablePath,   // explicit Chromium binary; otherwise CLOAKBROWSER_BINARY_PATH
-  headless = true,
-  defaultTimeout = 30,   // per-snippet seconds, min 5
-  downloadPolicy = "ask", // "ask" (default), "allow", or "deny"
+  browser: "cloak", // managed default; "chromium" is the explicit fallback
+  executablePath,   // explicit binary; also selects the Chromium fallback
+  headless: "auto", // visible with a display, headless on servers/CI
+  connectOverCdp,   // host-only attach endpoint; see attach mode
+  publicSearchPolicy: "block", // "allow" is an explicit host opt-in
+  searchMinIntervalMs: 0,
+  defaultTimeout: 30,   // per-snippet seconds, min 5
+  downloadPolicy: "ask", // "ask" (default), "allow", or "deny"
 });
 ```
+
+The managed Cloak backend is the default. It keeps BetterWright's persistent
+profile and policy while reducing common stock-browser automation signals; it
+does not guarantee undetectability. `browser: "chromium"` is useful for tests
+and compatibility, but stock Chromium exposes more automation signals. Set
+`BETTERWRIGHT_BROWSER` to choose a process-wide default.
+
+Public Google, Bing, and DuckDuckGo result UIs are blocked by default so broad
+discovery goes through the host's search tool. Trusted hosts can opt in with
+`publicSearchPolicy: "allow"` or `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=allow`; only
+then does `searchMinIntervalMs` apply.
+
+`connectOverCdp` is a trusted host configuration option, not part of the browser
+tool given to the model. Model-authored snippets cannot access CDP, the raw
+browser object, or `newCDPSession`.
 
 | Method | Description |
 | --- | --- |
@@ -32,7 +51,7 @@ There is no context-manager sugar in JS — call `close()` in a `finally`.
 ### Download approval
 
 `downloadPolicy: "ask"` is the default. Ordinary `run()` calls execute while
-Chromium downloads are denied. A trusted host must obtain explicit user approval
+browser downloads are denied. A trusted host must obtain explicit user approval
 first and then mark only that run with `{ approvedDownloads: true }`:
 
 ```js
@@ -78,9 +97,10 @@ try {
 }
 ```
 
-For long-lived desktop agents, `ensureChromeCdp()` starts or reuses a dedicated
-Google Chrome profile. Pair it with `searchMinIntervalMs` to keep public-search
-navigations from occurring in rapid bursts; see [attach mode](attach-mode.md).
+For long-lived desktop agents, `ensureChromeCdp()` can start or reuse a dedicated
+Google Chrome profile for host-controlled attach mode. For broad discovery, use
+the host's web-search tool and open returned results in BetterWright instead of
+automating Google or Bing's public search UI. See [attach mode](attach-mode.md).
 
 ### Pi tool-result images
 
@@ -103,10 +123,16 @@ return {
 
 ### Native CAPTCHA helpers
 
-Browser snippets receive `captcha.click(bounds)`, `captcha.drag(from, to)`, and
-`captcha.readText(bounds)`. The first two return a fresh accessibility snapshot;
-the last emits a cropped image artifact for the host model's existing vision.
-No solver dependency or API key is required. See [captcha.md](captcha.md).
+Browser snippets receive `captcha.inspect(bounds?)`, `captcha.click(bounds)`,
+`captcha.drag(from, to)`, and `captcha.readText(bounds)`. Detected challenges
+also attach a `captcha` image automatically. Treat a challenge as resumable:
+inspect the fresh result after each action. A rejection at the same stage
+requires an immediate alternate first-party source or human handoff; otherwise,
+continue through at most three distinct stages before taking that handoff. When
+the challenge clears, verify current application state and replay the original
+action only if it is idempotent or state proves it did not already complete.
+Never duplicate a submission, purchase, or message. No solver dependency or API
+key is required. See [captcha.md](captcha.md).
 
 ### Human-shaped actions
 
@@ -119,11 +145,11 @@ options.
 
 ```js
 new NetworkPolicy({
-  allowPrivateNetwork = false,
-  allowLoopback = false,
-  allowHosts = [],
-  blockHosts = [],
-  blockSecretBearingUrls = true,
+  allowPrivateNetwork: false,
+  allowLoopback: false,
+  allowHosts: [],
+  blockHosts: [],
+  blockSecretBearingUrls: true,
   custom,                    // (url, details) => decision | null
 });
 ```

@@ -8,7 +8,8 @@ test("default prompt is permissive", () => {
   const compact = prompt.replace(/\s+/g, " ");
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
-  assert.ok(prompt.includes("Do not repeatedly retry it or rotate through other public search engines"));
+  assert.ok(compact.includes("do not automate Google or Bing's public search UI"));
+  assert.ok(compact.includes("captcha.inspect(bounds)"));
   assert.ok(compact.includes("captcha.click(bounds)"));
   assert.ok(compact.includes("captcha.drag(from, to)"));
   assert.ok(compact.includes("captcha.readText(bounds)"));
@@ -17,7 +18,10 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("human.scroll(deltaY)"));
   assert.ok(compact.includes("host's approval-gated download tool"));
   assert.ok(compact.includes("before enabling that one bounded download run"));
-  assert.ok(compact.includes("If it remains blocked, stop"));
+  assert.ok(compact.includes("three distinct stages"));
+  assert.ok(compact.includes("stop native challenge attempts immediately"));
+  assert.ok(compact.includes("Replay the original action only when it is idempotent"));
+  assert.ok(compact.includes("never duplicate a submission, purchase, or message"));
   assert.ok(compact.includes("Inspect the returned image itself before citing it"));
   assert.ok(compact.includes("fix the page and retake it"));
   assert.ok(!prompt.includes("Guardrails for this session"));

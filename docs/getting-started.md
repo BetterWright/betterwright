@@ -2,42 +2,63 @@
 
 ## Install and set up
 
-BetterWright drives a real Chromium through Playwright, so it needs **Node.js
-18+** on your `PATH`. The browser itself is downloaded once by `setup`.
+BetterWright drives a managed CloakBrowser build through Playwright, so it needs
+**Node.js 22+** on your `PATH`. The browser itself is downloaded once by
+`setup`.
 
 ### Python
 
 ```bash
 pip install betterwright
-betterwright setup      # downloads the pinned Playwright + Chromium (~150 MB, once)
+betterwright setup      # downloads the signed managed browser (~200 MB, once)
 betterwright doctor     # prints what resolved; should end with "BetterWright is ready."
 ```
 
 ### JavaScript
 
 ```bash
-npm install betterwright   # the postinstall step downloads Chromium
+npm install betterwright   # postinstall downloads the managed browser
 npx betterwright doctor
 ```
 
 If `doctor` reports Node missing, install it from <https://nodejs.org> and rerun
-`setup`. If it reports Chromium missing, rerun `betterwright setup`.
+`setup`. If it reports CloakBrowser missing, rerun `betterwright setup`.
 
-### Optional CloakBrowser binary
+### Managed CloakBrowser backend
 
-BetterWright does not bundle or auto-download CloakBrowser's separately licensed
-binary. If you installed it from an official CloakHQ channel, point
-`CLOAKBROWSER_BINARY_PATH` at that executable before starting BetterWright. Both
-the JavaScript and Python clients will use it automatically while retaining
-BetterWright's profile, policy, vault, and agent helpers:
+Managed launches use CloakBrowser by default. `betterwright setup` asks the
+pinned official wrapper to fetch the correct binary directly from CloakHQ's
+release source and verify the published checksums with its pinned Ed25519
+signature before extraction. BetterWright ships the wrapper integration, not
+the separately licensed browser binary, and does not redistribute that binary.
+
+To use a CloakBrowser binary already installed through an official channel,
+point `CLOAKBROWSER_BINARY_PATH` at it before starting BetterWright:
 
 ```bash
 export CLOAKBROWSER_BINARY_PATH="$HOME/.cloakbrowser/chromium-.../chrome"
 ```
 
-An explicit `executablePath` / `executable_path` still wins. Playwright warns
-that alternate executable versions are not guaranteed compatible, so keep the
-Cloak browser and BetterWright's pinned Playwright reasonably aligned.
+The managed backend keeps one stable fingerprint seed and persistent profile.
+That removes several stock automation signals and can reduce false positives;
+it cannot guarantee that a site will accept the session or never issue a
+challenge.
+
+### Explicit Chromium fallback
+
+Use stock Playwright Chromium only when you need compatibility or a deterministic
+test browser:
+
+```bash
+betterwright setup --chromium
+export BETTERWRIGHT_BROWSER=chromium
+```
+
+Or select it per client with `browser="chromium"` / `browser: "chromium"`.
+Supplying `executable_path` / `executablePath` also selects this fallback. Stock
+Chromium can expose obvious automation signals, including headless branding and
+`navigator.webdriver`; it is a degraded fallback, not the recommended backend
+for normal agent browsing.
 
 ## Your first run
 
@@ -105,6 +126,6 @@ with BetterWright(policy=NetworkPolicy(allow_loopback=True)) as bw:
   a Chrome you already have open.
 - [Network policy](network-policy.md) — controlling what the browser can reach.
 - [Credentials](credentials.md) — encrypted storage and trusted host-side use.
-- [Native CAPTCHA helpers](captcha.md) — one-shot handling for authorized flows.
+- [Native CAPTCHA helpers](captcha.md) — resumable handling for authorized flows.
 - [Architecture](architecture.md) — how it works and what it does/doesn't secure.
 - [Examples](../examples) — runnable Python and JavaScript scripts.

@@ -9,7 +9,8 @@ def test_default_prompt_is_permissive():
     assert "You are authorized" in prompt
     # It explicitly tells the model not to refuse authorized actions.
     assert "do not refuse" in prompt.lower()
-    assert "Do not repeatedly retry it or rotate through other public search engines" in prompt
+    assert "automate Google or Bing's public search UI" in prompt
+    assert "captcha.inspect(bounds)" in compact
     assert "captcha.click(bounds)" in compact
     assert "captcha.drag(from, to)" in compact
     assert "captcha.readText(bounds)" in compact
@@ -18,7 +19,10 @@ def test_default_prompt_is_permissive():
     assert "human.scroll(deltaY)" in compact
     assert "host's approval-gated download tool" in compact
     assert "before enabling that one bounded download run" in compact
-    assert "If it remains blocked, stop" in compact
+    assert "three distinct stages" in compact
+    assert "stop native challenge attempts immediately" in compact
+    assert "Replay the original action only when it is idempotent" in compact
+    assert "never duplicate a submission, purchase, or message" in compact
     assert "Inspect the returned image itself before citing it" in compact
     assert "fix the page and retake it" in compact
     assert "Guardrails for this session" not in prompt

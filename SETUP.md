@@ -16,14 +16,17 @@ prompt.
 
 ## Step 0 — Prerequisites (do this for every path)
 
-1. **Node.js 18+ must be on `PATH`.** Check with `node --version`. If missing,
+1. **Node.js 22+ must be on `PATH`.** Check with `node --version`. If missing,
    tell the user to install it from https://nodejs.org — you cannot proceed
    without it.
 2. **Install BetterWright** for the host's language:
    - Python host: `pip install betterwright`
    - JavaScript host: `npm install betterwright`
    - MCP path (any host): `pip install "betterwright[mcp]"`
-3. **Download the browser** (one-time, ~150 MB): `betterwright setup`
+3. **Download the managed browser** (one-time, ~200 MB): `betterwright setup`.
+   The official CloakBrowser wrapper downloads its signed binary directly from
+   CloakHQ and verifies it before extraction; BetterWright does not redistribute
+   that separately licensed binary.
 4. **Verify** it is ready — this must print `BetterWright is ready.`:
    ```bash
    betterwright doctor
@@ -77,6 +80,15 @@ servers) and confirm a `browser` tool appears. Then do **§5**.
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
+Managed launches use CloakBrowser by default to reduce common automation false
+positives. This is not a guarantee of undetectability. Set
+`BETTERWRIGHT_BROWSER=chromium` only for the explicit stock-browser fallback;
+run `betterwright setup --chromium` once before selecting it.
+
+Public search-result UIs are blocked by default. Broad discovery should use the
+host's web-search tool, then open selected first-party pages in BetterWright.
+`BETTERWRIGHT_PUBLIC_SEARCH_POLICY=allow` is an explicit trusted-host opt-in.
+
 The default `BETTERWRIGHT_DOWNLOAD_POLICY=ask` fails closed when an MCP client
 cannot present elicitation. Set it to `allow` to remove approval prompts or
 `deny` to disable downloads completely.
@@ -108,6 +120,7 @@ def run_browser(code: str, session: str = "default", note: str | None = None) ->
         # NEVER attach r.files() (downloads, spilled JSON) as images.
         "screenshots": [s.data_url() for s in r.screenshots()],
         "files": [f.path for f in r.files()],
+        "challenges": r.challenges,
         "warnings": r.warnings,
     }
 
@@ -117,8 +130,11 @@ BROWSER_TOOL = {
     "description": (
         "Run async Playwright JavaScript in a persistent, policy-guarded browser. "
         "Globals: page, pages, context, state, openPage, usePage, closePage, "
-        "snapshot, screenshot, artifactPath, dialogs, credentials. A single "
-        "trailing expression returns automatically; a statement block must return."
+        "snapshot, screenshot, artifactPath, dialogs, credentials, captcha, human. "
+        "When a challenge is returned, inspect its image, use the native captcha or "
+        "human helpers for up to three distinct stages, then resume the original "
+        "action as soon as it clears. A single trailing expression returns "
+        "automatically; a statement block must return."
     ),
     "parameters": {
         "type": "object",
@@ -142,6 +158,10 @@ through the host UI in `ask` mode, skip the prompt in `allow` mode, and refuse i
 `browser.run(..., approved_downloads=True)`. Never expose `approved_downloads`
 as a model-controlled tool parameter. Then do **§5**.
 
+Do not expose `connect_over_cdp`, a CDP endpoint, the raw browser object, or
+`newCDPSession` through either tool. CDP is an optional trusted host transport;
+the model receives only BetterWright's guarded Playwright facade and helpers.
+
 ---
 
 ## §3 — JavaScript / TypeScript agent
@@ -155,7 +175,7 @@ const browser = new BetterWright({ policy: new NetworkPolicy({ allowLoopback: fa
 
 async function runBrowser({ code, session = "default", note }) {
   const r = await browser.run(code, { session, note });
-  const isImage = (a) => ["proof", "question", "debug"].includes(a.kind);
+  const isImage = (a) => ["proof", "question", "debug", "captcha"].includes(a.kind);
   return {
     ok: r.ok,
     result: r.result,
@@ -164,6 +184,7 @@ async function runBrowser({ code, session = "default", note }) {
     // a data URL. Never attach non-image files (downloads, spilled JSON).
     screenshots: (r.artifacts || []).filter(isImage).map((a) => a.media),
     files: (r.artifacts || []).filter((a) => !isImage(a)).map((a) => a.path),
+    challenges: r.challenges,
     warnings: r.warnings,
   };
 }
@@ -173,7 +194,9 @@ const browserTool = {
   description:
     "Run async Playwright JavaScript in a persistent, policy-guarded browser. " +
     "Globals: page, pages, context, state, openPage, usePage, closePage, " +
-    "snapshot, screenshot, artifactPath, dialogs, credentials.",
+    "snapshot, screenshot, artifactPath, dialogs, credentials, captcha, human. " +
+    "When a challenge is returned, inspect its image, use the native captcha or " +
+    "human helpers for up to three distinct stages, then resume the original action.",
   parameters: {
     type: "object",
     properties: {
@@ -192,6 +215,10 @@ the same model parameters; its trusted handler confirms in `ask`, skips the
 prompt in `allow`, refuses in `deny`, and only then calls
 `browser.run(code, { approvedDownloads: true })`. Never expose
 `approvedDownloads` as a model-controlled tool parameter. Then do **§5**.
+
+Do not expose `connectOverCdp`, a CDP endpoint, the raw browser object, or
+`newCDPSession` through either tool. CDP is an optional trusted host transport;
+the model receives only BetterWright's guarded Playwright facade and helpers.
 
 ---
 
@@ -226,6 +253,13 @@ the path you just wired. Have the agent (or run yourself) this two-step check:
 If both succeed, the integration is live. If the first fails with a runtime
 error, rerun `betterwright doctor` — the browser is probably not installed.
 
+For an agent research check, give it a broad discovery task and confirm it uses
+the host's web-search tool, then opens returned results or first-party pages in
+BetterWright. It should not automate Google or Bing's public search UI. If a
+challenge appears, confirm the tool result includes a `captcha` image and that
+the agent inspects and works through no more than three distinct stages before
+using an alternate source or requesting human help.
+
 ---
 
 ## §6 — Safeguards (configure to taste)
@@ -244,6 +278,8 @@ blocked). Tighten or loosen it deliberately. Two independent layers:
 | Ask before each download | `download_policy="ask"` / `downloadPolicy: "ask"` | `BETTERWRIGHT_DOWNLOAD_POLICY=ask` |
 | Remove download approval | `download_policy="allow"` / `downloadPolicy: "allow"` | `BETTERWRIGHT_DOWNLOAD_POLICY=allow` |
 | Disable all downloads | `download_policy="deny"` / `downloadPolicy: "deny"` | `BETTERWRIGHT_DOWNLOAD_POLICY=deny` |
+| Use stock Chromium fallback | `browser="chromium"` / `browser: "chromium"` | `BETTERWRIGHT_BROWSER=chromium` |
+| Permit public search-result UIs | `public_search_policy="allow"` / `publicSearchPolicy: "allow"` | `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=allow` |
 
 Cloud metadata endpoints can never be allowlisted. See
 [docs/network-policy.md](docs/network-policy.md).

@@ -2,7 +2,7 @@
 
 Commands
 --------
-``betterwright setup``    Install the pinned Playwright runtime and Chromium.
+``betterwright setup``    Install the pinned Playwright runtime and managed Cloak browser.
 ``betterwright doctor``   Report whether the runtime is ready, and why not.
 ``betterwright run``      Execute a Playwright snippet from a file, ``-``, or ``-c``.
 ``betterwright repl``     Read snippets from stdin, one per blank-line-separated block.
@@ -20,6 +20,7 @@ from betterwright import __version__
 from betterwright.client import BetterWright
 from betterwright.policy import NetworkPolicy
 from betterwright.runtime import (
+    PINNED_CLOAKBROWSER_VERSION,
     PINNED_PLAYWRIGHT_VERSION,
     diagnose,
     node_executable,
@@ -40,35 +41,54 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     node = node_executable()
     if not node:
         print(
-            "Node.js was not found on PATH. Install Node 18+ first "
+            "Node.js was not found on PATH. Install Node 22+ first "
             "(https://nodejs.org), then rerun `betterwright setup`.",
             file=sys.stderr,
         )
         return 1
     root = runtime_install_root()
     root.mkdir(parents=True, exist_ok=True)
-    print(f"Installing playwright-core@{PINNED_PLAYWRIGHT_VERSION} into {root} ...")
+    print(
+        f"Installing playwright-core@{PINNED_PLAYWRIGHT_VERSION} and "
+        f"cloakbrowser@{PINNED_CLOAKBROWSER_VERSION} into {root} ..."
+    )
     npm = _npm_executable()
     if not npm:
         print("npm was not found on PATH; it ships with Node.js.", file=sys.stderr)
         return 1
     install = subprocess.run(
-        [npm, "install", "--no-save", f"playwright-core@{PINNED_PLAYWRIGHT_VERSION}"],
+        [
+            npm,
+            "install",
+            "--no-save",
+            f"playwright-core@{PINNED_PLAYWRIGHT_VERSION}",
+            f"cloakbrowser@{PINNED_CLOAKBROWSER_VERSION}",
+        ],
         cwd=str(root),
         check=False,
     )
     if install.returncode != 0:
-        print("Failed to install playwright-core.", file=sys.stderr)
+        print("Failed to install the managed browser runtime.", file=sys.stderr)
         return install.returncode
-    print("Downloading the matching Chromium build ...")
-    cli_js = root / "node_modules" / "playwright-core" / "cli.js"
+    print("Downloading the signed managed CloakBrowser binary ...")
+    cloak_cli = root / "node_modules" / "cloakbrowser" / "dist" / "cli.js"
     download = subprocess.run(
-        [node, str(cli_js), "install", "chromium", "--no-shell"],
+        [node, str(cloak_cli), "install"],
         check=False,
     )
     if download.returncode != 0:
-        print("Failed to download Chromium.", file=sys.stderr)
+        print("Failed to download CloakBrowser.", file=sys.stderr)
         return download.returncode
+    if args.chromium:
+        print("Downloading the optional Playwright Chromium fallback ...")
+        cli_js = root / "node_modules" / "playwright-core" / "cli.js"
+        fallback = subprocess.run(
+            [node, str(cli_js), "install", "chromium", "--no-shell"],
+            check=False,
+        )
+        if fallback.returncode != 0:
+            print("Failed to download the Chromium fallback.", file=sys.stderr)
+            return fallback.returncode
     print("\nSetup complete. Run `betterwright doctor` to confirm.")
     return 0
 
@@ -144,6 +164,7 @@ def _result_to_dict(result) -> dict:
             {"kind": a.kind, "path": a.path, "size": a.size} for a in result.artifacts
         ],
         "pages": result.pages,
+        "challenges": result.challenges,
         "warnings": result.warnings,
         "duration_ms": result.duration_ms,
     }
@@ -168,7 +189,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"betterwright {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("setup", help="install the Playwright runtime and Chromium").set_defaults(func=_cmd_setup)
+    setup = sub.add_parser("setup", help="install Playwright and managed CloakBrowser")
+    setup.add_argument(
+        "--chromium",
+        action="store_true",
+        help="also download Playwright's explicit Chromium fallback",
+    )
+    setup.set_defaults(func=_cmd_setup)
     sub.add_parser("doctor", help="report runtime readiness").set_defaults(func=_cmd_doctor)
 
     run = sub.add_parser("run", help="execute a Playwright snippet")

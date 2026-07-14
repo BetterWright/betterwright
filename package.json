@@ -1,6 +1,6 @@
 {
   "name": "betterwright",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A persistent, policy-guarded Playwright browser for AI agents with a network policy, an encrypted credential vault, proof screenshots, and native CAPTCHA helpers.",
   "type": "module",
   "main": "src/index.mjs",
@@ -27,9 +27,10 @@
     "lint": "biome ci src bin scripts tests"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
+    "cloakbrowser": "0.4.10",
     "playwright-core": "1.61.1"
   },
   "keywords": [
