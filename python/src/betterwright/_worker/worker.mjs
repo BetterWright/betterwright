@@ -2031,12 +2031,166 @@ function buildCredentials(session, realm) {
   );
   const disabledFill = realm.safeFunction(() => {
     throw new Error(
-      "Credential filling is disabled in untrusted run() snippets; use the vault from trusted host code.",
+      "Credential filling is disabled in untrusted run() snippets because page " +
+        "DOM access would expose the filled value. Call the trusted host method " +
+        "bw.fillCredential(...) / bw.fill_credential(...) instead, which types " +
+        "the secret outside the sandbox and never returns it.",
     );
   });
   credentials.fill = disabledFill;
   credentials.generateAndFill = disabledFill;
   return Object.freeze(credentials);
+}
+
+// Type a value into one field using a trusted human-shaped focus click followed
+// by an exact fill. The click emits isTrusted pointer events (which anti-bot and
+// password-manager UIs require); fill then clears the field and sets the precise
+// value, dispatching an `input` event so React-controlled and match-validated
+// forms observe the change.
+async function fillCredentialField(page, session, selector, value) {
+  const target = String(selector || "").trim();
+  if (!target) throw new Error("A field selector is required to fill.");
+  const locator = page.locator(target).first();
+  await locator.waitFor({ state: "visible", timeout: 10_000 });
+  try {
+    await humanClickTarget(page, session, target, { timeout: 10_000 });
+  } catch {
+    await locator.focus({ timeout: 10_000 }).catch(() => {});
+  }
+  await locator.fill(String(value), { timeout: 10_000 });
+  return locator;
+}
+
+// Native, trusted credential fill. Reachable only through the host client's
+// fillCredential/generateAndFillCredential methods — never from a model-authored
+// run() snippet — so the secret is fetched, typed, and (optionally) submitted
+// entirely outside the sandbox. Only non-secret metadata is returned; the active
+// redaction net still scrubs the value from every field of this response.
+async function credentialFill(message) {
+  const started = performance.now();
+  const session = sessionFor(message.sessionId);
+  session.awaitingAnswerSince = null;
+  const firstEvent = session.events.length;
+  activeExecutionSession = session.id;
+  const spec = message.spec && typeof message.spec === "object" ? message.spec : {};
+  const fields = spec.fields && typeof spec.fields === "object" ? spec.fields : {};
+  try {
+    await ensureBrowser(message.config);
+    await ensureSessionPage(session);
+    const { page, origin } = await currentOrigin(session);
+    if (!fields.passwordSelector)
+      throw new Error("credential fill requires fields.passwordSelector.");
+
+    const action = spec.action === "generate" ? "generate" : "fill";
+    let vaultPayload;
+    if (action === "generate") {
+      const g = spec.generate && typeof spec.generate === "object" ? spec.generate : {};
+      vaultPayload = {
+        username: typeof g.username === "string" ? g.username : "",
+        label: g.label ?? null,
+        length: Number(g.length) || 24,
+        include_symbols: g.includeSymbols !== false,
+      };
+    } else {
+      const r = spec.record && typeof spec.record === "object" ? spec.record : {};
+      vaultPayload = {};
+      if (r.id != null) vaultPayload.id = r.id;
+      if (r.username != null) vaultPayload.username = r.username;
+    }
+
+    const record = await rpc(
+      "vault",
+      { action, origin, payload: vaultPayload },
+      `credfill:${session.id}`,
+    );
+    const secret = record?.secret == null ? "" : String(record.secret);
+    if (!secret)
+      throw new Error("The vault did not return a credential to fill for this origin.");
+    activeSecrets.add(secret);
+
+    const filled = [];
+    let lastLocator = null;
+    if (fields.usernameSelector) {
+      const username = typeof record.username === "string" ? record.username : "";
+      lastLocator = await fillCredentialField(
+        page,
+        session,
+        fields.usernameSelector,
+        username,
+      );
+      filled.push("username");
+    }
+    lastLocator = await fillCredentialField(
+      page,
+      session,
+      fields.passwordSelector,
+      secret,
+    );
+    filled.push("password");
+    if (fields.confirmPasswordSelector) {
+      lastLocator = await fillCredentialField(
+        page,
+        session,
+        fields.confirmPasswordSelector,
+        secret,
+      );
+      filled.push("confirmPassword");
+    }
+    // Fire blur so forms that validate the password/confirm match on blur (not
+    // just on input) run their check before any submit.
+    if (lastLocator) {
+      await lastLocator.evaluate((element) => element.blur?.()).catch(() => {});
+    }
+
+    let submitted = false;
+    if (fields.submitSelector) {
+      await humanClickTarget(page, session, String(fields.submitSelector), {
+        timeout: 10_000,
+      });
+      submitted = true;
+    }
+
+    const { secret: _secret, ...publicRecord } = record || {};
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: true,
+      result: redactDeep({ ...publicRecord, filled, submitted }),
+      console: [],
+      events: redactDeep(session.events.slice(firstEvent)),
+      artifacts: [],
+      warnings: [
+        ...(profileWarning ? [profileWarning] : []),
+        ...session.warnings.splice(0),
+      ],
+      challenges: [],
+      profileMode,
+      pages: await Promise.all(
+        [...session.pages.values()]
+          .filter((page) => !page.isClosed())
+          .slice(0, MAX_RESPONSE_PAGES)
+          .map((page) => summarize(page)),
+      ),
+      durationMs: Math.round((performance.now() - started) * 10) / 10,
+    });
+  } catch (error) {
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: false,
+      error: redactText(error?.message || String(error)),
+      console: [],
+      events: redactDeep(session.events.slice(firstEvent)),
+      artifacts: [],
+      warnings: profileWarning ? [profileWarning] : [],
+      challenges: [],
+      profileMode,
+      pages: [],
+      durationMs: Math.round((performance.now() - started) * 10) / 10,
+    });
+  } finally {
+    activeExecutionSession = null;
+  }
 }
 
 function buildSandbox(session, consoleMessages) {
@@ -2822,6 +2976,12 @@ input.on("line", (line) => {
     executeQueue = executeQueue.then(
       () => execute(message),
       () => execute(message),
+    );
+  }
+  if (message.type === "credential_fill") {
+    executeQueue = executeQueue.then(
+      () => credentialFill(message),
+      () => credentialFill(message),
     );
   }
 });

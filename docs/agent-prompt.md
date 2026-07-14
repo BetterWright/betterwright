@@ -33,8 +33,10 @@ With no guardrails, the guidance tells the model to:
   stalling, or adding "are you sure?" friction to ordinary steps.
 - **Work autonomously** — inspect, act, recover from routine failures, use
   multiple tabs, and keep a running `note`.
-- **Keep credentials out of the chat** and request a trusted host-side login
-  handoff when authentication is required.
+- **Keep credentials out of the chat.** When authentication is required, use a
+  password-manager extension's inline autofill if one is unlocked, or request the
+  trusted host-side fill (`bw.fill_credential` / `generate_and_fill_credential`);
+  never type or reconstruct a stored password.
 - **Use host web search for broad discovery** rather than automating Google or
   Bing's public search UI, then open returned results or first-party pages in
   BetterWright.

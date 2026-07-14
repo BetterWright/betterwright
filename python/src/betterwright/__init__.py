@@ -20,6 +20,7 @@ See https://github.com/CuriosityOS/betterwright for the full documentation.
 from __future__ import annotations
 
 from betterwright._home import betterwright_home
+from betterwright.chrome import ensure_chrome_cdp
 from betterwright.client import (
     Artifact,
     BetterWright,
@@ -50,5 +51,6 @@ __all__ = [
     "__version__",
     "agent_system_prompt",
     "betterwright_home",
+    "ensure_chrome_cdp",
     "normalize_http_origin",
 ]

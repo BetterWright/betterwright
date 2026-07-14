@@ -199,7 +199,8 @@ await page.click («the button that opens the dialog»);
 
 The `credentials` helpers manage non-secret metadata in the
 [encrypted vault](credentials.md). Secret-bearing fill operations are disabled
-inside model-authored `run()` snippets.
+inside model-authored `run()` snippets (`credentials.fill` throws on purpose);
+filling is done from trusted host code instead.
 
 ```js
 await credentials.save({ username: "alice", password: "…" });
@@ -209,7 +210,10 @@ await credentials.remove({ id });
 ```
 
 All operations are scoped to the current page's origin, which must be `http(s)`.
-See [credentials.md](credentials.md) for the full contract.
+To actually fill a login or signup form, the host calls `bw.fillCredential(...)`
+/ `bw.generateAndFillCredential(...)` (or `bw.fill_credential` in Python) — the
+worker types the password and any confirm-password field outside the sandbox and
+returns only metadata. See [credentials.md](credentials.md) for the full contract.
 
 ## Console
 

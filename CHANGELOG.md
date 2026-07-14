@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Trusted credential fill: `fill_credential` / `fillCredential` and
+  `generate_and_fill_credential` / `generateAndFillCredential` type a stored (or
+  freshly generated) password into the current page from the worker, outside the
+  model sandbox. Supports a `confirm_password_selector` for signup forms and an
+  optional `submit_selector`; only non-secret metadata is returned. This replaces
+  the previously advertised-but-unimplemented "trusted host-side login handoff".
+- `connect_over_cdp="auto"` (and Python `ensure_chrome_cdp`) reuse a running
+  debug Chrome or launch a real Google Chrome with a persistent profile, so the
+  agent can drive your own password-manager (e.g. 1Password) extension's inline
+  autofill in attach mode.
+- Examples: `signup_with_generated_password.py` and `onepassword_attach.py`.
+
+### Fixed
+
+- `examples/python/login_with_vault.py` called the disabled model-facing
+  `credentials.fill` and never actually filled; it now uses `bw.fill_credential`.
+
 ## [0.2.0] — 2026-07-14
 
 ### Added
