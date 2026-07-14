@@ -47,3 +47,25 @@ test("extra rules are appended", () => {
   const prompt = agentSystemPrompt({ extraRules: ["Only browse example.com."] });
   assert.ok(prompt.includes("Only browse example.com."));
 });
+
+test("password manager section is omitted by default", () => {
+  assert.ok(!agentSystemPrompt().includes("## Password manager"));
+});
+
+test("password manager section is added only when set", () => {
+  const prompt = agentSystemPrompt({ passwordManager: "1Password" });
+  assert.ok(prompt.includes("## Password manager"));
+  assert.ok(prompt.includes("1Password badge"));
+  assert.ok(prompt.includes("on-screen position"));
+});
+
+test("password manager name is normalized", () => {
+  assert.ok(agentSystemPrompt({ passwordManager: "1password" }).includes("A 1Password extension"));
+});
+
+test("password manager section precedes guardrails", () => {
+  const prompt = agentSystemPrompt({ passwordManager: "1Password", confirmBeforePurchase: true });
+  assert.ok(prompt.includes("## Password manager"));
+  assert.ok(prompt.includes("## Guardrails for this session"));
+  assert.ok(prompt.indexOf("## Password manager") < prompt.indexOf("## Guardrails for this session"));
+});
