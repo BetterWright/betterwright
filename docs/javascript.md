@@ -31,10 +31,11 @@ does not guarantee undetectability. `browser: "chromium"` is useful for tests
 and compatibility, but stock Chromium exposes more automation signals. Set
 `BETTERWRIGHT_BROWSER` to choose a process-wide default.
 
-Public Google, Bing, and DuckDuckGo result UIs are blocked by default so broad
-discovery goes through the host's search tool. Trusted hosts can opt in with
-`publicSearchPolicy: "allow"` or `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=allow`; only
-then does `searchMinIntervalMs` apply.
+Public Google, Bing, and DuckDuckGo result UIs are permitted by default; prefer
+routing broad discovery through the host's search tool anyway, and set
+`publicSearchPolicy: "block"` (or `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block`) to
+have the worker enforce that. `searchMinIntervalMs` spaces public-search
+navigations while they are permitted.
 
 `connectOverCdp` is a trusted host configuration option, not part of the browser
 tool given to the model. Model-authored snippets cannot access CDP, the raw
@@ -154,8 +155,8 @@ new NetworkPolicy({
 });
 ```
 
-`policy.check(url, details) => { allowed, reason? }`. The rules match the Python
-policy exactly; see [network-policy.md](network-policy.md).
+`policy.check(url, details) => { allowed, reason? }`. The rules are documented
+in [network-policy.md](network-policy.md).
 
 ## Providing a vault
 
@@ -172,9 +173,7 @@ new BetterWright({
 });
 ```
 
-The method receives the same `action`/`payload`/`origin` the Python
-`CredentialVault.handle_request` does, so the two can share a backend if you
-expose one. To fill a login or signup form, the vault must handle the `fill`
+To fill a login or signup form, the vault must handle the `fill`
 (and, for `generateAndFillCredential`, `generate`) action returning a `secret`;
 call `bw.fillCredential({...})` / `bw.generateAndFillCredential({...})` from host
 code, which types the password and any `confirmPasswordSelector` outside the
@@ -199,8 +198,8 @@ import { agentSystemPrompt } from "betterwright";
 agentSystemPrompt(guardrails?) => string
 ```
 
-Operator guidance for a browser agent's system prompt — identical text to the
-Python `agent_system_prompt`. Guardrail fields: `confirmBeforePurchase`,
+Operator guidance for a browser agent's system prompt. Guardrail fields:
+`confirmBeforePurchase`,
 `confirmBeforeIrreversible`, `forbidPurchases`, `forbidAccountCreation`,
 `spendingLimit`, `extraRules`, and `passwordManager`. See
 [agent-prompt.md](agent-prompt.md).

@@ -15,72 +15,75 @@ it with a `NetworkPolicy`.
 - **Blocks cloud instance-metadata endpoints** — the hostnames
   `metadata.google.internal` / `metadata.goog` and the link-local addresses
   (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`, `fd00:ec2::…`). These
-  can never be allowlisted; see below.
-- **Blocks private and loopback addresses** — RFC 1918 ranges, `127.0.0.0/8`,
-  IPv6 loopback and unique-local, link-local, and carrier-grade NAT.
+  can never be allowlisted or disabled; see below.
 - **Blocks non-web schemes** — only `http`, `https`, `ws`, and `wss` are
   routable (`about:blank`, `data:`, and `blob:` are allowed).
 - **Blocks URLs that appear to carry a secret** — a query string or path holding
   something shaped like an API key or JWT is refused, so a compromised page
   cannot exfiltrate a token through a URL.
-- **Allows the public internet.**
+- **Allows the public internet, private networks, and loopback** — RFC 1918
+  ranges, `127.0.0.0/8`, `localhost`, IPv6 loopback/unique-local, link-local,
+  carrier-grade NAT, and `*.internal`/`*.local`/`*.lan` hosts are reachable, so
+  an agent can drive local dev servers, a home router, or an intranet host
+  without extra configuration.
 
-This is the right default for an agent browsing on someone's behalf: it can
-reach real sites but cannot be steered into the machine's own cloud identity or
-internal network.
+This keeps the one non-negotiable protection — the machine's own cloud identity
+is never reachable — while letting an agent browse real sites and local
+infrastructure out of the box. For an agent running somewhere its private
+network is sensitive, harden it:
 
-## Opening things up
+```js
+const policy = new NetworkPolicy({ allowPrivateNetwork: false, allowLoopback: false });
+```
 
-```python
-from betterwright import BetterWright, NetworkPolicy
+That restores the strict posture: only the public internet (plus any
+`allowHosts` you name) is reachable.
 
-policy = NetworkPolicy(
-    allow_loopback=True,                 # 127.0.0.1 and localhost
-    allow_hosts=("staging.internal:8443",),  # one internal host, one port
-    block_hosts=("ads.example.com",),    # deny even though it is public
-)
-BetterWright(policy=policy)
+## Tuning the policy
+
+```js
+import { BetterWright, NetworkPolicy } from "betterwright";
+
+const policy = new NetworkPolicy({
+  allowPrivateNetwork: false,           // harden: block RFC 1918 / intranet
+  allowLoopback: true,                  // but keep 127.0.0.1 and localhost
+  allowHosts: ["staging.internal:8443"], // re-allow one internal host, one port
+  blockHosts: ["ads.example.com"],      // deny even though it is public
+});
+new BetterWright({ policy });
 ```
 
 | Option | Effect |
 | --- | --- |
-| `allow_loopback` | Permit `127.0.0.1` / `localhost` (for local dev servers). Does **not** open the wider private network. |
-| `allow_private_network` | Permit RFC 1918, link-local, and `*.internal`/`*.local` hosts. Implies loopback. |
-| `allow_hosts` | Always allow these hosts. An entry matches a host exactly or as a parent domain (`example.com` also matches `sub.example.com`); add `:port` to pin a port. |
-| `block_hosts` | Always block these hosts, evaluated before allowlists. |
-| `block_secret_bearing_urls` | Refuse URLs that look like they carry a key/token. Default `True`. |
-| `custom` | A hook, `custom(url, details) -> decision or None`, evaluated last. |
+| `allowLoopback` | Permit `127.0.0.1` / `localhost` (for local dev servers). Does **not** open the wider private network. Default `true`; set `false` to block. |
+| `allowPrivateNetwork` | Permit RFC 1918, link-local, and `*.internal`/`*.local` hosts. Implies loopback. Default `true`; set `false` to block. |
+| `allowHosts` | Always allow these hosts. An entry matches a host exactly or as a parent domain (`example.com` also matches `sub.example.com`); add `:port` to pin a port. |
+| `blockHosts` | Always block these hosts, evaluated before allowlists. |
+| `blockSecretBearingUrls` | Refuse URLs that look like they carry a key/token. Default `true`. |
+| `custom` | A hook, `custom(url, details)`, returning a decision or `null`, evaluated last. |
 
-Evaluation order is: scheme check → `block_hosts` → `allow_hosts` → metadata
+Evaluation order is: scheme check → `blockHosts` → `allowHosts` → metadata
 floor → private-network rules → `custom`.
 
 ### The custom hook
 
 The hook receives the URL and the request `details` (`method`, `resourceType`,
 `isNavigation`, and — for a resolved literal — `resolvedFrom`). Return a decision
-dict to override, or `None` to keep the decision made so far.
-
-```python
-def only_get_navigations(url, details):
-    if details.get("resourceType") == "document" and details.get("method") != "GET":
-        return {"allowed": False, "reason": "no non-GET top-level navigations"}
-    return None
-
-NetworkPolicy(custom=only_get_navigations)
-```
-
-An `allowed: True` returned from the hook still cannot reach a metadata endpoint
-— that floor is re-checked after the hook.
-
-The JavaScript client is identical, in camelCase:
+object to override, or `null` to keep the decision made so far.
 
 ```js
-new NetworkPolicy({
-  allowLoopback: true,
-  allowHosts: ["staging.internal:8443"],
-  custom: (url, details) => (details.method === "DELETE" ? { allowed: false } : null),
-});
+function onlyGetNavigations(url, details) {
+  if (details.resourceType === "document" && details.method !== "GET") {
+    return { allowed: false, reason: "no non-GET top-level navigations" };
+  }
+  return null;
+}
+
+new NetworkPolicy({ custom: onlyGetNavigations });
 ```
+
+An `allowed: true` returned from the hook still cannot reach a metadata endpoint
+— that floor is re-checked after the hook.
 
 ## Why metadata endpoints are unliftable
 
@@ -99,7 +102,7 @@ just a policy default — it is enforced at three independent layers:
    resolved to, so a hostname that passes cannot be swapped for a metadata
    address by DNS rebinding.
 3. **The policy.** `NetworkPolicy` refuses metadata hosts and refuses to honor
-   an `allow_hosts` entry or a `custom` allow that names one.
+   an `allowHosts` entry or a `custom` allow that names one.
 
 Any one of these would stop the common case; together they close the redirect
 and rebinding variants too.

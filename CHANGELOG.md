@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-07-15
+
+### Added
+
+- `betterwright skill` — prints a paste-ready agent skill: CLI usage followed
+  by the operator guidance. `--claude` adds SKILL.md frontmatter so
+  `betterwright skill --claude > ~/.claude/skills/browser/SKILL.md` installs a
+  native Claude Code skill; the plain output appends cleanly to Codex
+  `AGENTS.md` or any agent's system prompt. CLI + skill is now the primary,
+  documented integration path (README and SETUP.md restructured around it).
+- `betterwright mcp` — the MCP stdio server (`browser`, `browser_download`,
+  `browser_doctor`) now ships in the npm package behind the optional
+  `@modelcontextprotocol/sdk` peer dependency, with policy read from
+  `BETTERWRIGHT_*` environment variables and screenshots returned as native
+  MCP image content.
+
+### Changed
+
+- **Network policy defaults opened.** Private networks and loopback are now
+  reachable by default so agents can drive local dev servers and intranet
+  hosts out of the box (the earlier default blocked them). Cloud-metadata
+  endpoints and secret-bearing URLs remain blocked — that floor is not
+  configurable. Harden with the new CLI flags `--block-private-network` /
+  `--block-loopback`, the `NetworkPolicy` options
+  `allowPrivateNetwork: false` / `allowLoopback: false`, or the MCP env vars
+  `BETTERWRIGHT_BLOCK_PRIVATE_NETWORK=1` / `BETTERWRIGHT_BLOCK_LOOPBACK=1`.
+- The operator guidance now names the JavaScript credential-fill methods
+  (`bw.fillCredential`, `bw.generateAndFillCredential`).
+
+### Removed
+
+- **The Python package.** BetterWright is now npm-only; `pip install
+  betterwright` is discontinued at 0.4.0 and the PyPI publish workflow is
+  deleted. Python agents integrate through the CLI + skill path (shelling out
+  to the `betterwright` binary), which provides the same persistent,
+  policy-guarded browser without an in-process SDK. This also removes the
+  dual-language worker-sync, policy/prompt parity, and wheel machinery; the
+  shared policy conformance vectors live on as a JS regression suite.
+
 ## [0.4.0] — 2026-07-15
 
 ### Added
