@@ -40,38 +40,14 @@ else {
 }
 
 expectMatch(
-  "python/pyproject.toml version",
-  read("python/pyproject.toml"),
-  /^version = "([^"]+)"/m,
-  pkg.version,
-);
-expectMatch(
-  "Python __version__",
-  read("python/src/betterwright/__init__.py"),
-  /^__version__ = "([^"]+)"/m,
-  pkg.version,
-);
-expectMatch(
-  "Node CLI Playwright pin",
-  read("bin/betterwright.mjs"),
+  "Node runtime Playwright pin",
+  read("src/doctor.mjs"),
   /PINNED_PLAYWRIGHT_VERSION = "([^"]+)"/,
   pkg.dependencies["playwright-core"],
 );
 expectMatch(
-  "Node CLI CloakBrowser pin",
-  read("bin/betterwright.mjs"),
-  /PINNED_CLOAKBROWSER_VERSION = "([^"]+)"/,
-  pkg.dependencies.cloakbrowser,
-);
-expectMatch(
-  "Python Playwright pin",
-  read("python/src/betterwright/runtime.py"),
-  /PINNED_PLAYWRIGHT_VERSION = "([^"]+)"/,
-  pkg.dependencies["playwright-core"],
-);
-expectMatch(
-  "Python CloakBrowser pin",
-  read("python/src/betterwright/runtime.py"),
+  "Node runtime CloakBrowser pin",
+  read("src/doctor.mjs"),
   /PINNED_CLOAKBROWSER_VERSION = "([^"]+)"/,
   pkg.dependencies.cloakbrowser,
 );

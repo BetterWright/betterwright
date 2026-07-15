@@ -4,12 +4,12 @@
 
 ```
 ┌─────────────────────────────┐       JSON lines over stdio       ┌──────────────────────────┐
-│ Client (Python or JavaScript)│  ────────  execute  ───────────▶ │ Bundled Node worker      │
+│ Client (JavaScript)         │  ────────  execute  ───────────▶ │ Bundled Node worker      │
 │                             │                                   │                          │
 │ • owns the worker           │  ◀────  guard / vault RPC  ─────  │ • managed Cloak browser  │
 │ • NetworkPolicy            │  ───────  rpc_response  ────────▶ │ • sandbox (node:vm)      │
-│ • CredentialVault          │                                   │ • per-session pages      │
-│ • RunResult                │  ◀─────────  result  ───────────── │ • transport SOCKS proxy  │
+│ • vault (host-provided)    │                                   │ • per-session pages      │
+│ • result envelope          │  ◀─────────  result  ───────────── │ • transport SOCKS proxy  │
 └─────────────────────────────┘                                   └──────────────────────────┘
 ```
 
@@ -18,10 +18,8 @@ lifetime, sends it snippets to run, and answers the two kinds of callback the
 worker makes: `guard` (is this request allowed?) and `vault` (a credential
 operation). The worker owns the browser and the sandbox the model's code runs in.
 
-Python and JavaScript clients share the same Node worker implementation. The npm
-package loads `src/worker.mjs`; the Python wheel bundles a synchronized copy at
-`betterwright/_worker/worker.mjs`. `scripts/sync-worker.mjs` keeps the worker and
-its helper modules byte-for-byte aligned, while both client layers stay thin.
+The worker implementation lives at `src/worker.mjs` and is loaded by the npm
+package; the client layer stays thin.
 
 ## Why a separate worker process
 
@@ -65,7 +63,7 @@ and any method that could read BetterWright's own profile or vault or write
 outside the artifact directory. There is no `process`, `require`, or `fs`.
 
 The raw browser handle, CDP sessions, and Playwright private properties remain
-inside the worker. `connectOverCdp` / `connect_over_cdp` is trusted host launch
+inside the worker. `connectOverCdp` is trusted host launch
 configuration, never a snippet global or model-controlled browser-tool option.
 
 We do **not** claim `node:vm` is a security boundary — it isn't, and the
@@ -96,12 +94,11 @@ full.
 
 ### Secrets
 
-The [credential vault](credentials.md) stores passwords encrypted, scoped to an
-origin, outside Chromium's profile. Secret-bearing fill operations are not
+The [credential vault](credentials.md) is a host-provided, origin-scoped
+backend kept outside Chromium's profile. Secret-bearing fill operations are not
 available to model-authored snippets because arbitrary DOM access would make the
 filled value readable. As a last line, values the vault has handled are redacted
-from `run()` output. The vault's stated limit: it defends against accidental
-disclosure, not against an attacker who can already read your files.
+from `run()` output.
 
 ### Untrusted page content
 
@@ -120,10 +117,8 @@ Everything lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`):
 ├── browser/
 │   ├── profile/        persistent browser profile (cookies, logins)
 │   └── runtime/        ephemeral profiles when the main one is locked
-├── artifacts/          screenshots, downloads, spilled output (quota-managed)
-│   └── downloads/
-├── vault/              credentials.enc, vault.key, audit.jsonl
-└── node/               pinned Playwright + CloakBrowser wrappers for pip installs
+└── artifacts/          screenshots, downloads, spilled output (quota-managed)
+    └── downloads/
 ```
 
 The separately licensed CloakBrowser binary is cached by its official wrapper,
@@ -131,14 +126,14 @@ not copied into BetterWright's package or home directory. `betterwright setup`
 downloads it directly from CloakHQ's release source and verifies the wrapper's
 pinned Ed25519 signature before extraction.
 
-Delete the directory to reset everything; delete `vault/` to drop stored
-credentials; delete `browser/profile/` to sign out everywhere.
+Delete the directory to reset everything; delete `browser/profile/` to sign
+out everywhere.
 
 ## Pinned browser integration
 
 The worker, the JS facades it builds, Playwright, and the CloakBrowser wrapper
-have to agree, so both wrapper versions are pinned in the Python and JavaScript
-packages. `betterwright setup` installs those exact integrations and asks the
+have to agree, so both wrapper versions are pinned in the package.
+`betterwright setup` installs those exact integrations and asks the
 official CloakBrowser wrapper for its signed browser build. Bumping either
 wrapper is a deliberate, tested BetterWright change.
 

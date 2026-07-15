@@ -13,17 +13,12 @@ CAPTCHA helpers. Managed sessions use CloakBrowser by default to reduce common
 automation false positives while keeping BetterWright's policy and tool
 boundaries in place.
 
-It runs the same Node worker whether you drive it from **Python** or
-**JavaScript**, so an agent written in either language gets identical behavior.
+It is CLI-first: any agent that can run a shell command can drive the browser,
+and `betterwright skill` prints the instructions that teach it how.
 
-```python
-from betterwright import BetterWright
-
-with BetterWright() as bw:
-    result = bw.run("await page.goto('https://example.com'); return page.title()")
-    print(result.value)          # "Example Domain"
-    proof = bw.run("return screenshot({kind: 'proof', name: 'done'})")
-    print(proof.artifacts[0].media_reference)   # MEDIA:/…/done-….png
+```bash
+betterwright run -c "await page.goto('https://example.com'); return page.title()"
+# {"ok": true, "result": "Example Domain", ...}
 ```
 
 ---
@@ -40,7 +35,7 @@ work is, and it is what BetterWright handles for you:
 | --- | --- | --- |
 | **Session lifetime** | You open and close a browser per script. | One persistent managed browser with a real profile; the agent runs snippets against it across many turns. |
 | **Untrusted control** | The script is trusted; it gets the full API. | Model code runs in a sandbox with the file, process, and network-routing APIs removed. |
-| **Network scope** | Any URL the code names. | Every request is checked against a policy; cloud metadata and private networks are blocked by default, even against DNS rebinding. |
+| **Network scope** | Any URL the code names. | Every request is checked against a policy — even against DNS rebinding. Cloud metadata endpoints are always blocked; hosts you name can be allowed or denied. |
 | **Secrets** | Passwords live in your script or env. | An encrypted, origin-scoped vault is available to trusted host code; secret-bearing fill operations are not exposed to model snippets. |
 | **Evidence** | You assert; nobody looks. | `screenshot({kind: 'proof'})` produces a tagged artifact the agent returns as proof a task finished. |
 | **CAPTCHAs** | Out of scope. | Resumable challenge state, an attached image, and native checkbox, slider, text, and inspection helpers for authorized flows. |
@@ -56,101 +51,73 @@ BetterWright needs **Node.js 22+** on `PATH`. Setup downloads CloakBrowser's
 signed binary directly from its official release source. BetterWright does not
 redistribute that binary.
 
-### Python
-
 ```bash
-pip install betterwright
-betterwright setup        # installs the managed Cloak browser
-betterwright doctor       # confirms everything resolves
-```
-
-### JavaScript
-
-```bash
-npm install betterwright
-npx betterwright setup     # downloads the managed Cloak browser (~200 MB, once)
-npx betterwright doctor
+npm install -g betterwright
+betterwright setup     # downloads the managed Cloak browser (~200 MB, once)
+betterwright doctor    # confirms everything resolves
 ```
 
 BetterWright never downloads a browser as a hidden npm lifecycle side effect,
-so installs remain predictable and work with `--ignore-scripts`. Both packages
-ship the identical worker and pin the same Playwright and CloakBrowser wrapper
-versions. The browser binary is fetched and signature verified by the official
-CloakBrowser wrapper, then cached outside this package.
+so installs remain predictable and work with `--ignore-scripts`. The browser
+binary is fetched and signature-verified by the official CloakBrowser wrapper,
+then cached outside this package.
 
-Update the JavaScript package with `npm update betterwright` (or
-`npm install betterwright@latest`). Run `npx betterwright setup` again after an
-update only when `doctor` reports that the managed runtime is missing.
+Update with `npm update -g betterwright`. Run `betterwright setup` again after
+an update only when `doctor` reports that the managed runtime is missing.
 
 ---
 
-## The two APIs
+## Give it to your agent
 
-The `run()` call takes a string of asynchronous Playwright JavaScript. A single
-trailing expression is returned automatically; a multi-statement block must
-`return`. Inside that string the agent has a small set of globals — `page`,
-`openPage`, `snapshot`, `screenshot`, `human`, `credentials`, and a few others —
-documented in [docs/browser-api.md](docs/browser-api.md).
+The primary integration is **CLI + skill**: the agent runs the `betterwright`
+CLI through the shell tool it already has, and a skill teaches it how.
+`betterwright skill` prints that skill — CLI usage followed by BetterWright's
+operator guidance (act decisively on authorized tasks, verify with proof
+screenshots, work through challenges, never touch secrets). No server, no SDK,
+no glue code.
 
-**Python**
-
-```python
-from betterwright import BetterWright, NetworkPolicy
-
-with BetterWright(policy=NetworkPolicy(allow_loopback=True)) as bw:
-    dev = bw.session("dev")
-    dev.run("await page.goto('http://localhost:5173')")
-    title = dev.run("return page.title()")
-    print(title.value)
-```
-
-**JavaScript**
-
-```js
-import { BetterWright, NetworkPolicy } from "betterwright";
-
-const bw = new BetterWright({ policy: new NetworkPolicy({ allowLoopback: true }) });
-await bw.run("await page.goto('http://localhost:5173')");
-const title = await bw.run("return page.title()");
-console.log(title.result);
-await bw.close();
-```
-
-The Python client returns a typed [`RunResult`](docs/python.md); the JavaScript
-client returns the worker's result envelope directly (`result`, `artifacts`,
-`console`, `events`, `pages`, `challenges`, `warnings`, `durationMs`).
-
-Long-lived desktop agents can attach to a dedicated real-Chrome profile with
-`ensureChromeCdp()`, but that host-only mode gives up part of the managed launch
-boundary. For broad discovery, you can use the host's web-search tool and open
-its results in BetterWright instead of automating Google or Bing's public search
-UI; set `publicSearchPolicy: "block"` to have the managed worker enforce that
-(it is permitted by default).
-Visible bot challenges are surfaced as resumable state. See
-[attach mode](docs/attach-mode.md).
-
----
-
-## Adding it to an agent
-
-Point your agent (or coding agent) at **[SETUP.md](SETUP.md)** — it's written to
-be followed by an AI agent and walks it through integrating BetterWright into the
-host, whether that's an MCP client (Claude Code, Cursor, …), a Python or
-JavaScript agent, or a shell-only tool. Browser work stays on one main tool;
-downloads use a separate approval-gated tool by default.
-
-For MCP clients specifically, BetterWright ships a server:
+**Claude Code**
 
 ```bash
-pip install "betterwright[mcp]" && betterwright setup
-claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
+mkdir -p ~/.claude/skills/browser
+betterwright skill --claude > ~/.claude/skills/browser/SKILL.md
 ```
 
-### Pi Coding Agent
+(`--claude` adds SKILL.md frontmatter. Use `.claude/skills/browser/SKILL.md`
+inside a repo for a project-scoped skill.)
 
-BetterWright is also a native Pi package. Its package manifest loads a persistent
-`browser` tool, an approval-gated `browser_download` tool, vision screenshots,
-and the BetterWright operator prompt without an MCP hop:
+**Codex**
+
+```bash
+betterwright skill >> ~/.codex/AGENTS.md      # global, or >> AGENTS.md per-repo
+```
+
+**Hermes or any custom agent** — append `betterwright skill` output to the
+agent's system prompt; its shell/exec tool does the rest.
+
+The agent then drives the browser like this:
+
+```bash
+# one action — prints one JSON result
+betterwright run -c "await page.goto('https://example.com'); return page.title()"
+
+# multi-step work — blank-line-separated snippets against one live session
+betterwright repl < steps.txt
+```
+
+Logins, cookies, and the profile persist across every invocation; open tabs and
+in-memory `state` persist within a `repl` session. A one-shot `run` — launch,
+navigate, result, clean shutdown — completes in about a second.
+
+**[SETUP.md](SETUP.md)** is the full integration guide, written to be followed
+by an AI agent: point your coding agent at it and it can wire any host end to
+end.
+
+### Pi Coding Agent (native package)
+
+BetterWright is a native Pi package. Its manifest loads a persistent `browser`
+tool, an approval-gated `browser_download` tool, vision screenshots, and the
+operator prompt — no skill file or MCP hop needed:
 
 ```bash
 pi install npm:betterwright
@@ -158,26 +125,70 @@ npx -y betterwright setup
 pi
 ```
 
-For a local checkout, use `pi install /absolute/path/to/betterwright`, or try the
-extension for one run with `pi --extension ./src/pi-extension.mjs`. See the
-[Pi integration guide](SETUP.md#1--pi-coding-agent) and the reproducible
+See the [Pi integration guide](SETUP.md#2--pi-coding-agent) and the reproducible
 [Online-Mind2Web benchmark](https://github.com/CuriosityOS/betterwright/tree/main/benchmarks/online-mind2web).
+
+### MCP (if you prefer it)
+
+For MCP clients, BetterWright also ships a stdio server with `browser`,
+`browser_download`, and `browser_doctor` tools:
+
+```bash
+npm install -g betterwright @modelcontextprotocol/sdk
+claude mcp add betterwright -- npx betterwright mcp
+```
+
+---
+
+## The JavaScript API
+
+For a JS/TS agent you can edit, embed the client in-process. `run()` takes a
+string of asynchronous Playwright JavaScript; a single trailing expression is
+returned automatically. Inside that string the agent has a small set of
+globals — `page`, `openPage`, `snapshot`, `screenshot`, `human`, `credentials`,
+and a few others — documented in [docs/browser-api.md](docs/browser-api.md).
+
+```js
+import { BetterWright } from "betterwright";
+
+const bw = new BetterWright();
+await bw.run("await page.goto('http://localhost:5173')", { session: "dev" });
+const title = await bw.run("return page.title()", { session: "dev" });
+console.log(title.result);
+await bw.close();
+```
+
+The client returns the worker's result envelope (`ok`, `result`, `error`,
+`artifacts`, `console`, `events`, `pages`, `challenges`, `warnings`,
+`durationMs`). See [docs/javascript.md](docs/javascript.md) for the full API.
+
+Long-lived desktop agents can attach to a dedicated real-Chrome profile with
+`ensureChromeCdp()`, but that host-only mode gives up part of the managed launch
+boundary. For broad discovery, use the host's web-search tool and open its
+results in BetterWright instead of automating Google or Bing's public search
+UI; set `publicSearchPolicy: "block"` to have the managed worker enforce that
+(it is permitted by default). Visible bot challenges are surfaced as resumable
+state. See [attach mode](docs/attach-mode.md).
+
+---
 
 ## What each piece does
 
 - **[Network policy](docs/network-policy.md)** — every navigation, subresource,
-  WebSocket, and raw TCP connection is checked. The default blocks cloud
-  metadata endpoints and private/loopback addresses; open exactly what you need
-  with `allow_hosts`, `allow_loopback`, or a `custom` hook.
+  WebSocket, and raw TCP connection is checked. Cloud-metadata endpoints and
+  secret-bearing URLs are always blocked; the public internet, private networks,
+  and loopback are open by default so local dev servers just work. Harden with
+  `allowPrivateNetwork: false`, `allowLoopback: false`, `blockHosts`, or a
+  `custom` hook.
 - **[Credential vault](docs/credentials.md)** — AES-256-GCM, origin-scoped,
   stored outside Chromium's profile. Trusted host code fills logins and signups
-  (including confirm-password) with `fill_credential` / `generate_and_fill_credential`;
+  (including confirm-password) with `fillCredential` / `generateAndFillCredential`;
   the secret is typed outside the sandbox and never returned. Model snippets
   cannot request a secret-bearing fill. In [attach mode](docs/attach-mode.md) the
   agent can instead drive your own 1Password extension's inline autofill.
 - **[Proof artifacts](docs/browser-api.md#screenshots-and-artifacts)** —
-  screenshots tagged `proof`, `question`, or `debug`, returned as
-  `MEDIA:<path>` references a host UI can render.
+  screenshots tagged `proof`, `question`, or `debug`, returned as artifact
+  paths a host UI can render.
 - **Download approval** — ordinary browser runs deny downloads. A trusted host
   approves one download run at a time; deployments can configure `ask`, `allow`,
   or `deny` without weakening the byte and artifact quotas.
@@ -192,13 +203,14 @@ extension for one run with `pi --extension ./src/pi-extension.mjs`. See the
   the default backend reduces common browser-fingerprint false positives;
   stock Chromium remains an explicit fallback for compatibility and testing.
 - **[Agent guidance](docs/agent-prompt.md)** — drop-in operator instructions
-  (`agent_system_prompt()`) that make the model act decisively on authorized
-  tasks — logging in, signing up, buying — instead of hedging, with
-  `Guardrails` to re-impose confirmation, spending caps, or hard prohibitions.
+  (`agentSystemPrompt()`, or the CLI's `betterwright skill`) that make the
+  model act decisively on authorized tasks — logging in, signing up, buying —
+  instead of hedging, with guardrail options to re-impose confirmation,
+  spending caps, or hard prohibitions.
 
 ## How it works
 
-A Python or JavaScript client owns one long-lived Node worker. The worker holds
+The CLI (or your JS host code) owns one long-lived Node worker. The worker holds
 a persistent browser context and exposes a sandboxed set of globals to the
 model's code; it calls back to the client to authorize each request and to
 handle credentials. CDP and the underlying browser/context handles remain

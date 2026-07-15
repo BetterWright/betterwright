@@ -9,20 +9,11 @@ exactly the limits they want.
 
 Include the guidance in your agent's system prompt:
 
-```python
-from betterwright import agent_system_prompt
-
-system_prompt = MY_AGENT_PREAMBLE + "\n\n" + agent_system_prompt()
-```
-
 ```js
 import { agentSystemPrompt } from "betterwright";
 
 const systemPrompt = `${MY_AGENT_PREAMBLE}\n\n${agentSystemPrompt()}`;
 ```
-
-The Python and JavaScript functions produce identical text, so an agent in
-either language behaves the same.
 
 ## What the default guidance says
 
@@ -35,7 +26,7 @@ With no guardrails, the guidance tells the model to:
   multiple tabs, and keep a running `note`.
 - **Keep credentials out of the chat.** When authentication is required, use a
   password-manager extension's inline autofill if one is unlocked, or request the
-  trusted host-side fill (`bw.fill_credential` / `generate_and_fill_credential`);
+  trusted host-side fill (`bw.fillCredential` / `generateAndFillCredential`);
   never type or reconstruct a stored password.
 - **Use host web search for broad discovery** rather than automating Google or
   Bing's public search UI, then open returned results or first-party pages in
@@ -62,20 +53,6 @@ those.
 
 ## Re-adding limits with `Guardrails`
 
-```python
-from betterwright import agent_system_prompt, Guardrails
-
-guardrails = Guardrails(
-    confirm_before_purchase=True,     # pause + confirm before any payment
-    confirm_before_irreversible=True, # …and before delete/send/submit/booking
-    spending_limit="$50",             # confirm any single purchase over $50
-    forbid_account_creation=False,    # allow sign-ups
-    extra_rules=("Only operate on the user's own accounts.",),
-)
-
-system_prompt = agent_system_prompt(guardrails)
-```
-
 ```js
 import { agentSystemPrompt } from "betterwright";
 
@@ -86,15 +63,15 @@ const systemPrompt = agentSystemPrompt({
 });
 ```
 
-| Field (Python / JS) | Effect on the prompt |
+| Field | Effect on the prompt |
 | --- | --- |
-| `confirm_before_purchase` / `confirmBeforePurchase` | Pause, screenshot the order summary, and require confirmation before any payment. |
-| `confirm_before_irreversible` / `confirmBeforeIrreversible` | Require confirmation before deleting, sending, submitting, or confirming a booking. |
-| `forbid_purchases` / `forbidPurchases` | Never complete a purchase; may reach checkout, then stop. Supersedes the confirm/limit clauses. |
-| `forbid_account_creation` / `forbidAccountCreation` | Never create accounts; use existing credentials only. |
-| `spending_limit` / `spendingLimit` | A per-purchase cap, included verbatim (e.g. `"$50"`). |
-| `extra_rules` / `extraRules` | Extra lines appended verbatim. |
-| `password_manager` / `passwordManager` | Name of a password-manager extension present and unlocked in this browser (e.g. `"1Password"`). Adds a short inline-menu how-to **only when set**, so it costs no tokens otherwise. Pair with attach mode. |
+| `confirmBeforePurchase` | Pause, screenshot the order summary, and require confirmation before any payment. |
+| `confirmBeforeIrreversible` | Require confirmation before deleting, sending, submitting, or confirming a booking. |
+| `forbidPurchases` | Never complete a purchase; may reach checkout, then stop. Supersedes the confirm/limit clauses. |
+| `forbidAccountCreation` | Never create accounts; use existing credentials only. |
+| `spendingLimit` | A per-purchase cap, included verbatim (e.g. `"$50"`). |
+| `extraRules` | Extra lines appended verbatim. |
+| `passwordManager` | Name of a password-manager extension present and unlocked in this browser (e.g. `"1Password"`). Adds a short inline-menu how-to **only when set**, so it costs no tokens otherwise. Pair with attach mode. |
 
 When any guardrail is set, the guidance gains a **"Guardrails for this session"**
 section that overrides the autonomy above where they conflict.
@@ -104,9 +81,9 @@ section that overrides the autonomy above where they conflict.
 The prompt persuades a cooperative model; it cannot bind an adversarial or
 confused one. When a limit must actually hold, encode it where it is enforced:
 
-- **"Never touch our internal admin panel"** → `block_hosts` in the
+- **"Never touch our internal admin panel"** → `blockHosts` in the
   [network policy](network-policy.md), not just a sentence in the prompt.
-- **"Only this one site"** → an `allow_hosts` allowlist with a `custom` deny for
+- **"Only this one site"** → an `allowHosts` allowlist with a `custom` deny for
   everything else.
 - **"Never expose the password"** → keep secret-bearing operations in trusted
   host code; vault filling is disabled inside model snippets.
