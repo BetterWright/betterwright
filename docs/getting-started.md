@@ -6,25 +6,15 @@ BetterWright drives a managed CloakBrowser build through Playwright, so it needs
 **Node.js 22+** on your `PATH`. The browser itself is downloaded once by
 `setup`.
 
-### Python
-
-```bash
-pip install betterwright
-betterwright setup      # downloads the signed managed browser (~200 MB, once)
-betterwright doctor     # prints what resolved; should end with "BetterWright is ready."
-```
-
-### JavaScript
-
 ```bash
 npm install betterwright
 npx betterwright setup     # downloads the signed managed browser (~200 MB, once)
-npx betterwright doctor
+npx betterwright doctor    # prints what resolved; should end with "BetterWright is ready."
 ```
 
 If `doctor` reports Node missing, install it from <https://nodejs.org> and rerun
-`setup`. If a JavaScript install reports CloakBrowser missing, rerun
-`npx betterwright setup`; Python installs use `betterwright setup`.
+`setup`. If `doctor` reports CloakBrowser missing, rerun
+`npx betterwright setup`.
 
 Upgrade with `npm update betterwright` or `npm install betterwright@latest`.
 Package updates are intentional rather than automatic, so application lockfiles
@@ -66,8 +56,8 @@ betterwright setup --chromium
 export BETTERWRIGHT_BROWSER=chromium
 ```
 
-Or select it per client with `browser="chromium"` / `browser: "chromium"`.
-Supplying `executable_path` / `executablePath` also selects this fallback. Stock
+Or select it per client with `browser: "chromium"`.
+Supplying `executablePath` also selects this fallback. Stock
 Chromium can expose obvious automation signals, including headless branding and
 `navigator.webdriver`; it is a degraded fallback, not the recommended backend
 for normal agent browsing.
@@ -76,15 +66,6 @@ for normal agent browsing.
 
 A snippet is a string of async Playwright JavaScript. The last expression is
 returned automatically.
-
-```python
-from betterwright import BetterWright
-
-with BetterWright() as bw:
-    result = bw.run("await page.goto('https://example.com'); return page.title()")
-    print(result.ok)       # True
-    print(result.value)    # "Example Domain"
-```
 
 ```js
 import { BetterWright } from "betterwright";
@@ -100,12 +81,11 @@ await bw.close();
 A session is an independent set of pages and `state`. Use one per concurrent
 task; snippets in the same session share the same tabs across calls.
 
-```python
-with BetterWright() as bw:
-    checkout = bw.session("checkout")
-    checkout.run("await page.goto('https://shop.example/cart')")
-    # …a later turn, same tabs still open…
-    checkout.run("await page.click('text=Place order')")
+```js
+const bw = new BetterWright();
+await bw.run("await page.goto('https://shop.example/cart')", { session: "checkout" });
+// …a later turn, same tabs still open…
+await bw.run("await page.click('text=Place order')", { session: "checkout" });
 ```
 
 ## Proof of work
@@ -113,20 +93,25 @@ with BetterWright() as bw:
 Have the agent capture a `proof` screenshot before it claims a task is done, and
 return the artifact reference so a UI can show it.
 
-```python
-r = bw.run("return screenshot({kind: 'proof', name: 'order-confirmed'})")
-print(r.artifacts[0].media_reference)   # MEDIA:/…/order-confirmed-….png
+```js
+const r = await bw.run("return screenshot({kind: 'proof', name: 'order-confirmed'})");
+console.log(r.artifacts[0].media);   // MEDIA:/…/order-confirmed-….png
 ```
 
 ## Local development targets
 
-The default policy blocks `localhost`. Opt in when you're driving a dev server:
+The default policy reaches `localhost` and the private network, so a dev server
+just works. Harden it when the agent runs somewhere its private network is
+sensitive:
 
-```python
-from betterwright import BetterWright, NetworkPolicy
+```js
+import { BetterWright, NetworkPolicy } from "betterwright";
 
-with BetterWright(policy=NetworkPolicy(allow_loopback=True)) as bw:
-    bw.run("await page.goto('http://localhost:5173')")
+// Public internet only — no private network, no loopback.
+const bw = new BetterWright({
+  policy: new NetworkPolicy({ allowPrivateNetwork: false, allowLoopback: false }),
+});
+await bw.run("await page.goto('https://example.com')");
 ```
 
 ## Where to go next
@@ -140,4 +125,4 @@ with BetterWright(policy=NetworkPolicy(allow_loopback=True)) as bw:
 - [Credentials](credentials.md) — encrypted storage and trusted host-side use.
 - [Native CAPTCHA helpers](captcha.md) — resumable handling for authorized flows.
 - [Architecture](architecture.md) — how it works and what it does/doesn't secure.
-- [Examples](../examples) — runnable Python and JavaScript scripts.
+- [Examples](../examples) — runnable JavaScript scripts.

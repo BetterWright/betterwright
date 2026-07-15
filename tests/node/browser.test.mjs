@@ -34,6 +34,15 @@ function runtimeReady() {
 }
 
 const ready = runtimeReady();
+// On a laptop without the runtime, skipping is friendly. In CI it would mean
+// the entire integration suite silently reports green without running, so the
+// workflows set BETTERWRIGHT_REQUIRE_BROWSER=1 to turn that into a failure.
+if (!ready && process.env.BETTERWRIGHT_REQUIRE_BROWSER) {
+  throw new Error(
+    "BETTERWRIGHT_REQUIRE_BROWSER is set but no Chromium build is resolvable — " +
+      "the browser integration suite would silently skip. Run `betterwright setup --chromium`.",
+  );
+}
 const opts = { skip: ready ? false : "browser runtime not installed" };
 
 async function unusedPort() {
@@ -383,7 +392,13 @@ test("IPv4-mapped IPv6 cannot reach an IPv4 loopback service", opts, async () =>
     hits += 1;
     response.end("loopback reached");
   });
-  const bw = new BetterWright({ home: tempHome(), headless: true });
+  // Loopback is open by default; this guards the mapped-IPv6 spelling against
+  // bypassing a policy that explicitly blocks it.
+  const bw = new BetterWright({
+    home: tempHome(),
+    policy: new NetworkPolicy({ allowLoopback: false, allowPrivateNetwork: false }),
+    headless: true,
+  });
   try {
     const result = await bw.run(
       `await page.goto('http://[::ffff:127.0.0.1]:${server.port}/'); return 'reached'`,

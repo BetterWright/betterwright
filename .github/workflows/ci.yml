@@ -20,7 +20,6 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run check:worker
       - run: npm run check:versions
       - run: npm run lint
       - run: npm run test:unit
@@ -41,30 +40,8 @@ jobs:
       - name: Install deterministic Chromium test backend
         run: node node_modules/playwright-core/cli.js install chromium --no-shell
       # The broad suite selects explicit Chromium; Cloak has a separate opt-in E2E.
+      # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
+      # broken Chromium install can never report green by skipping every test.
       - run: npm test
-
-  python:
-    name: Python tests
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.12"]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install
-        working-directory: python
-        run: pip install -e '.[dev]'
-      - name: Install browser runtime
-        run: betterwright setup --chromium
-      - name: Lint
-        working-directory: python
-        run: ruff check .
-      - name: Test
-        working-directory: python
-        run: pytest -q
+        env:
+          BETTERWRIGHT_REQUIRE_BROWSER: "1"

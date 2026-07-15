@@ -5,12 +5,12 @@ sandbox. This page documents what that code can use: the globals, the helpers,
 the return-value handling, and the parts of the Playwright API that are
 deliberately removed.
 
-```python
-bw.run("""
+```js
+await bw.run(`
   await page.goto('https://news.ycombinator.com');
   const titles = await page.locator('.titleline > a').allInnerTexts();
   return titles.slice(0, 5);
-""")
+`);
 ```
 
 ## Return values
@@ -22,8 +22,7 @@ bw.run("""
   summarized rather than serialized whole — a `Page` becomes
   `{type: "Page", pageId, url, title, closed}`.
 - Large results are spilled to an artifact file and replaced with a
-  `{truncated: true, preview, fullOutputPath}` summary. On the Python client,
-  `RunResult.truncated` flags this.
+  `{truncated: true, preview, fullOutputPath}` summary.
 
 ## Pages
 
@@ -119,10 +118,10 @@ than automating Google or Bing's public search UI.
 
 It returns `{kind, path, media}` where `media` is `MEDIA:<absolute path>`. The
 `MEDIA:` convention lets a host surface render the file when the agent cites it.
-To feed a screenshot straight to a vision model, use the Python client's
-`RunResult.screenshots()` and `Artifact.data_url()` (a `data:image/png;base64,…`
-URL); the MCP server already returns screenshots as native image content. Never
-hand a host the non-image artifacts from `RunResult.files()` (downloads, spilled
+To feed a screenshot straight to a vision model, read the image artifact at its
+`path` (the `betterwright/pi` adapter and the MCP server already return
+screenshots as native image content). Never
+hand a host the non-image artifacts (downloads, spilled
 output) as images — that is what triggers "unsupported image MIME type" errors.
 The image kinds carry intent:
 
@@ -211,7 +210,7 @@ await credentials.remove({ id });
 
 All operations are scoped to the current page's origin, which must be `http(s)`.
 To actually fill a login or signup form, the host calls `bw.fillCredential(...)`
-/ `bw.generateAndFillCredential(...)` (or `bw.fill_credential` in Python) — the
+/ `bw.generateAndFillCredential(...)` — the
 worker types the password and any confirm-password field outside the sandbox and
 returns only metadata. See [credentials.md](credentials.md) for the full contract.
 

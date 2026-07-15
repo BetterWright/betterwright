@@ -5,87 +5,27 @@
 //   betterwright doctor           report runtime readiness
 //   betterwright run <file|-|-c>  execute a Playwright snippet
 //   betterwright repl             run blank-line-separated snippets from stdin
+//   betterwright skill            print paste-ready agent instructions
+//   betterwright mcp              serve the MCP stdio server (needs the MCP SDK)
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import readline from "node:readline";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
-import { BetterWright, NetworkPolicy } from "../src/index.mjs";
+import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
+import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
 
 const require = createRequire(import.meta.url);
-const PINNED_PLAYWRIGHT_VERSION = "1.61.1";
-const PINNED_CLOAKBROWSER_VERSION = "0.4.10";
-
-function resolveCoreDir() {
-  const override = (process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "").trim();
-  if (override && fs.existsSync(path.join(override, "package.json"))) return override;
-  try {
-    return path.dirname(require.resolve("playwright-core/package.json"));
-  } catch {
-    return null;
-  }
-}
-
-function resolveCloakDir() {
-  const override = (process.env.BETTERWRIGHT_CLOAKBROWSER_PATH || "").trim();
-  if (override && fs.existsSync(path.join(override, "package.json"))) return override;
-  try {
-    return path.resolve(
-      path.dirname(fileURLToPath(import.meta.resolve("cloakbrowser"))),
-      "..",
-    );
-  } catch {
-    return null;
-  }
-}
-
-async function cloakRuntime() {
-  const dir = resolveCloakDir();
-  if (!dir)
-    return {
-      dir: null,
-      version: null,
-      binaryVersion: null,
-      tier: null,
-      binary: null,
-      installed: false,
-    };
-  let version = null;
-  try {
-    version = require(path.join(dir, "package.json")).version;
-  } catch {
-    /* reported below */
-  }
-  try {
-    const cloak = await import(pathToFileURL(path.join(dir, "dist", "index.js")).href);
-    const info = cloak.binaryInfo();
-    return {
-      dir,
-      version,
-      binaryVersion: info.version || null,
-      tier: info.tier || null,
-      binary: info.binaryPath,
-      installed: Boolean(info.installed),
-    };
-  } catch {
-    return {
-      dir,
-      version,
-      binaryVersion: null,
-      tier: null,
-      binary: null,
-      installed: false,
-    };
-  }
-}
 
 function policyFromFlags(flags) {
+  // Private networks and loopback are open by default; --block-private-network
+  // / --block-loopback re-harden. The --allow-* flags are accepted no-ops.
   return new NetworkPolicy({
-    allowLoopback: flags.has("--allow-loopback"),
-    allowPrivateNetwork: flags.has("--allow-private-network"),
+    allowLoopback: !flags.has("--block-loopback"),
+    allowPrivateNetwork: !flags.has("--block-private-network"),
     allowHosts: collectValues(process.argv, "--allow-host"),
     blockHosts: collectValues(process.argv, "--block-host"),
   });
@@ -99,47 +39,7 @@ function collectValues(argv, flag) {
 }
 
 async function cmdDoctor() {
-  const core = resolveCoreDir();
-  const cloak = await cloakRuntime();
-  let version = null;
-  let chromium = null;
-  if (core) {
-    try {
-      version = require(path.join(core, "package.json")).version;
-    } catch {
-      /* ignore */
-    }
-    try {
-      chromium = require(path.join(core, "index.js")).chromium.executablePath();
-    } catch {
-      /* ignore */
-    }
-  }
-  const worker = fileURLToPath(new URL("../src/worker.mjs", import.meta.url));
-  const report = {
-    node: process.execPath,
-    worker,
-    worker_ok: fs.existsSync(worker),
-    playwright_core: core,
-    playwright_version: version,
-    playwright_pinned: PINNED_PLAYWRIGHT_VERSION,
-    cloakbrowser: cloak.dir,
-    cloakbrowser_version: cloak.version,
-    cloakbrowser_pinned: PINNED_CLOAKBROWSER_VERSION,
-    cloakbrowser_binary_version: cloak.binaryVersion,
-    cloakbrowser_binary_tier: cloak.tier,
-    cloakbrowser_binary: cloak.binary,
-    cloakbrowser_ok:
-      cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed,
-    chromium,
-    chromium_ok: Boolean(chromium && fs.existsSync(chromium)),
-  };
-  const backend = (process.env.BETTERWRIGHT_BROWSER || "cloak").trim().toLowerCase();
-  report.browser = backend;
-  report.ready =
-    report.worker_ok &&
-    version === PINNED_PLAYWRIGHT_VERSION &&
-    (backend === "chromium" ? report.chromium_ok : report.cloakbrowser_ok);
+  const report = await doctorReport();
   for (const [key, value] of Object.entries(report)) console.log(`${key.padEnd(20)} ${value}`);
   console.log(report.ready ? "\nBetterWright is ready." : "\nNot ready. Run `betterwright setup`.");
   return report.ready ? 0 : 1;
@@ -195,6 +95,53 @@ async function cmdRun(arg, flags) {
   }
 }
 
+// A CLI-usage preamble that turns the operator guidance (which talks about
+// `run()`) into a self-contained skill for any agent that can run a shell
+// command.
+const SKILL_PREAMBLE = `# Browser tool: BetterWright
+
+You can operate a real, persistent web browser by running the \`betterwright\`
+command. Use it whenever a task needs the live web — logging in, filling forms,
+booking, buying, or reading a page an API will not give you.
+
+Single action — pass async Playwright JavaScript; a trailing expression (or an
+explicit \`return\`) is the result:
+
+    betterwright run -c "await page.goto('https://example.com'); return page.title()"
+
+The command prints one JSON object:
+{ok, result, error, console, events, artifacts, pages, challenges, warnings, durationMs}.
+\`artifacts\` lists files written during the run; screenshots appear there with a
+\`path\` — open that image to actually see the page.
+
+Multi-step task — pipe blank-line-separated snippets into one long-lived session
+so open tabs and in-memory \`state\` persist between steps:
+
+    printf '%s\\n\\n%s\\n' "await page.goto('https://site.example')" "return page.title()" | betterwright repl
+
+Logins and cookies persist across every invocation through the on-disk profile;
+open tabs and \`state\` persist only within a single \`repl\` session.
+
+Network access is policy-guarded. Loopback and the private network are reachable
+by default; add \`--block-private-network\` / \`--block-loopback\` to lock down, or
+\`--allow-host <host>\` / \`--block-host <host>\` to adjust. Cloud-metadata endpoints
+are always blocked.
+
+Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet".`;
+
+// YAML frontmatter for `skill --claude`, so the output is a complete Claude
+// Code SKILL.md.
+const CLAUDE_SKILL_FRONTMATTER = `---
+name: browser
+description: Drive a persistent, policy-guarded real web browser via the betterwright CLI. Use for any task that needs the live web — logging in, filling forms, booking, buying, or reading a page an API will not give you.
+---`;
+
+function cmdSkill(flags) {
+  const body = `${SKILL_PREAMBLE}\n\n${agentSystemPrompt()}`;
+  console.log(flags.has("--claude") ? `${CLAUDE_SKILL_FRONTMATTER}\n\n${body}` : body);
+  return 0;
+}
+
 async function cmdRepl(flags) {
   const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed") });
   console.log("BetterWright REPL — blank line runs a snippet, Ctrl-D quits.\n");
@@ -231,11 +178,18 @@ async function main() {
       return cmdRun(positional, flags);
     case "repl":
       return cmdRepl(flags);
+    case "skill":
+      return cmdSkill(flags);
+    case "mcp": {
+      const { runMcpServer } = await import("../src/mcp-server.mjs");
+      await runMcpServer();
+      return 0;
+    }
     case "--version":
       console.log(require("../package.json").version);
       return 0;
     default:
-      console.error("Usage: betterwright <setup|doctor|run|repl> [options]");
+      console.error("Usage: betterwright <setup|doctor|run|repl|skill|mcp> [options]");
       return command ? 1 : 0;
   }
 }
