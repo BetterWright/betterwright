@@ -1,8 +1,8 @@
-// Default network policy for the BetterWright worker (JavaScript port).
+// Default network policy for the BetterWright worker.
 //
-// This mirrors the Python `betterwright.policy.NetworkPolicy` so the two
-// clients enforce identical rules. Every request the worker makes is answered
-// by `NetworkPolicy.check`. Two lower layers do not depend on this policy:
+// Every request the worker makes is answered by `NetworkPolicy.check`; the
+// conformance vectors in tests/fixtures/policy-vectors.json pin every
+// decision. Two lower layers do not depend on this policy:
 // Chromium's `--host-resolver-rules` NXDOMAIN the metadata hostnames, and all
 // traffic is forced through the worker's loopback SOCKS proxy so even localhost
 // reaches this check.
@@ -98,7 +98,15 @@ function categorizeIpv4(host) {
     inCidr4(value, ipv4ToInt("192.168.0.0"), 16) ||
     inCidr4(value, ipv4ToInt("169.254.0.0"), 16) ||
     inCidr4(value, ipv4ToInt("100.64.0.0"), 10) ||
-    inCidr4(value, ipv4ToInt("0.0.0.0"), 8)
+    inCidr4(value, ipv4ToInt("0.0.0.0"), 8) ||
+    // Documentation, benchmarking, multicast, and reserved ranges are
+    // classified as non-public, matching the conformance vectors.
+    inCidr4(value, ipv4ToInt("192.0.2.0"), 24) ||
+    inCidr4(value, ipv4ToInt("198.18.0.0"), 15) ||
+    inCidr4(value, ipv4ToInt("198.51.100.0"), 24) ||
+    inCidr4(value, ipv4ToInt("203.0.113.0"), 24) ||
+    inCidr4(value, ipv4ToInt("224.0.0.0"), 4) ||
+    inCidr4(value, ipv4ToInt("240.0.0.0"), 4)
   )
     return "private";
   return "public";
@@ -118,7 +126,9 @@ function categorizeIp(host) {
       bare === "::" ||
       bare.startsWith("fe80:") ||
       bare.startsWith("fc") ||
-      bare.startsWith("fd")
+      bare.startsWith("fd") ||
+      // Multicast (ff00::/8) is non-public.
+      bare.startsWith("ff")
     )
       return "private";
     return "public";
@@ -128,8 +138,13 @@ function categorizeIp(host) {
 
 export class NetworkPolicy {
   constructor(options = {}) {
-    this.allowPrivateNetwork = Boolean(options.allowPrivateNetwork);
-    this.allowLoopback = Boolean(options.allowLoopback);
+    // Private networks and loopback are reachable by default; agents commonly
+    // drive local dev servers, routers, and intranet hosts. Pass
+    // `allowPrivateNetwork: false` / `allowLoopback: false` for a hardened
+    // deployment. The cloud-metadata floor below is NOT governed by these and
+    // stays blocked regardless.
+    this.allowPrivateNetwork = options.allowPrivateNetwork !== false;
+    this.allowLoopback = options.allowLoopback !== false;
     this.allowHosts = options.allowHosts || [];
     this.blockHosts = options.blockHosts || [];
     this.blockSecretBearingUrls = options.blockSecretBearingUrls !== false;

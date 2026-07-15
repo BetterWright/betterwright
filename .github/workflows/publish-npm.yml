@@ -55,6 +55,8 @@ jobs:
       - name: Run browser integration suite
         if: steps.existing.outputs.published != 'true'
         run: npm test
+        env:
+          BETTERWRIGHT_REQUIRE_BROWSER: "1"
       - name: Publish to npm with provenance
         if: steps.existing.outputs.published != 'true'
         run: npm publish --access public

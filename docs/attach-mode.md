@@ -18,24 +18,17 @@ covers **headed** mode and the **attach** details.
 
 ## Headed vs. headless
 
-`headless` accepts `True`, `False`, or `"auto"` (the default):
+`headless` accepts `true`, `false`, or `"auto"` (the default):
 
 - **`"auto"`** — run a visible window when a display is available, and headless
   on servers, containers, and CI. This is what you usually want: you see the
   browser on your desktop, and nothing breaks on a headless host.
-- **`True`** / **`False`** — force it.
-
-```python
-from betterwright import BetterWright
-
-BetterWright()                    # auto: visible on a desktop, headless on a server
-BetterWright(headless=False)      # always show a window
-BetterWright(headless=True)       # never show a window
-```
+- **`true`** / **`false`** — force it.
 
 ```js
-new BetterWright();                  // auto
-new BetterWright({ headless: false }); // always visible
+new BetterWright();                    // auto: visible on a desktop, headless on a server
+new BetterWright({ headless: false }); // always show a window
+new BetterWright({ headless: true });  // never show a window
 ```
 
 Detection uses `DISPLAY`/`WAYLAND_DISPLAY` on Linux, the absence of an SSH-only
@@ -85,15 +78,9 @@ Log into whatever sites the task needs in that window. Confirm the port is up:
 
 ### 2. Point BetterWright at it
 
-```python
-from betterwright import BetterWright
-
-bw = BetterWright(connect_over_cdp="http://127.0.0.1:9222")
-bw.run("return pages.map(p => p.url())")   # sees the tabs already open
-```
-
 ```js
 const bw = new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" });
+await bw.run("return pages.map(p => p.url())");   // sees the tabs already open
 ```
 
 MCP server: set `BETTERWRIGHT_CONNECT_OVER_CDP=http://127.0.0.1:9222` in its env.
@@ -104,19 +91,13 @@ disconnects without closing your browser or its tabs.
 
 ### Managed dedicated Chrome — attach, or launch if none is open
 
-You usually don't want to launch Chrome by hand. Pass `connect_over_cdp="auto"`
+You usually don't want to launch Chrome by hand. Pass `connectOverCdp: "auto"`
 and BetterWright reuses a debug Chrome if one is already listening, or otherwise
 launches a real Google Chrome with a persistent dedicated profile and attaches to
 that:
 
-```python
-from betterwright import BetterWright
-
-bw = BetterWright(connect_over_cdp="auto")   # reuse or launch a real Chrome
-```
-
 ```js
-const bw = new BetterWright({ connectOverCdp: "auto" });
+const bw = new BetterWright({ connectOverCdp: "auto" });   // reuse or launch a real Chrome
 ```
 
 For explicit control (e.g. long-lived agents such as Pi that all attach to the
@@ -127,13 +108,6 @@ import { BetterWright, ensureChromeCdp } from "betterwright";
 
 const { endpoint, profileDir } = await ensureChromeCdp();
 const bw = new BetterWright({ connectOverCdp: endpoint });
-```
-
-```python
-from betterwright import BetterWright, ensure_chrome_cdp
-
-info = ensure_chrome_cdp()          # {"endpoint", "profile_dir", "started"}
-bw = BetterWright(connect_over_cdp=info["endpoint"])
 ```
 
 The managed browser uses Google Chrome when installed, binds its debugging port
@@ -148,7 +122,7 @@ Because the dedicated profile is persistent, it is the place to install a
 password-manager extension once and let the agent fill logins through it — so the
 secret stays in the extension and never reaches BetterWright:
 
-1. Start the browser once (`connect_over_cdp="auto"`), install the 1Password
+1. Start the browser once (`connectOverCdp: "auto"`), install the 1Password
    extension in the window that opens, sign in, and **unlock** it. The agent
    cannot type your master password or pass biometrics, so it must already be
    unlocked (the desktop-app integration keeps it unlocked across restarts).
@@ -159,8 +133,7 @@ secret stays in the extension and never reaches BetterWright:
 
 This only works in attach mode — the managed Cloak browser does not carry your
 extensions. When the extension is missing or locked, fall back to the trusted
-[vault fill](credentials.md) (`bw.fill_credential` / `generate_and_fill_credential`).
-See [`examples/python/onepassword_attach.py`](../examples/python/onepassword_attach.py).
+[vault fill](credentials.md) (`bw.fillCredential` / `bw.generateAndFillCredential`).
 
 Note the trade-off: extension autofill puts the secret into the page DOM, where a
 later model snippet could read it (redaction still scrubs run output). That is
@@ -168,13 +141,12 @@ acceptable for your own credentials under the "guard against accidental leakage"
 model, but it is a weaker guarantee than the vault fill, which never lets a model
 snippet near the value.
 
-For broad discovery, use a web-search tool supplied by the host, then open the
-returned result or first-party page in BetterWright. Do not automate Google or
-Bing's public search UI. The example's `publicSearchPolicy: "allow"` is an
-explicit trusted-host escape hatch; without it, those result pages are blocked.
-`searchMinIntervalMs` then spaces top-level public-search navigations, but
-pacing is not a substitute for the host search route and cannot guarantee that
-a provider will accept the traffic.
+For broad discovery, prefer a web-search tool supplied by the host, then open
+the returned result or first-party page in BetterWright rather than automating
+Google or Bing's public search UI. Result pages are permitted by default; set
+`publicSearchPolicy: "block"` to have the worker enforce the host-search route.
+`searchMinIntervalMs` spaces top-level public-search navigations while they are
+permitted, but pacing cannot guarantee that a provider will accept the traffic.
 
 ## The security trade-off — read this
 
@@ -207,7 +179,7 @@ deliberately, not your primary Chrome profile.
 
 ## When to use which
 
-- **Just want to watch it work?** Use `headless=False` (or `"auto"`) — that keeps
+- **Just want to watch it work?** Use `headless: false` (or `"auto"`) — that keeps
   the full security floor and still shows a window.
 - **Need your existing logins in a browser you can see?** Prefer logging into
   BetterWright's own managed persistent profile once (it survives across runs).

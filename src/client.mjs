@@ -2,7 +2,7 @@
 //
 // It owns one long-lived worker process, answers the worker's `guard` (network
 // policy) and `vault` (credential) RPCs, and exposes `run()` for executing
-// Playwright snippets. It mirrors the Python client so both share one runtime.
+// Playwright snippets.
 
 import { spawn } from "node:child_process";
 import { once } from "node:events";

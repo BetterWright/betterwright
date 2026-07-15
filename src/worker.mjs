@@ -9,9 +9,7 @@
 // on Chromium's command line before any model code can run.
 
 import crypto from "node:crypto";
-import dns from "node:dns/promises";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -34,6 +32,7 @@ import {
   isUnsupportedBrowserDownloadGuard,
   normalizeDownloadPolicy,
 } from "./downloads.mjs";
+import { createGuardProxy } from "./guard-proxy.mjs";
 import {
   movePointer,
   pointInside,
@@ -64,9 +63,7 @@ const DEFAULT_DOWNLOAD_LIMIT = 50 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_PIXEL_LIMIT = 40_000_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
-const SOCKS_HANDSHAKE_TIMEOUT_MS = 15_000;
-const SOCKS_CONNECT_TIMEOUT_MS = 10_000;
-const MAX_SOCKS_HANDSHAKE_BYTES = 8_192;
+const MAX_ACTIVE_SECRETS = 200;
 
 // Chromium applies these mappings below page/network routing.  They remain in
 // force even if evaluated code finds a way around the best-effort JS facades.
@@ -90,8 +87,6 @@ let profileWarning = "";
 let useSetContentCompatibility = false;
 let shuttingDown = false;
 let activeExecutionSession = null;
-let guardProxyServer = null;
-let guardProxyPort = null;
 let downloadCdpSession = null;
 let downloadGuardReady = false;
 let currentDownloadBehavior = "deny";
@@ -106,8 +101,23 @@ const pageIds = new WeakMap();
 const facadeToRaw = new WeakMap();
 const pendingRpc = new Map();
 const activeSecrets = new Set();
+
+// Secrets are kept beyond the run that used them because later runs can still
+// echo a previously typed value (console, DOM dumps). The cap only bounds
+// memory and per-redaction cost in long-lived workers; eviction is oldest-first
+// (Set iterates in insertion order), with re-tracked secrets refreshed to
+// newest.
+function trackSecret(value) {
+  const secret = String(value ?? "");
+  if (secret.length < 4) return;
+  activeSecrets.delete(secret);
+  activeSecrets.add(secret);
+  if (activeSecrets.size > MAX_ACTIVE_SECRETS) {
+    const oldest = activeSecrets.values().next().value;
+    activeSecrets.delete(oldest);
+  }
+}
 const pendingDownloadTasks = new Set();
-const guardProxySockets = new Set();
 let rpcCounter = 0;
 let pageCounter = 0;
 let executeQueue = Promise.resolve();
@@ -353,285 +363,11 @@ function transportExecuteId() {
     : "background";
 }
 
-function urlHost(host) {
-  return net.isIP(host) === 6 ? `[${host}]` : host;
-}
-
-function transportUrl(host, port) {
-  const scheme = port === 80 ? "http:" : "https:";
-  return `${scheme}//${urlHost(host)}:${port}/`;
-}
-
-function proxyBlockedError(reason = "Blocked by browser network policy") {
-  const error = new Error(reason);
-  error.code = "BW_PROXY_BLOCKED";
-  return error;
-}
-
-async function guardedTransportAddresses(host, port) {
-  const executeId = transportExecuteId();
-  const target = transportUrl(host, port);
-  const targetDecision = await guardUrl(
-    target,
-    { method: "CONNECT", resourceType: "transport" },
-    executeId,
-  );
-  if (!targetDecision?.allowed) throw proxyBlockedError(targetDecision?.reason);
-
-  let addresses;
-  const family = net.isIP(host);
-  if (family) addresses = [{ address: host, family }];
-  else {
-    try {
-      addresses = await dns.lookup(host, { all: true, verbatim: false });
-    } catch {
-      const error = new Error("Browser transport DNS resolution failed");
-      error.code = "BW_PROXY_DNS";
-      throw error;
-    }
-  }
-  if (!addresses.length) {
-    const error = new Error("Browser transport DNS returned no addresses");
-    error.code = "BW_PROXY_DNS";
-    throw error;
-  }
-
-  // Validate every answer, then connect to one of these exact literals. This
-  // closes both redirect-hop and DNS-rebinding gaps: Chromium never performs a
-  // second target lookup outside this guarded worker.
-  for (const candidate of addresses) {
-    const decision = await guardUrl(
-      transportUrl(candidate.address, port),
-      {
-        method: "CONNECT",
-        resourceType: "transport-address",
-        resolvedFrom: host,
-      },
-      executeId,
-    );
-    if (!decision?.allowed) throw proxyBlockedError(decision?.reason);
-  }
-  return addresses;
-}
-
-function trackProxySocket(socket) {
-  guardProxySockets.add(socket);
-  socket.once("close", () => guardProxySockets.delete(socket));
-  // A remote reset is normal browser-network behavior. Never let an unhandled
-  // socket error terminate the long-lived worker.
-  socket.on("error", () => socket.destroy());
-  return socket;
-}
-
-function connectAddress(address, port) {
-  return new Promise((resolve, reject) => {
-    const socket = trackProxySocket(
-      net.createConnection({
-        host: address.address,
-        port,
-        family: address.family,
-      }),
-    );
-    const fail = (error) => {
-      socket.destroy();
-      reject(error);
-    };
-    socket.setTimeout(SOCKS_CONNECT_TIMEOUT_MS, () => {
-      const error = new Error("Browser transport connection timed out");
-      error.code = "BW_PROXY_CONNECT";
-      fail(error);
-    });
-    socket.once("error", fail);
-    socket.once("connect", () => {
-      socket.off("error", fail);
-      socket.setTimeout(0);
-      resolve(socket);
-    });
-  });
-}
-
-async function connectGuardedTarget(host, port) {
-  const addresses = await guardedTransportAddresses(host, port);
-  let lastError = null;
-  for (const address of addresses) {
-    try {
-      return await connectAddress(address, port);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  const error = new Error("Browser transport could not reach the target");
-  error.code = lastError?.code || "BW_PROXY_CONNECT";
-  throw error;
-}
-
-function socksReply(code) {
-  return Buffer.from([5, code, 0, 1, 0, 0, 0, 0, 0, 0]);
-}
-
-function ipv6FromBytes(value) {
-  const groups = [];
-  for (let offset = 0; offset < 16; offset += 2)
-    groups.push(value.readUInt16BE(offset).toString(16));
-  return groups.join(":");
-}
-
-function handleGuardProxyClient(client) {
-  trackProxySocket(client);
-  client.setTimeout(SOCKS_HANDSHAKE_TIMEOUT_MS, () => client.destroy());
-  let buffer = Buffer.alloc(0);
-  let stage = "greeting";
-  let processing = false;
-
-  const reject = (code) => {
-    if (!client.destroyed) client.end(socksReply(code));
-  };
-
-  const processBuffer = async () => {
-    if (processing || client.destroyed) return;
-    processing = true;
-    try {
-      while (!client.destroyed) {
-        if (stage === "greeting") {
-          if (buffer.length < 2) return;
-          const version = buffer[0];
-          const methodCount = buffer[1];
-          if (buffer.length < 2 + methodCount) return;
-          const methods = buffer.subarray(2, 2 + methodCount);
-          buffer = buffer.subarray(2 + methodCount);
-          if (version === 5 && methods.includes(0) && client.writable) {
-            client.write(Buffer.from([5, 0]));
-          } else {
-            client.end(Buffer.from([5, 255]));
-            return;
-          }
-          stage = "request";
-          continue;
-        }
-
-        if (buffer.length < 4) return;
-        const version = buffer[0];
-        const command = buffer[1];
-        const reserved = buffer[2];
-        const addressType = buffer[3];
-        if (version !== 5 || reserved !== 0) {
-          reject(1);
-          return;
-        }
-        if (command !== 1) {
-          reject(7);
-          return;
-        }
-
-        let total;
-        let host;
-        if (addressType === 1) {
-          total = 10;
-          if (buffer.length < total) return;
-          host = [...buffer.subarray(4, 8)].join(".");
-        } else if (addressType === 3) {
-          if (buffer.length < 5) return;
-          const length = buffer[4];
-          total = 7 + length;
-          if (!length || buffer.length < total) return;
-          host = buffer.subarray(5, 5 + length).toString("utf8");
-          if (host.includes("\ufffd") || /[\0\r\n]/.test(host)) {
-            reject(8);
-            return;
-          }
-        } else if (addressType === 4) {
-          total = 22;
-          if (buffer.length < total) return;
-          host = ipv6FromBytes(buffer.subarray(4, 20));
-        } else {
-          reject(8);
-          return;
-        }
-
-        const port = buffer.readUInt16BE(total - 2);
-        if (!port) {
-          reject(1);
-          return;
-        }
-        const initialData = buffer.subarray(total);
-        buffer = Buffer.alloc(0);
-        client.pause();
-        client.off("data", onData);
-        try {
-          const upstream = await connectGuardedTarget(host, port);
-          if (client.destroyed) {
-            upstream.destroy();
-            return;
-          }
-          client.setTimeout(0);
-          client.write(socksReply(0));
-          if (initialData.length) upstream.write(initialData);
-          client.pipe(upstream).pipe(client);
-          client.resume();
-        } catch (error) {
-          reject(
-            error?.code === "BW_PROXY_BLOCKED"
-              ? 2
-              : error?.code === "BW_PROXY_DNS"
-                ? 4
-                : 5,
-          );
-        }
-        return;
-      }
-    } finally {
-      processing = false;
-    }
-  };
-
-  const onData = (chunk) => {
-    if (buffer.length + chunk.length > MAX_SOCKS_HANDSHAKE_BYTES) {
-      reject(1);
-      return;
-    }
-    buffer = Buffer.concat([buffer, chunk]);
-    void processBuffer();
-  };
-  client.on("data", onData);
-}
-
-async function ensureGuardProxy() {
-  if (guardProxyServer && guardProxyPort) return guardProxyPort;
-  const server = net.createServer(handleGuardProxyClient);
-  const port = await new Promise((resolve, reject) => {
-    const onError = (error) => reject(error);
-    server.once("error", onError);
-    server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
-      server.off("error", onError);
-      const address = server.address();
-      resolve(address.port);
-    });
-  });
-  guardProxyServer = server;
-  guardProxyPort = port;
-  server.on("error", () => {
-    // Existing connections retain their own error handling. A future browser
-    // call will restart the worker if the proxy actually becomes unavailable.
-  });
-  server.unref();
-  return port;
-}
-
-async function closeGuardProxy() {
-  const server = guardProxyServer;
-  guardProxyServer = null;
-  guardProxyPort = null;
-  for (const socket of guardProxySockets) socket.destroy();
-  guardProxySockets.clear();
-  if (!server) return;
-  await new Promise((resolve) => {
-    try {
-      server.close(() => resolve());
-    } catch {
-      resolve();
-    }
-  });
-}
+// Transport-level SOCKS5 guard proxy; policy checks stay here via guardUrl.
+const guardProxy = createGuardProxy({
+  guardUrl,
+  executeId: transportExecuteId,
+});
 
 async function installDownloadGuard(context) {
   await closeDownloadGuard();
@@ -1503,7 +1239,7 @@ async function ensureBrowser(config) {
     );
     profileMode = profileLock.ephemeral ? "ephemeral" : "persistent";
     profileWarning = profileLock.warning;
-    const transportProxyPort = await ensureGuardProxy();
+    const transportProxyPort = await guardProxy.ensure();
 
     const headless = launchConfig.headless !== false;
     const args = [
@@ -2009,7 +1745,7 @@ async function vaultCall(session, action, payload = {}) {
     { action, origin, payload },
     `active:${session.id}`,
   );
-  if (response?.secret) activeSecrets.add(String(response.secret));
+  if (response?.secret) trackSecret(response.secret);
   return response;
 }
 
@@ -2022,13 +1758,13 @@ function buildCredentials(session, realm) {
   credentials.save = realm.safeFunction(async (options) => {
     if (!options?.password)
       throw new Error("credentials.save requires password.");
-    activeSecrets.add(String(options.password));
+    trackSecret(options.password);
     const response = await vaultCall(session, "save", options);
     const { secret: _secret, ...publicResult } = response;
     return publicResult;
   });
   credentials.update = realm.safeFunction(async (options) => {
-    if (options?.password) activeSecrets.add(String(options.password));
+    if (options?.password) trackSecret(options.password);
     const response = await vaultCall(session, "update", options || {});
     const { secret: _secret, ...publicResult } = response;
     return publicResult;
@@ -2066,6 +1802,43 @@ async function fillCredentialField(page, session, selector, value) {
   }
   await locator.fill(String(value), { timeout: 10_000 });
   return locator;
+}
+
+// Assemble the wire envelope shared by execute() and credentialFill().
+// Callers pass only what differs; warnings always lead with the profile
+// warning, then the first challenge's advice, then (when the run completed
+// enough to own them) the session's queued warnings.
+async function buildEnvelope(
+  session,
+  message,
+  started,
+  {
+    firstEvent,
+    console: consoleMessages = [],
+    artifacts = [],
+    challenges = [],
+    drainSessionWarnings = false,
+    pages = null,
+    ...fields
+  },
+) {
+  return {
+    type: "result",
+    id: message.id,
+    ...fields,
+    console: redactDeep(consoleMessages),
+    events: redactDeep(session.events.slice(firstEvent)),
+    artifacts: redactDeep(artifacts),
+    warnings: [
+      ...(profileWarning ? [profileWarning] : []),
+      ...(challenges.length ? [challenges[0].advice] : []),
+      ...(drainSessionWarnings ? session.warnings.splice(0) : []),
+    ],
+    challenges: redactDeep(challenges),
+    profileMode,
+    pages: pages ?? (await summarizeSessionPages(session)),
+    durationMs: Math.round((performance.now() - started) * 10) / 10,
+  };
 }
 
 // Native, trusted credential fill. Reachable only through the host client's
@@ -2113,7 +1886,7 @@ async function credentialFill(message) {
     const secret = record?.secret == null ? "" : String(record.secret);
     if (!secret)
       throw new Error("The vault did not return a credential to fill for this origin.");
-    activeSecrets.add(secret);
+    trackSecret(secret);
 
     const filled = [];
     let lastLocator = null;
@@ -2158,38 +1931,23 @@ async function credentialFill(message) {
     }
 
     const { secret: _secret, ...publicRecord } = record || {};
-    sendResult({
-      type: "result",
-      id: message.id,
-      ok: true,
-      result: redactDeep({ ...publicRecord, filled, submitted }),
-      console: [],
-      events: redactDeep(session.events.slice(firstEvent)),
-      artifacts: [],
-      warnings: [
-        ...(profileWarning ? [profileWarning] : []),
-        ...session.warnings.splice(0),
-      ],
-      challenges: [],
-      profileMode,
-      pages: await summarizeSessionPages(session),
-      durationMs: Math.round((performance.now() - started) * 10) / 10,
-    });
+    sendResult(
+      await buildEnvelope(session, message, started, {
+        firstEvent,
+        drainSessionWarnings: true,
+        ok: true,
+        result: redactDeep({ ...publicRecord, filled, submitted }),
+      }),
+    );
   } catch (error) {
-    sendResult({
-      type: "result",
-      id: message.id,
-      ok: false,
-      error: redactText(error?.message || String(error)),
-      console: [],
-      events: redactDeep(session.events.slice(firstEvent)),
-      artifacts: [],
-      warnings: profileWarning ? [profileWarning] : [],
-      challenges: [],
-      profileMode,
-      pages: [],
-      durationMs: Math.round((performance.now() - started) * 10) / 10,
-    });
+    sendResult(
+      await buildEnvelope(session, message, started, {
+        firstEvent,
+        pages: [],
+        ok: false,
+        error: redactText(error?.message || String(error)),
+      }),
+    );
   } finally {
     activeExecutionSession = null;
   }
@@ -3071,24 +2829,17 @@ async function execute(message) {
       };
     }
 
-    sendResult({
-      type: "result",
-      id: message.id,
-      ok: true,
-      result: redactDeep(publicResult),
-      console: redactDeep(consoleMessages),
-      events: redactDeep(session.events.slice(firstEvent)),
-      artifacts: redactDeep(session.artifacts.slice(firstArtifact)),
-      warnings: [
-        ...(profileWarning ? [profileWarning] : []),
-        ...(challenges.length ? [challenges[0].advice] : []),
-        ...session.warnings.splice(0),
-      ],
-      challenges: redactDeep(challenges),
-      profileMode,
-      pages: await summarizeSessionPages(session),
-      durationMs: Math.round((performance.now() - started) * 10) / 10,
-    });
+    sendResult(
+      await buildEnvelope(session, message, started, {
+        firstEvent,
+        console: consoleMessages,
+        artifacts: session.artifacts.slice(firstArtifact),
+        challenges,
+        drainSessionWarnings: true,
+        ok: true,
+        result: redactDeep(publicResult),
+      }),
+    );
   } catch (error) {
     let failure = error;
     if (downloadRunConfigured) {
@@ -3109,24 +2860,17 @@ async function execute(message) {
       challenges = markChallengesForWorkerRestart(challenges);
     }
     await enforceArtifactQuota(session).catch(() => {});
-    sendResult({
-      type: "result",
-      id: message.id,
-      ok: false,
-      error: redactText(failure?.message || String(failure)),
-      console: redactDeep(consoleMessages),
-      events: redactDeep(session.events.slice(firstEvent)),
-      artifacts: redactDeep(session.artifacts.slice(firstArtifact)),
-      warnings: [
-        ...(profileWarning ? [profileWarning] : []),
-        ...(challenges.length ? [challenges[0].advice] : []),
-      ],
-      challenges: redactDeep(challenges),
-      profileMode,
-      pages: await summarizeSessionPages(session),
-      restartWorker,
-      durationMs: Math.round((performance.now() - started) * 10) / 10,
-    });
+    sendResult(
+      await buildEnvelope(session, message, started, {
+        firstEvent,
+        console: consoleMessages,
+        artifacts: session.artifacts.slice(firstArtifact),
+        challenges,
+        ok: false,
+        error: redactText(failure?.message || String(failure)),
+        restartWorker,
+      }),
+    );
   } finally {
     if (approvedDownloadSession === session.id) approvedDownloadSession = null;
     activeExecutionSession = null;
@@ -3153,7 +2897,7 @@ async function shutdown() {
     browserContext = null;
     connectedBrowser = null;
     connectedMode = false;
-    await closeGuardProxy();
+    await guardProxy.close();
     return;
   }
   // Chromium can emit BrowserContext.close before its process finishes the
@@ -3171,7 +2915,7 @@ async function shutdown() {
   }
   browserContext = null;
   releaseProfileLock();
-  await closeGuardProxy();
+  await guardProxy.close();
   if (ephemeralProfileDir) {
     try {
       fs.rmSync(ephemeralProfileDir, { recursive: true, force: true });

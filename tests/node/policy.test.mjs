@@ -4,9 +4,25 @@ import { test } from "node:test";
 import { NetworkPolicy } from "../../src/policy.mjs";
 
 const allow = (policy, url) => policy.check(url).allowed === true;
+// Private networks and loopback are open by default; construct a hardened
+// policy for the tests that exercise the strict blocking behavior.
+const strict = () =>
+  new NetworkPolicy({ allowPrivateNetwork: false, allowLoopback: false });
 
 test("public https allowed by default", () => {
   assert.ok(allow(new NetworkPolicy(), "https://example.com/path?q=1"));
+});
+
+test("private ranges and loopback allowed by default", () => {
+  const policy = new NetworkPolicy();
+  for (const url of [
+    "http://10.0.0.5/",
+    "http://192.168.0.1/",
+    "http://127.0.0.1:8000/",
+    "http://localhost:5173/",
+    "http://nas.lan/",
+  ])
+    assert.ok(allow(policy, url), url);
 });
 
 test("metadata hostname and address blocked", () => {
@@ -20,8 +36,8 @@ test("metadata cannot be allowlisted", () => {
   assert.equal(policy.check("http://metadata.google.internal/").allowed, false);
 });
 
-test("private ranges blocked by default", () => {
-  const policy = new NetworkPolicy();
+test("private ranges blocked in strict mode", () => {
+  const policy = strict();
   for (const url of [
     "http://10.0.0.5/",
     "http://192.168.1.1/",
@@ -32,7 +48,7 @@ test("private ranges blocked by default", () => {
 });
 
 test("IPv4-mapped IPv6 preserves the embedded IPv4 classification", () => {
-  const policy = new NetworkPolicy();
+  const policy = strict();
   for (const url of [
     "http://[::ffff:127.0.0.1]/",
     "http://[::ffff:10.0.0.1]/",
@@ -42,8 +58,18 @@ test("IPv4-mapped IPv6 preserves the embedded IPv4 classification", () => {
   assert.ok(allow(policy, "https://[::ffff:8.8.8.8]/"));
 });
 
+test("metadata stays blocked even with the default open posture", () => {
+  const policy = new NetworkPolicy();
+  assert.ok(!allow(policy, "http://169.254.169.254/latest/meta-data/"));
+  assert.ok(!allow(policy, "http://[::ffff:169.254.169.254]/"));
+  assert.ok(!allow(policy, "http://metadata.google.internal/"));
+});
+
 test("loopback opt-in does not open the private network", () => {
-  const policy = new NetworkPolicy({ allowLoopback: true });
+  const policy = new NetworkPolicy({
+    allowPrivateNetwork: false,
+    allowLoopback: true,
+  });
   assert.ok(allow(policy, "http://127.0.0.1:3000/"));
   assert.ok(allow(policy, "http://localhost:3000/"));
   assert.ok(!allow(policy, "http://10.0.0.1/"));
@@ -57,7 +83,11 @@ test("block host beats defaults and matches subdomains", () => {
 });
 
 test("allow host honors an explicit port", () => {
-  const policy = new NetworkPolicy({ allowHosts: ["localhost:3000"] });
+  const policy = new NetworkPolicy({
+    allowPrivateNetwork: false,
+    allowLoopback: false,
+    allowHosts: ["localhost:3000"],
+  });
   assert.ok(allow(policy, "http://localhost:3000/"));
   assert.ok(!allow(policy, "http://localhost:4000/"));
 });

@@ -1,0 +1,640 @@
+{
+  "comment": "Conformance vectors for the NetworkPolicy in src/policy.mjs. The test suite runs every vector; a change that alters any decision fails with the vector's name. Policy options use snake_case (a historical artifact of the fixture format); the test maps them to camelCase. Private networks and loopback are OPEN by default, so vectors that exercise the strict blocking path set allow_private_network/allow_loopback to false explicitly. The cloud-metadata floor is never disabled by those flags. reason_contains, when present, must be a substring of the returned reason.",
+  "vectors": [
+    {
+      "name": "public https",
+      "url": "https://example.com/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "public http with path",
+      "url": "http://api.example.com/v1/data?q=1",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "websocket public",
+      "url": "wss://example.com/socket",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "about:blank",
+      "url": "about:blank",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "data url",
+      "url": "data:text/plain,hello",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "blob url",
+      "url": "blob:https://example.com/uuid",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "file scheme blocked",
+      "url": "file:///etc/passwd",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "unsupported browser URL scheme"
+    },
+    {
+      "name": "javascript scheme blocked",
+      "url": "javascript:alert(1)",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "unsupported browser URL scheme"
+    },
+    {
+      "name": "empty url",
+      "url": "",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "empty URL"
+    },
+    {
+      "name": "private allowed by default",
+      "url": "http://192.168.0.1/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "rfc1918 10/8 allowed by default",
+      "url": "http://10.1.2.3/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "loopback allowed by default",
+      "url": "http://127.0.0.1:8080/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "localhost allowed by default",
+      "url": "http://localhost:5173/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "lan host allowed by default",
+      "url": "http://nas.lan/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "internal host allowed by default",
+      "url": "http://db.prod.internal/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "metadata hostname google",
+      "url": "http://metadata.google.internal/computeMetadata/v1/",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata hostname goog",
+      "url": "http://metadata.goog/",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata ip aws",
+      "url": "http://169.254.169.254/latest/meta-data/",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata ip ecs task",
+      "url": "http://169.254.170.2/v2/credentials",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata ip alibaba",
+      "url": "http://100.100.100.200/latest/meta-data/",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata ipv6 ec2",
+      "url": "http://[fd00:ec2::254]/latest/meta-data/",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata blocked despite default open posture",
+      "url": "http://169.254.169.254/",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata survives allow_private_network",
+      "url": "http://169.254.169.254/",
+      "policy": {
+        "allow_private_network": true
+      },
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata survives allow_hosts",
+      "url": "http://metadata.google.internal/",
+      "policy": {
+        "allow_hosts": [
+          "metadata.google.internal"
+        ]
+      },
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "metadata via ipv4-mapped ipv6",
+      "url": "http://[::ffff:169.254.169.254]/",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "metadata"
+    },
+    {
+      "name": "loopback ipv4 blocked in strict mode",
+      "url": "http://127.0.0.1:8080/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "loopback address"
+    },
+    {
+      "name": "loopback ipv4 allowed by flag",
+      "url": "http://127.0.0.1:8080/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": true
+      },
+      "allowed": true
+    },
+    {
+      "name": "loopback ipv6 blocked in strict mode",
+      "url": "http://[::1]:3000/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "loopback address"
+    },
+    {
+      "name": "loopback via mapped ipv6 blocked in strict mode",
+      "url": "http://[::ffff:127.0.0.1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "loopback address"
+    },
+    {
+      "name": "localhost hostname blocked in strict mode",
+      "url": "http://localhost:5173/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "loopback address"
+    },
+    {
+      "name": "localhost subdomain blocked in strict mode",
+      "url": "http://app.localhost/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "loopback address"
+    },
+    {
+      "name": "localhost allowed by allow_private_network",
+      "url": "http://localhost:5173/",
+      "policy": {
+        "allow_private_network": true
+      },
+      "allowed": true
+    },
+    {
+      "name": "rfc1918 10/8 blocked in strict mode",
+      "url": "http://10.1.2.3/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "rfc1918 172.16/12 blocked in strict mode",
+      "url": "http://172.20.0.1/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "rfc1918 192.168/16 blocked in strict mode",
+      "url": "http://192.168.1.1/admin",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "rfc1918 allowed by flag",
+      "url": "http://10.1.2.3/",
+      "policy": {
+        "allow_private_network": true
+      },
+      "allowed": true
+    },
+    {
+      "name": "link-local ipv4 blocked in strict mode",
+      "url": "http://169.254.1.1/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "cgnat blocked in strict mode",
+      "url": "http://100.64.0.1/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "zero-net blocked in strict mode",
+      "url": "http://0.1.2.3/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "private via mapped ipv6 blocked in strict mode",
+      "url": "http://[::ffff:10.0.0.1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "public via mapped ipv6",
+      "url": "http://[::ffff:93.184.216.34]/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "ipv6 link-local blocked in strict mode",
+      "url": "http://[fe80::1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "ipv6 unique-local fc blocked in strict mode",
+      "url": "http://[fc00::1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "ipv6 unique-local fd blocked in strict mode",
+      "url": "http://[fd12:3456::1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "ipv6 unspecified blocked in strict mode",
+      "url": "http://[::]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "ipv6 multicast blocked in strict mode",
+      "url": "http://[ff02::1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "multicast ipv4 blocked in strict mode",
+      "url": "http://224.0.0.1/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "reserved ipv4 blocked in strict mode",
+      "url": "http://240.0.0.1/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "test-net-1 blocked in strict mode",
+      "url": "http://192.0.2.5/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "benchmark range blocked in strict mode",
+      "url": "http://198.18.0.1/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "test-net-2 blocked in strict mode",
+      "url": "http://198.51.100.7/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "test-net-3 blocked in strict mode",
+      "url": "http://203.0.113.9/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "broadcast blocked in strict mode",
+      "url": "http://255.255.255.255/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "public ipv6 allowed",
+      "url": "http://[2606:4700::6810:84e5]/",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "dotless hostname blocked in strict mode",
+      "url": "http://intranet/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal hostname"
+    },
+    {
+      "name": "dot-local blocked in strict mode",
+      "url": "http://printer.local/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal hostname"
+    },
+    {
+      "name": "dot-internal blocked in strict mode",
+      "url": "http://db.prod.internal/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal hostname"
+    },
+    {
+      "name": "dot-lan blocked in strict mode",
+      "url": "http://nas.lan/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal hostname"
+    },
+    {
+      "name": "internal hostname allowed by flag",
+      "url": "http://db.prod.internal/",
+      "policy": {
+        "allow_private_network": true
+      },
+      "allowed": true
+    },
+    {
+      "name": "allow_hosts exact re-allows a blocked host",
+      "url": "http://10.1.2.3/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false,
+        "allow_hosts": [
+          "10.1.2.3"
+        ]
+      },
+      "allowed": true
+    },
+    {
+      "name": "allow_hosts parent domain covers subdomain",
+      "url": "https://api.dev.example.test/",
+      "policy": {
+        "allow_hosts": [
+          "example.test"
+        ]
+      },
+      "allowed": true
+    },
+    {
+      "name": "block_hosts requires dot boundary",
+      "url": "https://evilexample.test/",
+      "policy": {
+        "block_hosts": [
+          "example.test"
+        ]
+      },
+      "allowed": true
+    },
+    {
+      "name": "allow_hosts with matching port",
+      "url": "http://192.168.1.10:8080/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false,
+        "allow_hosts": [
+          "192.168.1.10:8080"
+        ]
+      },
+      "allowed": true
+    },
+    {
+      "name": "allow_hosts with other port stays blocked",
+      "url": "http://192.168.1.10:9999/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false,
+        "allow_hosts": [
+          "192.168.1.10:8080"
+        ]
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "block_hosts beats allow_hosts",
+      "url": "https://tracker.example.com/",
+      "policy": {
+        "allow_hosts": [
+          "example.com"
+        ],
+        "block_hosts": [
+          "tracker.example.com"
+        ]
+      },
+      "allowed": false,
+      "reason_contains": "host blocked by policy"
+    },
+    {
+      "name": "block_hosts parent blocks subdomain",
+      "url": "https://cdn.ads.test/",
+      "policy": {
+        "block_hosts": [
+          "ads.test"
+        ]
+      },
+      "allowed": false,
+      "reason_contains": "host blocked by policy"
+    },
+    {
+      "name": "block_hosts port-scoped ignores other ports",
+      "url": "https://example.com/",
+      "policy": {
+        "block_hosts": [
+          "example.com:8443"
+        ]
+      },
+      "allowed": true
+    },
+    {
+      "name": "openai-style key in url",
+      "url": "https://example.com/?key=sk-abcdefghijklmnopqrstuvwxyz123456",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "API key or token"
+    },
+    {
+      "name": "github token in path",
+      "url": "https://example.com/ghp_ABCDEFGHIJKLMNOPQRSTuvwxyz012345/raw",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "API key or token"
+    },
+    {
+      "name": "aws access key in query",
+      "url": "https://example.com/?id=AKIAIOSFODNN7EXAMPLE",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "API key or token"
+    },
+    {
+      "name": "url-encoded secret still caught",
+      "url": "https://example.com/?key=sk%2Dabcdefghijklmnopqrstuvwxyz123456",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "API key or token"
+    },
+    {
+      "name": "jwt in url blocked",
+      "url": "https://example.com/?t=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "API key or token"
+    },
+    {
+      "name": "secret check disabled by flag",
+      "url": "https://example.com/?key=sk-abcdefghijklmnopqrstuvwxyz123456",
+      "policy": {
+        "block_secret_bearing_urls": false
+      },
+      "allowed": true
+    },
+    {
+      "name": "short sk prefix is not a secret",
+      "url": "https://example.com/?key=sk-short",
+      "policy": {},
+      "allowed": true
+    }
+  ]
+}
