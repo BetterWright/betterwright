@@ -1,0 +1,278 @@
+{
+  "schema_version": "betterwright-online-mind2web-sample-v1",
+  "benchmark": "Online-Mind2Web",
+  "count": 50,
+  "seed": "betterwright-online-mind2web-v1",
+  "selection": "Difficulty-stratified SHA-256 sample from task IDs unchanged after the source mirror; order independent.",
+  "excluded_updated_task_bases": [
+    "199be0b54a436daee74247971fc684ee",
+    "1bc154377120ec15b18dbabdba49c741",
+    "47186fac8e7c7277af01144644eb4e0b",
+    "50d91eabde542906937ab4c5b6f8f23a",
+    "547f5729c59d5d12a457a3ebb74c31c6",
+    "78baf9dbe7c3532f7d7ef4cc22a7f065",
+    "7e1047f4803237f319c004f7a7f6bccb",
+    "85b284c18d7e78c9b5a9e074e7aa3b98",
+    "8ae510355d978424f490798f900bfa2c",
+    "b64f938af842f6a1b4489d0e49a785a7",
+    "c698ff3fc0f6cbce39947c597ab5749b",
+    "c94551d2b18f9ad0ab31b0bd98ca42e3",
+    "fc53ddd3421411a41c1020a3fdc84ec4"
+  ],
+  "partitions": {
+    "development": 35,
+    "holdout": 15
+  },
+  "tasks": [
+    {
+      "task_id": "f707d765bca668830745d20807d7bee6",
+      "level": "hard",
+      "partition": "development"
+    },
+    {
+      "task_id": "753f372c189d3b306623cb0c65b50320",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "43a1ca251f11c6b0bdd0379766cc49e6",
+      "level": "medium",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "871e7771cecb989972f138ecc373107b",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "a172a5d9ffaf5ef02bd550ec4fe24e6d",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "6ca20f1da01edeb49a7a42c816d8c6fe",
+      "level": "medium",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "367d843c640637745e8fafa741cca13b",
+      "level": "hard",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "cad62d2be0c53f08a416457486b3db23",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "a48e2f1ee8d87eaeea56fe5e730427e6",
+      "level": "medium",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "f2097f92a10d42a842c14179f422311e",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "b922508886ded315c9835457a6eb43ea",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "9bb63ad0e38d5691a618932a8b31c05a",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "b4aa7315e31dfcdc52baf7771be260c9",
+      "level": "hard",
+      "partition": "development"
+    },
+    {
+      "task_id": "ec78d3a635e417bc2a80d03ca93d7165",
+      "level": "hard",
+      "partition": "development"
+    },
+    {
+      "task_id": "bb5d90e6f2fbc0ae146f7c1998c2b4a1",
+      "level": "hard",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "29b7372d5a3884a2ba831af2d117af3c",
+      "level": "easy",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "6ebde509dca8f15c0fa1bd74f071e8d6",
+      "level": "hard",
+      "partition": "development"
+    },
+    {
+      "task_id": "95cad96f2e43f3c0d8efad1331c77c8c",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "2e4e21cf1449c6894b17d571c47b77ea",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "987bad7c6d4726d64232a8a1c3386888",
+      "level": "hard",
+      "partition": "development"
+    },
+    {
+      "task_id": "323bd85e3559655d89e5496b951a25e8",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "824eb7bb0ef1ce40bfd49c12182d9428_110325",
+      "level": "hard",
+      "partition": "development"
+    },
+    {
+      "task_id": "99daaed9a83c266341d28aa40067d376",
+      "level": "easy",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "cf757a775fa1224acfc7998489e199a8",
+      "level": "hard",
+      "partition": "development"
+    },
+    {
+      "task_id": "a6f0434ce6aff5f9b03681241b03ad82",
+      "level": "easy",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "9d09bc948462db032bac98968b11b008",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "75a1b5dcd2c28508a971d98d51fe5767",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "e4e19e04286f644d747d8c5a79d17fac",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "4e3f6a538cc1f7321cfc50260db9545d",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "bfa2de159be6978acf2702be31a2eeeb",
+      "level": "hard",
+      "partition": "development"
+    },
+    {
+      "task_id": "da8f3823a827c7d3a492f383808e7912",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "71f8de1834599fba443f40dbbfab8edd",
+      "level": "hard",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "7562d9b4e4829a44245aafce2e1f62db",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "39c388cdc468688c8139cc2bb5157c13",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "ba2a469af584f16da93ce6a7430cf7e5",
+      "level": "medium",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "d5c34bf39eb6096ae5d439325cde4d32",
+      "level": "easy",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "b3a7da968de13bbdcaed12ffe4993df6",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "4d3157aab34b54e5f0c4b965dfe930f3",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "8689af4d33ce00bf2cdd8987d3bbfd86",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "0632e496d37badee0350dad358f047c5",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "c39d6c245f8243993e707d54d2f4acec",
+      "level": "hard",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "38203be65401943aea2179c4c680059a",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "8f80e64e44e1fada018997b2fe869683_110325",
+      "level": "easy",
+      "partition": "development"
+    },
+    {
+      "task_id": "59b7b990b4828bc305ab0d7ed6071b55",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "92a3d4236f167af4afdc08876a902ba6",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "b7258ee05d75e6c50673a59914db412e_110325",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "864244b6969e0f8733b0eb1ca06cd51f",
+      "level": "medium",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "8103786e0e5976ebf961bd062d5f39cd",
+      "level": "medium",
+      "partition": "holdout"
+    },
+    {
+      "task_id": "bc2ce7f206045dd2d322e5695a947219",
+      "level": "medium",
+      "partition": "development"
+    },
+    {
+      "task_id": "87f4c5128e36cdb9366a138a7b61bb00",
+      "level": "medium",
+      "partition": "holdout"
+    }
+  ]
+}
