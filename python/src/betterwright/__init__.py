@@ -36,7 +36,7 @@ from betterwright.vault import (
     normalize_http_origin,
 )
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "Artifact",
