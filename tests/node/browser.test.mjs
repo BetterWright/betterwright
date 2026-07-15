@@ -206,6 +206,33 @@ test("navigate and read the title", opts, async () => {
   }
 });
 
+test("page summaries identify the active tab", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const opened = await bw.run(`
+      await page.setContent('<title>First</title><h1>First</h1>');
+      const second = await openPage();
+      await second.setContent('<title>Second</title><h1>Second</h1>');
+      return pages.map(item => ({ pageId: item }));
+    `);
+    assert.equal(opened.ok, true, opened.error);
+    assert.equal(opened.pages.length, 2);
+    assert.equal(opened.pages.filter((page) => page.active).length, 1);
+    assert.equal(opened.pages.find((page) => page.active).title, "Second");
+
+    const firstId = opened.pages.find((page) => page.title === "First").pageId;
+    const selected = await bw.run(`
+      await usePage(${JSON.stringify(firstId)});
+      return page.title();
+    `);
+    assert.equal(selected.ok, true, selected.error);
+    assert.equal(selected.pages.filter((page) => page.active).length, 1);
+    assert.equal(selected.pages.find((page) => page.active).title, "First");
+  } finally {
+    await bw.close();
+  }
+});
+
 test("public search UIs route agents to the host search tool", opts, async () => {
   // Public search is allowed by default now, so opt into the block routing.
   const bw = new BetterWright({
@@ -459,6 +486,64 @@ test("vault fills are unavailable to model-authored snippets", opts, async () =>
   } finally {
     await bw.close();
     await server.close();
+  }
+});
+
+test("overlays dismisses cookie and promotional popups but preserves task dialogs", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <div role="dialog" id="cookie"><p>We value your privacy and use cookies.</p><button onclick="this.parentElement.remove()">Reject all</button></div>
+        <div role="dialog" id="promo"><p>Subscribe to our newsletter for a discount.</p><button aria-label="Close" onclick="this.parentElement.remove()">×</button></div>
+        <div role="dialog" id="checkout"><p>Confirm purchase</p><button aria-label="Close">×</button></div>
+      \`);
+      const dismissed = await overlays.dismiss();
+      return {
+        dismissed,
+        cookie: await page.locator('#cookie').count(),
+        promo: await page.locator('#promo').count(),
+        checkoutVisible: await page.locator('#checkout').isVisible(),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(
+      result.result.dismissed.dismissed.map((item) => item.kind),
+      ["cookie", "promotion"],
+    );
+    assert.equal(result.result.cookie, 0);
+    assert.equal(result.result.promo, 0);
+    assert.equal(result.result.checkoutVisible, true);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("controls and media inspectors expose exact live state", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <label>Radius <select><option>10 miles</option><option selected>25 miles</option></select></label>
+        <label>Maximum price <input type="number" min="0" max="25000" step="1" value="24999"></label>
+        <input type="password" aria-label="Password" value="never-return-this">
+        <h1>Game recap: Knicks vs Spurs</h1>
+        <video aria-label="Game recap: Knicks vs Spurs" src="recap.mp4"></video>
+      \`);
+      return { controls: await controls.inspect(), media: await media.inspect() };
+    `);
+    assert.equal(result.ok, true, result.error);
+    const controls = result.result.controls.frames[0].controls;
+    const radius = controls.find((control) => control.label === "Radius");
+    assert.equal(radius.options.find((option) => option.selected).text, "25 miles");
+    assert.equal(controls.find((control) => control.label === "Maximum price").value, "24999");
+    assert.equal(controls.find((control) => control.label === "Password").value, "[redacted]");
+    const media = result.result.media.frames[0].media[0];
+    assert.equal(media.title, "Game recap: Knicks vs Spurs");
+    assert.equal(media.paused, true);
+    assert.deepEqual(media.headings, ["Game recap: Knicks vs Spurs"]);
+  } finally {
+    await bw.close();
   }
 });
 
@@ -738,6 +823,35 @@ test("visible bot challenges include actionable state and a vision artifact", op
     assert.equal(result.challenges?.[0]?.solve?.maxAttempts, 3);
     assert.ok(result.warnings?.some((warning) => /solve it before retrying/i.test(warning)));
     assert.ok(result.artifacts?.some((artifact) => artifact.kind === "captcha"));
+  } finally {
+    await bw.close();
+  }
+});
+
+test("inactive stale challenges do not contaminate the active tab result", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<h1>Verify you are human to continue</h1>');
+      const blockedId = pages[0];
+      const clean = await openPage();
+      await clean.setContent('<h1>Current clean result</h1>');
+      return { blockedId, clean: await clean.title() };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.challenges, undefined);
+    assert.equal(
+      result.artifacts?.some((artifact) => artifact.kind === "captcha") ?? false,
+      false,
+    );
+
+    const blockedId = result.result.blockedId.pageId;
+    const selected = await bw.run(`
+      await usePage(${JSON.stringify(blockedId)});
+      return page.url();
+    `);
+    assert.equal(selected.challenges?.[0]?.type, "bot_challenge");
+    assert.ok(selected.artifacts?.some((artifact) => artifact.kind === "captcha"));
   } finally {
     await bw.close();
   }

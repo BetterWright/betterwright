@@ -40,16 +40,64 @@ Then go to the matching section:
 
 | Host | Section |
 | --- | --- |
-| An MCP client (Claude Code, Cursor, Windsurf, Cline, …) | **§1 — MCP** |
-| A Python agent you can edit | **§2 — Python** |
-| A JavaScript / TypeScript agent you can edit | **§3 — JavaScript** |
-| A host that can only run shell commands | **§4 — CLI** |
+| Pi Coding Agent | **§1 — Pi Coding Agent** |
+| An MCP client (Claude Code, Cursor, Windsurf, Cline, …) | **§2 — MCP** |
+| A Python agent you can edit | **§3 — Python** |
+| A JavaScript / TypeScript agent you can edit | **§4 — JavaScript** |
+| A host that can only run shell commands | **§5 — CLI** |
 
-After integrating, do **§5 — Verify** and offer **§6 — Safeguards**.
+After integrating, do **§6 — Verify** and offer **§7 — Safeguards**.
 
 ---
 
-## §1 — MCP client (Claude Code, Cursor, and similar)
+## §1 — Pi Coding Agent
+
+BetterWright declares its native extension in the package's `pi.extensions`
+manifest. Pi therefore loads `browser` and `browser_download` directly, keeps
+one BetterWright session alive, attaches screenshots as vision content, and
+adds the BetterWright operator guidance to the system prompt.
+
+For a published package:
+
+```bash
+pi install npm:betterwright
+npx -y betterwright setup
+pi
+```
+
+For a local checkout under active development:
+
+```bash
+npm install
+npx betterwright setup
+pi install /absolute/path/to/betterwright
+pi
+```
+
+Use `-l` with `pi install` for project-local Pi settings. To try the source
+extension without installing the package, run
+`pi --extension ./src/pi-extension.mjs` from the BetterWright checkout.
+
+The extension supports these optional host environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `BETTERWRIGHT_PI_START_URL` | Navigate once to an HTTP(S) start page before the first tool call. |
+| `BETTERWRIGHT_PI_MAX_STEPS` | Positive browser-tool step budget. |
+| `BETTERWRIGHT_PI_SESSION` | Persistent BetterWright session name; defaults to `pi`. |
+| `BETTERWRIGHT_PI_TRACE_DIR` | Write JSONL steps and copied screenshots for evaluation or audit. |
+| `BETTERWRIGHT_PI_AUTO_SCREENSHOT` | Attach the active page after a call that produced no image; defaults to true. |
+| `BETTERWRIGHT_PI_TIMEOUT_SECONDS` | Per-snippet BetterWright timeout. |
+| `BETTERWRIGHT_PI_DOWNLOAD_POLICY` | `ask`, `allow`, or `deny`; non-interactive `ask` mode fails closed. |
+
+Pi package extensions execute with host privileges, while model-authored browser
+code still runs inside BetterWright's guarded worker. Review package source and
+keep download approval and network policy under trusted host control. Then do
+**§6**.
+
+---
+
+## §2 — MCP client (Claude Code, Cursor, and similar)
 
 BetterWright ships an MCP server that exposes `browser`, `browser_download`, and
 `browser_doctor`. `browser_download` uses MCP elicitation to ask the user before
@@ -77,8 +125,8 @@ documents):
 ```
 
 The server reads its policy from the environment, so the same command works
-everywhere — see **§6** for the variables. Restart the client (or reload its MCP
-servers) and confirm a `browser` tool appears. Then do **§5**.
+everywhere — see **§7** for the variables. Restart the client (or reload its MCP
+servers) and confirm a `browser` tool appears. Then do **§6**.
 
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
@@ -99,7 +147,7 @@ cannot present elicitation. Set it to `allow` to remove approval prompts or
 
 ---
 
-## §2 — Python agent
+## §3 — Python agent
 
 Keep **one** `BetterWright` instance alive for the whole process (not one per
 call — that would throw away the persistent session). Register an ordinary
@@ -109,7 +157,7 @@ guidance to your system prompt.
 ```python
 from betterwright import BetterWright, NetworkPolicy, agent_system_prompt
 
-# 1. One browser for the process. Adjust the policy per §6.
+# 1. One browser for the process. Adjust the policy per §7.
 browser = BetterWright(policy=NetworkPolicy(allow_loopback=False))
 
 # 2. The tool handler. Map `session` to your conversation/thread id so each
@@ -160,7 +208,7 @@ parameters. Its trusted host handler must apply the configured policy: confirm
 through the host UI in `ask` mode, skip the prompt in `allow` mode, and refuse in
 `deny` mode. Only after approval should it call
 `browser.run(..., approved_downloads=True)`. Never expose `approved_downloads`
-as a model-controlled tool parameter. Then do **§5**.
+as a model-controlled tool parameter. Then do **§6**.
 
 Do not expose `connect_over_cdp`, a CDP endpoint, the raw browser object, or
 `newCDPSession` through either tool. CDP is an optional trusted host transport;
@@ -168,7 +216,7 @@ the model receives only BetterWright's guarded Playwright facade and helpers.
 
 ---
 
-## §3 — JavaScript / TypeScript agent
+## §4 — JavaScript / TypeScript agent
 
 Identical shape. Keep one client alive and expose ordinary and download tools.
 
@@ -218,7 +266,7 @@ Register `browserTool` and route it to `runBrowser`. Add `browser_download` with
 the same model parameters; its trusted handler confirms in `ask`, skips the
 prompt in `allow`, refuses in `deny`, and only then calls
 `browser.run(code, { approvedDownloads: true })`. Never expose
-`approvedDownloads` as a model-controlled tool parameter. Then do **§5**.
+`approvedDownloads` as a model-controlled tool parameter. Then do **§6**.
 
 Do not expose `connectOverCdp`, a CDP endpoint, the raw browser object, or
 `newCDPSession` through either tool. CDP is an optional trusted host transport;
@@ -226,7 +274,7 @@ the model receives only BetterWright's guarded Playwright facade and helpers.
 
 ---
 
-## §4 — Shell-only host
+## §5 — Shell-only host
 
 If you can only run shell commands, use the CLI directly — no integration code.
 It prints a single JSON object and exits `0` on success, `1` on failure.
@@ -239,11 +287,11 @@ Pass a multi-line snippet from a file with `betterwright run path/to/snippet.js`
 or from stdin with `betterwright run -`. Policy flags: `--allow-loopback`,
 `--allow-host HOST`, `--block-host HOST`, `--headed`. This is the quickest path
 but the browser does not persist between separate `run` invocations, so prefer
-§1–§3 for real multi-step work.
+§1–§4 for real multi-step work.
 
 ---
 
-## §5 — Verify the integration
+## §6 — Verify the integration
 
 Do not report success until you have observed the browser actually work through
 the path you just wired. Have the agent (or run yourself) this two-step check:
@@ -267,7 +315,7 @@ using an alternate source or requesting human help.
 
 ---
 
-## §6 — Safeguards (configure to taste)
+## §7 — Safeguards (configure to taste)
 
 BetterWright is safe by default (cloud metadata and private networks are
 blocked). Tighten or loosen it deliberately. Two independent layers:

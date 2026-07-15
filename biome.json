@@ -1,7 +1,14 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
   "files": {
-    "includes": ["src/**", "bin/**", "scripts/**", "tests/**"]
+    "includes": [
+      "src/**",
+      "bin/**",
+      "scripts/**",
+      "tests/**",
+      "benchmarks/**",
+      "!!benchmarks/online-mind2web/runs"
+    ]
   },
   "linter": {
     "enabled": true,

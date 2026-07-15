@@ -6,6 +6,7 @@ import { agentSystemPrompt } from "../../src/prompt.mjs";
 test("default prompt is permissive", () => {
   const prompt = agentSystemPrompt();
   const compact = prompt.replace(/\s+/g, " ");
+  assert.ok(prompt.length < 4_000, `default prompt grew to ${prompt.length} characters`);
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
   assert.ok(compact.includes("do not automate Google or Bing's public search UI"));
@@ -24,6 +25,12 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("never duplicate a submission, purchase, or message"));
   assert.ok(compact.includes("Inspect the returned image itself before citing it"));
   assert.ok(compact.includes("fix the page and retake it"));
+  assert.ok(compact.includes("overlays.dismiss()"));
+  assert.ok(compact.includes("required filter/facet must be visibly active"));
+  assert.ok(compact.includes("controls.inspect()"));
+  assert.ok(compact.includes("media.inspect()"));
+  assert.ok(compact.includes("match its visible title/content"));
+  assert.ok(compact.includes("Never mark an unmet"));
   assert.ok(!prompt.includes("Guardrails for this session"));
 });
 

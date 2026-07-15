@@ -6,10 +6,11 @@ from betterwright.prompt import Guardrails, agent_system_prompt
 def test_default_prompt_is_permissive():
     prompt = agent_system_prompt()
     compact = " ".join(prompt.split())
+    assert len(prompt) < 4_000
     assert "You are authorized" in prompt
     # It explicitly tells the model not to refuse authorized actions.
     assert "do not refuse" in prompt.lower()
-    assert "automate Google or Bing's public search UI" in prompt
+    assert "automate Google or Bing's public search UI" in compact
     assert "captcha.inspect(bounds)" in compact
     assert "captcha.click(bounds)" in compact
     assert "captcha.drag(from, to)" in compact
@@ -25,6 +26,12 @@ def test_default_prompt_is_permissive():
     assert "never duplicate a submission, purchase, or message" in compact
     assert "Inspect the returned image itself before citing it" in compact
     assert "fix the page and retake it" in compact
+    assert "overlays.dismiss()" in compact
+    assert "required filter/facet must be visibly active" in compact
+    assert "controls.inspect()" in compact
+    assert "media.inspect()" in compact
+    assert "match its visible title/content" in compact
+    assert "Never mark an unmet" in compact
     assert "Guardrails for this session" not in prompt
 
 
