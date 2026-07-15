@@ -1,0 +1,91 @@
+{
+  "schema_version": "betterwright-online-mind2web-public-results-v1",
+  "benchmark": "Online-Mind2Web",
+  "result_kind": "iterative best-validated campaign",
+  "official_evaluation": false,
+  "dataset": {
+    "snapshot_date": "2025-11-23",
+    "sha256": "9e12bc981aa8bac167987f2e762669f3efa16a3ded2ea75609cfcba888aa0422",
+    "manifest": "full-300.json",
+    "manifest_sha256": "dfd0db63bc59e336949718dc004ed4a97e31a93fb9ee86ce56e807f4172aa252"
+  },
+  "agent": {
+    "model": "openai-codex/gpt-5.6-sol",
+    "reasoning": "high",
+    "max_browser_steps": 100,
+    "maximum_concurrency": 32
+  },
+  "evaluation": {
+    "method": "BetterWright local strict multimodal judge",
+    "judge_model": "openai-codex/gpt-5.6-sol",
+    "judge_reasoning": "high",
+    "completed_at": "2026-07-15T12:25:25.800Z"
+  },
+  "summary": {
+    "tasks": 300,
+    "passed": 278,
+    "failed": 22,
+    "pass_rate": 0.9266666667
+  },
+  "by_difficulty": {
+    "easy": {
+      "tasks": 81,
+      "passed": 80,
+      "failed": 1
+    },
+    "medium": {
+      "tasks": 143,
+      "passed": 134,
+      "failed": 9
+    },
+    "hard": {
+      "tasks": 76,
+      "passed": 64,
+      "failed": 12
+    }
+  },
+  "task_result_encoding": {
+    "manifest": "full-300.json",
+    "default_status": "success",
+    "default_score": 100,
+    "failed_task_ids_override_default": true
+  },
+  "failed_task_ids": [
+    "0a54069a0ef542e571d1fee7f39c93d5",
+    "123e8c2fc453f55fadd1d0b9aaf94df4",
+    "199be0b54a436daee74247971fc684ee_110325",
+    "2218042362d8fae73756eb309848c2b2",
+    "2c8ef01a92c71ba9ef2e59bb17eea2b3_110325",
+    "33bd2cdcea4fcc42a09a8a1e4e5841c6_110325",
+    "547f5729c59d5d12a457a3ebb74c31c6",
+    "636b07af4dd97c1793733db1fd1b90b8_110325",
+    "78baf9dbe7c3532f7d7ef4cc22a7f065",
+    "79f0bd7df6e685f30f20025cc6755c0a_110325",
+    "8f2611047de227a2ca8bda13f6e2e5fb_110325",
+    "8fdec8eeffd3491e6526cc78c028120b",
+    "9829f3087ab1f9c8eba6b6dd2b831d25_112325",
+    "9af05e392cf3f5a8ff17aa764ba5bda6",
+    "a0a18ca6a3529f3e97c771aadd42d3a0_110325",
+    "a48e2f1ee8d87eaeea56fe5e730427e6",
+    "afcebfed28bea091d58f49ea6cb8194b",
+    "b7258ee05d75e6c50673a59914db412e_110325",
+    "c94551d2b18f9ad0ab31b0bd98ca42e3",
+    "d8e2a81fa621ce4737e5ea85671b630e_110325",
+    "e7301bb694871429bf2eb36c3a72186c_110325",
+    "f27c0a7b8b0bb33d37698dff227fc8d7"
+  ],
+  "privacy": {
+    "contains_task_text": false,
+    "contains_agent_answers": false,
+    "contains_judge_reasoning": false,
+    "contains_screenshots": false,
+    "contains_trajectories": false,
+    "contains_browser_profiles": false,
+    "contains_session_logs": false
+  },
+  "notes": [
+    "This is not an official Online-Mind2Web human evaluation or leaderboard score.",
+    "The score combines validated outcomes retained across targeted reruns; it is not a one-shot 300-task run.",
+    "An interrupted later rerun was not judged and is excluded."
+  ]
+}
