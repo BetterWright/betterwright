@@ -25,17 +25,40 @@ function artifactImagePath(artifact) {
   if (!path.isAbsolute(candidate) || !mimeType) return null;
   const kind = String(artifact?.kind || "");
   if (!SCREENSHOT_KINDS.has(kind) && !media.startsWith("MEDIA:")) return null;
-  return { path: candidate, mimeType };
+  return { path: candidate, mimeType, kind };
 }
 
-/** Convert BetterWright screenshot artifacts to Pi AgentToolResult image blocks. */
-export async function piImageContent(result, { maxImageBytes = 2_500_000 } = {}) {
-  const content = [];
+/** Return safe, local image artifacts that Pi can receive as vision input. */
+export function piImageArtifacts(result) {
+  const images = [];
   const seen = new Set();
   for (const artifact of result?.artifacts || []) {
     const image = artifactImagePath(artifact);
     if (!image || seen.has(image.path)) continue;
     seen.add(image.path);
+    images.push({ path: image.path, mimeType: image.mimeType });
+  }
+  return images;
+}
+
+/** Select the screenshot that best represents the browser step in a trace. */
+export function piPrimaryImageArtifact(result) {
+  const images = [];
+  const seen = new Set();
+  for (const artifact of result?.artifacts || []) {
+    const image = artifactImagePath(artifact);
+    if (!image || seen.has(image.path)) continue;
+    seen.add(image.path);
+    images.push(image);
+  }
+  const selected = images.findLast((image) => image.kind !== "captcha") || images.at(-1);
+  return selected ? { path: selected.path, mimeType: selected.mimeType } : null;
+}
+
+/** Convert BetterWright screenshot artifacts to Pi AgentToolResult image blocks. */
+export async function piImageContent(result, { maxImageBytes = 2_500_000 } = {}) {
+  const content = [];
+  for (const image of piImageArtifacts(result)) {
     try {
       const stat = await fs.stat(image.path);
       if (!stat.isFile() || stat.size > maxImageBytes) continue;

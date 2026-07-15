@@ -9,11 +9,17 @@ import {
   METADATA_ADDRESSES,
   METADATA_HOSTNAMES,
   NetworkPolicy,
+  piImageArtifacts,
   piImageContent,
+  piPrimaryImageArtifact,
   type RunResult,
 } from "betterwright";
 import { chromeExecutableCandidates } from "betterwright/chrome";
 import type { PiImageContentBlock } from "betterwright/pi";
+import createBetterWrightPiExtension, {
+  createPiExtension,
+  type PiExtension,
+} from "betterwright/pi-extension";
 import type { NetworkDecision } from "betterwright/policy";
 import type { Guardrails as PromptGuardrails } from "betterwright/prompt";
 import { METADATA_RESOLVER_RULES } from "betterwright/worker";
@@ -43,6 +49,10 @@ const chrome: string | null = findChromeExecutable();
 const candidates: string[] = chromeExecutableCandidates();
 const cdp = ensureChromeCdp({ port: 9223 });
 const images: Promise<PiImageContentBlock[]> = piImageContent({ artifacts: [] });
+const artifacts = piImageArtifacts({ artifacts: [] });
+const primaryArtifact = piPrimaryImageArtifact({ artifacts: [] });
+const extension: PiExtension = createPiExtension({ maxSteps: 100 });
+const defaultExtension: PiExtension = createBetterWrightPiExtension;
 const error: Error = new BrowserError("failed");
 const metadataAddress: boolean = METADATA_ADDRESSES.has("169.254.169.254");
 const metadataHost: boolean = METADATA_HOSTNAMES.has("metadata.google.internal");
@@ -57,6 +67,10 @@ void [
   candidates,
   cdp,
   images,
+  artifacts,
+  primaryArtifact,
+  extension,
+  defaultExtension,
   error,
   metadataAddress,
   metadataHost,

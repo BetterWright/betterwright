@@ -49,6 +49,7 @@ try {
     "types/policy.d.ts",
     "types/prompt.d.ts",
     "types/pi.d.ts",
+    "types/pi-extension.d.ts",
     "types/worker.d.ts",
   ];
   const missing = required.filter((name) => !paths.has(name));
@@ -88,11 +89,13 @@ try {
         "const policy = await import('betterwright/policy');",
         "const prompt = await import('betterwright/prompt');",
         "const pi = await import('betterwright/pi');",
+        "const piExtension = await import('betterwright/pi-extension');",
         "if (typeof root.BetterWright !== 'function') throw new Error('missing BetterWright');",
         "if (typeof chrome.ensureChromeCdp !== 'function') throw new Error('missing chrome export');",
         "if (typeof policy.NetworkPolicy !== 'function') throw new Error('missing policy export');",
         "if (typeof prompt.agentSystemPrompt !== 'function') throw new Error('missing prompt export');",
         "if (typeof pi.piImageContent !== 'function') throw new Error('missing Pi export');",
+        "if (typeof piExtension.default !== 'function') throw new Error('missing Pi extension');",
       ].join("\n"),
     ],
     { cwd: installRoot },
@@ -105,6 +108,7 @@ try {
       "import { chromeExecutableCandidates } from 'betterwright/chrome';",
       "import type { NetworkDecision } from 'betterwright/policy';",
       "import type { PiImageContentBlock } from 'betterwright/pi';",
+      "import createPiExtension from 'betterwright/pi-extension';",
       "import type { Guardrails } from 'betterwright/prompt';",
       "import { METADATA_RESOLVER_RULES } from 'betterwright/worker';",
       "const policy = new NetworkPolicy();",
@@ -113,7 +117,7 @@ try {
       "const decision: NetworkDecision = policy.check('https://example.com');",
       "const blocks: PiImageContentBlock[] = [];",
       "const guardrails: Guardrails = { passwordManager: '1Password' };",
-      "void [result, decision, blocks, guardrails, chromeExecutableCandidates(), METADATA_RESOLVER_RULES];",
+      "void [result, decision, blocks, guardrails, createPiExtension, chromeExecutableCandidates(), METADATA_RESOLVER_RULES];",
     ].join("\n"),
   );
   const typescript = path.join(root, "node_modules", "typescript", "bin", "tsc");
