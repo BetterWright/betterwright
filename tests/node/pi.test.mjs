@@ -4,7 +4,26 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { piImageContent } from "../../src/pi.mjs";
+import {
+  piImageArtifacts,
+  piImageContent,
+  piPrimaryImageArtifact,
+} from "../../src/pi.mjs";
+
+test("Pi image artifact discovery is safe, ordered, and deduplicated", () => {
+  const screenshot = path.join(os.tmpdir(), "betterwright-proof.png");
+  assert.deepEqual(
+    piImageArtifacts({
+      artifacts: [
+        { kind: "proof", path: screenshot },
+        { kind: "proof", media: `MEDIA:${screenshot}` },
+        { kind: "artifact", path: `${screenshot}.json` },
+        { kind: "proof", path: "relative.png" },
+      ],
+    }),
+    [{ path: screenshot, mimeType: "image/png" }],
+  );
+});
 
 test("Pi image blocks use top-level data and mimeType", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "betterwright-pi-"));
@@ -40,6 +59,26 @@ test("Pi image blocks attach captcha text crops", async () => {
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test("Pi trace evidence prefers the latest non-challenge screenshot", () => {
+  const proof = path.join(os.tmpdir(), "betterwright-proof.png");
+  const staleChallenge = path.join(os.tmpdir(), "betterwright-captcha.png");
+  assert.deepEqual(
+    piPrimaryImageArtifact({
+      artifacts: [
+        { kind: "proof", path: proof },
+        { kind: "captcha", path: staleChallenge },
+      ],
+    }),
+    { path: proof, mimeType: "image/png" },
+  );
+  assert.deepEqual(
+    piPrimaryImageArtifact({
+      artifacts: [{ kind: "captcha", path: staleChallenge }],
+    }),
+    { path: staleChallenge, mimeType: "image/png" },
+  );
 });
 
 test("Pi image adapter ignores spilled output and oversized images", async () => {

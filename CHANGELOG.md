@@ -4,7 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] — 2026-07-15
+
+### Added
+
+- Native Pi Coding Agent package integration with persistent `browser` and
+  approval-gated `browser_download` tools, screenshot vision blocks, bounded
+  step budgets, optional trace recording, and typed JavaScript exports.
+- A deterministic Online-Mind2Web harness with 50-task and full 300-task
+  manifests, development/holdout partitions, v2 trajectory validation,
+  resumable subset runs, and a strict local multimodal judge pinned to the
+  benchmark model and reasoning level.
+- A recorded 300-task Online-Mind2Web campaign report — 278/300 (92.7%) under
+  the local strict judge — with public-safe results, difficulty breakdown, and
+  dataset hashes under `benchmarks/online-mind2web/`.
 
 ### Changed
 
@@ -26,6 +39,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Pi start-page navigation failures are recoverable, and the initial failure is
+  retained as trace evidence instead of causing every later tool call to fail.
+- Challenge detection and Pi trace screenshots follow only the active page, so
+  an inactive stale CAPTCHA tab cannot replace the current page's evidence or
+  challenge state.
+- Local benchmark judging retains the first trajectory frame, preserving proof
+  that a run started at the required site and any access failure that justified
+  a later fallback.
 - The stock-Chromium fallback now uses its own `profile-chromium` directory
   instead of sharing the Cloak `profile`. Because the fallback ships a newer
   Chromium than Cloak, a single shared profile let it silently upgrade the

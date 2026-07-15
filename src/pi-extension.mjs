@@ -1,0 +1,629 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import { BetterWright } from "./client.mjs";
+import {
+  piImageArtifacts,
+  piImageContent,
+  piPrimaryImageArtifact,
+} from "./pi.mjs";
+import { agentSystemPrompt } from "./prompt.mjs";
+
+const BROWSER_TOOL_NAMES = new Set([
+  "browser",
+  "browser_download",
+  "browser_evidence",
+]);
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+const WEB_PROTOCOLS = new Set(["http:", "https:"]);
+
+export const PI_BROWSER_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    code: {
+      type: "string",
+      minLength: 1,
+      description: "Async Playwright JavaScript to run in the persistent browser.",
+    },
+    note: {
+      type: "string",
+      description: "Short present-tense status line describing this browser step.",
+    },
+  },
+  required: ["code"],
+};
+
+export const PI_EVIDENCE_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: {
+      type: "string",
+      enum: ["initialize", "prove", "audit"],
+      description:
+        "Initialize the exact task checklist, prove visible requirements, or audit what remains.",
+    },
+    requirements: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string", minLength: 1 },
+          description: { type: "string", minLength: 1 },
+        },
+        required: ["id", "description"],
+      },
+      description:
+        "For initialize: one atomic item per explicit constraint, filter, ranking, action, and requested datum.",
+    },
+    proofs: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string", minLength: 1 },
+          evidence: { type: "string", minLength: 1 },
+        },
+        required: ["id", "evidence"],
+      },
+      description:
+        "For prove: checklist IDs visibly established on the current page and what the proof frame shows.",
+    },
+  },
+  required: ["operation"],
+};
+
+const TOOL_DESCRIPTION =
+  "Run async Playwright JavaScript in a persistent, policy-guarded browser. " +
+  "The page global is the active Page; pages is an array of open Pages. " +
+  "usePage(indexOrPageId) selects a tab and must not receive a Page object. " +
+  "Other globals: context, state, openPage, closePage, snapshot, screenshot, " +
+  "artifactPath, dialogs, credentials, captcha, human, overlays, controls, media. Inspect with " +
+  "snapshot({interactive:true}); act on [ref=eN] with page.locator('aria-ref=eN'). " +
+  "Use openPage and Promise.all for independent multi-site research. A trailing " +
+  "expression returns automatically; statement blocks must return.";
+
+function envBoolean(name, fallback) {
+  const raw = String(process.env[name] || "").trim().toLowerCase();
+  if (TRUE_VALUES.has(raw)) return true;
+  if (FALSE_VALUES.has(raw)) return false;
+  return fallback;
+}
+
+function envPositiveInteger(name, fallback) {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function normalizedStartUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = new URL(raw);
+  if (!WEB_PROTOCOLS.has(parsed.protocol)) {
+    throw new TypeError("Pi startUrl must use http or https.");
+  }
+  return parsed.href;
+}
+
+function normalizedMaxSteps(value) {
+  if (value === undefined) {
+    return envPositiveInteger(
+      "BETTERWRIGHT_PI_MAX_STEPS",
+      Number.POSITIVE_INFINITY,
+    );
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new TypeError("Pi maxSteps must be a positive integer.");
+  }
+  return parsed;
+}
+
+function resolvedBrowserOptions(options) {
+  const timeout = envPositiveInteger("BETTERWRIGHT_PI_TIMEOUT_SECONDS", 0);
+  const downloadPolicy = String(
+    process.env.BETTERWRIGHT_PI_DOWNLOAD_POLICY || "",
+  )
+    .trim()
+    .toLowerCase();
+  return {
+    ...(options || {}),
+    ...(timeout ? { defaultTimeout: timeout } : {}),
+    ...(downloadPolicy ? { downloadPolicy } : {}),
+  };
+}
+
+function mergeObservation(result, observation) {
+  if (!observation) return result;
+  const warnings = [...(result?.warnings || [])];
+  if (!observation.ok && observation.error) {
+    warnings.push(`Automatic Pi observation failed: ${observation.error}`);
+  }
+  return {
+    ...(result || {}),
+    artifacts: [...(result?.artifacts || []), ...(observation.artifacts || [])],
+    pages: observation.pages || result?.pages,
+    challenges: observation.challenges || result?.challenges,
+    warnings,
+  };
+}
+
+async function traceStep(traceDir, step, toolName, params, result) {
+  if (!traceDir) return;
+  await fs.mkdir(traceDir, { recursive: true });
+  const image = piPrimaryImageArtifact(result);
+  let screenshot = "";
+  if (image) {
+    const source = image.path;
+    const extension = path.extname(source).toLowerCase() || ".png";
+    screenshot = path.join(
+      traceDir,
+      `step_${String(step).padStart(4, "0")}${extension}`,
+    );
+    await fs.copyFile(source, screenshot);
+  }
+  const row = {
+    step_num: step,
+    response: String(params.note || "").trim(),
+    action: toolName,
+    arguments: { code: params.code, ...(params.note ? { note: params.note } : {}) },
+    screenshot,
+    url:
+      result?.piObservation?.url ||
+      result?.pages?.find((page) => page?.active)?.url ||
+      result?.pages?.[0]?.url ||
+      null,
+    final: false,
+    ok: result?.ok === true,
+  };
+  await fs.appendFile(
+    path.join(traceDir, "steps.jsonl"),
+    `${JSON.stringify(row)}\n`,
+    "utf8",
+  );
+}
+
+function modelEnvelope(result, step, maxSteps, budgetExhausted) {
+  return {
+    ...(result || {}),
+    pi: {
+      step,
+      maxSteps: Number.isFinite(maxSteps) ? maxSteps : null,
+      remainingSteps: Number.isFinite(maxSteps)
+        ? Math.max(0, maxSteps - step)
+        : null,
+      budgetExhausted,
+    },
+  };
+}
+
+const NEGATIVE_PROOF =
+  /\b(?:cannot|can't|could not|unavailable|not offered|not selected|not applied|empty|no results?|failed|blocked|greyed out|grayed out|not in (?:the )?(?:cart|bag))\b/i;
+const NEGATIVE_REQUIREMENT =
+  /\b(?:no|none|empty|unavailable|blocked|absence|not available|zero results?)\b/i;
+const EXACT_NUMERIC_REQUIREMENT =
+  /\b(?:exact(?:ly)?|within|under|fewer than|less than|more than|greater than|before|after|between|range)\b/i;
+const FILTER_REQUIREMENT = /\b(?:filter|facet)\b/i;
+const ACTIVE_CONTROL_PROOF =
+  /\b(?:active|applied|selected|checked|chip|facet|control|option|toggle|pill)\b/i;
+
+function normalizedNumbers(value) {
+  return String(value || "")
+    .replaceAll(",", "")
+    .match(/\d+(?:\.\d+)?/g) || [];
+}
+
+function proofRejection(requirement, evidence) {
+  const expected = String(requirement || "");
+  const observed = String(evidence || "");
+  if (
+    NEGATIVE_PROOF.test(observed) &&
+    !NEGATIVE_REQUIREMENT.test(expected)
+  ) {
+    return "The proof describes an unmet or blocked state, not satisfaction.";
+  }
+  if (EXACT_NUMERIC_REQUIREMENT.test(expected)) {
+    const observedNumbers = new Set(normalizedNumbers(observed));
+    const missing = [...new Set(normalizedNumbers(expected))].filter(
+      (number) => !observedNumbers.has(number),
+    );
+    if (missing.length) {
+      return `The proof omits exact numeric constraint(s): ${missing.join(", ")}.`;
+    }
+  }
+  if (
+    /\b(?:under|fewer than|less than|before)\b/i.test(expected) &&
+    /(?:\bor (?:less|fewer)\b|\bup to\b|≤)/i.test(observed)
+  ) {
+    return "The proof uses an inclusive boundary for a strict requirement.";
+  }
+  if (
+    !/(?:\d\s*\+|\bat least\b|\bor (?:more|greater)\b)/i.test(expected) &&
+    normalizedNumbers(expected).some((number) =>
+      new RegExp(`(?:^|\\D)${number.replace(".", "\\.")}\\s*\\+`).test(observed),
+    )
+  ) {
+    return "The proof uses a broader numeric value than the requirement.";
+  }
+  if (FILTER_REQUIREMENT.test(expected) && !ACTIVE_CONTROL_PROOF.test(observed)) {
+    return "A required filter or facet needs visibly active control state; matching item attributes are insufficient.";
+  }
+  return null;
+}
+
+/**
+ * Build a native Pi Coding Agent extension around one persistent BetterWright.
+ * The default export below resolves runtime knobs from BETTERWRIGHT_PI_* env vars.
+ */
+export function createPiExtension(options = {}) {
+  return function betterWrightPiExtension(pi) {
+    const autoScreenshot =
+      options.autoScreenshot ??
+      envBoolean("BETTERWRIGHT_PI_AUTO_SCREENSHOT", true);
+    const maxSteps = normalizedMaxSteps(options.maxSteps);
+    const requireEvidence =
+      options.requireEvidence ??
+      envBoolean("BETTERWRIGHT_PI_REQUIRE_EVIDENCE", false);
+    const traceDir = String(
+      options.traceDir ?? process.env.BETTERWRIGHT_PI_TRACE_DIR ?? "",
+    ).trim();
+    const session = String(
+      options.session ?? process.env.BETTERWRIGHT_PI_SESSION ?? "pi",
+    );
+    const startUrl = normalizedStartUrl(
+      options.startUrl ?? process.env.BETTERWRIGHT_PI_START_URL,
+    );
+    let browser = options.browser || null;
+    let startPromise = null;
+    let pendingStartWarning = "";
+    let stepCount = 0;
+    let checklistInitialized = false;
+    let completionNudges = 0;
+    const evidenceChecklist = new Map();
+
+    function checklistState() {
+      const requirements = [...evidenceChecklist.values()];
+      const pending = requirements.filter((item) => item.status !== "proven");
+      return {
+        initialized: checklistInitialized,
+        ready: checklistInitialized && pending.length === 0,
+        pending: pending.map((item) => item.id),
+        requirements,
+      };
+    }
+
+    function checklistResult(extra = {}) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ ...checklistState(), ...extra }, null, 2),
+          },
+        ],
+        details: checklistState(),
+      };
+    }
+
+    async function getBrowser() {
+      if (!browser)
+        browser = new BetterWright(resolvedBrowserOptions(options.browserOptions));
+      if (startUrl && !startPromise) {
+        startPromise = browser
+          .run(
+            `await page.goto(${JSON.stringify(startUrl)}, { waitUntil: "domcontentloaded" }); return { url: page.url(), title: await page.title() }`,
+            { session },
+          )
+          .then(async (result) => {
+            if (!result?.ok) {
+              pendingStartWarning =
+                `Initial navigation to ${startUrl} failed: ` +
+                `${result?.error || "unknown error"}. The browser remains available for recovery.`;
+            }
+            if (traceDir) {
+              const observation = await browser.run(
+                'const artifact = await screenshot({ kind: "debug", name: "pi-start" }); return { artifact, url: page.url(), title: await page.title() }',
+                { session, note: "Recording the supplied start page" },
+              );
+              const combined = mergeObservation(result, observation);
+              combined.piObservation = observation?.result || null;
+              await traceStep(
+                traceDir,
+                0,
+                "navigate",
+                {
+                  code: `await page.goto(${JSON.stringify(startUrl)})`,
+                  note: "Initial navigation to the supplied benchmark website",
+                },
+                combined,
+              );
+            }
+          });
+      }
+      if (startPromise) await startPromise;
+      return browser;
+    }
+
+    function deactivateBrowserTools() {
+      if (
+        typeof pi.getActiveTools !== "function" ||
+        typeof pi.setActiveTools !== "function"
+      )
+        return;
+      pi.setActiveTools(
+        pi.getActiveTools().filter((name) => !BROWSER_TOOL_NAMES.has(name)),
+      );
+    }
+
+    async function executeBrowser(toolName, params, signal, approvedDownloads) {
+      if (signal?.aborted) throw new Error("Browser call cancelled.");
+      if (requireEvidence && !checklistInitialized) {
+        throw new Error(
+          "Initialize browser_evidence with every atomic task requirement before browsing.",
+        );
+      }
+      if (stepCount >= maxSteps) {
+        deactivateBrowserTools();
+        throw new Error(
+          `Browser step budget (${maxSteps}) is exhausted. Provide the best final answer from collected evidence.`,
+        );
+      }
+      const step = ++stepCount;
+      const instance = await getBrowser();
+      const result = await instance.run(`await overlays.dismiss();\n${params.code}`, {
+        session,
+        note: params.note,
+        approvedDownloads,
+      });
+      let observation = null;
+      if (autoScreenshot && piImageArtifacts(result).length === 0) {
+        observation = await instance.run(
+          'const artifact = await screenshot({ kind: "debug", name: "pi-observation" }); return { artifact, url: page.url(), title: await page.title() }',
+          { session, note: "Capturing the current browser state" },
+        );
+      }
+      const combined = mergeObservation(result, observation);
+      if (observation?.result) combined.piObservation = observation.result;
+      if (pendingStartWarning) {
+        combined.warnings = [
+          pendingStartWarning,
+          ...(combined.warnings || []),
+        ];
+        pendingStartWarning = "";
+      }
+      let traceWarning = "";
+      try {
+        await traceStep(traceDir, step, toolName, params, combined);
+      } catch (error) {
+        traceWarning = `\nTrace warning: ${error?.message || error}`;
+      }
+      const budgetExhausted = step >= maxSteps;
+      if (budgetExhausted) deactivateBrowserTools();
+      const envelope = modelEnvelope(combined, step, maxSteps, budgetExhausted);
+      if (requireEvidence || checklistInitialized) {
+        envelope.pi.evidenceChecklist = checklistState();
+      }
+      const budgetMessage = budgetExhausted
+        ? "\nBrowser step budget exhausted. Audit the task requirements and provide the final deliverable now."
+        : "";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${JSON.stringify(envelope, null, 2)}${budgetMessage}${traceWarning}`,
+          },
+          ...(await piImageContent(combined)),
+        ],
+        details: {
+          step,
+          ok: combined?.ok === true,
+          pages: combined?.pages || [],
+          artifacts: combined?.artifacts || [],
+          budgetExhausted,
+          ...((requireEvidence || checklistInitialized) && {
+            evidenceChecklist: checklistState(),
+          }),
+        },
+      };
+    }
+
+    async function executeEvidence(params, signal) {
+      const operation = String(params.operation || "");
+      if (operation === "initialize") {
+        if (checklistInitialized) {
+          throw new Error(
+            "browser_evidence is already initialized; prove or audit the existing checklist.",
+          );
+        }
+        if (!Array.isArray(params.requirements) || !params.requirements.length) {
+          throw new Error("initialize requires at least one task requirement.");
+        }
+        for (const input of params.requirements) {
+          const id = String(input?.id || "").trim();
+          const description = String(input?.description || "").trim();
+          if (!id || !description) {
+            throw new Error("Every task requirement needs a non-empty id and description.");
+          }
+          if (evidenceChecklist.has(id)) {
+            throw new Error(`Duplicate task requirement id: ${id}`);
+          }
+          evidenceChecklist.set(id, {
+            id,
+            description,
+            status: "pending",
+            evidence: null,
+            proofStep: null,
+            proofUrl: null,
+          });
+        }
+        checklistInitialized = true;
+        return checklistResult({
+          instruction:
+            "Browse until each item is visibly established, then use browser_evidence prove on the page that shows it.",
+        });
+      }
+
+      if (!checklistInitialized) {
+        throw new Error("Initialize browser_evidence before proving or auditing.");
+      }
+      if (operation === "audit") {
+        const state = checklistState();
+        return checklistResult({
+          instruction: state.ready
+            ? "All requirements have proof frames. Re-read the task and provide the exact final deliverable."
+            : "Do not finish. Continue working on every pending requirement, then record visible proof.",
+        });
+      }
+      if (operation !== "prove") {
+        throw new Error(`Unsupported browser_evidence operation: ${operation}`);
+      }
+      if (!Array.isArray(params.proofs) || !params.proofs.length) {
+        throw new Error("prove requires at least one proof item.");
+      }
+      const proofs = params.proofs.map((input) => {
+        const id = String(input?.id || "").trim();
+        const evidence = String(input?.evidence || "").trim();
+        if (!evidenceChecklist.has(id)) {
+          throw new Error(`Unknown task requirement id: ${id || "<empty>"}`);
+        }
+        if (!evidence) throw new Error(`Requirement ${id} needs a proof description.`);
+        const rejection = proofRejection(
+          evidenceChecklist.get(id)?.description,
+          evidence,
+        );
+        if (rejection) throw new Error(`Requirement ${id} proof rejected: ${rejection}`);
+        return { id, evidence };
+      });
+      const note = `PROOF ${proofs.map((proof) => `${proof.id}: ${proof.evidence}`).join(" | ")}`;
+      const result = await executeBrowser(
+        "browser_evidence",
+        {
+          code:
+            'const artifact = await screenshot({ kind: "proof", name: "pi-evidence" }); return { artifact, url: page.url(), title: await page.title() }',
+          note,
+        },
+        signal,
+        false,
+      );
+      if (result.details.ok) {
+        const proofUrl = result.details.pages.find((page) => page?.active)?.url || null;
+        for (const proof of proofs) {
+          evidenceChecklist.set(proof.id, {
+            ...evidenceChecklist.get(proof.id),
+            status: "proven",
+            evidence: proof.evidence,
+            proofStep: result.details.step,
+            proofUrl,
+          });
+        }
+      }
+      const state = checklistState();
+      result.content[0].text += `\n\nEvidence checklist after this proof:\n${JSON.stringify(state, null, 2)}`;
+      result.details.evidenceChecklist = state;
+      return result;
+    }
+
+    pi.registerTool({
+      name: "browser",
+      label: "BetterWright Browser",
+      description: TOOL_DESCRIPTION,
+      promptSnippet:
+        "Drive a persistent browser with policy-guarded Playwright JavaScript",
+      promptGuidelines: [
+        "Use browser for web navigation, interaction, and multi-page research; keep one persistent session and verify visible outcomes before finishing.",
+      ],
+      parameters: PI_BROWSER_PARAMETERS,
+      execute: (_id, params, signal) =>
+        executeBrowser("browser", params, signal, false),
+    });
+
+    pi.registerTool({
+      name: "browser_evidence",
+      label: "BetterWright Evidence Checklist",
+      description:
+        "Track atomic browser-task requirements and capture grounded proof screenshots. Initialize before browsing, prove only requirements visible on the current page, then audit before finishing.",
+      promptSnippet:
+        "Initialize the exact task checklist, capture requirement-linked proof frames, and audit completion",
+      promptGuidelines: [
+        "Use browser_evidence initialize before browser calls with one atomic item per explicit filter, ranking, action, and requested datum; prove only items visible in the attached frame, and audit before the final answer.",
+      ],
+      parameters: PI_EVIDENCE_PARAMETERS,
+      execute: (_id, params, signal) => executeEvidence(params, signal),
+    });
+
+    pi.registerTool({
+      name: "browser_download",
+      label: "BetterWright Download",
+      description: `${TOOL_DESCRIPTION} This approval-gated variant may save a remote file.`,
+      parameters: PI_BROWSER_PARAMETERS,
+      async execute(_id, params, signal, _onUpdate, ctx) {
+        const instance = await getBrowser();
+        if (instance.downloadPolicy === "deny") {
+          throw new Error("Browser downloads are disabled by host policy.");
+        }
+        if (instance.downloadPolicy === "ask") {
+          if (!ctx?.hasUI || typeof ctx.ui?.confirm !== "function") {
+            throw new Error(
+              "Browser download requires user approval, but this Pi mode has no approval UI.",
+            );
+          }
+          const approved = await ctx.ui.confirm(
+            "Allow browser download?",
+            params.note || "The agent requested one bounded download step.",
+          );
+          if (!approved) throw new Error("Browser download was not approved.");
+        }
+        return executeBrowser("browser_download", params, signal, true);
+      },
+    });
+
+    pi.on("before_agent_start", (event) => ({
+      systemPrompt: `${String(event.systemPrompt || "")}\n\n${agentSystemPrompt(options.guardrails)}`,
+    }));
+
+    pi.on("agent_end", () => {
+      if (
+        !requireEvidence ||
+        !checklistInitialized ||
+        checklistState().ready ||
+        stepCount >= maxSteps ||
+        completionNudges >= 2 ||
+        typeof pi.sendMessage !== "function"
+      ) {
+        return;
+      }
+      completionNudges += 1;
+      const state = checklistState();
+      const pending = state.requirements
+        .filter((item) => item.status !== "proven")
+        .map((item) => `${item.id}: ${item.description}`)
+        .join(" | ");
+      pi.sendMessage(
+        {
+          customType: "betterwright-evidence-gate",
+          content:
+            `Completion blocked: unresolved requirements remain (${pending}). ` +
+            "Continue browser work, capture valid visible proof, then audit again.",
+          display: false,
+          details: state,
+        },
+        { deliverAs: "followUp", triggerTurn: true },
+      );
+    });
+
+    pi.on("session_shutdown", async () => {
+      if (browser && options.closeBrowserOnShutdown !== false) await browser.close();
+      browser = null;
+      startPromise = null;
+    });
+  };
+}
+
+export default createPiExtension();

@@ -146,6 +146,23 @@ pip install "betterwright[mcp]" && betterwright setup
 claude mcp add betterwright -- python -m betterwright.integrations.mcp_server
 ```
 
+### Pi Coding Agent
+
+BetterWright is also a native Pi package. Its package manifest loads a persistent
+`browser` tool, an approval-gated `browser_download` tool, vision screenshots,
+and the BetterWright operator prompt without an MCP hop:
+
+```bash
+pi install npm:betterwright
+npx -y betterwright setup
+pi
+```
+
+For a local checkout, use `pi install /absolute/path/to/betterwright`, or try the
+extension for one run with `pi --extension ./src/pi-extension.mjs`. See the
+[Pi integration guide](SETUP.md#1--pi-coding-agent) and the reproducible
+[Online-Mind2Web benchmark](https://github.com/CuriosityOS/betterwright/tree/main/benchmarks/online-mind2web).
+
 ## What each piece does
 
 - **[Network policy](docs/network-policy.md)** — every navigation, subresource,

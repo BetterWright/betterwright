@@ -19,6 +19,7 @@ export type { Guardrails } from "./prompt.js";
 export type {
   BetterWrightArtifactLike,
   BetterWrightResultLike,
+  PiImageArtifact,
   PiImageContentBlock,
   PiImageContentOptions,
 } from "./pi.js";
