@@ -31,6 +31,11 @@
       "import": "./src/pi.mjs",
       "default": "./src/pi.mjs"
     },
+    "./pi-extension": {
+      "types": "./types/pi-extension.d.ts",
+      "import": "./src/pi-extension.mjs",
+      "default": "./src/pi-extension.mjs"
+    },
     "./worker": {
       "types": "./types/worker.d.ts",
       "import": "./src/worker.mjs",
@@ -56,7 +61,7 @@
     "test": "node --test tests/node/*.test.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
-    "lint": "biome ci src bin scripts tests",
+    "lint": "biome ci src bin scripts tests benchmarks",
     "check:worker": "node scripts/sync-worker.mjs --check",
     "check:versions": "node scripts/check-versions.mjs",
     "check:package": "node scripts/check-package.mjs",
@@ -69,6 +74,11 @@
   "packageManager": "npm@11.5.1",
   "publishConfig": {
     "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./src/pi-extension.mjs"
+    ]
   },
   "dependencies": {
     "cloakbrowser": "0.4.10",
@@ -83,7 +93,8 @@
     "ai",
     "captcha",
     "browser-use",
-    "web-agent"
+    "web-agent",
+    "pi-package"
   ],
   "license": "MIT",
   "author": "BetterWright contributors",
