@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "betterwright"
-version = "0.3.1"
+version = "0.4.0"
 description = "A persistent, policy-guarded Playwright browser for AI agents."
 readme = "README.md"
 requires-python = ">=3.9"
