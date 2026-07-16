@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Local CAPTCHA solver** — `captcha.solve()` and `captcha.detect()` run entirely
+  inside the managed browser with no third-party captcha APIs and no heavy ML
+  runtime. Auto-handles checkbox, Turnstile, Cloudflare managed checks, and
+  sliders; image grids and text challenges return a 2Captcha-shaped
+  `processing` envelope with vision artifacts and tile bounds for the host
+  model. Pure helpers are exported as `classifyChallengeStage`,
+  `CAPTCHA_STAGES`, and `CAPTCHA_SOLVE_STATUSES`. Challenge reports now include
+  `stage`, `autoSolvable`, and `needsVision`.
+
 ## [0.5.0] — 2026-07-15
 
 ### Added

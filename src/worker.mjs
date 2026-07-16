@@ -17,6 +17,20 @@ import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 import {
+  buildSolveResult,
+  CAPTCHA_SOLVE_STATUSES,
+  CAPTCHA_STAGES,
+  CHECKBOX_SELECTORS,
+  classifyChallengeStage,
+  IMAGE_TILE_SELECTORS,
+  maxAutoStages,
+  nextSolveAction,
+  SLIDER_SELECTORS,
+  solveTimeoutMs,
+  VERIFY_BUTTON_SELECTORS,
+  WIDGET_FRAME_PATTERNS,
+} from "./captcha-solver.mjs";
+import {
   detectBotChallenge,
   isPublicSearchNavigation,
   PUBLIC_SEARCH_BLOCK_ADVICE,
@@ -2279,6 +2293,14 @@ function buildSandbox(session, consoleMessages) {
     return { prepared: "dismiss" };
   });
   const captcha = Object.create(null);
+  captcha.detect = realm.safeFunction(async () => {
+    const page = await ensureSessionPage(session);
+    return detectCaptchaOnPage(page);
+  });
+  captcha.solve = realm.safeFunction(async (options = {}) => {
+    const page = await ensureSessionPage(session);
+    return solveCaptchaOnPage(page, session, options || {});
+  });
   captcha.click = realm.safeFunction(async (bounds) => {
     const page = await ensureSessionPage(session);
     const target = captchaBounds(bounds);
@@ -2600,6 +2622,94 @@ async function enforceArtifactQuota(session) {
   pruneArtifactQuota(session);
 }
 
+async function collectFrameMetadata(page) {
+  return Promise.all(
+    page
+      .frames()
+      .filter((frame) => frame !== page.mainFrame())
+      .slice(0, 24)
+      .map(async (frame) => {
+        const frameText = (
+          await frame
+            .locator("body")
+            .innerText({ timeout: 500 })
+            .catch(() => "")
+        ).slice(0, 10_000);
+        const checked = await frame
+          .locator(
+            '[aria-checked="true"], input[type="checkbox"]:checked, .recaptcha-checkbox-checked',
+          )
+          .count()
+          .then((count) => count > 0)
+          .catch(() => false);
+        return {
+          url: frame.url(),
+          text: frameText,
+          completed:
+            checked ||
+            /verification (?:complete|successful)|success!|you are verified/i.test(
+              frameText,
+            ),
+        };
+      }),
+  );
+}
+
+async function readSolvedProviders(page) {
+  return page
+    .evaluate(() => {
+      const tokens = {};
+      const read = (name) => {
+        const fields = [...document.querySelectorAll(`[name="${name}"]`)];
+        if (fields.length === 0) return "";
+        const values = fields.map((element) =>
+          typeof element.value === "string" ? element.value.trim() : "",
+        );
+        // A provider only counts as solved once every response field is filled;
+        // a partially populated multi-widget page is still an open challenge.
+        return values.every(Boolean) ? values[0] : "";
+      };
+      const recaptcha = read("g-recaptcha-response");
+      const hcaptcha = read("h-captcha-response");
+      const turnstile = read("cf-turnstile-response");
+      if (recaptcha) tokens.recaptcha = recaptcha;
+      if (hcaptcha) tokens.hcaptcha = hcaptcha;
+      if (turnstile) tokens.turnstile = turnstile;
+      // Generic local fixture / self-hosted widgets.
+      const generic = read("bw-captcha-response") || read("captcha-response");
+      if (generic) tokens.generic = generic;
+      return tokens;
+    })
+    .catch(() => ({}));
+}
+
+async function collectChallengeMetadata(page) {
+  let title = "";
+  let text = "";
+  let frames = [];
+  let tokens = {};
+  try {
+    [title, text, frames, tokens] = await Promise.all([
+      page.title().catch(() => ""),
+      page.locator("body").innerText({ timeout: 750 }).catch(() => ""),
+      collectFrameMetadata(page),
+      readSolvedProviders(page),
+    ]);
+  } catch {
+    /* page may navigate mid-collect */
+  }
+  return {
+    main: {
+      url: page.url(),
+      title,
+      text: text.slice(0, 50_000),
+    },
+    frames,
+    solvedProviders: Object.keys(tokens),
+    tokens,
+  };
+}
+
 async function detectSessionChallenges(session) {
   const challenges = [];
   const activePage = session.currentId
@@ -2611,81 +2721,21 @@ async function detectSessionChallenges(session) {
       : [...session.pages.values()].filter((page) => !page.isClosed()).slice(0, 1);
   for (const page of pages) {
     if (page.isClosed()) continue;
-    let text = "";
-    let title = "";
-    let frames = [];
-    let solvedProviders = [];
-    try {
-      [title, text, frames, solvedProviders] = await Promise.all([
-        page.title().catch(() => ""),
-        page.locator("body").innerText({ timeout: 750 }).catch(() => ""),
-        Promise.all(
-          page
-            .frames()
-            .filter((frame) => frame !== page.mainFrame())
-            .slice(0, 24)
-            .map(async (frame) => {
-              const frameText = (
-                await frame
-                  .locator("body")
-                  .innerText({ timeout: 500 })
-                  .catch(() => "")
-              ).slice(0, 10_000);
-              const checked = await frame
-                .locator(
-                  '[aria-checked="true"], input[type="checkbox"]:checked, .recaptcha-checkbox-checked',
-                )
-                .count()
-                .then((count) => count > 0)
-                .catch(() => false);
-              return {
-                url: frame.url(),
-                text: frameText,
-                completed:
-                  checked ||
-                  /verification (?:complete|successful)|success!|you are verified/i.test(
-                    frameText,
-                  ),
-              };
-            }),
-        ),
-        page
-          .evaluate(() => {
-            const hasResponse = (name) => {
-              const fields = [
-                ...document.querySelectorAll(`[name="${name}"]`),
-              ];
-              return (
-                fields.length > 0 &&
-                fields.every(
-                  (element) =>
-                    typeof element.value === "string" &&
-                    element.value.trim().length > 0,
-                )
-              );
-            };
-            return [
-              ...(hasResponse("g-recaptcha-response") ? ["recaptcha"] : []),
-              ...(hasResponse("h-captcha-response") ? ["hcaptcha"] : []),
-              ...(hasResponse("cf-turnstile-response") ? ["turnstile"] : []),
-            ];
-          })
-          .catch(() => []),
-      ]);
-    } catch {
-      /* a page may close while the result envelope is assembled */
-    }
-    const challenge = detectBotChallenge({
-      main: {
-        url: page.url(),
-        title,
-        text: text.slice(0, 50_000),
-      },
-      frames,
-      solvedProviders,
-    });
+    const metadata = await collectChallengeMetadata(page);
+    const challenge = detectBotChallenge(metadata);
     if (challenge) {
-      const reported = { pageId: pageId(page), ...challenge };
+      const classification = classifyChallengeStage({
+        ...metadata,
+        provider: challenge.provider,
+        type: challenge.type,
+      });
+      const reported = {
+        pageId: pageId(page),
+        ...challenge,
+        stage: classification.stage,
+        autoSolvable: classification.autoSolvable,
+        needsVision: classification.needsVision,
+      };
       try {
         const file = await captureScreenshot(
           page,
@@ -2704,6 +2754,448 @@ async function detectSessionChallenges(session) {
     }
   }
   return challenges;
+}
+
+function frameMatchesProvider(frame, provider) {
+  const url = frame.url() || "";
+  if (provider && WIDGET_FRAME_PATTERNS[provider]) {
+    return WIDGET_FRAME_PATTERNS[provider].test(url);
+  }
+  return Object.values(WIDGET_FRAME_PATTERNS).some((pattern) => pattern.test(url));
+}
+
+function candidateFrames(page, provider) {
+  const frames = page.frames().filter((frame) => frame !== page.mainFrame());
+  const matched = frames.filter((frame) => frameMatchesProvider(frame, provider));
+  return matched.length ? matched : frames.slice(0, 8);
+}
+
+async function elementBoxInPage(_page, _frame, locator) {
+  const handle = await locator.elementHandle({ timeout: 1_500 }).catch(() => null);
+  if (!handle) return null;
+  try {
+    const box = await handle.boundingBox();
+    if (!box || box.width <= 0 || box.height <= 0) return null;
+    // Frame-local boxes are already in page CSS pixels for Playwright frames.
+    return box;
+  } finally {
+    await handle.dispose().catch(() => {});
+  }
+}
+
+async function findClickableInScopes(page, scopes, selectors) {
+  for (const scope of scopes) {
+    for (const selector of selectors) {
+      const locator = scope.locator(selector).first();
+      const visible = await locator.isVisible({ timeout: 400 }).catch(() => false);
+      if (!visible) continue;
+      const box = await elementBoxInPage(page, scope, locator);
+      if (box) return { locator, box, scope };
+    }
+  }
+  return null;
+}
+
+async function humanClickBox(page, session, box, options = {}) {
+  const inputLike = Boolean(options.inputLike);
+  const leftBias = options.leftBias !== false;
+  const point = leftBias
+    ? {
+        x: Math.round(box.x + box.width * (0.12 + Math.random() * 0.08)),
+        y: Math.round(box.y + box.height * (0.4 + Math.random() * 0.2)),
+      }
+    : pointInside(box, inputLike);
+  await movePointer(page.mouse, session.cursor, point, { stepDivisor: 8 });
+  await pressPointer(page.mouse, inputLike);
+  return point;
+}
+
+async function challengeStillPresent(page, provider) {
+  const metadata = await collectChallengeMetadata(page);
+  if (provider && metadata.tokens[provider]) return { present: false, metadata };
+  if (Object.keys(metadata.tokens).length) return { present: false, metadata };
+  const challenge = detectBotChallenge(metadata);
+  return { present: Boolean(challenge), metadata, challenge };
+}
+
+async function captureTiles(page, session, provider) {
+  const scopes = [page, ...candidateFrames(page, provider)];
+  const tiles = [];
+  for (const scope of scopes) {
+    for (const selector of IMAGE_TILE_SELECTORS) {
+      const locators = scope.locator(selector);
+      const count = await locators.count().catch(() => 0);
+      if (count < 3) continue;
+      const limit = Math.min(count, 16);
+      for (let index = 0; index < limit; index += 1) {
+        const tile = locators.nth(index);
+        const visible = await tile.isVisible().catch(() => false);
+        if (!visible) continue;
+        const box = await elementBoxInPage(page, scope, tile);
+        if (!box) continue;
+        const label = await tile.getAttribute("aria-label").catch(() => null);
+        tiles.push({
+          index: tiles.length,
+          bounds: {
+            x: Math.round(box.x),
+            y: Math.round(box.y),
+            width: Math.round(box.width),
+            height: Math.round(box.height),
+          },
+          label: label || null,
+        });
+      }
+      if (tiles.length >= 3) break;
+    }
+    if (tiles.length >= 3) break;
+  }
+  const file = await captureScreenshot(
+    page,
+    session,
+    "captcha-grid.png",
+    "captcha-grid.png",
+    { type: "png", animations: "disabled" },
+  );
+  const artifact = { kind: "captcha", path: file, media: `MEDIA:${file}` };
+  session.artifacts.push(artifact);
+  return { tiles, artifact };
+}
+
+async function dragSliderOnPage(page, session, provider) {
+  const scopes = [page, ...candidateFrames(page, provider)];
+  const found = await findClickableInScopes(page, scopes, SLIDER_SELECTORS);
+  if (!found) return { ok: false, reason: "slider_not_found" };
+  const { box } = found;
+  const start = {
+    x: Math.round(box.x + box.width * 0.5),
+    y: Math.round(box.y + box.height * 0.5),
+  };
+  // Prefer the track width when the handle is small; drag most of the way across.
+  const trackWidth = Math.max(box.width * 4, 220);
+  const end = {
+    x: Math.round(start.x + trackWidth * (0.82 + Math.random() * 0.1)),
+    y: Math.round(start.y + (Math.random() - 0.5) * 4),
+  };
+  await movePointer(page.mouse, session.cursor, start, { stepDivisor: 8 });
+  await hostDelay(100 + Math.random() * 120);
+  await page.mouse.down();
+  await hostDelay(80 + Math.random() * 100);
+  await movePointer(page.mouse, session.cursor, end, {
+    stepDivisor: Math.max(3, Math.hypot(end.x - start.x, end.y - start.y) / 24),
+  });
+  await hostDelay(80 + Math.random() * 120);
+  await page.mouse.up();
+  return { ok: true, from: start, to: end };
+}
+
+async function runCaptchaSolveAction(page, session, classification, action, _attemptIndex) {
+  const provider = classification.provider;
+  const scopes = [page, ...candidateFrames(page, provider)];
+  switch (action.action) {
+    case "click_checkbox": {
+      // Prefer real checkbox/controls; never fall through to a bare `body` hit
+      // when a verify button is available (managed / generic widgets).
+      const preferred = CHECKBOX_SELECTORS.filter((selector) => selector !== "body");
+      let found = await findClickableInScopes(page, scopes, preferred);
+      if (!found) {
+        found = await findClickableInScopes(page, scopes, VERIFY_BUTTON_SELECTORS);
+      }
+      if (!found) {
+        // Fall back: click the first matching widget iframe itself (left side).
+        const iframe = page
+          .locator(
+            'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], iframe[src*="challenges.cloudflare" i], iframe[title*="captcha" i], iframe[title*="challenge" i], iframe[title*="widget" i]',
+          )
+          .first();
+        const box = await iframe.boundingBox().catch(() => null);
+        if (!box) return { ok: false, reason: "checkbox_not_found" };
+        const point = await humanClickBox(page, session, box, { leftBias: true });
+        return { ok: true, point, target: "iframe" };
+      }
+      const point = await humanClickBox(page, session, found.box, {
+        leftBias: found.box.width > 80,
+      });
+      return { ok: true, point, target: "checkbox" };
+    }
+    case "click_verify": {
+      const found = await findClickableInScopes(page, scopes, [
+        ...VERIFY_BUTTON_SELECTORS,
+        ...CHECKBOX_SELECTORS,
+      ]);
+      if (!found) return { ok: false, reason: "verify_control_not_found", soft: true };
+      const point = await humanClickBox(page, session, found.box, {
+        leftBias: false,
+      });
+      return { ok: true, point, target: "verify" };
+    }
+    case "drag_slider": {
+      const dragged = await dragSliderOnPage(page, session, provider);
+      return dragged;
+    }
+    case "capture_tiles": {
+      const captured = await captureTiles(page, session, provider);
+      return {
+        ok: true,
+        needsVision: true,
+        tiles: captured.tiles,
+        artifact: captured.artifact,
+      };
+    }
+    case "capture_text": {
+      const file = await captureScreenshot(
+        page,
+        session,
+        "captcha-text.png",
+        "captcha-text.png",
+        { type: "png", animations: "disabled" },
+      );
+      const artifact = { kind: "captcha", path: file, media: `MEDIA:${file}` };
+      session.artifacts.push(artifact);
+      return {
+        ok: true,
+        needsVision: true,
+        artifact,
+        instruction: "Read the attached CAPTCHA crop and type the text into the challenge input.",
+      };
+    }
+    case "wait_token":
+    case "wait_clear":
+      return { ok: true, waited: true };
+    case "inspect": {
+      const file = await captureScreenshot(
+        page,
+        session,
+        "captcha-challenge.png",
+        "captcha-challenge.png",
+        { type: "png", animations: "disabled" },
+      );
+      const artifact = { kind: "captcha", path: file, media: `MEDIA:${file}` };
+      session.artifacts.push(artifact);
+      return {
+        ok: true,
+        needsVision: true,
+        artifact,
+        instruction:
+          "Inspect the attached challenge and use captcha.click / captcha.drag / human.click as needed.",
+      };
+    }
+    default:
+      return { ok: false, reason: `unknown_action:${action.action}` };
+  }
+}
+
+async function detectCaptchaOnPage(page) {
+  const metadata = await collectChallengeMetadata(page);
+  const challenge = detectBotChallenge(metadata);
+  const classification = classifyChallengeStage({
+    ...metadata,
+    provider: challenge?.provider,
+    type: challenge?.type,
+  });
+  const widgets = [];
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    const url = frame.url() || "";
+    for (const [provider, pattern] of Object.entries(WIDGET_FRAME_PATTERNS)) {
+      if (pattern.test(url)) {
+        widgets.push({ provider, url, kind: "frame" });
+        break;
+      }
+    }
+  }
+  // Local fixtures may expose data-bw-captcha without provider frames.
+  const localWidget = await page
+    .locator("[data-bw-captcha], #bw-captcha, .bw-captcha")
+    .count()
+    .then((count) => count > 0)
+    .catch(() => false);
+  if (localWidget) {
+    widgets.push({ provider: "generic", url: page.url(), kind: "local" });
+  }
+  return {
+    present: Boolean(challenge) || widgets.length > 0 || classification.stage !== CAPTCHA_STAGES.NONE,
+    challenge: challenge || null,
+    classification,
+    widgets,
+    tokens: metadata.tokens,
+    cleared: Object.keys(metadata.tokens).length > 0,
+    url: page.url(),
+  };
+}
+
+async function solveCaptchaOnPage(page, session, options = {}) {
+  const started = Date.now();
+  const timeoutMs = solveTimeoutMs(options);
+  const maxStages = maxAutoStages(options);
+  const attempts = [];
+  const requestId = `bw_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+  let lastClassification = null;
+  let lastChallenge = null;
+  let lastArtifact = null;
+  let lastTiles = null;
+  let lastInstruction = null;
+
+  for (let stageIndex = 0; stageIndex < maxStages; stageIndex += 1) {
+    if (Date.now() - started > timeoutMs) {
+      return buildSolveResult({
+        status: CAPTCHA_SOLVE_STATUSES.ERROR,
+        requestId,
+        provider: lastClassification?.provider || "generic",
+        stage: lastClassification?.stage || CAPTCHA_STAGES.UNKNOWN,
+        errorCode: "ERROR_TIMEOUT",
+        errorText: `CAPTCHA solve timed out after ${timeoutMs}ms`,
+        attempts,
+        artifact: lastArtifact,
+        tiles: lastTiles,
+        instruction: lastInstruction,
+        challenge: lastChallenge,
+      });
+    }
+
+    const metadata = await collectChallengeMetadata(page);
+    if (Object.keys(metadata.tokens).length) {
+      const provider = Object.keys(metadata.tokens)[0];
+      return buildSolveResult({
+        status: CAPTCHA_SOLVE_STATUSES.READY,
+        requestId,
+        provider,
+        stage: CAPTCHA_STAGES.NONE,
+        token: metadata.tokens[provider],
+        attempts,
+        cleared: true,
+        challenge: lastChallenge,
+      });
+    }
+
+    const challenge = detectBotChallenge(metadata);
+    lastChallenge = challenge;
+    const classification = classifyChallengeStage({
+      ...metadata,
+      provider: challenge?.provider,
+      type: challenge?.type,
+    });
+    lastClassification = classification;
+
+    // Local fixture widgets without provider frames.
+    if (classification.stage === CAPTCHA_STAGES.NONE) {
+      const local = await page
+        .locator("[data-bw-captcha], #bw-captcha, .bw-captcha")
+        .first()
+        .isVisible()
+        .catch(() => false);
+      if (!local) {
+        // No challenge visible — treat as cleared.
+        return buildSolveResult({
+          status: CAPTCHA_SOLVE_STATUSES.READY,
+          requestId,
+          provider: "generic",
+          stage: CAPTCHA_STAGES.NONE,
+          attempts,
+          cleared: true,
+          challenge: null,
+        });
+      }
+      lastClassification = {
+        stage: CAPTCHA_STAGES.CHECKBOX,
+        provider: "generic",
+        autoSolvable: true,
+        needsVision: false,
+      };
+    }
+
+    const action = nextSolveAction(lastClassification, stageIndex);
+    const outcome = await runCaptchaSolveAction(
+      page,
+      session,
+      lastClassification,
+      action,
+      stageIndex,
+    );
+    attempts.push({
+      stageIndex,
+      stage: lastClassification.stage,
+      provider: lastClassification.provider,
+      action: action.action,
+      description: action.description,
+      ok: Boolean(outcome.ok),
+      reason: outcome.reason || null,
+      atMs: Date.now() - started,
+    });
+
+    if (outcome.artifact) lastArtifact = outcome.artifact;
+    if (outcome.tiles) lastTiles = outcome.tiles;
+    if (outcome.instruction) lastInstruction = outcome.instruction;
+
+    if (outcome.needsVision) {
+      return buildSolveResult({
+        status: CAPTCHA_SOLVE_STATUSES.PROCESSING,
+        requestId,
+        provider: lastClassification.provider,
+        stage: lastClassification.stage,
+        attempts,
+        artifact: lastArtifact,
+        tiles: lastTiles,
+        instruction:
+          lastInstruction ||
+          "Use host vision on the attached captcha artifact, act on the page, then call captcha.solve() again.",
+        challenge: lastChallenge,
+      });
+    }
+
+    if (!outcome.ok && !outcome.soft) {
+      // Soft failures (e.g. verify button absent on managed challenge) still wait.
+      if (stageIndex === maxStages - 1) {
+        return buildSolveResult({
+          status: CAPTCHA_SOLVE_STATUSES.ERROR,
+          requestId,
+          provider: lastClassification.provider,
+          stage: lastClassification.stage,
+          errorCode: "ERROR_ACTION_FAILED",
+          errorText: outcome.reason || "CAPTCHA action failed",
+          attempts,
+          artifact: lastArtifact,
+          challenge: lastChallenge,
+        });
+      }
+    }
+
+    if (action.waitMs > 0) {
+      await hostDelay(action.waitMs);
+    }
+
+    const after = await challengeStillPresent(page, lastClassification.provider);
+    if (!after.present) {
+      const provider =
+        Object.keys(after.metadata.tokens || {})[0] || lastClassification.provider;
+      return buildSolveResult({
+        status: CAPTCHA_SOLVE_STATUSES.READY,
+        requestId,
+        provider,
+        stage: lastClassification.stage,
+        token: after.metadata.tokens?.[provider] || null,
+        attempts,
+        cleared: true,
+        challenge: lastChallenge,
+      });
+    }
+  }
+
+  return buildSolveResult({
+    status: CAPTCHA_SOLVE_STATUSES.PROCESSING,
+    requestId,
+    provider: lastClassification?.provider || "generic",
+    stage: lastClassification?.stage || CAPTCHA_STAGES.UNKNOWN,
+    attempts,
+    artifact: lastArtifact,
+    tiles: lastTiles,
+    instruction:
+      lastInstruction ||
+      "Auto-solve stages exhausted. Inspect the page with captcha.inspect or hand off to a human.",
+    challenge: lastChallenge,
+    errorCode: null,
+    errorText: null,
+  });
 }
 
 function markChallengesForWorkerRestart(challenges) {

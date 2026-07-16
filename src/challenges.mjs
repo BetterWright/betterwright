@@ -1,4 +1,6 @@
 const NATIVE_CAPTCHA_HELPERS = Object.freeze([
+  "captcha.solve",
+  "captcha.detect",
   "captcha.inspect",
   "captcha.click",
   "captcha.drag",
@@ -13,12 +15,14 @@ const PUBLIC_SEARCH_BLOCK_ADVICE =
 
 const SEARCH_CHALLENGE_ADVICE =
   "A bot challenge is blocking this page. Preserve this page and solve it before " +
-  "retrying the blocked action. Inspect the attached challenge image and current " +
-  "snapshot, then use `captcha.inspect`, `captcha.click`, `captcha.drag`, " +
-  "`captcha.readText`, or `human.click` as appropriate. Continue through up to " +
-  "three distinct stages of the same challenge, inspecting the fresh result after " +
-  "each action. As soon as it clears, resume the original action and continue the " +
-  "task. Never repeat the " +
+  "retrying the blocked action. Prefer `captcha.solve()` for local automatic " +
+  "checkbox, Turnstile, managed-challenge, and slider stages (no external APIs). " +
+  "If solve returns status `processing` with a vision artifact (image grid or " +
+  "text), inspect the attached image, click matching tiles or type the text, then " +
+  "call `captcha.solve()` again. Fall back to `captcha.inspect`, `captcha.click`, " +
+  "`captcha.drag`, `captcha.readText`, or `human.click` when needed. Continue " +
+  "through up to three distinct stages of the same challenge. As soon as it " +
+  "clears, resume the original action and continue the task. Never repeat the " +
   "same failed action or rotate identities/search engines; after three unresolved " +
   "stages, use a host web-research tool, first-party route, or human handoff.";
 
