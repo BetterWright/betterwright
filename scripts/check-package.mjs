@@ -46,6 +46,8 @@ try {
     "src/worker.mjs",
     "types/index.d.ts",
     "types/chrome.d.ts",
+    "types/captcha-solver.d.ts",
+    "types/challenges.d.ts",
     "types/policy.d.ts",
     "types/prompt.d.ts",
     "types/pi.d.ts",

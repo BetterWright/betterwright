@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Local checkbox CAPTCHA fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; background: #f6f7f9; }
+    .bw-captcha {
+      display: flex; align-items: center; gap: 12px;
+      width: 304px; height: 78px; padding: 0 16px;
+      background: #fff; border: 1px solid #d3d3d3; border-radius: 3px;
+      box-shadow: 0 0 4px rgba(0,0,0,.08);
+    }
+    #checkbox {
+      width: 28px; height: 28px; border: 2px solid #c1c1c1; border-radius: 2px;
+      background: #fafafa; cursor: pointer; display: grid; place-items: center;
+      padding: 0; font: inherit;
+    }
+    #checkbox[aria-checked="true"] { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+    #status { margin-top: 16px; color: #444; }
+  </style>
+</head>
+<body>
+  <h1>Verify you are human</h1>
+  <p>I'm not a robot — complete the captcha to continue.</p>
+  <div class="bw-captcha" data-bw-captcha="checkbox" id="bw-captcha">
+    <button type="button" id="checkbox" role="checkbox" aria-checked="false" aria-label="I'm not a robot"></button>
+    <span>I'm not a robot</span>
+  </div>
+  <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
+  <p id="status">Waiting…</p>
+  <script>
+    const box = document.getElementById("checkbox");
+    const field = document.getElementById("bw-captcha-response");
+    const status = document.getElementById("status");
+    function solve() {
+      if (box.getAttribute("aria-checked") === "true") return;
+      box.setAttribute("aria-checked", "true");
+      box.textContent = "✓";
+      field.value = "bw_local_token_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      status.textContent = "Verification complete";
+      document.title = "Verified";
+    }
+    box.addEventListener("click", solve);
+    box.addEventListener("keydown", (event) => {
+      if (event.key === " " || event.key === "Enter") solve();
+    });
+  </script>
+</body>
+</html>

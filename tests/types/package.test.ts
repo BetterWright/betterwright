@@ -3,6 +3,10 @@ import {
   BetterWright,
   type BetterWrightOptions,
   BrowserError,
+  CAPTCHA_SOLVE_STATUSES,
+  CAPTCHA_STAGES,
+  classifyChallengeStage,
+  detectBotChallenge,
   ensureChromeCdp,
   findChromeExecutable,
   type Guardrails,
@@ -56,6 +60,15 @@ const defaultExtension: PiExtension = createBetterWrightPiExtension;
 const error: Error = new BrowserError("failed");
 const metadataAddress: boolean = METADATA_ADDRESSES.has("169.254.169.254");
 const metadataHost: boolean = METADATA_HOSTNAMES.has("metadata.google.internal");
+const captchaStage = classifyChallengeStage({
+  frames: [{ url: "https://www.google.com/recaptcha/api2/anchor?k=k", text: "I'm not a robot" }],
+});
+const captchaStatus: string = CAPTCHA_SOLVE_STATUSES.READY;
+const captchaStageName: string = CAPTCHA_STAGES.CHECKBOX;
+const challenge = detectBotChallenge({
+  url: "https://example.com",
+  text: "Verify you are human",
+});
 
 // @ts-expect-error BetterWright supports only the two declared browser backends.
 new BetterWright({ browser: "firefox" });
@@ -75,4 +88,8 @@ void [
   metadataAddress,
   metadataHost,
   METADATA_RESOLVER_RULES,
+  captchaStage,
+  captchaStatus,
+  captchaStageName,
+  challenge,
 ];

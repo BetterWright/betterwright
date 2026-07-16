@@ -38,7 +38,7 @@ work is, and it is what BetterWright handles for you:
 | **Network scope** | Any URL the code names. | Every request is checked against a policy — even against DNS rebinding. Cloud metadata endpoints are always blocked; hosts you name can be allowed or denied. |
 | **Secrets** | Passwords live in your script or env. | An encrypted, origin-scoped vault is available to trusted host code; secret-bearing fill operations are not exposed to model snippets. |
 | **Evidence** | You assert; nobody looks. | `screenshot({kind: 'proof'})` produces a tagged artifact the agent returns as proof a task finished. |
-| **CAPTCHAs** | Out of scope. | Resumable challenge state, an attached image, and native checkbox, slider, text, and inspection helpers for authorized flows. |
+| **CAPTCHAs** | Out of scope. | Local `captcha.solve()` (no third-party APIs): auto checkbox / Turnstile / managed / slider stages, vision handoff for image grids, plus manual helpers. |
 
 If you are writing a test, use Playwright. If you are handing a browser to an
 agent and need it to stay safe and accountable, that is what this is for.
@@ -192,10 +192,10 @@ state. See [attach mode](docs/attach-mode.md).
 - **Download approval** — ordinary browser runs deny downloads. A trusted host
   approves one download run at a time; deployments can configure `ask`, `allow`,
   or `deny` without weakening the byte and artifact quotas.
-- **[Native CAPTCHA helpers](docs/captcha.md)** — automatic challenge images,
-  explicit inspection, checkbox clicks, smooth slider drags, and tightly
-  cropped text challenges for the agent's existing vision, with no external
-  solving service or API key.
+- **[Native CAPTCHA helpers](docs/captcha.md)** — local `captcha.solve()` with
+  no third-party solving service: auto checkbox, Turnstile, managed-challenge,
+  and slider stages; image grids and text challenges hand off to the agent's
+  existing vision with tile bounds and crops.
 - **[Human-shaped actions](docs/browser-api.md#human-shaped-interactions)** —
   curved pointer movement, paced typing, and eased wheel events without another
   runtime dependency.
