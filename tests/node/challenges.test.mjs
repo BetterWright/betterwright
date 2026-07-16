@@ -193,6 +193,8 @@ test("returns bounded solve, verify, and resume advice", () => {
   assert.equal(challenge?.solve.maxAttempts, 3);
   assert.equal(challenge?.solve.resumeOnClear, true);
   assert.deepEqual(challenge?.solve.helpers, [
+    "captcha.solve",
+    "captcha.detect",
     "captcha.inspect",
     "captcha.click",
     "captcha.drag",

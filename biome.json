@@ -7,7 +7,8 @@
       "scripts/**",
       "tests/**",
       "benchmarks/**",
-      "!!benchmarks/online-mind2web/runs"
+      "!!benchmarks/online-mind2web/runs",
+      "!!tests/node/fixtures/**"
     ]
   },
   "linter": {

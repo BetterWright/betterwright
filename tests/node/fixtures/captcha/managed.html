@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Checking your browser before accessing example</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f0f2f5; }
+    .card { background: #fff; padding: 32px 40px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.08); text-align: center; }
+    button {
+      margin-top: 16px; padding: 10px 18px; border: 1px solid #c5c9d0; border-radius: 4px;
+      background: #fafafa; cursor: pointer; font-size: 14px;
+    }
+    button:hover { background: #eef1f5; }
+  </style>
+</head>
+<body>
+  <div class="card bw-captcha" data-bw-captcha="managed" id="bw-captcha">
+    <h1>Checking your browser before accessing protected.example</h1>
+    <p>Performing security verification. Verify you are human to continue.</p>
+    <button type="button" id="verify">Verify you are human</button>
+    <input type="hidden" name="cf-turnstile-response" id="cf-turnstile-response" value="" />
+    <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
+  </div>
+  <script>
+    document.getElementById("verify").addEventListener("click", () => {
+      const token = "bw_managed_token_" + Date.now().toString(36);
+      document.getElementById("cf-turnstile-response").value = token;
+      document.getElementById("bw-captcha-response").value = token;
+      document.title = "Verified";
+      document.querySelector("h1").textContent = "Verification successful";
+      document.querySelector("p").textContent = "You are verified. Continue.";
+      document.getElementById("verify").remove();
+    });
+  </script>
+</body>
+</html>

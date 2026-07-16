@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Local slider CAPTCHA fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; background: #f6f7f9; }
+    h1 { font-size: 1.25rem; }
+    .track {
+      position: relative; width: 320px; height: 44px;
+      background: #e8eaed; border-radius: 22px; border: 1px solid #c5c9d0;
+      user-select: none; touch-action: none;
+    }
+    .slider-handle {
+      position: absolute; left: 2px; top: 2px; width: 40px; height: 40px;
+      border: 0; border-radius: 50%; background: #1a73e8; color: #fff;
+      display: grid; place-items: center; cursor: grab; font-size: 18px; padding: 0;
+    }
+    #status { margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Slide the puzzle piece to complete the security check</h1>
+  <div class="bw-captcha" data-bw-captcha="slider" id="bw-captcha">
+    <div class="track" id="track">
+      <button type="button" class="slider-handle" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Slide to verify" id="handle">›</button>
+    </div>
+  </div>
+  <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
+  <p id="status">Drag to verify…</p>
+  <script>
+    const track = document.getElementById("track");
+    const handle = document.getElementById("handle");
+    const field = document.getElementById("bw-captcha-response");
+    const status = document.getElementById("status");
+    let dragging = false;
+    let startX = 0;
+    let origin = 0;
+    const max = () => track.clientWidth - handle.clientWidth - 4;
+
+    function setLeft(px) {
+      const clamped = Math.max(0, Math.min(max(), px));
+      handle.style.left = clamped + "px";
+      const ratio = clamped / max();
+      handle.setAttribute("aria-valuenow", String(Math.round(ratio * 100)));
+      if (ratio >= 0.8 && !field.value) {
+        field.value = "bw_slider_token_" + Date.now().toString(36);
+        status.textContent = "Verification successful";
+        document.title = "Verified";
+        handle.style.background = "#188038";
+      }
+    }
+
+    handle.addEventListener("pointerdown", (event) => {
+      dragging = true;
+      startX = event.clientX;
+      origin = parseFloat(handle.style.left || "2") || 2;
+      handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      setLeft(origin + (event.clientX - startX));
+    });
+    handle.addEventListener("pointerup", () => { dragging = false; });
+    // Also accept programmatic mouse path used by Playwright mouse API.
+    handle.addEventListener("mousedown", (event) => {
+      dragging = true;
+      startX = event.clientX;
+      origin = parseFloat(handle.style.left || "2") || 2;
+      const onMove = (e) => setLeft(origin + (e.clientX - startX));
+      const onUp = () => {
+        dragging = false;
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    });
+  </script>
+</body>
+</html>

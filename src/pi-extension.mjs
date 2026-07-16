@@ -84,7 +84,9 @@ const TOOL_DESCRIPTION =
   "The page global is the active Page; pages is an array of open Pages. " +
   "usePage(indexOrPageId) selects a tab and must not receive a Page object. " +
   "Other globals: context, state, openPage, closePage, snapshot, screenshot, " +
-  "artifactPath, dialogs, credentials, captcha, human, overlays, controls, media. Inspect with " +
+  "artifactPath, dialogs, credentials, captcha, human, overlays, controls, media. " +
+  "On challenges prefer captcha.solve() (local, no external APIs); if status is " +
+  "processing, use the vision artifact/tiles then solve again. Inspect with " +
   "snapshot({interactive:true}); act on [ref=eN] with page.locator('aria-ref=eN'). " +
   "Use openPage and Promise.all for independent multi-site research. A trailing " +
   "expression returns automatically; statement blocks must return.";

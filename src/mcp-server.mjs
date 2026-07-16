@@ -120,13 +120,16 @@ human. A single trailing expression is returned automatically; a statement
 block must return.
 Capture \`screenshot({kind: 'proof'})\` before claiming a visible task is done —
 the image is returned inline; you do not need to open any file path.
-When \`challenges\` is returned, preserve the page and use \`captcha.inspect\`,
-\`captcha.click\`, \`captcha.drag\`, \`captcha.readText\`, and \`human.click\` to work
-through at most three distinct challenge stages. If the same stage rejects an
-action, stop native challenge attempts immediately and use an alternate source
-or human handoff. When the challenge clears, verify current application state;
-replay the original action only if it is idempotent or state proves it did not
-already complete. Never duplicate a submission, purchase, or message.`;
+When \`challenges\` is returned, preserve the page and call \`captcha.solve()\`
+first (local automatic solver — no external APIs). If status is \`processing\`,
+use the attached vision artifact / tile bounds, then solve again. Fall back to
+\`captcha.detect\`, \`captcha.inspect\`, \`captcha.click\`, \`captcha.drag\`,
+\`captcha.readText\`, and \`human.click\`. Work through at most three distinct
+challenge stages. If the same stage rejects an action, stop native challenge
+attempts immediately and use an alternate source or human handoff. When the
+challenge clears, verify current application state; replay the original action
+only if it is idempotent or state proves it did not already complete. Never
+duplicate a submission, purchase, or message.`;
 
 const BROWSER_DOWNLOAD_DESCRIPTION = `Run browser code that may download a file, with user approval first.
 

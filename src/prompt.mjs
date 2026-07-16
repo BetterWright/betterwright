@@ -36,10 +36,11 @@ them, or add confirmation unless a guardrail below requires it.
   an ordinary browser run.
 
 ## Challenges and secrets
-- Treat CAPTCHA as resumable state on the same page/profile. Inspect the attached
-  image or use \`captcha.inspect(bounds)\`; use \`captcha.click(bounds)\`,
-  \`captcha.drag(from, to)\`, \`captcha.readText(bounds)\`, or \`human.click\` as
-  appropriate. For image grids, use vision and click matching tiles.
+- Treat CAPTCHA as resumable state on the same page/profile. Prefer
+  \`captcha.solve()\` first (local; no external API). \`ready\` means cleared;
+  \`processing\` means use the attached vision artifact/\`tiles\`, act, then solve
+  again. Fallbacks: \`captcha.inspect(bounds)\`, \`captcha.click(bounds)\`,
+  \`captcha.drag(from, to)\`, \`captcha.readText(bounds)\`, or \`human.click\`.
 - Reinspect after each challenge action. Attempt at most three distinct stages.
   If a stage rejects an action, stop native challenge attempts immediately; use
   a first-party alternative or human handoff. Never repeat a failed action or
