@@ -2661,12 +2661,13 @@ async function readSolvedProviders(page) {
       const tokens = {};
       const read = (name) => {
         const fields = [...document.querySelectorAll(`[name="${name}"]`)];
-        const values = fields
-          .map((element) =>
-            typeof element.value === "string" ? element.value.trim() : "",
-          )
-          .filter(Boolean);
-        return values.length > 0 && values.every(Boolean) ? values[0] : "";
+        if (fields.length === 0) return "";
+        const values = fields.map((element) =>
+          typeof element.value === "string" ? element.value.trim() : "",
+        );
+        // A provider only counts as solved once every response field is filled;
+        // a partially populated multi-widget page is still an open challenge.
+        return values.every(Boolean) ? values[0] : "";
       };
       const recaptcha = read("g-recaptcha-response");
       const hcaptcha = read("h-captcha-response");
