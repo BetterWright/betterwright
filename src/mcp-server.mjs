@@ -118,6 +118,11 @@ Globals available to \`code\`: page, pages, context, state, openPage, usePage,
 closePage, snapshot, screenshot, artifactPath, dialogs, credentials, captcha,
 human. A single trailing expression is returned automatically; a statement
 block must return.
+Read pages with \`snapshot({interactive: true})\` and act on \`[ref=eN]\` via
+\`page.locator('aria-ref=eN')\`. \`snapshot({ref})\` scopes to a subtree,
+\`snapshot({diff: true})\` verifies an action, \`screenshot({annotate: true})\`
+draws each ref's box on the image. Snapshots include iframe contents and
+off-screen elements — do not scroll to read, and never guess refs or URLs.
 Capture \`screenshot({kind: 'proof'})\` before claiming a visible task is done —
 the image is returned inline; you do not need to open any file path.
 When \`challenges\` is returned, preserve the page and call \`captcha.solve()\`

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { diffSnapshots, filterInteractive } from "../../src/snapshot.mjs";
+import {
+  diffSnapshots,
+  filterInteractive,
+  parseAnnotationBoxes,
+} from "../../src/snapshot.mjs";
 
 const TREE = [
   '- generic [active] [ref=e1]:',
@@ -54,6 +58,58 @@ test("diffSnapshots returns only changed lines", () => {
   assert.ok(
     lines.includes('+ ' + '      - button "Sending…" [disabled] [ref=e10]'),
   );
+});
+
+const BOXED_TREE = [
+  "- generic [ref=e1] [box=0,0,1200,900]:",
+  '  - heading "Title" [level=1] [ref=e2] [box=10,10,300,40]',
+  '  - button "Top" [ref=e3] [box=10,60,80,24]',
+  '  - link "Away" [ref=e4] [cursor=pointer] [box=10,-30,80,24]:',
+  '    - /url: "#a"',
+  "  - iframe [ref=e5] [box=100,200,400,300]:",
+  '    - button "Inner" [ref=f1e2] [box=8,8,120,24]',
+  '    - iframe [ref=f1e3] [box=20,50,200,100]:',
+  '      - button "Deep" [ref=f2e2] [box=5,5,60,20]',
+  '  - button "Hidden" [ref=e6]',
+  '  - button "Flat" [ref=e7] [box=10,500,80,0]',
+].join("\n");
+
+test("parseAnnotationBoxes keeps interactive elements with page-absolute boxes", () => {
+  const boxes = parseAnnotationBoxes(BOXED_TREE);
+  const byRef = Object.fromEntries(boxes.map((box) => [box.ref, box]));
+  // Non-interactive, box-less, and zero-area elements are dropped.
+  assert.ok(!byRef.e2, "heading should be dropped");
+  assert.ok(!byRef.e6, "element without a box should be dropped");
+  assert.ok(!byRef.e7, "zero-height element should be dropped");
+  // Main-frame boxes pass through unchanged, negatives included.
+  assert.deepEqual(byRef.e3, { ref: "e3", x: 10, y: 60, width: 80, height: 24 });
+  assert.equal(byRef.e4.y, -30);
+  // cursor=pointer counts as interactive.
+  assert.ok(byRef.e4);
+  // Child-frame boxes are offset by every ancestor iframe.
+  assert.deepEqual(byRef.f1e2, {
+    ref: "f1e2",
+    x: 108,
+    y: 208,
+    width: 120,
+    height: 24,
+  });
+  assert.deepEqual(byRef.f2e2, {
+    ref: "f2e2",
+    x: 125,
+    y: 255,
+    width: 60,
+    height: 20,
+  });
+});
+
+test("parseAnnotationBoxes caps output without corrupting iframe offsets", () => {
+  const lines = ["- generic [ref=e1] [box=0,0,1000,1000]:"];
+  for (let i = 0; i < 10; i += 1)
+    lines.push(`  - button "b${i}" [ref=e${i + 2}] [box=0,${i * 30},50,20]`);
+  const boxes = parseAnnotationBoxes(lines.join("\n"), { max: 3 });
+  assert.equal(boxes.length, 3);
+  assert.equal(boxes[0].ref, "e2");
 });
 
 test("diffSnapshots flags oversized inputs instead of stalling", () => {

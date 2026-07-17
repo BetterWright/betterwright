@@ -6,7 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-17
+
 ### Added
+
+- **Annotated screenshots** — `screenshot({annotate: true})` overlays a
+  labelled bounding box on every interactive element (including elements inside
+  child iframes, offset to page coordinates) before capturing, so what the
+  model sees in the image maps directly back to an `aria-ref` it can act on.
+  The overlay is removed after capture and the artifact reports an
+  `annotations` count.
+- **Ref-scoped snapshots** — `snapshot({ref: 'e31'})` zooms into one element's
+  subtree using a ref from the previous snapshot, with no CSS selector needed.
+- Snapshot headers now include the page title alongside the page id and URL.
+
+### Changed
+
+- Operator guidance rewritten around an explicit reading-escalation ladder
+  (interactive snapshot → full snapshot → brief wait and re-snapshot →
+  annotated screenshot), ref/URL anti-guessing rules, action–verification
+  batching within a single `run()`, a concrete recovery ladder (fresh snapshot
+  before retry, inspect the hit target on "obscured" clicks, switch approach
+  after two failures), and no-sleep/no-scroll-to-read discipline. The MCP
+  `browser` tool description and the pi extension description carry the same
+  guidance.
 
 - **Local CAPTCHA solver** — `captcha.solve()` and `captcha.detect()` run entirely
   inside the managed browser with no third-party captcha APIs and no heavy ML
