@@ -6,6 +6,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-17
+
+### Added
+
+- **Runtime.enable stealth (opt-in)** — `new BetterWright({ stealthRuntimeFix: true })`,
+  the `--stealth` CLI flag, or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1` route the
+  driver through the pre-patched `patchright-core` drop-in so every `run()`
+  snippet executes in an isolated world. This defeats main-world automation
+  detection (rebrowser's `mainWorldExecution` test goes from flagged to
+  untriggered) that the managed Cloak browser leaves open — Cloak already
+  neutralizes the `Runtime.enable` and `navigator.webdriver` signals, but
+  `page.evaluate` otherwise still runs in the page's main world. A module-
+  resolution hook applies the swap process-wide, including the Cloak wrapper's
+  own `import("playwright-core")`. Trade-off (surfaced as a run warning while
+  active): snippets can no longer read page-defined main-world globals such as
+  `window.__NEXT_DATA__`; DOM access, clicks, and typing are unaffected.
+  `patchright-core` is an optional dependency, pinned to the same 1.61.x line as
+  `playwright-core`; `betterwright doctor` reports `stealth_available`. Off by
+  default.
+
+### Changed
+
+- **Attach mode auto-enables the stealth fix.** Attach mode (any non-empty
+  `connectOverCdp`, including the headed `"auto"` default that drives a real
+  Google Chrome) connects to a stock browser whose CDP session leaks
+  `Runtime.enable` — the one automation signal the managed Cloak fork hides at
+  the binary level but a browser BetterWright merely connects to cannot. When
+  the optional `patchright-core` driver is installed, `stealthRuntimeFix` now
+  defaults **on** in attach mode so that leak is suppressed and `page.evaluate`
+  runs in an isolated world, making the headed/attach path no longer the most
+  bot-detectable one. An explicit `stealthRuntimeFix` option or
+  `BETTERWRIGHT_STEALTH_RUNTIME_FIX` still wins in both directions; pass `false`
+  to opt out (regaining page-defined main-world globals). The managed browser
+  default is unchanged and never auto-enables it.
+
 ## [0.6.0] — 2026-07-17
 
 ### Added

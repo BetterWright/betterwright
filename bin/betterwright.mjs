@@ -7,6 +7,10 @@
 //   betterwright repl             run blank-line-separated snippets from stdin
 //   betterwright skill            print paste-ready agent instructions
 //   betterwright mcp              serve the MCP stdio server (needs the MCP SDK)
+//
+// run/repl flags: --headed, network flags (--block-private-network,
+// --block-loopback, --allow-host/--block-host), and --stealth (isolated-world
+// driver that evades main-world automation detection; needs patchright-core).
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -85,7 +89,7 @@ async function readSnippet(arg) {
 
 async function cmdRun(arg, flags) {
   const code = await readSnippet(arg);
-  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed") });
+  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), stealthRuntimeFix: flags.has("--stealth") || undefined });
   try {
     const result = await bw.run(code);
     console.log(JSON.stringify(result, null, 2));
@@ -143,7 +147,7 @@ function cmdSkill(flags) {
 }
 
 async function cmdRepl(flags) {
-  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed") });
+  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), stealthRuntimeFix: flags.has("--stealth") || undefined });
   console.log("BetterWright REPL — blank line runs a snippet, Ctrl-D quits.\n");
   const rl = readline.createInterface({ input: process.stdin });
   let buffer = [];

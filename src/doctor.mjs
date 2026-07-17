@@ -14,6 +14,15 @@ const require = createRequire(import.meta.url);
 export const PINNED_PLAYWRIGHT_VERSION = "1.61.1";
 export const PINNED_CLOAKBROWSER_VERSION = "0.4.10";
 
+/** Version of the optional patchright-core stealth driver, or null if absent. */
+export function stealthDriverVersion() {
+  try {
+    return require("patchright-core/package.json").version;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveCoreDir() {
   const override = (process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "").trim();
   if (override && fs.existsSync(path.join(override, "package.json"))) return override;
@@ -114,6 +123,9 @@ export async function doctorReport() {
     chromium,
     chromium_ok: Boolean(chromium && fs.existsSync(chromium)),
   };
+  const stealth = stealthDriverVersion();
+  report.stealth_driver = stealth;
+  report.stealth_available = Boolean(stealth);
   const backend = (process.env.BETTERWRIGHT_BROWSER || "cloak").trim().toLowerCase();
   report.browser = backend;
   report.ready =

@@ -156,7 +156,17 @@ it didn't start:
 
 - **Browser signals:** attach mode uses the Chrome instance you launched, not
   BetterWright's managed Cloak backend. It therefore gives up Cloak's reduction
-  of common stock automation signals.
+  of common stock automation signals — most notably, a stock Chrome's CDP
+  session exposes the `Runtime.enable` leak that Cloak's fork hides. To cover
+  that specific vector, BetterWright **auto-enables the isolated-world stealth
+  fix in attach mode** when the optional `patchright-core` driver is installed:
+  `page.evaluate` runs in an isolated world and the `Runtime.enable` signal is
+  suppressed. This is the one launch-time protection attach mode can still get,
+  because it lives in the driver rather than the browser binary. Pass
+  `stealthRuntimeFix: false` (or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=0`) to opt
+  out; note the trade-off that snippets then cannot read page-defined
+  main-world globals. Without `patchright-core` installed, attach mode leaves
+  the leak in place — install it for the least-detectable attach path.
 
 - **Gone in attach mode:** the launch-time network floor — the Chromium
   `--host-resolver-rules` that NXDOMAIN cloud-metadata endpoints, the forced

@@ -102,6 +102,13 @@ let launchConfig = null;
 let profileLock = null;
 let profileMode = "persistent";
 let profileWarning = "";
+// Set by the client via `--import` when stealthRuntimeFix is on: the driver is
+// patchright-core and every page.evaluate runs in an isolated world.
+const stealthActive = process.env.BETTERWRIGHT_STEALTH_ACTIVE === "1";
+const STEALTH_WARNING =
+  "Runtime.enable stealth is active: run() snippets execute in an isolated " +
+  "world, so page-defined main-world globals (e.g. window.__NEXT_DATA__) read " +
+  "as undefined. DOM access, clicks, and typing are unaffected.";
 let useSetContentCompatibility = false;
 let shuttingDown = false;
 let activeExecutionSession = null;
@@ -1931,6 +1938,7 @@ async function buildEnvelope(
     artifacts: redactDeep(artifacts),
     warnings: [
       ...(profileWarning ? [profileWarning] : []),
+      ...(stealthActive ? [STEALTH_WARNING] : []),
       ...(challenges.length ? [challenges[0].advice] : []),
       ...(drainSessionWarnings ? session.warnings.splice(0) : []),
     ],
