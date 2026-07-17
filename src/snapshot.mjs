@@ -52,6 +52,47 @@ export function filterInteractive(text) {
   return kept.length ? kept.join("\n") : "(no interactive elements)";
 }
 
+const REF_PATTERN = /\[ref=([a-z0-9]+)\]/;
+const BOX_PATTERN =
+  /\[box=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)\]/;
+const IFRAME_LINE = /^\s*- iframe\b/;
+
+/**
+ * Extract interactive elements with page-absolute bounding boxes from an
+ * `ariaSnapshot({mode: "ai", boxes: true})` tree. Child-frame boxes are
+ * reported relative to their own frame's viewport, so each element's box is
+ * offset by the boxes of its ancestor iframes (tracked via indentation).
+ * Returns up to `max` entries of `{ref, x, y, width, height}`.
+ */
+export function parseAnnotationBoxes(text, { max = 150 } = {}) {
+  const stack = [{ indent: -1, dx: 0, dy: 0 }];
+  const boxes = [];
+  for (const line of String(text).split("\n")) {
+    if (/^\s*- \//.test(line)) continue; // property line, e.g. `- /url: …`
+    const boxMatch = BOX_PATTERN.exec(line);
+    if (!boxMatch) continue;
+    const indent = indentOf(line);
+    while (stack.length > 1 && stack[stack.length - 1].indent >= indent)
+      stack.pop();
+    const { dx, dy } = stack[stack.length - 1];
+    const box = {
+      x: Number(boxMatch[1]) + dx,
+      y: Number(boxMatch[2]) + dy,
+      width: Number(boxMatch[3]),
+      height: Number(boxMatch[4]),
+    };
+    if (IFRAME_LINE.test(line))
+      stack.push({ indent, dx: box.x, dy: box.y });
+    if (boxes.length >= max) continue;
+    const ref = REF_PATTERN.exec(line)?.[1];
+    if (!ref || box.width <= 0 || box.height <= 0) continue;
+    if (!(INTERACTIVE_ROLE.test(line) || line.includes("[cursor=pointer]")))
+      continue;
+    boxes.push({ ref, ...box });
+  }
+  return boxes;
+}
+
 // Beyond this many lines per side an LCS table stops being cheap; callers
 // fall back to the full snapshot.
 const MAX_DIFF_LINES = 3_000;

@@ -54,7 +54,11 @@ import {
   scrollWheel,
   typeText,
 } from "./human.mjs";
-import { diffSnapshots, filterInteractive } from "./snapshot.mjs";
+import {
+  diffSnapshots,
+  filterInteractive,
+  parseAnnotationBoxes,
+} from "./snapshot.mjs";
 
 const playwrightCoreDir = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "";
 const playwrightModule = playwrightCoreDir
@@ -724,6 +728,71 @@ async function assertScreenshotPixelLimit(page, options) {
   }
 }
 
+// Overlay id namespaced to avoid colliding with page-owned elements. The
+// overlay is pointer-events:none and removed right after capture.
+const ANNOTATION_OVERLAY_ID = "__betterwright_annotations__";
+
+function drawAnnotationOverlay({ boxes, fullPage, overlayId }) {
+  document.getElementById(overlayId)?.remove();
+  const root = document.createElement("div");
+  root.id = overlayId;
+  const dx = fullPage ? window.scrollX : 0;
+  const dy = fullPage ? window.scrollY : 0;
+  root.style.cssText =
+    `position:${fullPage ? "absolute" : "fixed"};left:0;top:0;width:0;` +
+    "height:0;z-index:2147483647;pointer-events:none;";
+  for (const box of boxes) {
+    const frame = document.createElement("div");
+    frame.style.cssText =
+      `position:absolute;left:${box.x + dx}px;top:${box.y + dy}px;` +
+      `width:${box.width}px;height:${box.height}px;` +
+      "border:2px solid #e11d48;border-radius:2px;box-sizing:border-box;";
+    const label = document.createElement("span");
+    label.textContent = box.ref;
+    label.style.cssText =
+      `position:absolute;left:-2px;top:${box.y + dy < 16 ? 0 : -16}px;` +
+      "background:#e11d48;color:#fff;font:11px/14px monospace;" +
+      "padding:0 3px;border-radius:2px;white-space:nowrap;";
+    frame.appendChild(label);
+    root.appendChild(frame);
+  }
+  document.body.appendChild(root);
+}
+
+function removeAnnotationOverlay(overlayId) {
+  document.getElementById(overlayId)?.remove();
+}
+
+// Take a fresh boxes-annotated aria snapshot, draw ref-labelled outlines over
+// the interactive elements (including those inside child iframes, offset to
+// page coordinates), and leave the overlay up for the caller's capture.
+// Returns how many elements were annotated.
+async function addScreenshotAnnotations(page, fullPage) {
+  const tree = await page.locator("body").ariaSnapshot({
+    mode: "ai",
+    boxes: true,
+    timeout: 10_000,
+  });
+  let boxes = parseAnnotationBoxes(tree);
+  if (!fullPage) {
+    const viewport = page.viewportSize();
+    if (viewport)
+      boxes = boxes.filter(
+        (box) =>
+          box.x < viewport.width &&
+          box.y < viewport.height &&
+          box.x + box.width > 0 &&
+          box.y + box.height > 0,
+      );
+  }
+  await page.evaluate(drawAnnotationOverlay, {
+    boxes,
+    fullPage: Boolean(fullPage),
+    overlayId: ANNOTATION_OVERLAY_ID,
+  });
+  return boxes.length;
+}
+
 async function captureScreenshot(page, session, requested, fallback, options) {
   await assertScreenshotPixelLimit(page, options);
   const content = await page.screenshot(options);
@@ -982,9 +1051,16 @@ const lastSnapshots = new WeakMap();
 
 async function snapshotPage(page, options = {}) {
   const depth = Math.floor(Number(options?.depth) || 0);
-  const scope = options?.selector
-    ? page.locator(String(options.selector))
-    : page.locator("body");
+  const ref = options?.ref ? String(options.ref) : "";
+  if (ref && !/^(?:f\d+)*e\d+$/.test(ref))
+    throw new Error(
+      `Invalid snapshot ref "${ref}" — expected a marker like "e12" or "f1e3".`,
+    );
+  const scope = ref
+    ? page.locator(`aria-ref=${ref}`)
+    : options?.selector
+      ? page.locator(String(options.selector))
+      : page.locator("body");
   let text = await scope.ariaSnapshot({
     mode: "ai",
     timeout: Number(options?.timeout || 10_000),
@@ -993,6 +1069,7 @@ async function snapshotPage(page, options = {}) {
   if (options?.interactive) text = filterInteractive(text);
 
   const key = JSON.stringify([
+    ref,
     String(options?.selector || ""),
     Boolean(options?.interactive),
     depth,
@@ -1002,7 +1079,16 @@ async function snapshotPage(page, options = {}) {
   const previous = store.get(key);
   store.set(key, text);
 
-  const header = `page ${pageId(page)} ${page.url()}`;
+  let title = "";
+  try {
+    title = String(await page.title())
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120);
+  } catch {
+    // A page mid-navigation can refuse title(); the header works without it.
+  }
+  const header = `page ${pageId(page)} ${page.url()}${title ? ` "${title}"` : ""}`;
   if (options?.diff && previous !== undefined) {
     const result = diffSnapshots(previous, text);
     if (!result.changed)
@@ -2266,19 +2352,26 @@ function buildSandbox(session, consoleMessages) {
     // pass `type` explicitly so the two can never disagree.
     let requested = settings.name || `${kind}.${type}`;
     if (!/\.(png|jpe?g)$/i.test(requested)) requested = `${requested}.${type}`;
-    const file = await captureScreenshot(
-      page,
-      session,
-      requested,
-      `${kind}.${type}`,
-      {
+    const fullPage = Boolean(settings.fullPage);
+    let annotations;
+    if (settings.annotate)
+      annotations = await addScreenshotAnnotations(page, fullPage);
+    let file;
+    try {
+      file = await captureScreenshot(page, session, requested, `${kind}.${type}`, {
         type,
-        fullPage: Boolean(settings.fullPage),
+        fullPage,
         animations: "disabled",
         ...(type === "jpeg" ? { quality: Number(settings.quality) || 80 } : {}),
-      },
-    );
+      });
+    } finally {
+      if (settings.annotate)
+        await page
+          .evaluate(removeAnnotationOverlay, ANNOTATION_OVERLAY_ID)
+          .catch(() => {});
+    }
     const artifact = { kind, path: file, media: `MEDIA:${file}` };
+    if (annotations !== undefined) artifact.annotations = annotations;
     session.artifacts.push(artifact);
     if (kind === "question") session.awaitingAnswerSince = Date.now();
     return artifact;
