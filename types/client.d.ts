@@ -24,6 +24,8 @@ export class BetterWright {
   searchMinIntervalMs: number;
   publicSearchPolicy: "block" | "allow";
   downloadPolicy: "ask" | "allow" | "deny";
+  stealthRuntimeFix: boolean;
+  stealthAutoAttach: boolean;
   defaultTimeout: number;
 
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;

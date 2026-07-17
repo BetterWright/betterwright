@@ -7,6 +7,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -127,6 +128,41 @@ function resolvePlaywrightCore() {
   return "";
 }
 
+const STEALTH_REGISTER_PATH = fileURLToPath(
+  new URL("./stealth-register.mjs", import.meta.url),
+);
+
+/**
+ * Resolve the opt-in Runtime.enable stealth fix. Precedence: an explicit
+ * option > the `BETTERWRIGHT_STEALTH_RUNTIME_FIX` env override > off.
+ * When on, the worker process is spawned with a module-resolution hook that
+ * redirects `playwright-core` to the pre-patched `patchright-core` drop-in, so
+ * every `page.evaluate` runs in an isolated world (defeating main-world
+ * automation detection) instead of the page's main world. It applies to the
+ * managed Cloak browser too, because the hook intercepts the wrapper's own
+ * `import("playwright-core")`. Cost: model snippets can no longer read
+ * page-defined main-world globals (e.g. `window.__NEXT_DATA__`); DOM access is
+ * unaffected. Off by default so normal runs keep full main-world access.
+ */
+function resolveStealthRuntimeFix(value) {
+  const raw =
+    value != null ? value : process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
+  if (raw == null) return false;
+  if (typeof raw === "boolean") return raw;
+  return ["1", "true", "yes", "on"].includes(String(raw).trim().toLowerCase());
+}
+
+/** Confirm the pre-patched driver is installed before enabling stealth. */
+function stealthDriverAvailable() {
+  const require = createRequire(import.meta.url);
+  try {
+    require.resolve("patchright-core");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A persistent, policy-guarded Playwright browser. */
 export class BetterWright {
   /**
@@ -152,7 +188,9 @@ export class BetterWright {
    *   Chrome installed uses "auto" (real Chrome, no launch-time floor), while a
    *   headless run (server/CI or headless:true) or a machine without Chrome
    *   launches the managed sandbox with the floor intact. Pass "" to force the
-   *   launched sandbox regardless.
+   *   launched sandbox regardless. Attach mode drives a stock Chrome, whose CDP
+   *   session leaks `Runtime.enable`, so the stealth runtime fix is auto-enabled
+   *   there (when `patchright-core` is installed) unless explicitly disabled.
    * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
    *   allowed top-level Google, Bing, or DuckDuckGo search navigations
    * @param {"block"|"allow"} [options.publicSearchPolicy="allow"] set "block"
@@ -161,6 +199,18 @@ export class BetterWright {
    * @param {"ask"|"allow"|"deny"} [options.downloadPolicy="ask"] require a
    *   trusted host to mark an individual run approved, allow every run, or
    *   deny downloads entirely
+   * @param {boolean} [options.stealthRuntimeFix=false] run model snippets in an
+   *   isolated world (via the pre-patched `patchright-core` driver) so
+   *   `page.evaluate` no longer trips main-world automation detection. Applies
+   *   to the managed Cloak browser and the fallbacks. Off by default, except in
+   *   attach mode (a non-empty `connectOverCdp`, including the headed "auto"
+   *   default): there it auto-enables when `patchright-core` is installed,
+   *   because a stock attached Chrome leaks `Runtime.enable` that the managed
+   *   fork would otherwise hide. Pass `false` (or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=0`)
+   *   to opt out even in attach mode. Trade-off: snippets can no longer read
+   *   page-defined main-world globals (e.g. `window.__NEXT_DATA__`); DOM access
+   *   and clicks are unaffected. Requires the optional `patchright-core`
+   *   dependency to be installed.
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
@@ -179,6 +229,27 @@ export class BetterWright {
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
     this.publicSearchPolicy = resolvePublicSearchPolicy(options.publicSearchPolicy);
     this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
+    this.stealthRuntimeFix = resolveStealthRuntimeFix(options.stealthRuntimeFix);
+    // Attach mode drives a stock Google Chrome, whose CDP session leaks
+    // `Runtime.enable` and runs `page.evaluate` in the main world — the managed
+    // Cloak fork neutralizes both at the binary level, but a browser we merely
+    // connect to can't be. So when the host is attaching (a non-empty endpoint,
+    // including the headed "auto" default) and hasn't spoken to stealth either
+    // way, default the isolated-world driver on if it is installed, so the
+    // headed/attach path is not the most bot-detectable one. An explicit option
+    // or env var still wins in both directions.
+    const stealthConfigured =
+      options.stealthRuntimeFix != null ||
+      process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX != null;
+    this.stealthAutoAttach = false;
+    if (
+      !stealthConfigured &&
+      this.connectOverCdp !== "" &&
+      stealthDriverAvailable()
+    ) {
+      this.stealthRuntimeFix = true;
+      this.stealthAutoAttach = true;
+    }
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
 
     this._process = null;
@@ -234,7 +305,23 @@ export class BetterWright {
     const core = resolvePlaywrightCore();
     if (core) env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = core;
 
-    const child = spawn(process.execPath, [WORKER_PATH], {
+    // Stealth: redirect the worker's (and the Cloak wrapper's) playwright-core
+    // to patchright-core by registering a resolve hook at process start, before
+    // any driver import runs. `--import` must precede the worker script.
+    const execArgv = [];
+    if (this.stealthRuntimeFix) {
+      if (!stealthDriverAvailable()) {
+        throw new BrowserError(
+          "stealthRuntimeFix is enabled but the optional 'patchright-core' " +
+            "dependency is not installed. Install it with " +
+            "`npm install patchright-core`, or disable stealthRuntimeFix.",
+        );
+      }
+      execArgv.push("--import", STEALTH_REGISTER_PATH);
+      env.BETTERWRIGHT_STEALTH_ACTIVE = "1";
+    }
+
+    const child = spawn(process.execPath, [...execArgv, WORKER_PATH], {
       cwd: path.dirname(WORKER_PATH),
       stdio: ["pipe", "pipe", "pipe"],
       env,

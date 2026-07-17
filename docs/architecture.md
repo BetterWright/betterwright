@@ -146,3 +146,15 @@ tier. Reproducible deployments can set a full `CLOAKBROWSER_VERSION`, while
 Managed CloakBrowser reduces common browser-fingerprint false positives but
 does not guarantee undetectability. Stock Chromium remains an explicit
 compatibility/test fallback and may expose obvious automation signals.
+
+CloakBrowser's forked Chromium already neutralizes the `Runtime.enable` CDP leak
+and the `navigator.webdriver` flag, but Playwright still runs `page.evaluate` in
+the page's main world, so a main-world trap can observe the agent the moment it
+inspects a page. The opt-in `stealthRuntimeFix` (constructor option, `--stealth`,
+or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`) closes that vector by swapping the driver
+for the pre-patched `patchright-core`, which executes snippets in an isolated
+world. It is applied by registering a module-resolution hook on the worker
+process (`src/stealth-register.mjs` → `src/stealth-hooks.mjs`) so the redirect
+also covers the Cloak wrapper's own bare `import("playwright-core")`. The cost is
+that model snippets can no longer read page-defined main-world globals; it is off
+by default for that reason.

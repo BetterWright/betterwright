@@ -22,6 +22,7 @@ new BetterWright({
   searchMinIntervalMs: 0,
   defaultTimeout: 30,   // per-snippet seconds, min 5
   downloadPolicy: "ask", // "ask" (default), "allow", or "deny"
+  stealthRuntimeFix: false, // isolated-world driver; evades main-world detection
 });
 ```
 
@@ -40,6 +41,24 @@ navigations while they are permitted.
 `connectOverCdp` is a trusted host configuration option, not part of the browser
 tool given to the model. Model-authored snippets cannot access CDP, the raw
 browser object, or `newCDPSession`.
+
+`stealthRuntimeFix` (off by default; also `--stealth` or
+`BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`) runs every snippet in an isolated world via
+the optional `patchright-core` driver, so `page.evaluate` no longer trips
+main-world automation detection. The managed Cloak backend already hides the
+`Runtime.enable` and `navigator.webdriver` signals; this closes the remaining
+main-world-execution vector. Trade-off: snippets can no longer read page-defined
+main-world globals (e.g. `window.__NEXT_DATA__`, `dataLayer`) — DOM queries,
+clicks, and typing are unaffected, and a run warning flags when it is active.
+Install the optional dependency (`npm install patchright-core`) to use it;
+`betterwright doctor` reports `stealth_available`.
+
+In [attach mode](attach-mode.md) (any non-empty `connectOverCdp`, including the
+headed `"auto"` default) BetterWright drives a stock Chrome that Cloak's fork
+cannot protect, so it **auto-enables `stealthRuntimeFix`** there when
+`patchright-core` is installed — suppressing that browser's `Runtime.enable`
+leak, which is the whole reason attach mode was more bot-detectable. Pass
+`stealthRuntimeFix: false` (or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=0`) to opt out.
 
 | Method | Description |
 | --- | --- |

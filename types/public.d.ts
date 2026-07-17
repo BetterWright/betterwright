@@ -36,4 +36,11 @@ export interface BetterWrightOptions {
   searchMinIntervalMs?: number;
   publicSearchPolicy?: PublicSearchPolicy;
   downloadPolicy?: DownloadPolicy;
+  /**
+   * Run model snippets in an isolated world (via the optional `patchright-core`
+   * driver) so `page.evaluate` no longer trips main-world automation detection.
+   * Trade-off: snippets cannot read page-defined main-world globals. Off by
+   * default. Also settable with `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`.
+   */
+  stealthRuntimeFix?: boolean;
 }
