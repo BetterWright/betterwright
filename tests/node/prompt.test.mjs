@@ -6,9 +6,21 @@ import { agentSystemPrompt } from "../../src/prompt.mjs";
 test("default prompt is permissive", () => {
   const prompt = agentSystemPrompt();
   const compact = prompt.replace(/\s+/g, " ");
-  assert.ok(prompt.length < 4_000, `default prompt grew to ${prompt.length} characters`);
+  assert.ok(prompt.length < 5_200, `default prompt grew to ${prompt.length} characters`);
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
+  // Reading escalation, ref discipline, batching, and recovery guidance.
+  assert.ok(compact.includes("snapshot({interactive: true})"));
+  assert.ok(compact.includes("screenshot({annotate: true})"));
+  assert.ok(compact.includes("snapshot({ref: 'eN'})"));
+  assert.ok(compact.includes("snapshot({diff: true})"));
+  assert.ok(compact.includes("never guess a ref, URL, or page state"));
+  assert.ok(compact.includes("iframe contents"));
+  assert.ok(compact.includes("Batch action and verification"));
+  assert.ok(compact.includes("add no sleeps"));
+  assert.ok(compact.includes("inspect the real hit target"));
+  assert.ok(compact.includes("same path failing twice means switch approach"));
+  assert.ok(compact.includes("missed, stale, or wrong-target action"));
   assert.ok(compact.includes("do not automate Google or Bing's public search UI"));
   assert.ok(compact.includes("captcha.inspect(bounds)"));
   assert.ok(compact.includes("captcha.click(bounds)"));

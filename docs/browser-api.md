@@ -51,33 +51,42 @@ return { a: await a.title(), b: await b.title() };
 ## Reading the page
 
 `snapshot(options?)` returns an accessibility-tree snapshot of the current page —
-a compact, model-friendly view far cheaper than full HTML. Every element carries
-a `[ref=eN]` marker you can act on directly with an `aria-ref` locator, so there
-is no need to reverse-engineer a CSS selector from the snapshot:
+a compact, model-friendly view far cheaper than full HTML. The header line
+carries the page id, URL, and title. Every element carries a `[ref=eN]` marker
+you can act on directly with an `aria-ref` locator, so there is no need to
+reverse-engineer a CSS selector from the snapshot:
 
 ```js
-return await snapshot({interactive: true}); // "page page-1 https://…\n- button \"Sign in\" [ref=e12]…"
+return await snapshot({interactive: true}); // "page page-1 https://… \"Sign in\"\n- button \"Sign in\" [ref=e12]…"
 // then, in a later run:
 await human.click(page.locator('aria-ref=e12'));
 ```
 
+The tree covers the whole page, not just the viewport: off-screen elements are
+included (locator actions scroll to their target on their own, so never scroll
+just to read), and child-iframe contents appear inline with frame-qualified
+refs like `f1e2` that work in `aria-ref` locators exactly like main-frame refs.
+
 Refs are assigned fresh on every snapshot and go stale when the page changes —
-re-snapshot after navigations or re-renders before using one.
+re-snapshot after navigations or re-renders before using one, and never guess a
+ref you have not seen in the current snapshot.
 
 | Option | Default | Notes |
 | --- | --- | --- |
 | `interactive` | `false` | Keep only actionable elements (buttons, links, inputs, `cursor: pointer`, …) plus their ancestors. The cheapest way to see what you can do on a page. |
 | `diff` | `false` | Return only the `+`/`-` lines changed since the previous same-shaped snapshot of this page, or `(no changes since previous snapshot)`. |
+| `ref` | — | Scope the snapshot to one element's subtree by its ref from the previous snapshot, e.g. `{ref: 'e31'}` — no CSS selector needed. |
 | `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
 | `depth` | — | Limit tree depth. |
 | `maxChars` | `10000` | Truncation limit, capped at 20000. |
 | `timeout` | `10000` | Milliseconds. |
 
-Prefer `snapshot({interactive: true})` for deciding what to click and
-`snapshot({diff: true})` for checking what an action changed; take a full
-`snapshot()` only when you need to read page content wholesale. For anything
-Playwright can read — text, attributes, computed state — use the normal
-`page.locator(...)` API.
+Escalate reading only as far as the task needs: `snapshot({interactive: true})`
+to decide what to click, a full `snapshot()` to read content wholesale,
+`snapshot({diff: true})` to check what an action changed, and
+`screenshot({annotate: true})` when only the visual layout can answer the
+question. For anything Playwright can read — text, attributes, computed
+state — use the normal `page.locator(...)` API.
 
 ## Human-shaped interactions
 
@@ -112,9 +121,19 @@ than automating Google or Bing's public search UI.
 | --- | --- | --- |
 | `kind` | `"debug"` | `"proof"`, `"question"`, or `"debug"` — how the host UI should treat it. |
 | `name` | `"<kind>.png"` | A `.png`/`.jpg` extension is added if you omit one. |
+| `annotate` | `false` | Draw a labelled box over every interactive element, so what you see maps back to a ref you can act on. |
 | `fullPage` | `false` | Capture the full scrollable page. |
 | `type` | `"png"` | `"png"` or `"jpeg"`. |
 | `quality` | `80` | JPEG only. |
+
+`{annotate: true}` takes a fresh boxes-annotated snapshot, overlays each
+interactive element's bounding box labelled with its ref — including elements
+inside child iframes, offset to page coordinates — captures, then removes the
+overlay. The returned artifact gains an `annotations` count, and the refs shown
+in the image are current, so `page.locator('aria-ref=…')` acts on exactly what
+you see. Use it as the last step of reading escalation: when the accessibility
+tree cannot answer a layout question, or to visually confirm what a ref points
+at before a consequential click.
 
 It returns `{kind, path, media}` where `media` is `MEDIA:<absolute path>`. The
 `MEDIA:` convention lets a host surface render the file when the agent cites it.

@@ -22,8 +22,19 @@ With no guardrails, the guidance tells the model to:
 - **Treat the user's request as authorization.** If they asked it to sign in,
   create an account, fill a form, book, or buy, it does that — without refusing,
   stalling, or adding "are you sure?" friction to ordinary steps.
-- **Work autonomously** — inspect, act, recover from routine failures, use
-  multiple tabs, and keep a running `note`.
+- **Work autonomously** — inspect, act, recover, use multiple tabs, and keep a
+  running `note`.
+- **Read by escalation and never guess.** Start with
+  `snapshot({interactive: true})`, escalate to a full snapshot, a re-snapshot
+  after a brief wait, and finally `screenshot({annotate: true})`; never guess a
+  ref, URL, or page state it has not observed, and never scroll just to read
+  (snapshots already include iframe contents and off-screen elements).
+- **Verify actions and batch steps.** An action is unconfirmed until
+  `snapshot({diff: true})` shows the expected state; action and verification go
+  in one `run()` when the next step needs no fresh ref.
+- **Recover deliberately** — no sleeps after auto-waiting actions, a fresh
+  snapshot before any retry, inspect the real hit target after an "obscured"
+  click, and switch approach after the same path fails twice.
 - **Keep credentials out of the chat.** When authentication is required, use a
   password-manager extension's inline autofill if one is unlocked, or request the
   trusted host-side fill (`bw.fillCredential` / `generateAndFillCredential`);
