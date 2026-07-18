@@ -55,6 +55,22 @@ export function managedCloakViewport(binaryInfo, headless) {
   return undefined;
 }
 
+/** Build the explicit Chromium arguments used by the managed Cloak browser. */
+export function managedCloakArgs(fingerprintSeed) {
+  return [
+    // Chromium suppresses bad-flag infobars for automated test browsers when
+    // this recognized switch is present. Cloak/Playwright must retain
+    // --no-sandbox for root and container runtimes, where sandboxed Chromium
+    // cannot launch.
+    "--test-type",
+    // WebRTC is not represented by Playwright request routing and can
+    // otherwise send STUN/data-channel UDP directly around a TCP proxy.
+    // Force it onto the configured proxy/TCP path instead.
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    `--fingerprint=${fingerprintSeed}`,
+  ];
+}
+
 function cloakEntrypoint() {
   const override = (process.env.BETTERWRIGHT_CLOAKBROWSER_PATH || "").trim();
   if (!override) return "cloakbrowser";

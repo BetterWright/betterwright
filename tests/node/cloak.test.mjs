@@ -5,11 +5,28 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { assertProfileNotNewer, managedCloakViewport } from "../../src/cloak.mjs";
+import {
+  assertProfileNotNewer,
+  managedCloakArgs,
+  managedCloakViewport,
+} from "../../src/cloak.mjs";
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
 
 const enabled = process.env.BETTERWRIGHT_CLOAK_E2E === "1";
 const opts = { skip: enabled ? false : "set BETTERWRIGHT_CLOAK_E2E=1" };
+
+test("managed Cloak arguments omit resolver rules and suppress bad-flag bars", () => {
+  const args = managedCloakArgs("12345");
+  assert.deepEqual(args, [
+    "--test-type",
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--fingerprint=12345",
+  ]);
+  assert.equal(
+    args.some((arg) => arg.startsWith("--host-resolver-rules")),
+    false,
+  );
+});
 
 test("managed Cloak viewports stay coherent on affected builds", () => {
   assert.deepEqual(

@@ -75,17 +75,14 @@ actually relied upon are below it, at the browser and network layer.
 
 The controls that hold even if a snippet found a way around the JS facades:
 
-1. **Browser resolver rules.** The Chromium-derived managed browser is launched
-   with `--host-resolver-rules` mapping
-   cloud-metadata hostnames and link-local ranges to `NOTFOUND`. WebRTC is
-   pinned to the proxy path so it can't send UDP around it.
-2. **A mandatory transport proxy.** All traffic — including localhost — is
+1. **A mandatory transport proxy.** All traffic — including localhost — is
    forced through a loopback SOCKS proxy the worker runs (`bypass: <-loopback>`).
    The proxy authorizes the connect target *and re-authorizes every IP the
    hostname resolved to*, then connects to those exact literals. This closes
    DNS-rebinding and redirect-hop bypasses: Chromium never does a second,
-   unguarded lookup.
-3. **The policy, failing closed.** `NetworkPolicy` answers every `guard`. If it
+   unguarded lookup. WebRTC is pinned to the proxy path so it can't send UDP
+   around it.
+2. **The policy, failing closed.** `NetworkPolicy` answers every `guard`. If it
    errors, the request is denied. Metadata endpoints can't be allowlisted.
 
 These are independent of the sandbox and of each other. See
