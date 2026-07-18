@@ -8,19 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Cache-write is now reported for OpenAI-style backends (codex, grok).** Those
-  APIs report only cache *reads*, so `cacheWriteTokens` was always `0`; it is now
-  derived as the fresh input processed this turn (`inputTokens − cacheReadTokens`),
-  the tokens written to the cache. `inputTokens = cacheReadTokens + cacheWriteTokens`
-  holds for these backends; Anthropic keeps its directly reported read and
-  cache-creation counts.
+- **Slimmer run summary.** The one-line summary now shows just input, output, and
+  context — `done in 6 steps, 7 tool calls, 11.4s, 46,880 in / 1,330 out · context
+  20,000`. Input/output are cumulative across turns; `context` is the prompt size
+  at the end of the task.
+- **Cache tokens read from each provider's real fields** (no longer derived) and
+  kept in the JSON `usage` as `cacheReadTokens` / `cacheWriteTokens`: the Responses
+  API's `input_tokens_details.cached_tokens` / `cache_write_tokens`, the Chat
+  Completions `prompt_tokens_details` equivalents, and Anthropic's
+  `cache_read_input_tokens` / `cache_creation_input_tokens`. Note: the codex
+  ChatGPT backend surfaces cache *reads* but always returns `0` for cache writes,
+  which is why cache is left out of the one-line summary (it's still in the JSON).
 - **Dropped `usage.totalTokens`** from the result and the summary line — input and
   output tokens price differently, so a combined total was misleading.
-- **Renamed `usage.contextTokens` → `usage.context`** (the summary label is now
-  `context …` instead of `ctx …`).
-
-  The run summary now reads: `done in 6 steps, 7 tool calls, 11.4s, 46,880 in /
-  1,330 out · 40,000 cache read · 6,880 cache write · context 20,000`.
+- **Renamed `usage.contextTokens` → `usage.context`**.
 
 ### Added
 

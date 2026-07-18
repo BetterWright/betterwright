@@ -23,9 +23,8 @@ betterwright exec "find the top Hacker News story and give me its title and poin
 ```
 
 Progress notes stream to stderr as the loop runs — the last one summarizes the
-run's cost (`done in 6 steps, 7 tool calls, 11.4s, 46,880 in / 1,330 out · 40,000
-cache read · 6,880 cache write · context 20,000`) — and the final result is one
-JSON object on stdout:
+run's cost (`done in 6 steps, 7 tool calls, 11.4s, 46,880 in / 1,330 out · context
+20,000`) — and the final result is one JSON object on stdout:
 
 ```json
 {
@@ -38,7 +37,7 @@ JSON object on stdout:
     "inputTokens": 46880,
     "outputTokens": 1330,
     "cacheReadTokens": 40000,
-    "cacheWriteTokens": 6880,
+    "cacheWriteTokens": 0,
     "context": 20000
   },
   "durationMs": 11400,
@@ -48,15 +47,17 @@ JSON object on stdout:
 
 `toolCalls` counts the `browser`/`login`/`ask`/`done` calls the model issued (it
 can exceed `steps` when a turn batches several). `usage` sums the token counts the
-model adapter reported across turns; a field is `0` when the provider returned no
-usage block. `inputTokens` is the full prompt size (cached tokens included);
-`cacheReadTokens` is the part served from cache and `cacheWriteTokens` the fresh
-input processed and written to the cache — on OpenAI-style backends (codex, grok)
-`inputTokens = cacheReadTokens + cacheWriteTokens`; Anthropic reports the cache
-read and cache-creation counts directly. `context` is the prompt size at the
-**end** of the task — the last turn's input, i.e. how much context the model was
-holding when it finished. `durationMs` is the task wall-clock (it excludes tearing
-down a browser the loop created for itself).
+model adapter reported across turns (a field is `0` when the provider returned no
+usage block); `inputTokens` is the full prompt size, cached tokens included.
+`cacheReadTokens` and `cacheWriteTokens` come straight from the provider's usage
+block — the Responses API's `input_tokens_details.cached_tokens` /
+`cache_write_tokens`, the Chat Completions `prompt_tokens_details` equivalents, or
+Anthropic's `cache_read_input_tokens` / `cache_creation_input_tokens`. (The codex
+ChatGPT backend reports cache reads but always returns `0` for cache writes, so
+cache is kept in this JSON but left out of the one-line summary.) `context` is the
+prompt size at the **end** of the task — the last turn's input, i.e. how much
+context the model was holding when it finished. `durationMs` is the task
+wall-clock (it excludes tearing down a browser the loop created for itself).
 
 Flags:
 
@@ -89,7 +90,7 @@ Type a task and press Enter. /help for commands, /exit or Ctrl-D to quit.
 
 The page title is "Example Domain."
 proof: /…/proof-….png
-done · 2 steps · 2 tool calls · 2.1s · 4,961 in / 120 out · 3,072 cache read · 1,889 cache write · context 4,961
+done · 2 steps · 2 tool calls · 2.1s · 4,961 in / 120 out · context 4,961
 
 ▸
 ```
@@ -113,6 +114,7 @@ Meta-commands (a line starting with `/`):
 | `/help` | list the commands |
 | `/model <name>` | switch model for the next task |
 | `/reasoning <level>` | change reasoning effort (`/effort` also works) |
+| `/headed` | show the browser window (`/headless` to hide it again) |
 | `/new` | start a fresh browser session (close open tabs) |
 | `/clear` | clear the screen |
 | `/exit` | quit (or Ctrl-D) |

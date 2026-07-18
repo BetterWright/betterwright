@@ -318,7 +318,11 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
               finish_reason: "tool_calls",
             },
           ],
-          usage: { prompt_tokens: 42, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 30 } },
+          usage: {
+            prompt_tokens: 42,
+            completion_tokens: 8,
+            prompt_tokens_details: { cached_tokens: 30, cache_write_tokens: 5 },
+          },
         };
       },
     };
@@ -345,9 +349,9 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
   assert.equal(out.toolCalls[0].name, "browser");
   assert.deepEqual(out.toolCalls[0].input, { code: "return 1" });
   assert.equal(out.toolCalls[0].id, "call_1"); // synthesized
-  // prompt_/completion_tokens normalize to input/output; cached_tokens → cache read;
-  // cache write is the fresh (non-cached) input, 42 − 30 = 12.
-  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 8, cacheReadTokens: 30, cacheWriteTokens: 12 });
+  // prompt_/completion_tokens normalize to input/output; cached_tokens → cache read
+  // and cache_write_tokens → cache write are read directly (GPT-5.6+).
+  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 8, cacheReadTokens: 30, cacheWriteTokens: 5 });
 });
 
 test("openaiModel surfaces HTTP errors", async () => {
