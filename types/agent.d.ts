@@ -40,10 +40,16 @@ export interface AgentModel {
   }): Promise<{ text: string; toolCalls: AgentToolCall[]; stopReason?: string; usage?: AgentUsage | null }>;
 }
 
-/** Token usage, normalized across model adapters (0 when a provider omits it). */
+/**
+ * Token usage for one turn, normalized across model adapters (0 when a provider
+ * omits it). `inputTokens` is the full prompt size for the turn, cached tokens
+ * included; `cacheReadTokens`/`cacheWriteTokens` break out the cached portion.
+ */
 export interface AgentUsage {
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
 }
 
 export interface AgentStepEvent {
@@ -81,8 +87,22 @@ export interface AgentResult {
   reason: "max-steps" | "answered" | "stopped" | "done";
   /** How many tool calls the model issued; can exceed `steps` when a turn batches several. */
   toolCalls: number;
-  /** Summed token usage the model adapters reported (fields are 0 when unavailable). */
-  usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  /**
+   * Token usage summed across turns (fields are 0 when unavailable).
+   * `cacheReadTokens`/`cacheWriteTokens` are the cached portion of the input;
+   * `contextTokens` is the prompt size at the end of the task (the last turn's
+   * input), i.e. how much context the model was holding when it finished.
+   */
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    contextTokens: number;
+  };
+  /** Task wall-clock in milliseconds (excludes owned-browser teardown). */
+  durationMs: number;
   transcript: AgentMessage[];
   proof: string | null;
 }

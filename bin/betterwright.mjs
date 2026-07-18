@@ -181,6 +181,23 @@ function flagValue(argv, flag, fallback) {
   return index !== -1 && index + 1 < argv.length ? argv[index + 1] : fallback;
 }
 
+// Compact wall-clock: milliseconds under a second, otherwise seconds to 1 dp.
+function formatDuration(ms) {
+  const n = Number(ms) || 0;
+  return n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`;
+}
+
+// The token portion of a run summary, shared by `exec` and the console:
+//   48,210 tokens (46,880 in / 1,330 out · 40,000 cache read · 2,000 cache write) · ctx 20,000
+function formatUsage(usage) {
+  const n = (x) => Number(x || 0).toLocaleString();
+  return (
+    `${n(usage.totalTokens)} tokens (${n(usage.inputTokens)} in / ${n(usage.outputTokens)} out · ` +
+    `${n(usage.cacheReadTokens)} cache read · ${n(usage.cacheWriteTokens)} cache write) · ` +
+    `ctx ${n(usage.contextTokens)}`
+  );
+}
+
 // ANSI helpers that no-op when stdout is not a TTY or NO_COLOR is set.
 function styler() {
   const on = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
@@ -305,14 +322,13 @@ async function cmdInteractive(flags) {
         continue;
       }
 
-      const { inputTokens, outputTokens, totalTokens } = result.usage;
       console.log(result.answer ? `\n${bold(result.answer)}` : dim("\n(no answer returned)"));
       if (result.proof) console.log(dim(`proof: ${result.proof}`));
       console.log(
         dim(
           `${result.ok ? "done" : "unfinished"} · ${result.steps} step${result.steps === 1 ? "" : "s"} · ` +
-            `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"} · ` +
-            `${totalTokens.toLocaleString()} tokens (${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out)\n`,
+            `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"} · ${formatDuration(result.durationMs)} · ` +
+            `${formatUsage(result.usage)}\n`,
         ),
       );
     }
@@ -364,11 +380,10 @@ async function cmdExec(flags) {
     console.error(error?.message || String(error));
     return 1;
   }
-  const { inputTokens, outputTokens, totalTokens } = result.usage;
   process.stderr.write(
     `  done in ${result.steps} step${result.steps === 1 ? "" : "s"}, ` +
       `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"}, ` +
-      `${totalTokens.toLocaleString()} tokens (${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out)\n`,
+      `${formatDuration(result.durationMs)}, ${formatUsage(result.usage)}\n`,
   );
   console.log(
     JSON.stringify(
@@ -379,6 +394,7 @@ async function cmdExec(flags) {
         reason: result.reason,
         toolCalls: result.toolCalls,
         usage: result.usage,
+        durationMs: result.durationMs,
         proof: result.proof,
       },
       null,

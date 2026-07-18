@@ -121,25 +121,39 @@ const DONE_TOOL_PARAMETERS = {
   required: ["answer"],
 };
 
-// Normalize a provider's token-usage block to a common { inputTokens,
-// outputTokens } shape. Anthropic counts cached input separately, so fold the
-// cache tokens back into the input total.
+// Normalize a provider's token-usage block to a common shape:
+//   { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }
+// `inputTokens` is the TOTAL prompt size for the turn (cached tokens included),
+// so the final turn's `inputTokens` is the context size at the end of the task;
+// `cacheReadTokens`/`cacheWriteTokens` break out the cached portion.
+//
+// Anthropic reports the uncached prompt in `input_tokens` and the cached parts
+// separately, so the total is the sum.
 function anthropicUsage(usage) {
   if (!usage) return null;
-  const input =
-    (usage.input_tokens || 0) +
-    (usage.cache_read_input_tokens || 0) +
-    (usage.cache_creation_input_tokens || 0);
-  return { inputTokens: input, outputTokens: usage.output_tokens || 0 };
+  const cacheRead = usage.cache_read_input_tokens || 0;
+  const cacheWrite = usage.cache_creation_input_tokens || 0;
+  return {
+    inputTokens: (usage.input_tokens || 0) + cacheRead + cacheWrite,
+    outputTokens: usage.output_tokens || 0,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+  };
 }
 
 // Chat Completions uses prompt_/completion_tokens; the Responses API uses
-// input_/output_tokens — accept either.
+// input_/output_tokens — accept either. Both count cached tokens *inside* the
+// prompt total and expose them under a `*_tokens_details.cached_tokens` field;
+// neither reports a separate cache-write count, so that stays 0.
 function openaiUsage(usage) {
   if (!usage) return null;
+  const cacheRead =
+    usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens ?? 0;
   return {
     inputTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0,
     outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: 0,
   };
 }
 
@@ -227,7 +241,7 @@ function loginOptionsFromInput(input = {}, session) {
  *   when provided, the loop exposes an `ask` tool so the model can put a question
  *   to the user mid-task; the returned string is fed back as the answer. Omit it
  *   (the `exec` default) to run fully autonomously with no `ask` tool.
- * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, totalTokens: number}, transcript: object[], proof: (string|null)}>}
+ * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, totalTokens: number, cacheReadTokens: number, cacheWriteTokens: number, contextTokens: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
  */
 export async function runAgentTask(options = {}) {
   const task = String(options.task || "").trim();
@@ -261,8 +275,15 @@ export async function runAgentTask(options = {}) {
   let steps = 0;
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  // The final turn's prompt size — the context the model was holding when the
+  // task ended. Overwritten each turn that reports usage, so it keeps the last.
+  let contextTokens = 0;
   let toolCallCount = 0;
+  let durationMs = 0;
 
+  const startedAt = Date.now();
   try {
     for (steps = 1; steps <= maxSteps; steps += 1) {
       const response = await model.complete({ system, messages, tools });
@@ -270,6 +291,9 @@ export async function runAgentTask(options = {}) {
       if (response.usage) {
         inputTokens += response.usage.inputTokens || 0;
         outputTokens += response.usage.outputTokens || 0;
+        cacheReadTokens += response.usage.cacheReadTokens || 0;
+        cacheWriteTokens += response.usage.cacheWriteTokens || 0;
+        contextTokens = response.usage.inputTokens || 0;
       }
       toolCallCount += toolCalls.length;
       messages.push({ role: "assistant", text: response.text || "", toolCalls });
@@ -344,6 +368,9 @@ export async function runAgentTask(options = {}) {
       if (finished) break;
     }
   } finally {
+    // Measure task wall-clock before tearing down an owned browser, so the
+    // reported time is the work, not the teardown.
+    durationMs = Date.now() - startedAt;
     if (ownsBrowser) await browser.close();
   }
 
@@ -361,7 +388,14 @@ export async function runAgentTask(options = {}) {
       inputTokens,
       outputTokens,
       totalTokens: inputTokens + outputTokens,
+      // Cached-input breakdown (subsets of the input total, summed across turns)
+      // and the context size at the end of the task (the last turn's prompt).
+      cacheReadTokens,
+      cacheWriteTokens,
+      contextTokens,
     },
+    // Task wall-clock in milliseconds (excludes owned-browser teardown).
+    durationMs,
     transcript: messages,
     proof,
   };
