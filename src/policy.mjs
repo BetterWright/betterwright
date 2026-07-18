@@ -2,10 +2,9 @@
 //
 // Every request the worker makes is answered by `NetworkPolicy.check`; the
 // conformance vectors in tests/fixtures/policy-vectors.json pin every
-// decision. Two lower layers do not depend on this policy:
-// Chromium's `--host-resolver-rules` NXDOMAIN the metadata hostnames, and all
-// traffic is forced through the worker's loopback SOCKS proxy so even localhost
-// reaches this check.
+// decision. A lower layer does not depend on this policy: all traffic is forced
+// through the worker's loopback SOCKS proxy so even localhost reaches this
+// check.
 
 import net from "node:net";
 
