@@ -76,15 +76,13 @@ export async function movePointer(mouse, cursor, target, options = {}) {
   );
   const dx = target.x - start.x;
   const dy = target.y - start.y;
-  const perpendicular = { x: -dy / (distance || 1), y: dx / (distance || 1) };
-  const control1 = {
-    x: start.x + dx * 0.28 + perpendicular.x * between(-0.18, 0.18) * distance,
-    y: start.y + dy * 0.28 + perpendicular.y * between(-0.18, 0.18) * distance,
-  };
-  const control2 = {
-    x: start.x + dx * 0.72 + perpendicular.x * between(-0.18, 0.18) * distance,
-    y: start.y + dy * 0.72 + perpendicular.y * between(-0.18, 0.18) * distance,
-  };
+  const perpendicular = { x: -dy / distance, y: dx / distance };
+  const control = (t) => ({
+    x: start.x + dx * t + perpendicular.x * between(-0.18, 0.18) * distance,
+    y: start.y + dy * t + perpendicular.y * between(-0.18, 0.18) * distance,
+  });
+  const control1 = control(0.28);
+  const control2 = control(0.72);
 
   for (let index = 1; index <= steps; index += 1) {
     const progress = index / steps;
@@ -120,7 +118,7 @@ export async function typeText(keyboard, text, options = {}) {
   const characters = [...String(text)];
   for (let index = 0; index < characters.length; index += 1) {
     const character = characters[index];
-    if ((character.codePointAt(0) || 0) > 127) await keyboard.insertText(character);
+    if (character.codePointAt(0) > 127) await keyboard.insertText(character);
     else await keyboard.type(character);
     if (index < characters.length - 1) {
       await sleep(

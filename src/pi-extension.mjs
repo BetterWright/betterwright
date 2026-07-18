@@ -13,6 +13,7 @@ const BROWSER_TOOL_NAMES = new Set([
   "browser",
   "browser_download",
   "browser_evidence",
+  "browser_login",
 ]);
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
@@ -33,6 +34,46 @@ export const PI_BROWSER_PARAMETERS = {
     },
   },
   required: ["code"],
+};
+
+export const PI_LOGIN_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    passwordSelector: {
+      type: "string",
+      minLength: 1,
+      description: "CSS selector for the password field (required).",
+    },
+    usernameSelector: {
+      type: "string",
+      description: "CSS selector for the username/email field.",
+    },
+    confirmPasswordSelector: {
+      type: "string",
+      description: "CSS selector for a confirm-password field (signup).",
+    },
+    submitSelector: {
+      type: "string",
+      description: "CSS selector clicked to submit in the same trusted call.",
+    },
+    id: { type: "string", description: "Select the saved record by id." },
+    username: {
+      type: "string",
+      description: "Select the saved record by username, or set it on signup.",
+    },
+    generate: {
+      type: "boolean",
+      description: "Generate, fill, and save a new strong password (signup).",
+    },
+    length: { type: "integer", description: "Generated password length (default 24)." },
+    includeSymbols: {
+      type: "boolean",
+      description: "Include symbols in a generated password (default true).",
+    },
+    label: { type: "string", description: "Human label for a newly saved record." },
+  },
+  required: ["passwordSelector"],
 };
 
 export const PI_EVIDENCE_PARAMETERS = {
@@ -118,6 +159,28 @@ function normalizedStartUrl(value) {
   return parsed.href;
 }
 
+// Keep only recognized fillCredential keys from the tool params.
+function loginOptions(params = {}) {
+  const options = {
+    passwordSelector: String(params.passwordSelector || ""),
+    generate: params.generate === true,
+  };
+  for (const key of [
+    "usernameSelector",
+    "confirmPasswordSelector",
+    "submitSelector",
+    "id",
+    "username",
+    "label",
+  ]) {
+    if (params[key] != null) options[key] = String(params[key]);
+  }
+  if (params.length != null) options.length = Number(params.length);
+  if (typeof params.includeSymbols === "boolean")
+    options.includeSymbols = params.includeSymbols;
+  return options;
+}
+
 function normalizedMaxSteps(value) {
   if (value === undefined) {
     return envPositiveInteger(
@@ -157,6 +220,7 @@ function mergeObservation(result, observation) {
     artifacts: [...(result?.artifacts || []), ...(observation.artifacts || [])],
     pages: observation.pages || result?.pages,
     challenges: observation.challenges || result?.challenges,
+    skills: observation.skills || result?.skills,
     warnings,
   };
 }
@@ -306,14 +370,12 @@ export function createPiExtension(options = {}) {
     }
 
     function checklistResult(extra = {}) {
+      const state = checklistState();
       return {
         content: [
-          {
-            type: "text",
-            text: JSON.stringify({ ...checklistState(), ...extra }, null, 2),
-          },
+          { type: "text", text: JSON.stringify({ ...state, ...extra }, null, 2) },
         ],
-        details: checklistState(),
+        details: state,
       };
     }
 
@@ -412,9 +474,9 @@ export function createPiExtension(options = {}) {
       const budgetExhausted = step >= maxSteps;
       if (budgetExhausted) deactivateBrowserTools();
       const envelope = modelEnvelope(combined, step, maxSteps, budgetExhausted);
-      if (requireEvidence || checklistInitialized) {
-        envelope.pi.evidenceChecklist = checklistState();
-      }
+      const checklist =
+        requireEvidence || checklistInitialized ? checklistState() : null;
+      if (checklist) envelope.pi.evidenceChecklist = checklist;
       const budgetMessage = budgetExhausted
         ? "\nBrowser step budget exhausted. Audit the task requirements and provide the final deliverable now."
         : "";
@@ -432,9 +494,7 @@ export function createPiExtension(options = {}) {
           pages: combined?.pages || [],
           artifacts: combined?.artifacts || [],
           budgetExhausted,
-          ...((requireEvidence || checklistInitialized) && {
-            evidenceChecklist: checklistState(),
-          }),
+          ...(checklist && { evidenceChecklist: checklist }),
         },
       };
     }
@@ -547,6 +607,33 @@ export function createPiExtension(options = {}) {
       parameters: PI_BROWSER_PARAMETERS,
       execute: (_id, params, signal) =>
         executeBrowser("browser", params, signal, false),
+    });
+
+    pi.registerTool({
+      name: "browser_login",
+      label: "BetterWright Login",
+      description:
+        "Fill a saved or freshly generated credential without the secret ever entering the " +
+        "conversation. The password is fetched, typed, and (with submitSelector) submitted " +
+        "inside the browser worker; it never appears in a snapshot or result. Use instead of " +
+        "typing a password in browser code, which is blocked. Set generate=true to sign up " +
+        "with a new strong password saved to the vault.",
+      parameters: PI_LOGIN_PARAMETERS,
+      async execute(_id, params, signal) {
+        if (signal?.aborted) throw new Error("Browser login cancelled.");
+        const instance = await getBrowser();
+        if (typeof instance.fillCredential !== "function") {
+          throw new Error("This BetterWright build has no credential fill available.");
+        }
+        const result = await instance.fillCredential({ session, ...loginOptions(params) });
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+            ...(await piImageContent(result)),
+          ],
+          details: { ok: result?.ok === true, pages: result?.pages || [] },
+        };
+      },
     });
 
     pi.registerTool({

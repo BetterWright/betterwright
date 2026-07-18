@@ -101,6 +101,9 @@ export async function contentForResult(result) {
     files,
     pages: result.pages || [],
     challenges: result.challenges || [],
+    // Deeper site/provider packs matching the open pages; read the `path` with
+    // your file tool before improvising site-specific behavior.
+    skills: result.skills || [],
     warnings: result.warnings || [],
     duration_ms: result.durationMs,
   };
@@ -142,6 +145,92 @@ MCP client presents a confirmation before any browser code runs. Set
 BETTERWRIGHT_DOWNLOAD_POLICY=allow to remove that prompt, or deny to disable
 all downloads.`;
 
+const LOGIN_DESCRIPTION = `Fill a saved or freshly generated credential without the secret ever entering the conversation.
+
+The password is fetched, typed, and (if submitSelector is given) submitted
+entirely inside the browser worker — it is never returned to you and never
+appears in a snapshot (password fields read as "[redacted]"). Provide CSS
+selectors for the fields. Use this instead of typing a password in browser
+code, which is blocked for exactly this reason.
+
+- Log in with a saved record: pass passwordSelector (and usernameSelector), and
+  optionally id or username to pick the record.
+- Sign up with a new strong password: set generate=true; it is generated,
+  filled into passwordSelector and confirmPasswordSelector, saved to the vault,
+  and never revealed.
+
+Requires a host-configured vault; without one there are no credentials to fill.`;
+
+const LOGIN_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    passwordSelector: {
+      type: "string",
+      description: "CSS selector for the password field (required).",
+    },
+    usernameSelector: {
+      type: "string",
+      description: "CSS selector for the username/email field.",
+    },
+    confirmPasswordSelector: {
+      type: "string",
+      description: "CSS selector for a confirm-password field (signup).",
+    },
+    submitSelector: {
+      type: "string",
+      description: "CSS selector clicked to submit in the same trusted call.",
+    },
+    id: { type: "string", description: "Select the saved record by id." },
+    username: {
+      type: "string",
+      description: "Select the saved record by username, or set the new one on signup.",
+    },
+    generate: {
+      type: "boolean",
+      description: "Generate, fill, and save a new strong password (signup).",
+      default: false,
+    },
+    length: { type: "integer", description: "Generated password length (default 24)." },
+    includeSymbols: {
+      type: "boolean",
+      description: "Include symbols in a generated password (default true).",
+    },
+    label: { type: "string", description: "Human label for a newly saved record." },
+    session: {
+      type: "string",
+      description: "Independent set of pages/state; reuse a name across calls.",
+      default: "default",
+    },
+  },
+  required: ["passwordSelector"],
+};
+
+/**
+ * Translate `browser_login` tool arguments into fillCredential options,
+ * keeping only the recognized keys so the trusted fill sees a clean spec.
+ */
+export function loginOptionsFromArgs(args = {}) {
+  const options = {
+    session: String(args.session || "default"),
+    passwordSelector: String(args.passwordSelector || ""),
+    generate: args.generate === true,
+  };
+  for (const key of [
+    "usernameSelector",
+    "confirmPasswordSelector",
+    "submitSelector",
+    "id",
+    "username",
+    "label",
+  ]) {
+    if (args[key] != null) options[key] = String(args[key]);
+  }
+  if (args.length != null) options.length = Number(args.length);
+  if (typeof args.includeSymbols === "boolean")
+    options.includeSymbols = args.includeSymbols;
+  return options;
+}
+
 const RUN_INPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -162,17 +251,16 @@ const RUN_INPUT_SCHEMA = {
 
 async function loadSdk() {
   try {
-    const [{ Server }, { StdioServerTransport }, types] = await Promise.all([
+    const [
+      { Server },
+      { StdioServerTransport },
+      { ListToolsRequestSchema, CallToolRequestSchema },
+    ] = await Promise.all([
       import("@modelcontextprotocol/sdk/server/index.js"),
       import("@modelcontextprotocol/sdk/server/stdio.js"),
       import("@modelcontextprotocol/sdk/types.js"),
     ]);
-    return {
-      Server,
-      StdioServerTransport,
-      ListToolsRequestSchema: types.ListToolsRequestSchema,
-      CallToolRequestSchema: types.CallToolRequestSchema,
-    };
+    return { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema };
   } catch (error) {
     if (error?.code === "ERR_MODULE_NOT_FOUND") throw new Error(MCP_SDK_HINT);
     throw error;
@@ -205,17 +293,20 @@ async function approveDownload(server, note) {
   }
 }
 
-export async function runMcpServer(env = process.env) {
+export async function runMcpServer(env = process.env, { vault } = {}) {
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
     await loadSdk();
 
   const downloadPolicy = downloadPolicyFromEnv(env);
   // One persistent browser for the life of the server, so pages and logins
-  // survive across tool calls the way an agent expects.
+  // survive across tool calls the way an agent expects. Pass a `vault` when
+  // embedding programmatically to enable `browser_login`; the plain CLI has no
+  // vault, so logins there go through a password-manager extension instead.
   const browser = new BetterWright({
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
+    ...(vault ? { vault } : {}),
   });
 
   const server = new Server(
@@ -230,6 +321,11 @@ export async function runMcpServer(env = process.env) {
         name: "browser_download",
         description: BROWSER_DOWNLOAD_DESCRIPTION,
         inputSchema: RUN_INPUT_SCHEMA,
+      },
+      {
+        name: "browser_login",
+        description: LOGIN_DESCRIPTION,
+        inputSchema: LOGIN_INPUT_SCHEMA,
       },
       {
         name: "browser_doctor",
@@ -247,6 +343,10 @@ export async function runMcpServer(env = process.env) {
         return {
           content: [{ type: "text", text: JSON.stringify(await doctorReport()) }],
         };
+      }
+      if (name === "browser_login") {
+        const result = await browser.fillCredential(loginOptionsFromArgs(args));
+        return { content: await contentForResult(result) };
       }
       if (name !== "browser" && name !== "browser_download") {
         throw new Error(`Unknown tool: ${name}`);

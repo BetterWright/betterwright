@@ -274,6 +274,94 @@ test("vault fills are unavailable to model-authored snippets", opts, async () =>
   }
 });
 
+test("credentials.save/list carry category and filter, and never leak field secrets", opts, async () => {
+  const apiKey = "sk-live-supersecret-01";
+  const calls = [];
+  const vault = {
+    async handleRequest(action, payload, origin) {
+      calls.push({ action, payload });
+      if (action === "save") return { id: "rec-1", origin, category: payload.category };
+      if (action === "list")
+        // A well-behaved backend returns metadata only; the redaction net is a
+        // second defense the test also exercises below.
+        return { credentials: [{ id: "rec-1", category: "api-credential", label: "CI token" }] };
+      return {};
+    },
+  };
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+    vault,
+  });
+  const server = await listen((_request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end("<main>ok</main>");
+  });
+  try {
+    const result = await bw.run(
+      `
+      await page.goto(${JSON.stringify(server.origin)});
+      const saved = await credentials.save({
+        category: 'api-credential',
+        label: 'CI token',
+        fields: { secret: ${JSON.stringify(apiKey)} },
+      });
+      const listed = await credentials.list({ text: 'CI', category: 'api-credential' });
+      // Try to smuggle the secret back out through ordinary console output.
+      console.log('leak-probe ' + ${JSON.stringify(apiKey)});
+      return { saved, listed };
+    `,
+    );
+    assert.equal(result.ok, true, result.error);
+    // Category flows through save and list unchanged.
+    assert.equal(calls.find((c) => c.action === "save").payload.category, "api-credential");
+    assert.deepEqual(calls.find((c) => c.action === "list").payload, {
+      text: "CI",
+      category: "api-credential",
+    });
+    assert.equal(result.result.saved.category, "api-credential");
+    assert.equal(result.result.listed[0].label, "CI token");
+    // The field secret was tracked, so it is scrubbed from console output.
+    const consoleText = JSON.stringify(result.console || []);
+    assert.doesNotMatch(consoleText, /supersecret/);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("snapshot redacts filled password values but keeps other fields", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <form>
+          <input id="u" placeholder="Username">
+          <input id="p" type="password" placeholder="Password">
+          <button>Sign in</button>
+        </form>
+      \`);
+      await page.fill('#u', 'alice');
+      await page.fill('#p', 'hunter2-super-secret');
+      const snap = await snapshot({ interactive: true });
+      return {
+        leaks: snap.includes('hunter2-super-secret'),
+        redacted: snap.includes('[redacted]'),
+        keepsUsername: snap.includes('alice'),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    // The password value must never reach the model-facing snapshot text.
+    assert.equal(result.result.leaks, false);
+    assert.equal(result.result.redacted, true);
+    // Non-secret fields still read normally.
+    assert.equal(result.result.keepsUsername, true);
+  } finally {
+    await bw.close();
+  }
+});
+
 test("overlays dismisses cookie and promotional popups but preserves task dialogs", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {

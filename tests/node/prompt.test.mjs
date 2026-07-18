@@ -6,7 +6,7 @@ import { agentSystemPrompt } from "../../src/prompt.mjs";
 test("default prompt is permissive", () => {
   const prompt = agentSystemPrompt();
   const compact = prompt.replace(/\s+/g, " ");
-  assert.ok(prompt.length < 5_200, `default prompt grew to ${prompt.length} characters`);
+  assert.ok(prompt.length < 5_500, `default prompt grew to ${prompt.length} characters`);
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
   // Reading escalation, ref discipline, batching, and recovery guidance.

@@ -48,15 +48,8 @@ export function resolveCloakDir() {
 
 export async function cloakRuntime() {
   const dir = resolveCloakDir();
-  if (!dir)
-    return {
-      dir: null,
-      version: null,
-      binaryVersion: null,
-      tier: null,
-      binary: null,
-      installed: false,
-    };
+  const noBinary = { binaryVersion: null, tier: null, binary: null, installed: false };
+  if (!dir) return { dir: null, version: null, ...noBinary };
   let version = null;
   try {
     version = require(path.join(dir, "package.json")).version;
@@ -75,14 +68,7 @@ export async function cloakRuntime() {
       installed: Boolean(info.installed),
     };
   } catch {
-    return {
-      dir,
-      version,
-      binaryVersion: null,
-      tier: null,
-      binary: null,
-      installed: false,
-    };
+    return { dir, version, ...noBinary };
   }
 }
 
@@ -99,10 +85,13 @@ export async function doctorReport() {
     }
   }
   const worker = fileURLToPath(new URL("./worker.mjs", import.meta.url));
-  const report = {
+  const workerOk = fs.existsSync(worker);
+  const cloakOk = cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed;
+  const stealth = stealthDriverVersion();
+  return {
     node: process.execPath,
     worker,
-    worker_ok: fs.existsSync(worker),
+    worker_ok: workerOk,
     playwright_core: core,
     playwright_version: version,
     playwright_pinned: PINNED_PLAYWRIGHT_VERSION,
@@ -112,16 +101,10 @@ export async function doctorReport() {
     cloakbrowser_binary_version: cloak.binaryVersion,
     cloakbrowser_binary_tier: cloak.tier,
     cloakbrowser_binary: cloak.binary,
-    cloakbrowser_ok:
-      cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed,
+    cloakbrowser_ok: cloakOk,
+    stealth_driver: stealth,
+    stealth_available: Boolean(stealth),
+    browser: "cloak",
+    ready: workerOk && version === PINNED_PLAYWRIGHT_VERSION && cloakOk,
   };
-  const stealth = stealthDriverVersion();
-  report.stealth_driver = stealth;
-  report.stealth_available = Boolean(stealth);
-  report.browser = "cloak";
-  report.ready =
-    report.worker_ok &&
-    version === PINNED_PLAYWRIGHT_VERSION &&
-    report.cloakbrowser_ok;
-  return report;
 }

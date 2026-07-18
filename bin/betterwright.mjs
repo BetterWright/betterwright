@@ -5,7 +5,10 @@
 //   betterwright doctor           report runtime readiness
 //   betterwright run <file|-|-c>  execute a Playwright snippet
 //   betterwright repl             run blank-line-separated snippets from stdin
+//   betterwright exec <task>      run a task with BetterWright's own agent loop
+//   betterwright auth --login <p> OAuth sign-in for a model backend (codex|grok)
 //   betterwright skill            print paste-ready agent instructions
+//   betterwright skills [list|show]  read on-demand site/provider knowledge packs
 //   betterwright mcp              serve the MCP stdio server (needs the MCP SDK)
 //
 // run/repl flags: --headed, network flags (--block-private-network,
@@ -122,6 +125,11 @@ so open tabs and in-memory \`state\` persist between steps:
 Logins and cookies persist across every invocation through the on-disk profile;
 open tabs and \`state\` persist only within a single \`repl\` session.
 
+When a result lists \`skills\`, deeper site or provider knowledge matches the
+open pages — read the named pack with \`betterwright skills show <name>\` before
+improvising on that site. \`betterwright skills list\` shows what is available;
+read the \`credential-manager\` pack before any login, signup, or checkout.
+
 Network access is policy-guarded. Loopback and the private network are reachable
 by default; add \`--block-private-network\` / \`--block-loopback\` to lock down, or
 \`--allow-host <host>\` / \`--block-host <host>\` to adjust. Cloud-metadata endpoints
@@ -165,6 +173,126 @@ async function cmdRepl(flags) {
   return 0;
 }
 
+function flagValue(argv, flag, fallback) {
+  const index = argv.indexOf(flag);
+  return index !== -1 && index + 1 < argv.length ? argv[index + 1] : fallback;
+}
+
+// `exec <task>`: BetterWright's own agent harness (the `aside exec` shape).
+// A model (Claude SDK / codex OAuth / grok OAuth) plugs into the browser-tuned
+// loop and drives the task to completion. Progress notes go to stderr; the
+// final {ok, answer, steps, proof} goes to stdout.
+async function cmdExec(flags) {
+  const { runAgentTask } = await import("../src/agent.mjs");
+  const argv = process.argv;
+  const task = argv.slice(3).find((token) => !token.startsWith("-"));
+  if (!task) {
+    console.error(
+      'Usage: betterwright exec "<task>" [--model claude|codex|grok] [--model-id <id>] [--effort <level>] [--max-steps <n>] [--session <name>] [--headed]',
+    );
+    return 1;
+  }
+  const modelOptions = {};
+  const modelId = flagValue(argv, "--model-id");
+  if (modelId) modelOptions.model = modelId;
+  const effort = flagValue(argv, "--effort");
+  if (effort) modelOptions.effort = effort;
+
+  let result;
+  try {
+    result = await runAgentTask({
+      task,
+      model: flagValue(argv, "--model", "claude"),
+      modelOptions,
+      maxSteps: Number(flagValue(argv, "--max-steps")) || undefined,
+      session: flagValue(argv, "--session", "default"),
+      policy: policyFromFlags(flags),
+      headless: !flags.has("--headed"),
+      onStep: ({ step, tool, note }) =>
+        process.stderr.write(`  [${step}] ${tool}${note ? `: ${note}` : ""}\n`),
+    });
+  } catch (error) {
+    // Config problems (missing credentials, missing SDK) read better as a plain
+    // line than a stack trace.
+    console.error(error?.message || String(error));
+    return 1;
+  }
+  console.log(
+    JSON.stringify({ ok: result.ok, answer: result.answer, steps: result.steps, reason: result.reason, proof: result.proof }, null, 2),
+  );
+  return result.ok ? 0 : 1;
+}
+
+// `auth --login codex|grok` / `auth --status`: OAuth sign-in for the built-in
+// agent's model backends. Runs the provider's PKCE flow, opens the browser to
+// the consent screen, and stores the tokens BetterWright's model adapter reads.
+async function cmdAuth(rest) {
+  const { loginProvider, loadCodexAuth, loadGrokAuth, codexAccessToken, grokAccessToken } = await import(
+    "../src/auth.mjs"
+  );
+  const provider = flagValue(rest, "--login") || rest.find((t) => !t.startsWith("-"));
+
+  if (rest.includes("--status")) {
+    const codex = loadCodexAuth();
+    const grok = loadGrokAuth();
+    console.log(
+      codex
+        ? `codex   signed in${codex.accountId ? ` (account ${codex.accountId})` : ""}`
+        : "codex   not signed in — run `betterwright auth --login codex`",
+    );
+    console.log(
+      grok
+        ? `grok    signed in${grok.accountId ? ` (account ${grok.accountId})` : ""}`
+        : "grok    not signed in — run `betterwright auth --login grok`",
+    );
+    return codex || grok ? 0 : 1;
+  }
+
+  if (!provider) {
+    console.error("Usage: betterwright auth --login codex|grok   (or --status)");
+    return 1;
+  }
+
+  try {
+    const result = await loginProvider({
+      provider,
+      log: (line) => process.stderr.write(`${line}\n`),
+    });
+    // Confirm the tokens actually work by minting a fresh access token.
+    if (result.provider === "codex") await codexAccessToken();
+    else if (result.provider === "grok") await grokAccessToken();
+    console.log(
+      `Signed in to ${result.provider}${result.email ? ` as ${result.email}` : ""}. Tokens stored at ${result.file}.`,
+    );
+    console.log(`Run a task with: betterwright exec "<task>" --model ${result.provider}`);
+    return 0;
+  } catch (error) {
+    console.error(error?.message || String(error));
+    return 1;
+  }
+}
+
+// `skills list` / `skills show <name>`: site and provider knowledge packs the
+// agent reads on demand (run results hint matching packs under `skills`).
+async function cmdSkills(rest) {
+  const { listSkills, readSkill } = await import("../src/skills.mjs");
+  const [subcommand = "list", name] = rest.filter((token) => !token.startsWith("-"));
+  if (subcommand === "list") {
+    for (const skill of listSkills()) {
+      const marker = skill.error ? ` [broken: ${skill.error}]` : "";
+      console.log(`${skill.name}\t${skill.description}${marker}`);
+    }
+    return 0;
+  }
+  if (subcommand === "show" && name) {
+    const skill = readSkill(name);
+    console.log(skill.body.trim());
+    return 0;
+  }
+  console.error("Usage: betterwright skills [list | show <name>]");
+  return 1;
+}
+
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const flags = new Set(rest.filter((token) => token.startsWith("--")));
@@ -178,8 +306,14 @@ async function main() {
       return cmdRun(positional, flags);
     case "repl":
       return cmdRepl(flags);
+    case "exec":
+      return cmdExec(flags);
+    case "auth":
+      return cmdAuth(rest);
     case "skill":
       return cmdSkill(flags);
+    case "skills":
+      return cmdSkills(rest);
     case "mcp": {
       const { runMcpServer } = await import("../src/mcp-server.mjs");
       await runMcpServer();
@@ -189,7 +323,9 @@ async function main() {
       console.log(require("../package.json").version);
       return 0;
     default:
-      console.error("Usage: betterwright <setup|doctor|run|repl|skill|mcp> [options]");
+      console.error(
+        "Usage: betterwright <setup|doctor|run|repl|exec|auth|skill|skills|mcp> [options]",
+      );
       return command ? 1 : 0;
   }
 }

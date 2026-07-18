@@ -8,8 +8,41 @@ import {
   contentForResult,
   downloadPolicyFromEnv,
   headlessFromEnv,
+  loginOptionsFromArgs,
   policyFromEnv,
 } from "../../src/mcp-server.mjs";
+
+test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
+  assert.deepEqual(
+    loginOptionsFromArgs({
+      passwordSelector: "#pw",
+      usernameSelector: "#user",
+      submitSelector: "#go",
+      id: "rec-1",
+      generate: true,
+      length: "18",
+      includeSymbols: false,
+      code: "danger()",
+      note: "ignored",
+    }),
+    {
+      session: "default",
+      passwordSelector: "#pw",
+      generate: true,
+      usernameSelector: "#user",
+      submitSelector: "#go",
+      id: "rec-1",
+      length: 18,
+      includeSymbols: false,
+    },
+  );
+  // Defaults: session "default", generate false, no stray keys.
+  assert.deepEqual(loginOptionsFromArgs({ passwordSelector: "#p" }), {
+    session: "default",
+    passwordSelector: "#p",
+    generate: false,
+  });
+});
 
 test("policyFromEnv is open by default and hardens via BLOCK_* vars", () => {
   const open = policyFromEnv({});
@@ -70,11 +103,13 @@ test("contentForResult separates screenshots from file paths", async () => {
     "files",
     "pages",
     "challenges",
+    "skills",
     "warnings",
     "duration_ms",
   ]);
   assert.equal(summary.ok, true);
   assert.equal(summary.duration_ms, 12.3);
+  assert.deepEqual(summary.skills, []);
   assert.deepEqual(summary.files, [{ kind: "download", path: "/tmp/report.pdf" }]);
   assert.equal(content[1].type, "image");
   assert.equal(content[1].mimeType, "image/png");

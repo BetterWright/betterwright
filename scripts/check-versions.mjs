@@ -23,9 +23,7 @@ if (lock.version !== pkg.version || lockRoot.version !== pkg.version) {
 }
 for (const dependency of ["playwright-core", "cloakbrowser"]) {
   if (lockRoot.dependencies?.[dependency] !== pkg.dependencies[dependency]) {
-    failures.push(
-      `package-lock.json ${dependency} pin does not match package.json`,
-    );
+    failures.push(`package-lock.json ${dependency} pin does not match package.json`);
   }
 }
 const npmVersion = String(pkg.packageManager || "").match(/^npm@(.+)$/)?.[1];
