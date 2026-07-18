@@ -65,6 +65,13 @@ export interface RunAgentTaskOptions {
   /** Ignored when an external `browser` is passed — that browser's own vault decides login availability. */
   vault?: CredentialVault;
   onStep?: (event: AgentStepEvent) => void;
+  /**
+   * When provided, the loop exposes an `ask` tool so the model can put a
+   * question to the user mid-task; the returned string is fed back as the
+   * answer. Omit it (the `exec` default) to run fully autonomously with no
+   * `ask` tool.
+   */
+  askUser?: (question: { question: string; options: string[] }) => string | Promise<string>;
 }
 
 export interface AgentResult {

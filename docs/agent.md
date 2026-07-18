@@ -56,6 +56,56 @@ Flags:
 Network flags (`--block-private-network`, `--allow-host`, …) work the same as on
 `run`/`repl`.
 
+## Interactive console (`betterwright`)
+
+`betterwright exec` runs one task and exits. Run **`betterwright`** with no
+subcommand for the interactive counterpart — a console, like `aside` on its own,
+where you type tasks and watch the agent work:
+
+```
+$ betterwright --model codex
+BetterWright — interactive agent console
+model codex · session default · headless
+Type a task and press Enter. /help for commands, /exit or Ctrl-D to quit.
+
+▸ what is the page title of example.com
+  · [1] browser: opening the page and reading its title
+
+The page title is "Example Domain."
+proof: /…/proof-….png
+done · 2 steps · 2 tool calls · 5,081 tokens (4,961 in / 120 out)
+
+▸
+```
+
+Each step the agent takes streams as it happens, then the answer, the proof
+screenshot path, and the same cost summary `exec` prints. **One browser session
+persists across tasks**, so a later task can build on where an earlier one left
+off — you stay signed in, tabs stay open. The same `--model`, `--model-id`,
+`--effort`, `--session`, `--headed`, and network flags apply.
+
+Meta-commands (a line starting with `/`):
+
+| Command | Effect |
+| --- | --- |
+| `/help` | list the commands |
+| `/model <name>` | switch model for the next task |
+| `/effort <level>` | change reasoning effort |
+| `/new` | start a fresh browser session (close open tabs) |
+| `/clear` | clear the screen |
+| `/exit` | quit (or Ctrl-D) |
+
+### The `ask` tool
+
+Because a user is present, the interactive console gives the agent an **`ask`
+tool**: when it genuinely needs input — a code it cannot obtain, a consequential
+choice with no reasonable default, or a task ambiguous enough that guessing risks
+the wrong thing — it asks you a question (offering short concrete options when the
+answer is a choice) and waits for your typed reply before continuing. It still
+acts on its own for ordinary reversible steps; it does not ask permission to
+proceed. `betterwright exec` has no user watching, so it runs without the `ask`
+tool and never stalls on a question.
+
 ## Choosing a model
 
 The three built-in adapters resolve their own credentials:
@@ -105,6 +155,22 @@ const result = await runAgentTask({
   onStep: ({ step, tool, note }) => console.error(`[${step}] ${tool}: ${note}`),
 });
 console.log(result.answer, result.proof);
+console.log(result.toolCalls, result.usage); // e.g. 7, { inputTokens, outputTokens, totalTokens }
+```
+
+Pass an **`askUser`** handler to let the loop ask the human mid-task — this is
+how the interactive console wires the `ask` tool. Given a handler, `runAgentTask`
+exposes an `ask` tool to the model; without one it runs fully autonomously.
+
+```js
+const result = await runAgentTask({
+  task: "book me a table for dinner tonight",
+  model: "codex",
+  askUser: async ({ question, options }) => {
+    // Route to your UI/host; return the user's answer as a string.
+    return await promptTheUser(question, options);
+  },
+});
 ```
 
 `runAgentTask` constructs and closes its own browser unless you pass one:
@@ -148,8 +214,9 @@ model, apiKey })` is a ready-made adapter for any OpenAI-compatible endpoint.
 ## What the loop does
 
 Each turn: the model sees the task, the operator guidance from
-[`agentSystemPrompt`](agent-prompt.md), and the tools (`browser`, `done`, and
-`login` when a vault is present). It calls `browser` with async Playwright
+[`agentSystemPrompt`](agent-prompt.md), and the tools (`browser`, `done`,
+`login` when a vault is present, and `ask` when an `askUser` handler is present).
+It calls `browser` with async Playwright
 JavaScript; BetterWright runs it and feeds back a compact JSON observation
 (`ok`, `result`, `console`, `pages`, `challenges`, `skills`, `warnings`,
 `screenshots`). The loop ends when the model calls `done` (or answers in prose),

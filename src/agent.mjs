@@ -39,7 +39,7 @@ const OBSERVATION_LIMIT = 12_000;
 // How the harness introduces its tools. `agentSystemPrompt()` speaks in terms of
 // `run()`; this preamble maps that onto the `browser` tool so the same operator
 // guidance applies unchanged.
-const HARNESS_PREAMBLE = `You are operating a real, persistent, policy-guarded web browser to complete the user's task end to end, autonomously.
+const HARNESS_PREAMBLE_HEAD = `You are operating a real, persistent, policy-guarded web browser to complete the user's task end to end, autonomously.
 
 Call the \`browser\` tool with async Playwright JavaScript to act — each call is one \`run()\` in the guidance below. A single trailing expression is returned; a statement block must \`return\`. Globals: page, pages, context, state, openPage, usePage, closePage, snapshot, screenshot, artifactPath, dialogs, credentials, captcha, human, overlays, controls, media.
 
@@ -48,17 +48,44 @@ Work in as few \`browser\` calls as the task safely allows: every call is a full
 - Plan, then batch. When you already know what to read and where from — a value on a page, the same field across several pages, a comparison between tabs — do it in ONE call: navigate (or open several tabs with \`Promise.all([openPage(a), openPage(b)])\`), extract each value, compute, and return the finished result. Do not spend one call per page.
 - Prefer direct extraction when the target is unambiguous: \`page.locator(...).innerText()\`, \`getByRole\`, \`allInnerTexts()\`, or \`page.url()\` after a redirect. Known shortcuts (a project's \`/releases/latest\` URL) beat click-through exploration. Compute in JS and return the finished answer, not raw page dumps.
 - When the right element is not obvious — an article's first real sentence (leading nodes are often empty or hatnotes), the "main" result among many — read a scoped \`snapshot({interactive:true})\` or \`snapshot({selector})\` first to see the real structure, then target precisely. If an extraction returns empty, too short, or clearly wrong, do NOT retry the same blind locator — take one snapshot to see the structure, then extract. One snapshot beats three guesses.
-- Use the read → act → verify loop when the page is interactive or its structure is unknown — forms, logins, search boxes, dynamic UIs, or when an action's outcome is uncertain: \`snapshot({interactive: true})\` to see what to click, act on \`[ref=eN]\` via \`page.locator('aria-ref=eN')\`, then \`snapshot({diff: true})\` to confirm. Snapshots cover the whole page including iframes and off-screen elements — never scroll just to read, never guess a ref or URL.
+- Use the read → act → verify loop when the page is interactive or its structure is unknown — forms, logins, search boxes, dynamic UIs, or when an action's outcome is uncertain: \`snapshot({interactive: true})\` to see what to click, act on \`[ref=eN]\` via \`page.locator('aria-ref=eN')\`, then \`snapshot({diff: true})\` to confirm. Snapshots cover the whole page including iframes and off-screen elements — never scroll just to read, never guess a ref or URL.`;
 
-You are operating autonomously: the user is not watching and cannot answer mid-task. Do not ask "shall I proceed?" — for reversible steps that follow from the task, act. Work until the task is genuinely done or you are truly blocked (an MFA code you cannot obtain, a consequential choice with no reasonable default).
+// Autonomy paragraph — two variants. In `exec` no one is watching, so the model
+// must never stall; in an interactive session the `ask` tool exists, so the model
+// may ask when it genuinely needs the user (but still acts on the obvious).
+const HARNESS_AUTONOMY_HEADLESS = `You are operating autonomously: the user is not watching and cannot answer mid-task. Do not ask "shall I proceed?" — for reversible steps that follow from the task, act. Work until the task is genuinely done or you are truly blocked (an MFA code you cannot obtain, a consequential choice with no reasonable default).`;
 
-When finished, call the \`done\` tool with a clear answer for the user. On any task with a visible result, capture \`screenshot({kind: 'proof'})\` of the end state first — do it in the same \`browser\` call as your final action when you can, to save a turn. Call \`done\` exactly once, at the end.`;
+const HARNESS_AUTONOMY_INTERACTIVE = `You are operating in an interactive session: the user is present and can answer through the \`ask\` tool. Still act autonomously — do not ask "shall I proceed?" for reversible steps that follow from the task; just do them. Call \`ask\` only when you genuinely need the user: an input you cannot obtain yourself (an MFA/2FA code, which of several accounts to use), a consequential or irreversible choice with no reasonable default (a purchase, a message to send, a destructive action), or a task ambiguous enough that guessing risks doing the wrong thing. Offer short concrete options and mask any secret (e.g. "account ending 999"). Then keep working until the task is genuinely done.`;
+
+const HARNESS_PREAMBLE_TAIL = `When finished, call the \`done\` tool with a clear answer for the user. On any task with a visible result, capture \`screenshot({kind: 'proof'})\` of the end state first — do it in the same \`browser\` call as your final action when you can, to save a turn. Call \`done\` exactly once, at the end.`;
+
+// Assemble the harness preamble, choosing the autonomy paragraph by whether an
+// `ask` tool is available (interactive) or not (headless `exec`).
+function harnessPreamble({ withAsk } = {}) {
+  const autonomy = withAsk ? HARNESS_AUTONOMY_INTERACTIVE : HARNESS_AUTONOMY_HEADLESS;
+  return `${HARNESS_PREAMBLE_HEAD}\n\n${autonomy}\n\n${HARNESS_PREAMBLE_TAIL}`;
+}
 
 const BROWSER_TOOL_DESCRIPTION = `Run async Playwright JavaScript in the persistent browser and get back a JSON observation ({ok, result, error, console, pages, challenges, skills, warnings, screenshots, duration_ms}). Read with snapshot({interactive:true}); act on [ref=eN] via page.locator('aria-ref=eN'); verify with snapshot({diff:true}). Never type or print a password — use the login tool if present, or a password-manager extension.`;
 
 const DONE_TOOL_DESCRIPTION = `Finish the task. Call this exactly once when the task is complete or genuinely blocked, with the final answer or status for the user. Capture a proof screenshot first when there is a visible result.`;
 
 const LOGIN_TOOL_DESCRIPTION = `Fill a saved or freshly generated credential without the secret ever entering the conversation. The password is fetched, typed, and (with submitSelector) submitted inside the browser worker — never returned, never shown in a snapshot. Provide CSS selectors for the fields. Set generate=true to create and save a new strong password when signing up.`;
+
+const ASK_TOOL_DESCRIPTION = `Ask the present user a question and wait for their typed answer. Use ONLY when you genuinely need input to proceed — a code or credential you cannot obtain, a consequential or irreversible choice with no reasonable default, or genuine ambiguity in the task. Offer short concrete options when the answer is a choice, and mask any secret (e.g. "account ending 999"). Do not use it to ask permission for ordinary reversible steps — just do those.`;
+
+const ASK_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {
+    question: { type: "string", description: "The question to put to the user." },
+    options: {
+      type: "array",
+      items: { type: "string" },
+      description: "Optional short, concrete choices to offer when the answer is a selection.",
+    },
+  },
+  required: ["question"],
+};
 
 const LOGIN_TOOL_PARAMETERS = {
   type: "object",
@@ -116,13 +143,15 @@ function openaiUsage(usage) {
   };
 }
 
-function toolsForHarness({ withLogin }) {
+function toolsForHarness({ withLogin, withAsk }) {
   const tools = [
     { name: "browser", description: BROWSER_TOOL_DESCRIPTION, parameters: BROWSER_TOOL_PARAMETERS },
     { name: "done", description: DONE_TOOL_DESCRIPTION, parameters: DONE_TOOL_PARAMETERS },
   ];
   if (withLogin)
     tools.push({ name: "login", description: LOGIN_TOOL_DESCRIPTION, parameters: LOGIN_TOOL_PARAMETERS });
+  if (withAsk)
+    tools.push({ name: "ask", description: ASK_TOOL_DESCRIPTION, parameters: ASK_TOOL_PARAMETERS });
   return tools;
 }
 
@@ -194,6 +223,10 @@ function loginOptionsFromInput(input = {}, session) {
  *   browsers only — ignored when an external `browser` is passed, whose own
  *   vault then decides login availability)
  * @param {(event: object) => void} [options.onStep] progress callback per step
+ * @param {(q: {question: string, options: string[]}) => (string|Promise<string>)} [options.askUser]
+ *   when provided, the loop exposes an `ask` tool so the model can put a question
+ *   to the user mid-task; the returned string is fed back as the answer. Omit it
+ *   (the `exec` default) to run fully autonomously with no `ask` tool.
  * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, totalTokens: number}, transcript: object[], proof: (string|null)}>}
  */
 export async function runAgentTask(options = {}) {
@@ -204,6 +237,7 @@ export async function runAgentTask(options = {}) {
   const maxSteps = Math.max(1, Number(options.maxSteps) || DEFAULT_MAX_STEPS);
   const session = String(options.session || "default");
   const onStep = typeof options.onStep === "function" ? options.onStep : () => {};
+  const askUser = typeof options.askUser === "function" ? options.askUser : null;
 
   const ownsBrowser = !options.browser;
   const browser =
@@ -214,9 +248,10 @@ export async function runAgentTask(options = {}) {
       ...(options.vault ? { vault: options.vault } : {}),
     });
   const withLogin = Boolean(browser.vault);
+  const withAsk = Boolean(askUser);
 
-  const system = `${HARNESS_PREAMBLE}\n\n${agentSystemPrompt(options.guardrails || {})}`;
-  const tools = toolsForHarness({ withLogin });
+  const system = `${harnessPreamble({ withAsk })}\n\n${agentSystemPrompt(options.guardrails || {})}`;
+  const tools = toolsForHarness({ withLogin, withAsk });
   const messages = [{ role: "user", text: task }];
 
   let answer = "";
@@ -269,6 +304,28 @@ export async function runAgentTask(options = {}) {
             results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
           } catch (error) {
             results.push({ id: call.id, name: call.name, content: `login error: ${error?.message || error}` });
+          }
+          continue;
+        }
+        if (call.name === "ask") {
+          const question = String(call.input?.question ?? "").trim();
+          const choices = Array.isArray(call.input?.options) ? call.input.options.map(String) : [];
+          onStep({ step: steps, tool: "ask", note: question });
+          // The `ask` tool is only offered when askUser was provided, so this is
+          // reachable only in interactive mode; still guard against a stray call.
+          if (!askUser) {
+            results.push({ id: call.id, name: call.name, content: "No user is available to answer in this run." });
+            continue;
+          }
+          try {
+            const reply = String((await askUser({ question, options: choices })) ?? "").trim();
+            results.push({
+              id: call.id,
+              name: call.name,
+              content: reply ? `User answered: ${reply}` : "User gave no answer; use your best judgment or report it blocked.",
+            });
+          } catch (error) {
+            results.push({ id: call.id, name: call.name, content: `ask error: ${error?.message || error}` });
           }
           continue;
         }

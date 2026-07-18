@@ -4,12 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.1] — 2026-07-18
+## [0.8.0] — 2026-07-18
 
 ### Added
 
+- **Interactive agent console (`betterwright` with no subcommand).** The
+  counterpart to `aside` on its own: a REPL where you type natural-language tasks
+  and watch BetterWright's own agent loop drive the browser to complete them. Each
+  step streams as it happens, then the answer, the proof-screenshot path, and a
+  one-line cost summary. **One browser session persists across tasks**, so a later
+  task builds on where an earlier one left off (still signed in, tabs open). Meta
+  commands: `/model`, `/effort`, `/new`, `/clear`, `/help`, `/exit`. The usual
+  `--model`, `--model-id`, `--effort`, `--session`, `--headed`, and network flags
+  apply.
+- **`ask` tool for interactive runs.** When `runAgentTask` is given an `askUser`
+  handler (the interactive console wires this to the prompt), the loop exposes an
+  `ask` tool so the agent can put a question to the user mid-task — a code it
+  cannot obtain, a consequential choice with no reasonable default, or genuine
+  ambiguity — offering short concrete options and continuing on the reply. The
+  operator guidance switches to an interactive posture accordingly. `betterwright
+  exec` has no user watching, so it runs without the `ask` tool and never stalls.
 - **`betterwright exec` now reports what the run cost.** The result JSON carries
-  `toolCalls` (how many `browser`/`login`/`done` calls the model issued) and
+  `toolCalls` (how many `browser`/`login`/`ask`/`done` calls the model issued) and
   `usage` (`{ inputTokens, outputTokens, totalTokens }`, summed across turns), and
   the final stderr line prints a one-line summary — e.g. `done in 6 steps, 7 tool
   calls, 48,210 tokens (46,880 in / 1,330 out)`. `runAgentTask` returns the same
