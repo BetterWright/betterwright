@@ -143,17 +143,20 @@ function anthropicUsage(usage) {
 
 // Chat Completions uses prompt_/completion_tokens; the Responses API uses
 // input_/output_tokens — accept either. Both count cached tokens *inside* the
-// prompt total and expose them under a `*_tokens_details.cached_tokens` field;
-// neither reports a separate cache-write count, so that stays 0.
+// prompt total and expose them under a `*_tokens_details.cached_tokens` field.
+// Neither reports a cache-write count directly, so derive it: the input not
+// served from cache is the fresh input processed (and written to) the cache this
+// turn, and it keeps `input = cacheRead + cacheWrite` exact for these backends.
 function openaiUsage(usage) {
   if (!usage) return null;
+  const inputTokens = usage.prompt_tokens ?? usage.input_tokens ?? 0;
   const cacheRead =
     usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens ?? 0;
   return {
-    inputTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0,
+    inputTokens,
     outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
     cacheReadTokens: cacheRead,
-    cacheWriteTokens: 0,
+    cacheWriteTokens: Math.max(0, inputTokens - cacheRead),
   };
 }
 
@@ -241,7 +244,7 @@ function loginOptionsFromInput(input = {}, session) {
  *   when provided, the loop exposes an `ask` tool so the model can put a question
  *   to the user mid-task; the returned string is fed back as the answer. Omit it
  *   (the `exec` default) to run fully autonomously with no `ask` tool.
- * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, totalTokens: number, cacheReadTokens: number, cacheWriteTokens: number, contextTokens: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
+ * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
  */
 export async function runAgentTask(options = {}) {
   const task = String(options.task || "").trim();
@@ -387,12 +390,11 @@ export async function runAgentTask(options = {}) {
     usage: {
       inputTokens,
       outputTokens,
-      totalTokens: inputTokens + outputTokens,
       // Cached-input breakdown (subsets of the input total, summed across turns)
-      // and the context size at the end of the task (the last turn's prompt).
+      // and `context` = the prompt size at the end of the task (last turn's input).
       cacheReadTokens,
       cacheWriteTokens,
-      contextTokens,
+      context: contextTokens,
     },
     // Task wall-clock in milliseconds (excludes owned-browser teardown).
     durationMs,

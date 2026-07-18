@@ -188,13 +188,13 @@ function formatDuration(ms) {
 }
 
 // The token portion of a run summary, shared by `exec` and the console:
-//   48,210 tokens (46,880 in / 1,330 out · 40,000 cache read · 2,000 cache write) · ctx 20,000
+//   46,880 in / 1,330 out · 40,000 cache read · 2,000 cache write · context 20,000
 function formatUsage(usage) {
   const n = (x) => Number(x || 0).toLocaleString();
   return (
-    `${n(usage.totalTokens)} tokens (${n(usage.inputTokens)} in / ${n(usage.outputTokens)} out · ` +
-    `${n(usage.cacheReadTokens)} cache read · ${n(usage.cacheWriteTokens)} cache write) · ` +
-    `ctx ${n(usage.contextTokens)}`
+    `${n(usage.inputTokens)} in / ${n(usage.outputTokens)} out · ` +
+    `${n(usage.cacheReadTokens)} cache read · ${n(usage.cacheWriteTokens)} cache write · ` +
+    `context ${n(usage.context)}`
   );
 }
 
@@ -208,12 +208,12 @@ function styler() {
 }
 
 const INTERACTIVE_HELP = `Commands:
-  /help            show this help
-  /model <name>    switch model (claude | codex | grok | a model id)
-  /effort <level>  set reasoning effort (low | medium | high | xhigh | max)
-  /new             start a fresh browser session (close open tabs)
-  /clear           clear the screen
-  /exit            quit (or Ctrl-D)
+  /help               show this help
+  /model <name>       switch model (claude | codex | grok | a model id)
+  /reasoning <level>  set reasoning effort (low | medium | high | xhigh | max)
+  /new                start a fresh browser session (close open tabs)
+  /clear              clear the screen
+  /exit               quit (or Ctrl-D)
 
 Anything else is a task: BetterWright drives the browser to complete it,
 streams what it is doing, and asks you a question if it genuinely needs one.`;
@@ -233,7 +233,8 @@ async function cmdInteractive(flags) {
   const modelOptions = {};
   const modelId = flagValue(argv, "--model-id");
   if (modelId) modelOptions.model = modelId;
-  const effort = flagValue(argv, "--effort");
+  // `--reasoning` is an alias for `--effort` (both set the reasoning effort).
+  const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
   if (effort) modelOptions.effort = effort;
   const session = flagValue(argv, "--session", "default");
   const headless = !flags.has("--headed");
@@ -279,9 +280,9 @@ async function cmdInteractive(flags) {
           console.log(dim(`model is ${modelLabel()}`));
           continue;
         }
-        if (cmd === "effort") {
+        if (cmd === "effort" || cmd === "reasoning") {
           if (arg) modelOptions.effort = arg;
-          console.log(dim(`effort is ${modelOptions.effort || "low"}`));
+          console.log(dim(`reasoning effort is ${modelOptions.effort || "low"}`));
           continue;
         }
         if (cmd === "new" || cmd === "reset") {
@@ -351,14 +352,15 @@ async function cmdExec(flags) {
   const task = argv.slice(3).find((token) => !token.startsWith("-"));
   if (!task) {
     console.error(
-      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort <level>] [--max-steps <n>] [--session <name>] [--headed]',
+      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort|--reasoning <level>] [--max-steps <n>] [--session <name>] [--headed]',
     );
     return 1;
   }
   const modelOptions = {};
   const modelId = flagValue(argv, "--model-id");
   if (modelId) modelOptions.model = modelId;
-  const effort = flagValue(argv, "--effort");
+  // `--reasoning` is an alias for `--effort` (both set the reasoning effort).
+  const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
   if (effort) modelOptions.effort = effort;
 
   let result;

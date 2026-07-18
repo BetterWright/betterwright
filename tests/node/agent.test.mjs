@@ -114,11 +114,10 @@ test("runAgentTask sums token usage and counts every tool call", async () => {
   assert.equal(result.toolCalls, 3);
   assert.equal(result.usage.inputTokens, 150);
   assert.equal(result.usage.outputTokens, 30);
-  assert.equal(result.usage.totalTokens, 180);
   // Cache read/write sum across turns; context is the LAST turn's input size.
   assert.equal(result.usage.cacheReadTokens, 90);
   assert.equal(result.usage.cacheWriteTokens, 40);
-  assert.equal(result.usage.contextTokens, 50);
+  assert.equal(result.usage.context, 50);
   // Wall-clock is reported as a non-negative number of milliseconds.
   assert.equal(typeof result.durationMs, "number");
   assert.ok(result.durationMs >= 0);
@@ -131,10 +130,9 @@ test("runAgentTask reports zeroed usage when the model omits a usage block", asy
   assert.deepEqual(result.usage, {
     inputTokens: 0,
     outputTokens: 0,
-    totalTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
-    contextTokens: 0,
+    context: 0,
   });
   assert.equal(result.toolCalls, 0);
 });
@@ -295,8 +293,9 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
   assert.equal(out.toolCalls[0].name, "browser");
   assert.deepEqual(out.toolCalls[0].input, { code: "return 1" });
   assert.equal(out.toolCalls[0].id, "call_1"); // synthesized
-  // prompt_/completion_tokens normalize to input/output; cached_tokens → cache read.
-  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 8, cacheReadTokens: 30, cacheWriteTokens: 0 });
+  // prompt_/completion_tokens normalize to input/output; cached_tokens → cache read;
+  // cache write is the fresh (non-cached) input, 42 − 30 = 12.
+  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 8, cacheReadTokens: 30, cacheWriteTokens: 12 });
 });
 
 test("openaiModel surfaces HTTP errors", async () => {
