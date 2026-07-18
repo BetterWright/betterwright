@@ -91,21 +91,18 @@ A server-side agent usually runs on a cloud instance whose metadata service
 (`169.254.169.254` and friends) hands out the machine's credentials to anything
 that can make an HTTP request from the box. A prompt-injected page trying to
 read those is one of the sharpest risks in agent browsing. So the block is not
-just a policy default — it is enforced at three independent layers:
+just a policy default — it is enforced at two independent layers:
 
-1. **Chromium resolver rules.** The browser is launched with
-   `--host-resolver-rules` that map every metadata hostname and link-local range
-   to `NOTFOUND` before any page loads.
-2. **The transport guard.** All traffic is forced through the worker's own
+1. **The transport guard.** All traffic is forced through the worker's own
    loopback SOCKS proxy (Chromium cannot bypass it, even for localhost). The
    proxy validates the connect target *and* re-validates every IP the hostname
    resolved to, so a hostname that passes cannot be swapped for a metadata
    address by DNS rebinding.
-3. **The policy.** `NetworkPolicy` refuses metadata hosts and refuses to honor
+2. **The policy.** `NetworkPolicy` refuses metadata hosts and refuses to honor
    an `allowHosts` entry or a `custom` allow that names one.
 
-Any one of these would stop the common case; together they close the redirect
-and rebinding variants too.
+Either layer stops the common case; together they close the redirect and
+rebinding variants too.
 
 ## Failure is closed
 

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Removed Chromium's `--host-resolver-rules` launch argument and marked the
+  managed browser as a test-type process so Cloak/Playwright's required root and
+  container arguments no longer produce persistent command-line warning bars.
+  The transport proxy and `NetworkPolicy` continue to enforce metadata blocking.
+
 ## [0.8.5] — 2026-07-18
 
 ### Changed
