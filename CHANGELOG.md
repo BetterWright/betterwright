@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Headed and headless runs now always launch the managed CloakBrowser with the
+  same persistent profile and full network floor. The desktop default no longer
+  diverts headed sessions into ordinary Google Chrome over CDP.
+- Browser integration CI now installs and exercises CloakBrowser directly,
+  including a headed Xvfb smoke, instead of using Playwright's stock test
+  Chromium as the broad-suite backend.
+
+### Removed
+
+- Removed the stock-Chromium backend, `executablePath`, Chrome CDP attach mode,
+  the `betterwright/chrome` export, and `betterwright setup --chromium`.
+  Legacy options and environment variables fail clearly instead of weakening
+  the managed Cloak launch.
+
+### Fixed
+
+- `--headed`, `headless: false`, `headless: "auto"` on desktops, and
+  `BETTERWRIGHT_HEADLESS=0` now exercise actual headed CloakBrowser rather than
+  an unrelated Chrome launch path.
+
 ## [0.6.1] — 2026-07-17
 
 ### Added

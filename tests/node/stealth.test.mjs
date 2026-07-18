@@ -72,52 +72,6 @@ test("stealthRuntimeFix falls back to the env override", () => {
   }
 });
 
-test("stealthRuntimeFix auto-enables in attach mode when the driver is present", async () => {
-  const driverPresent = stealthDriverVersion() !== null;
-  const prevEnv = process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
-  const prevCdp = process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
-  delete process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
-  delete process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
-  const made = [];
-  const mk = (opts) => {
-    const bw = new BetterWright(opts);
-    made.push(bw);
-    return bw;
-  };
-  try {
-    // Managed browser (no attach): never auto-enabled.
-    const managed = mk({ connectOverCdp: "" });
-    assert.equal(managed.stealthRuntimeFix, false);
-    assert.equal(managed.stealthAutoAttach, false);
-
-    // Attach mode drives a stock Chrome, so the fix is defaulted on when the
-    // optional driver is installed (and left off when it is not).
-    const attached = mk({ connectOverCdp: "http://127.0.0.1:9222" });
-    assert.equal(attached.stealthRuntimeFix, driverPresent);
-    assert.equal(attached.stealthAutoAttach, driverPresent);
-
-    // An explicit opt-out wins even in attach mode: no auto-enable.
-    const optOut = mk({
-      connectOverCdp: "http://127.0.0.1:9222",
-      stealthRuntimeFix: false,
-    });
-    assert.equal(optOut.stealthRuntimeFix, false);
-    assert.equal(optOut.stealthAutoAttach, false);
-
-    // An explicit env decision is also respected verbatim (no auto-enable).
-    process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX = "0";
-    const envOff = mk({ connectOverCdp: "http://127.0.0.1:9222" });
-    assert.equal(envOff.stealthRuntimeFix, false);
-    assert.equal(envOff.stealthAutoAttach, false);
-  } finally {
-    for (const bw of made) await bw.close();
-    if (prevEnv === undefined) delete process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
-    else process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX = prevEnv;
-    if (prevCdp === undefined) delete process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
-    else process.env.BETTERWRIGHT_CONNECT_OVER_CDP = prevCdp;
-  }
-});
-
 test("doctor reports the optional stealth driver version when installed", () => {
   const version = stealthDriverVersion();
   // patchright-core is an optionalDependency; when present it is the pinned

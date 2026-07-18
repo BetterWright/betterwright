@@ -13,7 +13,6 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import { findChromeExecutable } from "./chrome.mjs";
 import { normalizeDownloadPolicy } from "./downloads.mjs";
 import { NetworkPolicy } from "./policy.mjs";
 
@@ -42,38 +41,30 @@ function resolveHeadless(headless) {
   return headless !== false;
 }
 
-function resolveBrowser(browser) {
-  const value = String(
-    browser ?? process.env.BETTERWRIGHT_BROWSER ?? "cloak",
+function assertManagedCloakOnly(options) {
+  const browser = String(
+    options.browser ?? process.env.BETTERWRIGHT_BROWSER ?? "cloak",
   )
     .trim()
     .toLowerCase();
-  if (!["cloak", "chromium"].includes(value)) {
-    throw new TypeError('browser must be "cloak" or "chromium".');
+  if (browser !== "cloak") {
+    throw new TypeError(
+      'BetterWright only supports the managed CloakBrowser backend; browser must be "cloak".',
+    );
   }
-  return value;
-}
-
-/**
- * Resolve the connect-over-CDP target, including the display-aware default.
- * Precedence: an explicit option (including `""` to force the launched
- * sandbox) > the `BETTERWRIGHT_CONNECT_OVER_CDP` env override > the default.
- * The default tracks the resolved `headless` decision (which already folds in
- * display detection): when the browser would run headed and a real Google
- * Chrome is installed, attach to that Chrome over CDP; when headless (a server,
- * container, CI, or an explicit `headless: true`) or Chrome is absent, launch
- * the managed sandbox and keep its network floor. `defaulted` marks the
- * auto-selected case so a Chrome that unexpectedly fails to attach can fall
- * back to the sandbox instead of failing the browser outright.
- */
-function resolveConnectOverCdp(value, headless) {
-  if (value != null) return { endpoint: String(value).trim(), defaulted: false };
-  const env = (process.env.BETTERWRIGHT_CONNECT_OVER_CDP || "").trim();
-  if (env) return { endpoint: env, defaulted: false };
-  if (!headless && findChromeExecutable()) {
-    return { endpoint: "auto", defaulted: true };
+  if (String(options.executablePath || "").trim()) {
+    throw new TypeError(
+      "executablePath is not supported. Use CLOAKBROWSER_BINARY_PATH to select an official CloakBrowser binary.",
+    );
   }
-  return { endpoint: "", defaulted: true };
+  const cdp = String(
+    options.connectOverCdp ?? process.env.BETTERWRIGHT_CONNECT_OVER_CDP ?? "",
+  ).trim();
+  if (cdp) {
+    throw new TypeError(
+      "connectOverCdp is not supported because BetterWright only launches its managed CloakBrowser.",
+    );
+  }
 }
 
 function resolvePublicSearchPolicy(policy) {
@@ -128,9 +119,7 @@ function resolvePlaywrightCore() {
   return "";
 }
 
-const STEALTH_REGISTER_PATH = fileURLToPath(
-  new URL("./stealth-register.mjs", import.meta.url),
-);
+const STEALTH_REGISTER_URL = new URL("./stealth-register.mjs", import.meta.url).href;
 
 /**
  * Resolve the opt-in Runtime.enable stealth fix. Precedence: an explicit
@@ -170,27 +159,10 @@ export class BetterWright {
    * @param {string} [options.home] state directory (default ~/.betterwright)
    * @param {NetworkPolicy} [options.policy] network policy
    * @param {object} [options.vault] optional vault with `handleRequest(action, payload, origin)`
-   * @param {"cloak"|"chromium"} [options.browser="cloak"] managed browser;
-   *   stock Chromium is an explicit degraded fallback
-   * @param {string} [options.executablePath] explicit Chromium binary; selecting
-   *   one also selects the Chromium fallback
+   * @param {"cloak"} [options.browser="cloak"] managed CloakBrowser backend
    * @param {boolean|"auto"} [options.headless="auto"] "auto" shows a window when
    *   a display is available and runs headless otherwise; true/false force it
    * @param {number} [options.defaultTimeout=30] per-snippet timeout, seconds
-   * @param {string} [options.connectOverCdp] attach to a Chrome started with
-   *   --remote-debugging-port at this endpoint (e.g. "http://127.0.0.1:9222")
-   *   instead of launching one; the launch-time network floor is inactive in
-   *   this mode — only the per-request policy applies. Pass "auto" to reuse a
-   *   debug Chrome if one is already running, or otherwise launch a real Google
-   *   Chrome with a persistent BetterWright profile (where you install and unlock
-   *   a password-manager extension once) and attach to that. When omitted, the
-   *   default follows the resolved headless decision: a headed run with Google
-   *   Chrome installed uses "auto" (real Chrome, no launch-time floor), while a
-   *   headless run (server/CI or headless:true) or a machine without Chrome
-   *   launches the managed sandbox with the floor intact. Pass "" to force the
-   *   launched sandbox regardless. Attach mode drives a stock Chrome, whose CDP
-   *   session leaks `Runtime.enable`, so the stealth runtime fix is auto-enabled
-   *   there (when `patchright-core` is installed) unless explicitly disabled.
    * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
    *   allowed top-level Google, Bing, or DuckDuckGo search navigations
    * @param {"block"|"allow"} [options.publicSearchPolicy="allow"] set "block"
@@ -202,54 +174,22 @@ export class BetterWright {
    * @param {boolean} [options.stealthRuntimeFix=false] run model snippets in an
    *   isolated world (via the pre-patched `patchright-core` driver) so
    *   `page.evaluate` no longer trips main-world automation detection. Applies
-   *   to the managed Cloak browser and the fallbacks. Off by default, except in
-   *   attach mode (a non-empty `connectOverCdp`, including the headed "auto"
-   *   default): there it auto-enables when `patchright-core` is installed,
-   *   because a stock attached Chrome leaks `Runtime.enable` that the managed
-   *   fork would otherwise hide. Pass `false` (or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=0`)
-   *   to opt out even in attach mode. Trade-off: snippets can no longer read
-   *   page-defined main-world globals (e.g. `window.__NEXT_DATA__`); DOM access
-   *   and clicks are unaffected. Requires the optional `patchright-core`
-   *   dependency to be installed.
+   *   to the managed Cloak browser. Off by default. Trade-off: snippets can no
+   *   longer read page-defined main-world globals (e.g. `window.__NEXT_DATA__`);
+   *   DOM access and clicks are unaffected. Requires the optional
+   *   `patchright-core` dependency to be installed.
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
     this.policy = options.policy || new NetworkPolicy();
     this.vault = options.vault || null;
-    const requestedBrowser = resolveBrowser(options.browser);
-    this.browserFlavor = options.executablePath ? "chromium" : requestedBrowser;
-    const cloakExecutable = (process.env.CLOAKBROWSER_BINARY_PATH || "").trim();
-    this.executablePath =
-      options.executablePath ||
-      (this.browserFlavor === "cloak" ? cloakExecutable : "");
+    assertManagedCloakOnly(options);
+    this.browserFlavor = "cloak";
     this.headless = resolveHeadless(options.headless);
-    const cdp = resolveConnectOverCdp(options.connectOverCdp, this.headless);
-    this.connectOverCdp = cdp.endpoint;
-    this._cdpDefaulted = cdp.defaulted;
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
     this.publicSearchPolicy = resolvePublicSearchPolicy(options.publicSearchPolicy);
     this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
     this.stealthRuntimeFix = resolveStealthRuntimeFix(options.stealthRuntimeFix);
-    // Attach mode drives a stock Google Chrome, whose CDP session leaks
-    // `Runtime.enable` and runs `page.evaluate` in the main world — the managed
-    // Cloak fork neutralizes both at the binary level, but a browser we merely
-    // connect to can't be. So when the host is attaching (a non-empty endpoint,
-    // including the headed "auto" default) and hasn't spoken to stealth either
-    // way, default the isolated-world driver on if it is installed, so the
-    // headed/attach path is not the most bot-detectable one. An explicit option
-    // or env var still wins in both directions.
-    const stealthConfigured =
-      options.stealthRuntimeFix != null ||
-      process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX != null;
-    this.stealthAutoAttach = false;
-    if (
-      !stealthConfigured &&
-      this.connectOverCdp !== "" &&
-      stealthDriverAvailable()
-    ) {
-      this.stealthRuntimeFix = true;
-      this.stealthAutoAttach = true;
-    }
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
 
     this._process = null;
@@ -259,7 +199,6 @@ export class BetterWright {
     this._queue = Promise.resolve();
     this._stderrTail = [];
     this._closed = false;
-    this._cdpResolved = false;
   }
 
   _workerConfig() {
@@ -271,23 +210,12 @@ export class BetterWright {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     return {
-      // Each browser flavor gets its own profile directory. Cloak and the
-      // stock-Chromium fallback ship different Chromium versions; sharing one
-      // profile lets the newer binary silently upgrade it out from under the
-      // older one, after which the older binary crashes on launch (a newer
-      // profile is not downgrade-safe). Cloak keeps the historical "profile"
-      // path so existing saved logins survive an upgrade.
-      profileDir: path.join(
-        root,
-        this.browserFlavor === "chromium" ? "profile-chromium" : "profile",
-      ),
+      profileDir: path.join(root, "profile"),
       runtimeDir: runtime,
       artifactsDir: artifacts,
       downloadsDir: downloads,
-      executablePath: this.executablePath,
       browserFlavor: this.browserFlavor,
       headless: this.headless,
-      cdpEndpoint: this.connectOverCdp,
       searchMinIntervalMs: this.searchMinIntervalMs,
       publicSearchPolicy: this.publicSearchPolicy,
       downloadPolicy: this.downloadPolicy,
@@ -317,7 +245,7 @@ export class BetterWright {
             "`npm install patchright-core`, or disable stealthRuntimeFix.",
         );
       }
-      execArgv.push("--import", STEALTH_REGISTER_PATH);
+      execArgv.push("--import", STEALTH_REGISTER_URL);
       env.BETTERWRIGHT_STEALTH_ACTIVE = "1";
     }
 
@@ -496,10 +424,8 @@ export class BetterWright {
     );
   }
 
-  /** Resolve a "auto" CDP endpoint (launch/reuse a real Chrome), restart the
-   * worker on a config change, and return the current worker config. */
+  /** Restart the worker on a config change and return the current config. */
   async _prepare() {
-    await this._resolveCdpEndpoint();
     const config = this._workerConfig();
     if (
       this._process &&
@@ -512,23 +438,6 @@ export class BetterWright {
     await this._start();
     this._lastConfig = config;
     return config;
-  }
-
-  async _resolveCdpEndpoint() {
-    if (this._cdpResolved) return;
-    if (String(this.connectOverCdp || "").trim().toLowerCase() === "auto") {
-      try {
-        const { ensureChromeCdp } = await import("./chrome.mjs");
-        const { endpoint } = await ensureChromeCdp({ home: this.home });
-        this.connectOverCdp = endpoint;
-      } catch (error) {
-        // An explicit "auto" request surfaces the failure; the display-aware
-        // default instead falls back to the launched sandbox (floor intact).
-        if (!this._cdpDefaulted) throw error;
-        this.connectOverCdp = "";
-      }
-    }
-    this._cdpResolved = true;
   }
 
   /** Send one worker command keyed by a fresh id and await its result envelope,

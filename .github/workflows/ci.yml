@@ -37,11 +37,12 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Install deterministic Chromium test backend
-        run: node node_modules/playwright-core/cli.js install chromium --no-shell
-      # The broad suite selects explicit Chromium; Cloak has a separate opt-in E2E.
+      - name: Install managed CloakBrowser
+        run: node bin/betterwright.mjs setup
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
-      # broken Chromium install can never report green by skipping every test.
+      # broken Cloak install can never report green by skipping every browser test.
       - run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
+      - name: Test managed CloakBrowser headed mode
+        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 node --test tests/node/cloak.test.mjs

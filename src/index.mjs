@@ -8,7 +8,6 @@ export {
   solveTimeoutMs,
 } from "./captcha-solver.mjs";
 export { detectBotChallenge } from "./challenges.mjs";
-export { ensureChromeCdp, findChromeExecutable } from "./chrome.mjs";
 export { BetterWright, BrowserError, NetworkPolicy } from "./client.mjs";
 export {
   piImageArtifacts,

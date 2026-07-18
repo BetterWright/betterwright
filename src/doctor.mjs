@@ -91,15 +91,9 @@ export async function doctorReport() {
   const core = resolveCoreDir();
   const cloak = await cloakRuntime();
   let version = null;
-  let chromium = null;
   if (core) {
     try {
       version = require(path.join(core, "package.json")).version;
-    } catch {
-      /* ignore */
-    }
-    try {
-      chromium = require(path.join(core, "index.js")).chromium.executablePath();
     } catch {
       /* ignore */
     }
@@ -120,17 +114,14 @@ export async function doctorReport() {
     cloakbrowser_binary: cloak.binary,
     cloakbrowser_ok:
       cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed,
-    chromium,
-    chromium_ok: Boolean(chromium && fs.existsSync(chromium)),
   };
   const stealth = stealthDriverVersion();
   report.stealth_driver = stealth;
   report.stealth_available = Boolean(stealth);
-  const backend = (process.env.BETTERWRIGHT_BROWSER || "cloak").trim().toLowerCase();
-  report.browser = backend;
+  report.browser = "cloak";
   report.ready =
     report.worker_ok &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (backend === "chromium" ? report.chromium_ok : report.cloakbrowser_ok);
+    report.cloakbrowser_ok;
   return report;
 }

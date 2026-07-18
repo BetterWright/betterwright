@@ -76,8 +76,7 @@ export async function loadCloakBrowser() {
       cloakModulePromise = null;
       const wrapped = new Error(
         "CloakBrowser is the managed BetterWright browser but its wrapper is not " +
-          "available. Run `betterwright setup`, or explicitly select the degraded " +
-          "Chromium backend.",
+          "available. Run `betterwright setup` to install the managed CloakBrowser runtime.",
       );
       wrapped.cause = error;
       throw wrapped;

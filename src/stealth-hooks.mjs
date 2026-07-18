@@ -7,7 +7,7 @@
 // `import("playwright-core")` and exposes no injection hook, so the only way to
 // swap the driver it uses is to intercept that specifier before Node resolves
 // it. The same redirect also covers BetterWright's own worker import and the
-// stock-Chromium fallback, so the whole process uses one driver.
+// managed Cloak launch, so the whole process uses one driver.
 //
 // patchright-core is an exact-version drop-in for playwright-core@1.61.x, so the
 // redirect is API-compatible; it just changes the CDP behaviour (no blanket

@@ -162,13 +162,12 @@ The client returns the worker's result envelope (`ok`, `result`, `error`,
 `artifacts`, `console`, `events`, `pages`, `challenges`, `warnings`,
 `durationMs`). See [docs/javascript.md](docs/javascript.md) for the full API.
 
-Long-lived desktop agents can attach to a dedicated real-Chrome profile with
-`ensureChromeCdp()`, but that host-only mode gives up part of the managed launch
-boundary. For broad discovery, use the host's web-search tool and open its
-results in BetterWright instead of automating Google or Bing's public search
+Headed and headless runs both use the same persistent managed Cloak profile and
+network boundary. For broad discovery, use the host's web-search tool and open
+its results in BetterWright instead of automating Google or Bing's public search
 UI; set `publicSearchPolicy: "block"` to have the managed worker enforce that
 (it is permitted by default). Visible bot challenges are surfaced as resumable
-state. See [attach mode](docs/attach-mode.md).
+state. See [headed browsing](docs/attach-mode.md).
 
 ---
 
@@ -184,8 +183,8 @@ state. See [attach mode](docs/attach-mode.md).
   stored outside Chromium's profile. Trusted host code fills logins and signups
   (including confirm-password) with `fillCredential` / `generateAndFillCredential`;
   the secret is typed outside the sandbox and never returned. Model snippets
-  cannot request a secret-bearing fill. In [attach mode](docs/attach-mode.md) the
-  agent can instead drive your own 1Password extension's inline autofill.
+  cannot request a secret-bearing fill. A password-manager extension can be
+  installed once in the persistent headed Cloak profile when needed.
 - **[Proof artifacts](docs/browser-api.md#screenshots-and-artifacts)** —
   screenshots tagged `proof`, `question`, or `debug`, returned as artifact
   paths a host UI can render.
@@ -200,8 +199,8 @@ state. See [attach mode](docs/attach-mode.md).
   curved pointer movement, paced typing, and eased wheel events without another
   runtime dependency.
 - **[Managed CloakBrowser backend](docs/getting-started.md#managed-cloakbrowser-backend)** —
-  the default backend reduces common browser-fingerprint false positives;
-  stock Chromium remains an explicit fallback for compatibility and testing.
+  the only backend in both headed and headless modes, reducing common
+  browser-fingerprint false positives without silently falling back to Chrome.
 - **[Agent guidance](docs/agent-prompt.md)** — drop-in operator instructions
   (`agentSystemPrompt()`, or the CLI's `betterwright skill`) that make the
   model act decisively on authorized tasks — logging in, signing up, buying —
