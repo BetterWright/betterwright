@@ -24,6 +24,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The interactive console now carries the conversation across tasks.** A
+  follow-up task remembers what earlier tasks did and can refer back to them
+  without repeating the work — not just the browser session (which already
+  persisted), but the transcript too. `/new` clears the memory (and the browser)
+  to start fresh. `runAgentTask` gained a `history` option (a prior call's
+  `transcript`) that seeds this; `betterwright exec` stays single-shot. The
+  Anthropic adapter now coalesces adjacent same-role turns so a continued session
+  stays a valid request.
 - **`--reasoning` as an alias for `--effort`** (and `/reasoning` for `/effort` in
   the interactive console) — the reasoning-effort control under its more intuitive
   name. `--effort` continues to work unchanged.

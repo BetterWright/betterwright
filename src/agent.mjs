@@ -244,6 +244,9 @@ function loginOptionsFromInput(input = {}, session) {
  *   when provided, the loop exposes an `ask` tool so the model can put a question
  *   to the user mid-task; the returned string is fed back as the answer. Omit it
  *   (the `exec` default) to run fully autonomously with no `ask` tool.
+ * @param {object[]} [options.history] a prior transcript (from a previous call's
+ *   `transcript`) to continue from, so a follow-up task can refer back to earlier
+ *   work. Omit for a fresh, single-shot run.
  * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
  */
 export async function runAgentTask(options = {}) {
@@ -269,7 +272,11 @@ export async function runAgentTask(options = {}) {
 
   const system = `${harnessPreamble({ withAsk })}\n\n${agentSystemPrompt(options.guardrails || {})}`;
   const tools = toolsForHarness({ withLogin, withAsk });
-  const messages = [{ role: "user", text: task }];
+  // Seed from a prior transcript when continuing a session (the interactive
+  // console passes the previous task's transcript), so a follow-up task can refer
+  // back to earlier work; otherwise start fresh.
+  const history = Array.isArray(options.history) ? options.history : [];
+  const messages = [...history, { role: "user", text: task }];
 
   let answer = "";
   let proof = null;
@@ -443,7 +450,7 @@ export function resolveModel(model, modelOptions = {}) {
 // --- Claude (Anthropic SDK) ------------------------------------------------
 
 function anthropicMessages(messages) {
-  return messages.map((m) => {
+  const mapped = messages.map((m) => {
     if (m.role === "user") return { role: "user", content: [{ type: "text", text: m.text }] };
     if (m.role === "tool")
       return {
@@ -460,6 +467,17 @@ function anthropicMessages(messages) {
       content.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.input || {} });
     return { role: "assistant", content };
   });
+  // The Messages API requires roles to alternate. Tool results are user-role, so
+  // continuing a session (a carried transcript ending in a tool result, then a
+  // new user task) yields two user turns in a row — coalesce adjacent same-role
+  // messages into one so the request stays valid.
+  const merged = [];
+  for (const msg of mapped) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === msg.role) last.content.push(...msg.content);
+    else merged.push({ role: msg.role, content: [...msg.content] });
+  }
+  return merged;
 }
 
 function parseAnthropicResponse(message) {

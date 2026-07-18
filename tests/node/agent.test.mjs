@@ -137,6 +137,58 @@ test("runAgentTask reports zeroed usage when the model omits a usage block", asy
   assert.equal(result.toolCalls, 0);
 });
 
+test("runAgentTask continues from a prior transcript (session memory)", async () => {
+  const browser = fakeBrowser();
+  const prior = [
+    { role: "user", text: "first task" },
+    { role: "assistant", text: "did the first task", toolCalls: [] },
+  ];
+  const model = scriptedModel([{ text: "used the earlier context", toolCalls: [] }]);
+
+  const result = await runAgentTask({ task: "follow-up", model, browser, history: prior });
+
+  // The model saw the prior transcript plus the new task.
+  const sent = model.seen[0].messages;
+  assert.equal(sent[0].text, "first task");
+  assert.equal(sent[1].text, "did the first task");
+  assert.equal(sent[2].text, "follow-up");
+  // The returned transcript extends the same history (so the console can chain).
+  assert.equal(result.transcript[0].text, "first task");
+  assert.equal(result.transcript.at(-1).text, "used the earlier context");
+});
+
+test("claudeModel coalesces consecutive user turns so a continued session stays valid", async () => {
+  let captured;
+  const client = {
+    messages: {
+      async create(req) {
+        captured = req;
+        return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+      },
+    },
+  };
+  const model = claudeModel({ client, model: "claude-test" });
+  // A carried transcript ends in a tool result (user-role); then a new user task.
+  await model.complete({
+    system: "s",
+    messages: [
+      { role: "assistant", text: "", toolCalls: [{ id: "t1", name: "browser", input: {} }] },
+      { role: "tool", results: [{ id: "t1", name: "browser", content: "obs" }] },
+      { role: "user", text: "next task" },
+    ],
+    tools: [{ name: "browser", description: "d", parameters: { type: "object" } }],
+  });
+
+  // No two adjacent messages share a role, and the tool result + new task merged
+  // into one user turn carrying both blocks.
+  for (let i = 1; i < captured.messages.length; i += 1)
+    assert.notEqual(captured.messages[i].role, captured.messages[i - 1].role);
+  const merged = captured.messages.find(
+    (m) => m.role === "user" && m.content.some((c) => c.type === "tool_result") && m.content.some((c) => c.type === "text"),
+  );
+  assert.ok(merged, "tool result and the new user task should be one coalesced user turn");
+});
+
 test("runAgentTask treats a prose reply (no tool call) as the answer", async () => {
   const browser = fakeBrowser();
   const model = scriptedModel([{ text: "Paris is the capital.", toolCalls: [] }]);
@@ -334,7 +386,10 @@ test("claudeModel maps to the Anthropic shape and parses content", async () => {
   assert.equal(captured.model, "claude-test");
   assert.equal(captured.system, "SYS");
   assert.equal(captured.tools[0].input_schema.type, "object");
-  assert.equal(captured.messages[1].content[0].type, "tool_result");
+  // A `tool` message maps to a tool_result block (position may shift when adjacent
+  // user turns coalesce).
+  const toolResult = captured.messages.flatMap((m) => m.content).find((c) => c.type === "tool_result");
+  assert.equal(toolResult?.tool_use_id, "x");
   assert.equal(out.text, "sure");
   assert.equal(out.toolCalls[0].name, "done");
   assert.deepEqual(out.toolCalls[0].input, { answer: "A" });

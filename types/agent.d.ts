@@ -78,6 +78,11 @@ export interface RunAgentTaskOptions {
    * `ask` tool.
    */
   askUser?: (question: { question: string; options: string[] }) => string | Promise<string>;
+  /**
+   * A prior transcript (from a previous call's `transcript`) to continue from, so
+   * a follow-up task can refer back to earlier work. Omit for a fresh run.
+   */
+  history?: AgentMessage[];
 }
 
 export interface AgentResult {
