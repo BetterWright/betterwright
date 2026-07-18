@@ -124,7 +124,9 @@ betterwright auth --login codex        # opens "Sign in to Codex with ChatGPT"
 betterwright exec "find the top Hacker News story and give me its title and points" --model codex
 ```
 
-Pick the model with `--model claude|codex|grok`. `codex` and `grok` sign in
+Pick the model with `--model claude|codex|grok`, or pass a bare model id and let
+BetterWright infer the backend from its prefix (`gpt-*`/`o*` → codex, `grok-*` →
+grok, `claude-*` → claude), e.g. `--model gpt-5.6-sol`. `codex` and `grok` sign in
 through BetterWright's own OAuth flow (`betterwright auth --login codex|grok`) and
 call the ChatGPT / xAI backends directly — no API key to paste, no router; `claude`
 uses the Anthropic SDK (`npm install @anthropic-ai/sdk`, `ANTHROPIC_API_KEY`). The
