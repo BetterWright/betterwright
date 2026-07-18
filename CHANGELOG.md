@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-07-18
+
+### Added
+
+- **Runs now report the time they took.** `runAgentTask` returns `durationMs`
+  (task wall-clock, excluding teardown of a browser it created for itself), and
+  both `betterwright exec` and the interactive console include it in their cost
+  summary. It is also part of the `exec` stdout JSON.
+- **Cache and end-of-task context in the usage report.** Alongside input/output
+  totals, `usage` now carries `cacheReadTokens` and `cacheWriteTokens` (the cached
+  portion of the input — OpenAI-style backends report only cache reads, so writes
+  stay `0`) and `contextTokens`, the prompt size at the end of the task (the last
+  turn's input — how much context the model was holding when it finished). The
+  summary line reads e.g. `done in 6 steps, 7 tool calls, 11.4s, 48,210 tokens
+  (46,880 in / 1,330 out · 40,000 cache read · 2,000 cache write) · ctx 20,000`.
+
 ## [0.8.0] — 2026-07-18
 
 ### Added
