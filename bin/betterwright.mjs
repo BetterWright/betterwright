@@ -211,7 +211,7 @@ const INTERACTIVE_HELP = `Commands:
   /help               show this help
   /model <name>       switch model (claude | codex | grok | a model id)
   /reasoning <level>  set reasoning effort (low | medium | high | xhigh | max)
-  /new                start a fresh browser session (close open tabs)
+  /new                start a fresh session (clear memory + close open tabs)
   /clear              clear the screen
   /exit               quit (or Ctrl-D)
 
@@ -246,6 +246,9 @@ async function cmdInteractive(flags) {
       stealthRuntimeFix: flags.has("--stealth") || undefined,
     });
   let browser = newBrowser();
+  // The running transcript, so a follow-up task remembers earlier ones. `/new`
+  // clears it (and the browser) to start a clean session.
+  let history = [];
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const nextLine = makeLineReader(rl);
@@ -254,7 +257,8 @@ async function cmdInteractive(flags) {
   const modelLabel = () => `${model}${modelOptions.model ? ` (${modelOptions.model})` : ""}`;
   console.log(bold("BetterWright") + " — interactive agent console");
   console.log(dim(`model ${modelLabel()} · session ${session} · ${headless ? "headless" : "headed"}`));
-  console.log(dim("Type a task and press Enter. /help for commands, /exit or Ctrl-D to quit.\n"));
+  console.log(dim("Type a task and press Enter. Follow-ups keep the session; /new starts fresh."));
+  console.log(dim("/help for commands, /exit or Ctrl-D to quit.\n"));
 
   try {
     for (;;) {
@@ -288,7 +292,8 @@ async function cmdInteractive(flags) {
         if (cmd === "new" || cmd === "reset") {
           await browser.close();
           browser = newBrowser();
-          console.log(dim("started a fresh browser session"));
+          history = [];
+          console.log(dim("started a fresh session (browser and memory cleared)"));
           continue;
         }
         console.log(dim(`unknown command /${cmd} — /help for the list`));
@@ -303,6 +308,7 @@ async function cmdInteractive(flags) {
           model,
           modelOptions,
           session,
+          history,
           onStep: ({ step, tool, note }) => {
             // `ask` is rendered by the askUser handler below; skip it here.
             if (tool === "ask") return;
@@ -318,10 +324,14 @@ async function cmdInteractive(flags) {
           },
         });
       } catch (error) {
-        // A failed task must not kill the console — report and keep going.
+        // A failed task must not kill the console — report and keep going. History
+        // is left untouched so the next task still has the prior context.
         console.log(dim(`  ! ${error?.message || error}`));
         continue;
       }
+
+      // Carry the transcript forward so the next task remembers this one.
+      history = result.transcript;
 
       console.log(result.answer ? `\n${bold(result.answer)}` : dim("\n(no answer returned)"));
       if (result.proof) console.log(dim(`proof: ${result.proof}`));

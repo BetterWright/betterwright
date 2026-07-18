@@ -95,10 +95,16 @@ done · 2 steps · 2 tool calls · 2.1s · 4,961 in / 120 out · 3,072 cache rea
 ```
 
 Each step the agent takes streams as it happens, then the answer, the proof
-screenshot path, and the same cost summary `exec` prints. **One browser session
-persists across tasks**, so a later task can build on where an earlier one left
-off — you stay signed in, tabs stay open. The same `--model`, `--model-id`,
+screenshot path, and the same cost summary `exec` prints. **The session carries
+across tasks**: both the browser (you stay signed in, tabs stay open) *and* the
+conversation — a follow-up task remembers what earlier ones did and can refer back
+to them without repeating the work (it's fed the running transcript). `/new` clears
+both the memory and the browser to start fresh. The same `--model`, `--model-id`,
 `--effort`/`--reasoning`, `--session`, `--headed`, and network flags apply.
+
+Because the transcript accumulates, a long session grows the context each task
+sends (largely served from cache — watch `cache read` in the summary); `/new` when
+you switch to unrelated work.
 
 Meta-commands (a line starting with `/`):
 
