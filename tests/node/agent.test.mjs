@@ -83,6 +83,48 @@ test("runAgentTask drives browser then finishes on done", async () => {
   assert.match(toolTurn.results[0].content, /"result":"HN"/);
 });
 
+test("runAgentTask sums token usage and counts every tool call", async () => {
+  const browser = fakeBrowser({
+    runs: [
+      { ok: true, result: "a", artifacts: [], durationMs: 1 },
+      { ok: true, result: "b", artifacts: [], durationMs: 1 },
+    ],
+  });
+  const model = scriptedModel([
+    // One turn batching two browser calls, with a usage block.
+    {
+      text: "",
+      toolCalls: [
+        { id: "c1", name: "browser", input: { code: "1" } },
+        { id: "c2", name: "browser", input: { code: "2" } },
+      ],
+      usage: { inputTokens: 100, outputTokens: 20 },
+    },
+    // A final turn: done + a usage block. Providers that omit usage contribute 0.
+    {
+      text: "",
+      toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }],
+      usage: { inputTokens: 50, outputTokens: 10 },
+    },
+  ]);
+
+  const result = await runAgentTask({ task: "count", model, browser });
+
+  // 2 browser + 1 done = 3 tool calls across 2 steps.
+  assert.equal(result.toolCalls, 3);
+  assert.equal(result.usage.inputTokens, 150);
+  assert.equal(result.usage.outputTokens, 30);
+  assert.equal(result.usage.totalTokens, 180);
+});
+
+test("runAgentTask reports zeroed usage when the model omits a usage block", async () => {
+  const browser = fakeBrowser();
+  const model = scriptedModel([{ text: "hi", toolCalls: [] }]);
+  const result = await runAgentTask({ task: "x", model, browser });
+  assert.deepEqual(result.usage, { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+  assert.equal(result.toolCalls, 0);
+});
+
 test("runAgentTask treats a prose reply (no tool call) as the answer", async () => {
   const browser = fakeBrowser();
   const model = scriptedModel([{ text: "Paris is the capital.", toolCalls: [] }]);
@@ -126,7 +168,26 @@ test("resolveModel maps names, passes objects through, rejects unknown", () => {
   const custom = { name: "mine", complete: async () => ({ text: "", toolCalls: [] }) };
   assert.equal(resolveModel(custom), custom);
   assert.equal(resolveModel("claude", {}).name, "claude");
-  assert.throws(() => resolveModel("gpt"), /Unknown model/);
+  assert.throws(() => resolveModel("mistral-large"), /Unknown model/);
+});
+
+test("resolveModel accepts a bare model id and infers the backend from its prefix", () => {
+  // gpt-* / o* → codex, grok-* → grok, claude-* → claude; the id becomes model id.
+  const codex = resolveModel("gpt-5.6-luna", { apiKey: "k" });
+  assert.equal(codex.name, "codex");
+  assert.equal(codex.modelId, "gpt-5.6-luna");
+
+  const grok = resolveModel("grok-4.3", { apiKey: "k" });
+  assert.equal(grok.name, "grok");
+  assert.equal(grok.modelId, "grok-4.3");
+
+  const claude = resolveModel("claude-opus-4-8");
+  assert.equal(claude.name, "claude");
+  assert.equal(claude.modelId, "claude-opus-4-8");
+
+  // An explicit --model-id wins over the id passed as the model.
+  const pinned = resolveModel("gpt-5.6-luna", { apiKey: "k", model: "gpt-override" });
+  assert.equal(pinned.modelId, "gpt-override");
 });
 
 test("openaiModel translates the transcript and parses tool calls", async () => {
@@ -149,6 +210,7 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
               finish_reason: "tool_calls",
             },
           ],
+          usage: { prompt_tokens: 42, completion_tokens: 8 },
         };
       },
     };
@@ -175,6 +237,8 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
   assert.equal(out.toolCalls[0].name, "browser");
   assert.deepEqual(out.toolCalls[0].input, { code: "return 1" });
   assert.equal(out.toolCalls[0].id, "call_1"); // synthesized
+  // prompt_/completion_tokens are normalized to input/output.
+  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 8 });
 });
 
 test("openaiModel surfaces HTTP errors", async () => {
@@ -195,6 +259,7 @@ test("claudeModel maps to the Anthropic shape and parses content", async () => {
             { type: "tool_use", id: "t1", name: "done", input: { answer: "A" } },
           ],
           stop_reason: "tool_use",
+          usage: { input_tokens: 30, cache_read_input_tokens: 12, output_tokens: 5 },
         };
       },
     },
@@ -216,6 +281,8 @@ test("claudeModel maps to the Anthropic shape and parses content", async () => {
   assert.equal(out.text, "sure");
   assert.equal(out.toolCalls[0].name, "done");
   assert.deepEqual(out.toolCalls[0].input, { answer: "A" });
+  // Cached input tokens fold into the input total (30 + 12), output passes through.
+  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 5 });
 });
 
 test("codex and grok adapters require credentials", () => {

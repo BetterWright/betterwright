@@ -94,6 +94,28 @@ const DONE_TOOL_PARAMETERS = {
   required: ["answer"],
 };
 
+// Normalize a provider's token-usage block to a common { inputTokens,
+// outputTokens } shape. Anthropic counts cached input separately, so fold the
+// cache tokens back into the input total.
+function anthropicUsage(usage) {
+  if (!usage) return null;
+  const input =
+    (usage.input_tokens || 0) +
+    (usage.cache_read_input_tokens || 0) +
+    (usage.cache_creation_input_tokens || 0);
+  return { inputTokens: input, outputTokens: usage.output_tokens || 0 };
+}
+
+// Chat Completions uses prompt_/completion_tokens; the Responses API uses
+// input_/output_tokens — accept either.
+function openaiUsage(usage) {
+  if (!usage) return null;
+  return {
+    inputTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0,
+    outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
+  };
+}
+
 function toolsForHarness({ withLogin }) {
   const tools = [
     { name: "browser", description: BROWSER_TOOL_DESCRIPTION, parameters: BROWSER_TOOL_PARAMETERS },
@@ -172,7 +194,7 @@ function loginOptionsFromInput(input = {}, session) {
  *   browsers only — ignored when an external `browser` is passed, whose own
  *   vault then decides login availability)
  * @param {(event: object) => void} [options.onStep] progress callback per step
- * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, transcript: object[], proof: (string|null)}>}
+ * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, totalTokens: number}, transcript: object[], proof: (string|null)}>}
  */
 export async function runAgentTask(options = {}) {
   const task = String(options.task || "").trim();
@@ -202,11 +224,19 @@ export async function runAgentTask(options = {}) {
   let finished = false;
   let reason = "max-steps";
   let steps = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let toolCallCount = 0;
 
   try {
     for (steps = 1; steps <= maxSteps; steps += 1) {
       const response = await model.complete({ system, messages, tools });
       const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+      if (response.usage) {
+        inputTokens += response.usage.inputTokens || 0;
+        outputTokens += response.usage.outputTokens || 0;
+      }
+      toolCallCount += toolCalls.length;
       messages.push({ role: "assistant", text: response.text || "", toolCalls });
 
       // No tool call: the model answered in prose. Treat that text as the
@@ -266,27 +296,54 @@ export async function runAgentTask(options = {}) {
     // On exhaustion the for-loop increments past the cap; report the real count.
     steps: Math.min(steps, maxSteps),
     reason,
+    // How many tool calls the model issued (browser/login/done) — can exceed
+    // `steps` when a turn batches several — and the token usage the adapters
+    // reported (null fields when the provider didn't return a usage block).
+    toolCalls: toolCallCount,
+    usage: {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+    },
     transcript: messages,
     proof,
   };
 }
 
+// Infer the backend adapter from a bare model id so `--model gpt-5.6-luna`
+// works like `--model codex --model-id gpt-5.6-luna`.
+function adapterForModelId(id) {
+  if (/^claude/.test(id)) return "claude";
+  if (/^grok/.test(id)) return "grok";
+  if (/^(gpt|o[0-9]|chatgpt|codex)/.test(id)) return "codex";
+  return null;
+}
+
 /**
  * Resolve a model name (or pass-through object) to a model adapter.
- * @param {string|object} model "claude" | "codex" | "grok" (aliases: "anthropic"
- *   → claude, "openai" → codex, "xai" → grok), or an object with an async
- *   `complete` method to use directly.
+ * @param {string|object} model An adapter name — "claude" | "codex" | "grok"
+ *   (aliases: "anthropic" → claude, "openai" → codex, "xai" → grok); a bare
+ *   model id whose backend is inferred from its prefix (`gpt-*`/`o*` → codex,
+ *   `grok-*` → grok, `claude-*` → claude); or an object with an async `complete`
+ *   method to use directly.
  * @param {object} [modelOptions]
  * @returns {{name: string, complete: Function}}
  */
 export function resolveModel(model, modelOptions = {}) {
   if (model && typeof model === "object" && typeof model.complete === "function") return model;
   const name = String(model || "").toLowerCase();
-  if (name === "claude" || name === "anthropic") return claudeModel(modelOptions);
-  if (name === "codex" || name === "openai") return codexModel(modelOptions);
-  if (name === "grok" || name === "xai") return grokModel(modelOptions);
+  const adapters = { claude: claudeModel, anthropic: claudeModel, codex: codexModel, openai: codexModel, grok: grokModel, xai: grokModel };
+  if (adapters[name]) return adapters[name](modelOptions);
+  // Not an adapter name — treat it as a model id and route by its prefix, using
+  // it as the model id unless an explicit --model-id already set one.
+  const inferred = adapterForModelId(name);
+  if (inferred) {
+    const options = { ...modelOptions, model: modelOptions.model || String(model) };
+    return { claude: claudeModel, codex: codexModel, grok: grokModel }[inferred](options);
+  }
   throw new Error(
-    `Unknown model "${model}". Use "claude", "codex", "grok", or pass a model object with a complete() method.`,
+    `Unknown model "${model}". Use an adapter name ("claude", "codex", "grok"), a model id ` +
+      `(e.g. "gpt-5.6-sol", "grok-4.3", "claude-opus-4-8"), or a model object with a complete() method.`,
   );
 }
 
@@ -320,7 +377,7 @@ function parseAnthropicResponse(message) {
     else if (block.type === "tool_use")
       toolCalls.push({ id: block.id, name: block.name, input: block.input || {} });
   }
-  return { text, toolCalls, stopReason: message.stop_reason };
+  return { text, toolCalls, stopReason: message.stop_reason, usage: anthropicUsage(message.usage) };
 }
 
 /**
@@ -415,7 +472,7 @@ function parseOpenaiResponse(data) {
     synthetic += 1;
     toolCalls.push({ id: tc.id || `call_${synthetic}`, name: tc.function?.name, input });
   }
-  return { text: msg.content || "", toolCalls, stopReason: choice.finish_reason };
+  return { text: msg.content || "", toolCalls, stopReason: choice.finish_reason, usage: openaiUsage(data?.usage) };
 }
 
 /**
@@ -574,6 +631,7 @@ function parseResponsesStream(raw) {
     text: text || fallback.text,
     toolCalls: toolCalls.length ? toolCalls : fallback.toolCalls,
     stopReason: completed?.status || (toolCalls.length ? "tool_calls" : "completed"),
+    usage: openaiUsage(completed?.usage),
   };
 }
 
@@ -627,7 +685,7 @@ function responsesModel(options = {}) {
       if (/^(?:event|data):/m.test(raw)) return parseResponsesStream(raw);
       const data = JSON.parse(raw);
       const parsed = parseResponsesOutput(data.output);
-      return { ...parsed, stopReason: data.status || "completed" };
+      return { ...parsed, stopReason: data.status || "completed", usage: openaiUsage(data.usage) };
     },
   };
 }

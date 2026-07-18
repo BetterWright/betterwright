@@ -22,19 +22,32 @@ coding agent. `betterwright exec` gives BetterWright that scaffold.
 betterwright exec "find the top Hacker News story and give me its title and points" --model claude
 ```
 
-Progress notes stream to stderr as the loop runs; the final result is one JSON
-object on stdout:
+Progress notes stream to stderr as the loop runs — the last one summarizes the
+run's cost (`done in 6 steps, 7 tool calls, 48,210 tokens (46,880 in / 1,330
+out)`) — and the final result is one JSON object on stdout:
 
 ```json
-{ "ok": true, "answer": "…", "steps": 6, "reason": "done", "proof": "/…/proof-….png" }
+{
+  "ok": true,
+  "answer": "…",
+  "steps": 6,
+  "reason": "done",
+  "toolCalls": 7,
+  "usage": { "inputTokens": 46880, "outputTokens": 1330, "totalTokens": 48210 },
+  "proof": "/…/proof-….png"
+}
 ```
+
+`toolCalls` counts the `browser`/`login`/`done` calls the model issued (it can
+exceed `steps` when a turn batches several). `usage` sums the token counts the
+model adapter reported; a field is `0` when the provider returned no usage block.
 
 Flags:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--model <name>` | `claude` | `claude`, `codex`, or `grok` |
-| `--model-id <id>` | per-adapter | Override the model id (e.g. `claude-fable-5`, `grok-4`) |
+| `--model <name>` | `claude` | An adapter name (`claude`, `codex`, `grok`) **or** a bare model id whose backend is inferred from its prefix — `gpt-*`/`o*` → codex, `grok-*` → grok, `claude-*` → claude (e.g. `--model gpt-5.6-sol`) |
+| `--model-id <id>` | per-adapter | Override the model id (e.g. `claude-fable-5`, `grok-4`); wins over an id passed to `--model` |
 | `--effort <level>` | `low` | `low`/`medium`/`high`/`xhigh`/`max` where the model supports it |
 | `--max-steps <n>` | `24` | Hard cap on model turns |
 | `--session <name>` | `default` | Browser session name |
