@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-07-18
+
+### Fixed
+
+- **`--model` (and `runAgentTask`'s `model`) now accepts a bare model id.**
+  Passing a model id such as `--model gpt-5.6-sol` no longer errors with
+  `Unknown model`; the backend is inferred from the id's prefix (`gpt-*`/`o*` →
+  codex, `grok-*` → grok, `claude-*` → claude) and the id is used as the model id
+  (an explicit `--model-id` still wins). Adapter names (`claude`/`codex`/`grok`)
+  work exactly as before.
+
 ## [0.7.0] — 2026-07-18
 
 ### Added

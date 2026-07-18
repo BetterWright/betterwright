@@ -33,8 +33,8 @@ Flags:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--model <name>` | `claude` | `claude`, `codex`, or `grok` |
-| `--model-id <id>` | per-adapter | Override the model id (e.g. `claude-fable-5`, `grok-4`) |
+| `--model <name>` | `claude` | An adapter name (`claude`, `codex`, `grok`) **or** a bare model id whose backend is inferred from its prefix — `gpt-*`/`o*` → codex, `grok-*` → grok, `claude-*` → claude (e.g. `--model gpt-5.6-sol`) |
+| `--model-id <id>` | per-adapter | Override the model id (e.g. `claude-fable-5`, `grok-4`); wins over an id passed to `--model` |
 | `--effort <level>` | `low` | `low`/`medium`/`high`/`xhigh`/`max` where the model supports it |
 | `--max-steps <n>` | `24` | Hard cap on model turns |
 | `--session <name>` | `default` | Browser session name |

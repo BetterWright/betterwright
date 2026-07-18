@@ -126,7 +126,26 @@ test("resolveModel maps names, passes objects through, rejects unknown", () => {
   const custom = { name: "mine", complete: async () => ({ text: "", toolCalls: [] }) };
   assert.equal(resolveModel(custom), custom);
   assert.equal(resolveModel("claude", {}).name, "claude");
-  assert.throws(() => resolveModel("gpt"), /Unknown model/);
+  assert.throws(() => resolveModel("mistral-large"), /Unknown model/);
+});
+
+test("resolveModel accepts a bare model id and infers the backend from its prefix", () => {
+  // gpt-* / o* → codex, grok-* → grok, claude-* → claude; the id becomes model id.
+  const codex = resolveModel("gpt-5.6-luna", { apiKey: "k" });
+  assert.equal(codex.name, "codex");
+  assert.equal(codex.modelId, "gpt-5.6-luna");
+
+  const grok = resolveModel("grok-4.3", { apiKey: "k" });
+  assert.equal(grok.name, "grok");
+  assert.equal(grok.modelId, "grok-4.3");
+
+  const claude = resolveModel("claude-opus-4-8");
+  assert.equal(claude.name, "claude");
+  assert.equal(claude.modelId, "claude-opus-4-8");
+
+  // An explicit --model-id wins over the id passed as the model.
+  const pinned = resolveModel("gpt-5.6-luna", { apiKey: "k", model: "gpt-override" });
+  assert.equal(pinned.modelId, "gpt-override");
 });
 
 test("openaiModel translates the transcript and parses tool calls", async () => {

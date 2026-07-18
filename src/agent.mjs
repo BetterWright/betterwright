@@ -271,22 +271,40 @@ export async function runAgentTask(options = {}) {
   };
 }
 
+// Infer the backend adapter from a bare model id so `--model gpt-5.6-luna`
+// works like `--model codex --model-id gpt-5.6-luna`.
+function adapterForModelId(id) {
+  if (/^claude/.test(id)) return "claude";
+  if (/^grok/.test(id)) return "grok";
+  if (/^(gpt|o[0-9]|chatgpt|codex)/.test(id)) return "codex";
+  return null;
+}
+
 /**
  * Resolve a model name (or pass-through object) to a model adapter.
- * @param {string|object} model "claude" | "codex" | "grok" (aliases: "anthropic"
- *   → claude, "openai" → codex, "xai" → grok), or an object with an async
- *   `complete` method to use directly.
+ * @param {string|object} model An adapter name — "claude" | "codex" | "grok"
+ *   (aliases: "anthropic" → claude, "openai" → codex, "xai" → grok); a bare
+ *   model id whose backend is inferred from its prefix (`gpt-*`/`o*` → codex,
+ *   `grok-*` → grok, `claude-*` → claude); or an object with an async `complete`
+ *   method to use directly.
  * @param {object} [modelOptions]
  * @returns {{name: string, complete: Function}}
  */
 export function resolveModel(model, modelOptions = {}) {
   if (model && typeof model === "object" && typeof model.complete === "function") return model;
   const name = String(model || "").toLowerCase();
-  if (name === "claude" || name === "anthropic") return claudeModel(modelOptions);
-  if (name === "codex" || name === "openai") return codexModel(modelOptions);
-  if (name === "grok" || name === "xai") return grokModel(modelOptions);
+  const adapters = { claude: claudeModel, anthropic: claudeModel, codex: codexModel, openai: codexModel, grok: grokModel, xai: grokModel };
+  if (adapters[name]) return adapters[name](modelOptions);
+  // Not an adapter name — treat it as a model id and route by its prefix, using
+  // it as the model id unless an explicit --model-id already set one.
+  const inferred = adapterForModelId(name);
+  if (inferred) {
+    const options = { ...modelOptions, model: modelOptions.model || String(model) };
+    return { claude: claudeModel, codex: codexModel, grok: grokModel }[inferred](options);
+  }
   throw new Error(
-    `Unknown model "${model}". Use "claude", "codex", "grok", or pass a model object with a complete() method.`,
+    `Unknown model "${model}". Use an adapter name ("claude", "codex", "grok"), a model id ` +
+      `(e.g. "gpt-5.6-sol", "grok-4.3", "claude-opus-4-8"), or a model object with a complete() method.`,
   );
 }
 
