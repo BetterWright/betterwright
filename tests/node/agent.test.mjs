@@ -98,13 +98,13 @@ test("runAgentTask sums token usage and counts every tool call", async () => {
         { id: "c1", name: "browser", input: { code: "1" } },
         { id: "c2", name: "browser", input: { code: "2" } },
       ],
-      usage: { inputTokens: 100, outputTokens: 20 },
+      usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 40 },
     },
     // A final turn: done + a usage block. Providers that omit usage contribute 0.
     {
       text: "",
       toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }],
-      usage: { inputTokens: 50, outputTokens: 10 },
+      usage: { inputTokens: 50, outputTokens: 10, cacheReadTokens: 30, cacheWriteTokens: 0 },
     },
   ]);
 
@@ -115,13 +115,27 @@ test("runAgentTask sums token usage and counts every tool call", async () => {
   assert.equal(result.usage.inputTokens, 150);
   assert.equal(result.usage.outputTokens, 30);
   assert.equal(result.usage.totalTokens, 180);
+  // Cache read/write sum across turns; context is the LAST turn's input size.
+  assert.equal(result.usage.cacheReadTokens, 90);
+  assert.equal(result.usage.cacheWriteTokens, 40);
+  assert.equal(result.usage.contextTokens, 50);
+  // Wall-clock is reported as a non-negative number of milliseconds.
+  assert.equal(typeof result.durationMs, "number");
+  assert.ok(result.durationMs >= 0);
 });
 
 test("runAgentTask reports zeroed usage when the model omits a usage block", async () => {
   const browser = fakeBrowser();
   const model = scriptedModel([{ text: "hi", toolCalls: [] }]);
   const result = await runAgentTask({ task: "x", model, browser });
-  assert.deepEqual(result.usage, { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+  assert.deepEqual(result.usage, {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    contextTokens: 0,
+  });
   assert.equal(result.toolCalls, 0);
 });
 
@@ -254,7 +268,7 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
               finish_reason: "tool_calls",
             },
           ],
-          usage: { prompt_tokens: 42, completion_tokens: 8 },
+          usage: { prompt_tokens: 42, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 30 } },
         };
       },
     };
@@ -281,8 +295,8 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
   assert.equal(out.toolCalls[0].name, "browser");
   assert.deepEqual(out.toolCalls[0].input, { code: "return 1" });
   assert.equal(out.toolCalls[0].id, "call_1"); // synthesized
-  // prompt_/completion_tokens are normalized to input/output.
-  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 8 });
+  // prompt_/completion_tokens normalize to input/output; cached_tokens → cache read.
+  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 8, cacheReadTokens: 30, cacheWriteTokens: 0 });
 });
 
 test("openaiModel surfaces HTTP errors", async () => {
@@ -303,7 +317,7 @@ test("claudeModel maps to the Anthropic shape and parses content", async () => {
             { type: "tool_use", id: "t1", name: "done", input: { answer: "A" } },
           ],
           stop_reason: "tool_use",
-          usage: { input_tokens: 30, cache_read_input_tokens: 12, output_tokens: 5 },
+          usage: { input_tokens: 30, cache_read_input_tokens: 12, cache_creation_input_tokens: 8, output_tokens: 5 },
         };
       },
     },
@@ -325,8 +339,8 @@ test("claudeModel maps to the Anthropic shape and parses content", async () => {
   assert.equal(out.text, "sure");
   assert.equal(out.toolCalls[0].name, "done");
   assert.deepEqual(out.toolCalls[0].input, { answer: "A" });
-  // Cached input tokens fold into the input total (30 + 12), output passes through.
-  assert.deepEqual(out.usage, { inputTokens: 42, outputTokens: 5 });
+  // input = uncached + cache read + cache write (30 + 12 + 8); cache parts break out.
+  assert.deepEqual(out.usage, { inputTokens: 50, outputTokens: 5, cacheReadTokens: 12, cacheWriteTokens: 8 });
 });
 
 test("codex and grok adapters require credentials", () => {

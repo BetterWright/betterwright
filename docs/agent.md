@@ -23,8 +23,9 @@ betterwright exec "find the top Hacker News story and give me its title and poin
 ```
 
 Progress notes stream to stderr as the loop runs — the last one summarizes the
-run's cost (`done in 6 steps, 7 tool calls, 48,210 tokens (46,880 in / 1,330
-out)`) — and the final result is one JSON object on stdout:
+run's cost (`done in 6 steps, 7 tool calls, 11.4s, 48,210 tokens (46,880 in /
+1,330 out · 40,000 cache read · 2,000 cache write) · ctx 20,000`) — and the final
+result is one JSON object on stdout:
 
 ```json
 {
@@ -33,14 +34,29 @@ out)`) — and the final result is one JSON object on stdout:
   "steps": 6,
   "reason": "done",
   "toolCalls": 7,
-  "usage": { "inputTokens": 46880, "outputTokens": 1330, "totalTokens": 48210 },
+  "usage": {
+    "inputTokens": 46880,
+    "outputTokens": 1330,
+    "totalTokens": 48210,
+    "cacheReadTokens": 40000,
+    "cacheWriteTokens": 2000,
+    "contextTokens": 20000
+  },
+  "durationMs": 11400,
   "proof": "/…/proof-….png"
 }
 ```
 
-`toolCalls` counts the `browser`/`login`/`done` calls the model issued (it can
-exceed `steps` when a turn batches several). `usage` sums the token counts the
-model adapter reported; a field is `0` when the provider returned no usage block.
+`toolCalls` counts the `browser`/`login`/`ask`/`done` calls the model issued (it
+can exceed `steps` when a turn batches several). `usage` sums the token counts the
+model adapter reported across turns; a field is `0` when the provider returned no
+usage block. `inputTokens` is the full prompt size (cached tokens included);
+`cacheReadTokens` and `cacheWriteTokens` break out the cached portion (OpenAI-style
+backends report only cache reads, so `cacheWriteTokens` stays `0` there).
+`contextTokens` is the prompt size at the **end** of the task — the last turn's
+input, i.e. how much context the model was holding when it finished. `durationMs`
+is the task wall-clock (it excludes tearing down a browser the loop created for
+itself).
 
 Flags:
 
@@ -73,7 +89,7 @@ Type a task and press Enter. /help for commands, /exit or Ctrl-D to quit.
 
 The page title is "Example Domain."
 proof: /…/proof-….png
-done · 2 steps · 2 tool calls · 5,081 tokens (4,961 in / 120 out)
+done · 2 steps · 2 tool calls · 2.1s · 5,081 tokens (4,961 in / 120 out · 3,072 cache read · 0 cache write) · ctx 4,961
 
 ▸
 ```
@@ -155,7 +171,8 @@ const result = await runAgentTask({
   onStep: ({ step, tool, note }) => console.error(`[${step}] ${tool}: ${note}`),
 });
 console.log(result.answer, result.proof);
-console.log(result.toolCalls, result.usage); // e.g. 7, { inputTokens, outputTokens, totalTokens }
+console.log(result.toolCalls, result.usage, result.durationMs);
+// 7, { inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens, contextTokens }, 11400
 ```
 
 Pass an **`askUser`** handler to let the loop ask the human mid-task — this is
