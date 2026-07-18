@@ -62,10 +62,10 @@ Pass `submitSelector` to submit in the same call, so no model turn ever sees the
 secret sitting in a field. The return value lists which `filled` fields were set
 and whether it `submitted`.
 
-**Using a password-manager extension instead (attach mode).** If you drive your
-own Chrome with a 1Password (or similar) extension installed and unlocked, the
-agent can trigger the extension's inline autofill menu and BetterWright never
-handles the secret at all. See [attach-mode.md](attach-mode.md).
+**Using a password-manager extension instead.** Install and unlock 1Password (or
+a similar extension) once in BetterWright's persistent headed Cloak profile.
+The agent can then trigger its inline autofill menu without BetterWright
+handling the secret. See [headed browsing](attach-mode.md).
 
 ## Providing a vault
 

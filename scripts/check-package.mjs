@@ -45,7 +45,6 @@ try {
     "src/index.mjs",
     "src/worker.mjs",
     "types/index.d.ts",
-    "types/chrome.d.ts",
     "types/captcha-solver.d.ts",
     "types/challenges.d.ts",
     "types/policy.d.ts",
@@ -87,7 +86,6 @@ try {
       "-e",
       [
         "const root = await import('betterwright');",
-        "const chrome = await import('betterwright/chrome');",
         "const policy = await import('betterwright/policy');",
         "const prompt = await import('betterwright/prompt');",
         "const pi = await import('betterwright/pi');",
@@ -95,7 +93,6 @@ try {
         "const mcp = await import('betterwright/mcp-server');",
         "if (typeof root.BetterWright !== 'function') throw new Error('missing BetterWright');",
         "if (typeof mcp.runMcpServer !== 'function') throw new Error('missing MCP server export');",
-        "if (typeof chrome.ensureChromeCdp !== 'function') throw new Error('missing chrome export');",
         "if (typeof policy.NetworkPolicy !== 'function') throw new Error('missing policy export');",
         "if (typeof prompt.agentSystemPrompt !== 'function') throw new Error('missing prompt export');",
         "if (typeof pi.piImageContent !== 'function') throw new Error('missing Pi export');",
@@ -109,7 +106,6 @@ try {
     path.join(installRoot, "consumer.ts"),
     [
       "import { BetterWright, NetworkPolicy, type RunResult } from 'betterwright';",
-      "import { chromeExecutableCandidates } from 'betterwright/chrome';",
       "import type { NetworkDecision } from 'betterwright/policy';",
       "import type { PiImageContentBlock } from 'betterwright/pi';",
       "import createPiExtension from 'betterwright/pi-extension';",
@@ -122,7 +118,7 @@ try {
       "const decision: NetworkDecision = policy.check('https://example.com');",
       "const blocks: PiImageContentBlock[] = [];",
       "const guardrails: Guardrails = { passwordManager: '1Password' };",
-      "void [result, decision, blocks, guardrails, createPiExtension, chromeExecutableCandidates(), METADATA_RESOLVER_RULES, runMcpServer];",
+      "void [result, decision, blocks, guardrails, createPiExtension, METADATA_RESOLVER_RULES, runMcpServer];",
     ].join("\n"),
   );
   const typescript = path.join(root, "node_modules", "typescript", "bin", "tsc");

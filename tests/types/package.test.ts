@@ -7,8 +7,6 @@ import {
   CAPTCHA_STAGES,
   classifyChallengeStage,
   detectBotChallenge,
-  ensureChromeCdp,
-  findChromeExecutable,
   type Guardrails,
   METADATA_ADDRESSES,
   METADATA_HOSTNAMES,
@@ -18,7 +16,6 @@ import {
   piPrimaryImageArtifact,
   type RunResult,
 } from "betterwright";
-import { chromeExecutableCandidates } from "betterwright/chrome";
 import type { PiImageContentBlock } from "betterwright/pi";
 import createBetterWrightPiExtension, {
   createPiExtension,
@@ -49,9 +46,6 @@ const promptOptions: Guardrails & PromptGuardrails = {
   passwordManager: "1Password",
 };
 const prompt: string = agentSystemPrompt(promptOptions);
-const chrome: string | null = findChromeExecutable();
-const candidates: string[] = chromeExecutableCandidates();
-const cdp = ensureChromeCdp({ port: 9223 });
 const images: Promise<PiImageContentBlock[]> = piImageContent({ artifacts: [] });
 const artifacts = piImageArtifacts({ artifacts: [] });
 const primaryArtifact = piPrimaryImageArtifact({ artifacts: [] });
@@ -70,15 +64,18 @@ const challenge = detectBotChallenge({
   text: "Verify you are human",
 });
 
-// @ts-expect-error BetterWright supports only the two declared browser backends.
+// @ts-expect-error BetterWright supports only managed CloakBrowser.
 new BetterWright({ browser: "firefox" });
+// @ts-expect-error The stock Chromium fallback was removed.
+new BetterWright({ browser: "chromium" });
+// @ts-expect-error External browser binaries are not accepted.
+new BetterWright({ executablePath: "/opt/chromium" });
+// @ts-expect-error CDP attach mode was removed.
+new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" });
 
 void [
   run,
   prompt,
-  chrome,
-  candidates,
-  cdp,
   images,
   artifacts,
   primaryArtifact,

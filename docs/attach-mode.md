@@ -1,197 +1,73 @@
-# Attaching to an existing Chrome (and headed mode)
+# Headed and headless CloakBrowser
 
-`connectOverCdp` chooses between two worlds: BetterWright's **own managed Cloak
-browser** (isolated persistent profile, full launch-time network floor) and
-**attaching to a real Chrome** you have open. The default is *display-aware*,
-mirroring `headless: "auto"`:
+BetterWright always launches its managed CloakBrowser. Headed and headless runs
+use the same persistent profile, fingerprint identity, network floor, download
+controls, and browser worker. There is no stock-Chromium fallback and no
+ordinary-Chrome CDP attach mode.
 
-- **Desktop with Google Chrome installed** → attaches to a real Chrome
-  (`"auto"`). You get real logins and extensions, but the launch-time network
-  floor is inactive (only the per-request policy applies).
-- **Headless / no Chrome** (servers, containers, CI) → launches the managed
-  Cloak sandbox with the network floor intact.
-
-Pass `connectOverCdp: ""` to force the launched sandbox regardless, an explicit
-endpoint to attach to a specific Chrome, or `"auto"` to force the real-Chrome
-path even where the default would not choose it. The rest of this document
-covers **headed** mode and the **attach** details.
-
-## Headed vs. headless
+## Choosing the display mode
 
 `headless` accepts `true`, `false`, or `"auto"` (the default):
 
-- **`"auto"`** — run a visible window when a display is available, and headless
-  on servers, containers, and CI. This is what you usually want: you see the
-  browser on your desktop, and nothing breaks on a headless host.
-- **`true`** / **`false`** — force it.
+- `"auto"` opens a visible Cloak window when a display is available and runs
+  headless on servers, containers, and CI.
+- `false` always requests a visible Cloak window.
+- `true` always runs Cloak headless.
 
 ```js
-new BetterWright();                    // auto: visible on a desktop, headless on a server
-new BetterWright({ headless: false }); // always show a window
-new BetterWright({ headless: true });  // never show a window
+new BetterWright();                    // visible on a desktop, headless on a server
+new BetterWright({ headless: false }); // always headed Cloak
+new BetterWright({ headless: true });  // always headless Cloak
 ```
 
-Detection uses `DISPLAY`/`WAYLAND_DISPLAY` on Linux, the absence of an SSH-only
-session on macOS, and the session type on Windows. Override the detection with
-`BETTERWRIGHT_DISPLAY=1` or `BETTERWRIGHT_DISPLAY=0`. Even headed, this is still
-BetterWright's own browser — a separate window from your everyday Chrome.
+The CLI equivalent is `betterwright run --headed`. For MCP, set
+`BETTERWRIGHT_HEADLESS=0`.
 
-## Attach mode — driving your real Chrome
+Display detection uses `DISPLAY`/`WAYLAND_DISPLAY` on Linux, the absence of an
+SSH-only session on macOS, and the session type on Windows. Override detection
+with `BETTERWRIGHT_DISPLAY=1` or `BETTERWRIGHT_DISPLAY=0`.
 
-Attach mode connects to a Chrome/Chromium you started yourself, so the agent
-works in the browser **you can see**, with **your tabs and logins**. It uses
-Chrome's DevTools protocol, which has one hard requirement: the browser must
-have been launched with `--remote-debugging-port`. You cannot attach to a normal
-Chrome that is already running without that flag — Chrome only opens the debug
-port when it starts.
+On a headless Linux host, use a virtual display for headed mode:
 
-CDP remains a trusted host transport. The endpoint is supplied when the client
-is constructed; it is not included in the model's browser tool, and
-model-authored snippets cannot access `newCDPSession`, the raw browser object,
-or private Playwright handles.
-
-### 1. Launch Chrome with the debug port
-
-Quit Chrome first, then start it with the flag. A separate profile directory is
-recommended so you are not handing the agent your primary profile.
-
-**macOS**
 ```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.betterwright-chrome"
+xvfb-run -a betterwright run --headed -c "return page.title()"
 ```
 
-**Linux**
-```bash
-google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.betterwright-chrome"
-```
+## Persistent state
 
-**Windows (PowerShell)**
-```powershell
-& "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-  --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\.betterwright-chrome"
-```
+Both modes use `$BETTERWRIGHT_HOME/browser/profile`. Cookies, local storage,
+browser history, and logins therefore survive a switch between headed and
+headless runs. Only one process can own the profile at a time; concurrent
+workers receive isolated ephemeral profiles rather than corrupting it.
 
-Log into whatever sites the task needs in that window. Confirm the port is up:
-`curl http://127.0.0.1:9222/json/version` should return JSON.
+To sign in manually, start one headed run, complete the login in the visible
+Cloak window, then keep using the normal persistent profile. For model-safe
+credential filling, prefer the trusted [credential API](credentials.md).
 
-### 2. Point BetterWright at it
+## Cloak-only enforcement
 
-```js
-const bw = new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" });
-await bw.run("return pages.map(p => p.url())");   // sees the tabs already open
-```
+These legacy settings are rejected instead of silently choosing a normal
+browser:
 
-MCP server: set `BETTERWRIGHT_CONNECT_OVER_CDP=http://127.0.0.1:9222` in its env.
+- `browser: "chromium"` or `BETTERWRIGHT_BROWSER=chromium`
+- `executablePath`
+- `connectOverCdp` or `BETTERWRIGHT_CONNECT_OVER_CDP`
+- `betterwright setup --chromium`
 
-The already-open tabs are adopted into the default session, so `pages`, `page`,
-`usePage`, and `snapshot` work against them immediately. On shutdown BetterWright
-disconnects without closing your browser or its tabs.
+To select an already installed official CloakBrowser build, use
+`CLOAKBROWSER_BINARY_PATH`. `betterwright doctor` reports the exact wrapper,
+binary version, tier, and path that will launch.
 
-### Managed dedicated Chrome — attach, or launch if none is open
+## Troubleshooting headed launch
 
-You usually don't want to launch Chrome by hand. Pass `connectOverCdp: "auto"`
-and BetterWright reuses a debug Chrome if one is already listening, or otherwise
-launches a real Google Chrome with a persistent dedicated profile and attaches to
-that:
+1. Run `betterwright doctor` and confirm `browser cloak`,
+   `cloakbrowser_ok true`, and `ready true`.
+2. Run `betterwright setup` if the managed binary is missing.
+3. On Linux, confirm a display is present or use `xvfb-run`.
+4. If BetterWright reports that the profile was upgraded by a newer browser,
+   move or remove `$BETTERWRIGHT_HOME/browser/profile` and sign in again. The
+   guard deliberately stops before an older Cloak build can crash while opening
+   an incompatible profile.
 
-```js
-const bw = new BetterWright({ connectOverCdp: "auto" });   // reuse or launch a real Chrome
-```
-
-For explicit control (e.g. long-lived agents such as Pi that all attach to the
-same stable state), call the helper yourself:
-
-```js
-import { BetterWright, ensureChromeCdp } from "betterwright";
-
-const { endpoint, profileDir } = await ensureChromeCdp();
-const bw = new BetterWright({ connectOverCdp: endpoint });
-```
-
-The managed browser uses Google Chrome when installed, binds its debugging port
-to `127.0.0.1`, and stores state under
-`~/.betterwright/chrome-cdp-profile`. Chrome 136 and newer require this separate
-`--user-data-dir`; BetterWright never points remote debugging at your everyday
-Chrome profile. Set `BETTERWRIGHT_HOME` to move the dedicated profile.
-
-### Password managers (1Password) in attach mode
-
-Because the dedicated profile is persistent, it is the place to install a
-password-manager extension once and let the agent fill logins through it — so the
-secret stays in the extension and never reaches BetterWright:
-
-1. Start the browser once (`connectOverCdp: "auto"`), install the 1Password
-   extension in the window that opens, sign in, and **unlock** it. The agent
-   cannot type your master password or pass biometrics, so it must already be
-   unlocked (the desktop-app integration keeps it unlocked across restarts).
-2. Keep 1Password's "Show autofill menu on field focus" setting on.
-3. The agent focuses a login field and clicks the matching entry in 1Password's
-   inline menu. BetterWright's clicks emit real `isTrusted` events, which the
-   extension requires, so the fill works.
-
-This only works in attach mode — the managed Cloak browser does not carry your
-extensions. When the extension is missing or locked, fall back to the trusted
-[vault fill](credentials.md) (`bw.fillCredential` / `bw.generateAndFillCredential`).
-
-Note the trade-off: extension autofill puts the secret into the page DOM, where a
-later model snippet could read it (redaction still scrubs run output). That is
-acceptable for your own credentials under the "guard against accidental leakage"
-model, but it is a weaker guarantee than the vault fill, which never lets a model
-snippet near the value.
-
-For broad discovery, prefer a web-search tool supplied by the host, then open
-the returned result or first-party page in BetterWright rather than automating
-Google or Bing's public search UI. Result pages are permitted by default; set
-`publicSearchPolicy: "block"` to have the worker enforce the host-search route.
-`searchMinIntervalMs` spaces top-level public-search navigations while they are
-permitted, but pacing cannot guarantee that a provider will accept the traffic.
-
-## The security trade-off — read this
-
-Attach mode gives up BetterWright's strongest guarantees, because they are
-applied when BetterWright launches the browser and it can't set them on a browser
-it didn't start:
-
-- **Browser signals:** attach mode uses the Chrome instance you launched, not
-  BetterWright's managed Cloak backend. It therefore gives up Cloak's reduction
-  of common stock automation signals — most notably, a stock Chrome's CDP
-  session exposes the `Runtime.enable` leak that Cloak's fork hides. To cover
-  that specific vector, BetterWright **auto-enables the isolated-world stealth
-  fix in attach mode** when the optional `patchright-core` driver is installed:
-  `page.evaluate` runs in an isolated world and the `Runtime.enable` signal is
-  suppressed. This is the one launch-time protection attach mode can still get,
-  because it lives in the driver rather than the browser binary. Pass
-  `stealthRuntimeFix: false` (or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=0`) to opt
-  out; note the trade-off that snippets then cannot read page-defined
-  main-world globals. Without `patchright-core` installed, attach mode leaves
-  the leak in place — install it for the least-detectable attach path.
-
-- **Gone in attach mode:** the launch-time network floor — the Chromium
-  `--host-resolver-rules` that NXDOMAIN cloud-metadata endpoints, the forced
-  transport proxy that catches every connection (including DNS-rebinding), and
-  the WebRTC pinning.
-- **Still active:** the per-request [`NetworkPolicy`](network-policy.md) via
-  request interception. It still blocks metadata endpoints and private networks
-  by default — but as a single layer, not the defense-in-depth of launch mode.
-- **Downloads:** BetterWright keeps its browser-wide byte limit when the attached
-  Chrome exposes that CDP control. Otherwise it disables downloads for the
-  attached pages instead of allowing unbounded writes to disk.
-
-Every run in attach mode returns a warning saying the floor is inactive.
-
-There's a second, larger consideration: pointing an autonomous agent at your
-real, logged-in browser is a big blast radius. It can act as authenticated-you on
-every site that profile is signed into, and a prompt-injection from any page
-becomes far more dangerous. Prefer a **dedicated `--user-data-dir`** you log into
-deliberately, not your primary Chrome profile.
-
-## When to use which
-
-- **Just want to watch it work?** Use `headless: false` (or `"auto"`) — that keeps
-  the full security floor and still shows a window.
-- **Need your existing logins in a browser you can see?** Prefer logging into
-  BetterWright's own managed persistent profile once (it survives across runs).
-  Reach for attach mode only when you specifically need the *same* browser you
-  already use.
+Managed CloakBrowser reduces common automation false positives; it cannot
+guarantee that a site will accept a session or never present a challenge.

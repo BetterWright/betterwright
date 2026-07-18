@@ -12,7 +12,6 @@
 // --block-loopback, --allow-host/--block-host), and --stealth (isolated-world
 // driver that evades main-world automation detection; needs patchright-core).
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -50,6 +49,12 @@ async function cmdDoctor() {
 }
 
 async function cmdSetup(flags) {
+  if (flags.has("--chromium")) {
+    console.error(
+      "The stock Chromium fallback was removed. BetterWright setup installs only managed CloakBrowser.",
+    );
+    return 1;
+  }
   const core = resolveCoreDir();
   if (!core) {
     console.error(
@@ -67,15 +72,6 @@ async function cmdSetup(flags) {
   console.log("Installing the managed CloakBrowser binary ...");
   const binary = await cloak.ensureBinary();
   console.log(`Installed ${binary}`);
-  if (flags.has("--chromium")) {
-    console.log("Downloading the optional Playwright Chromium fallback ...");
-    const result = spawnSync(
-      process.execPath,
-      [path.join(core, "cli.js"), "install", "chromium", "--no-shell"],
-      { stdio: "inherit" },
-    );
-    if (result.status !== 0) return result.status || 1;
-  }
   console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
   return 0;
 }

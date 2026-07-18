@@ -24,8 +24,6 @@
 //     BETTERWRIGHT_BLOCK_HOSTS=ads.com     always-block list (comma-separated)
 //     BETTERWRIGHT_DOWNLOAD_POLICY=ask     ask (default), allow, or deny downloads
 //     BETTERWRIGHT_HEADLESS=0              run the managed browser headed
-//     BETTERWRIGHT_BROWSER=chromium        explicit degraded Chromium fallback
-//     BETTERWRIGHT_CONNECT_OVER_CDP=http://127.0.0.1:9222   attach to an existing Chrome
 //
 // Screenshots are returned as native MCP image content, so a client renders
 // them directly — you never hand it a file path or guess a MIME type.
@@ -217,7 +215,6 @@ export async function runMcpServer(env = process.env) {
   const browser = new BetterWright({
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
-    connectOverCdp: String(env.BETTERWRIGHT_CONNECT_OVER_CDP || "").trim() || undefined,
     downloadPolicy,
   });
 

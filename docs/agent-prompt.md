@@ -82,7 +82,7 @@ const systemPrompt = agentSystemPrompt({
 | `forbidAccountCreation` | Never create accounts; use existing credentials only. |
 | `spendingLimit` | A per-purchase cap, included verbatim (e.g. `"$50"`). |
 | `extraRules` | Extra lines appended verbatim. |
-| `passwordManager` | Name of a password-manager extension present and unlocked in this browser (e.g. `"1Password"`). Adds a short inline-menu how-to **only when set**, so it costs no tokens otherwise. Pair with attach mode. |
+| `passwordManager` | Name of a password-manager extension present and unlocked in the persistent headed Cloak profile (e.g. `"1Password"`). Adds a short inline-menu how-to **only when set**, so it costs no tokens otherwise. |
 
 When any guardrail is set, the guidance gains a **"Guardrails for this session"**
 section that overrides the autonomy above where they conflict.

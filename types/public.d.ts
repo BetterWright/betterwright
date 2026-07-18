@@ -14,7 +14,6 @@ export type {
   NetworkPolicyOptions,
   NetworkRequestDetails,
 } from "./policy.js";
-export type { ChromeCdpResult, EnsureChromeCdpOptions } from "./chrome.js";
 export type { Guardrails } from "./prompt.js";
 export type {
   BetterWrightArtifactLike,
@@ -29,10 +28,8 @@ export interface BetterWrightOptions {
   policy?: NetworkPolicy;
   vault?: CredentialVault;
   browser?: BrowserFlavor;
-  executablePath?: string;
   headless?: HeadlessMode;
   defaultTimeout?: number;
-  connectOverCdp?: string;
   searchMinIntervalMs?: number;
   publicSearchPolicy?: PublicSearchPolicy;
   downloadPolicy?: DownloadPolicy;

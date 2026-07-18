@@ -11,11 +11,6 @@
       "import": "./src/index.mjs",
       "default": "./src/index.mjs"
     },
-    "./chrome": {
-      "types": "./types/chrome.d.ts",
-      "import": "./src/chrome.mjs",
-      "default": "./src/chrome.mjs"
-    },
     "./policy": {
       "types": "./types/policy.d.ts",
       "import": "./src/policy.mjs",

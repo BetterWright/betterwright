@@ -13,7 +13,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 import {
@@ -43,7 +42,6 @@ import {
 } from "./cloak.mjs";
 import {
   downloadBehaviorParams,
-  isUnsupportedBrowserDownloadGuard,
   normalizeDownloadPolicy,
 } from "./downloads.mjs";
 import { createGuardProxy } from "./guard-proxy.mjs";
@@ -59,12 +57,6 @@ import {
   filterInteractive,
   parseAnnotationBoxes,
 } from "./snapshot.mjs";
-
-const playwrightCoreDir = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "";
-const playwrightModule = playwrightCoreDir
-  ? await import(pathToFileURL(path.join(playwrightCoreDir, "index.mjs")).href)
-  : await import("playwright-core");
-const { chromium } = playwrightModule;
 
 const WORKER_VERSION = 1;
 const MAX_EVENTS = 40;
@@ -95,8 +87,6 @@ export const METADATA_RESOLVER_RULES = [
 ].join(", ");
 
 let browserContext = null;
-let connectedBrowser = null;
-let connectedMode = false;
 let launchPromise = null;
 let launchConfig = null;
 let profileLock = null;
@@ -116,9 +106,6 @@ let downloadCdpSession = null;
 let downloadGuardReady = false;
 let currentDownloadBehavior = "deny";
 let approvedDownloadSession = null;
-let attachedDownloadsDenied = false;
-let pageDownloadGuards = new WeakMap();
-const pageDownloadCdpSessions = new Set();
 
 const sessions = new Map();
 const pageToSession = new WeakMap();
@@ -396,7 +383,7 @@ const guardProxy = createGuardProxy({
 
 async function installDownloadGuard(context) {
   await closeDownloadGuard();
-  const browser = context.browser?.() || connectedBrowser;
+  const browser = context.browser?.();
   if (!browser || typeof browser.newBrowserCDPSession !== "function") {
     throw new Error("Chromium download byte limits require a browser CDP session.");
   }
@@ -419,16 +406,7 @@ async function installDownloadGuard(context) {
     );
   } catch (error) {
     await session.detach().catch(() => {});
-    if (!connectedMode || !isUnsupportedBrowserDownloadGuard(error))
-      throw error;
-    attachedDownloadsDenied = true;
-    await Promise.all(
-      context.pages().map((page) => denyAttachedPageDownloads(context, page)),
-    );
-    profileWarning +=
-      " This Chrome does not expose browser-wide bounded download controls, " +
-      "so downloads are disabled while attached.";
-    return;
+    throw error;
   }
   downloadCdpSession = session;
   downloadGuardReady = true;
@@ -436,16 +414,6 @@ async function installDownloadGuard(context) {
 }
 
 async function setDownloadPermission(allowed) {
-  if (attachedDownloadsDenied) {
-    if (allowed) {
-      throw new Error(
-        "Downloads cannot be approved because this attached Chrome does not " +
-          "provide bounded browser-wide download controls.",
-      );
-    }
-    currentDownloadBehavior = "deny";
-    return;
-  }
   if (!downloadCdpSession || !downloadGuardReady) {
     if (!allowed) return;
     throw new Error("Bounded download controls are unavailable.");
@@ -467,75 +435,21 @@ async function setDownloadPermission(allowed) {
   }
 }
 
-async function denyAttachedPageDownloads(context, page) {
-  if (!attachedDownloadsDenied || page.isClosed()) return;
-  const existing = pageDownloadGuards.get(page);
-  if (existing) return existing;
-  const guard = (async () => {
-    const session = await context.newCDPSession(page);
-    try {
-      await session.send("Page.setDownloadBehavior", { behavior: "deny" });
-    } catch (error) {
-      await session.detach().catch(() => {});
-      throw error;
-    }
-    pageDownloadCdpSessions.add(session);
-    page.once("close", () => {
-      pageDownloadCdpSessions.delete(session);
-      void session.detach().catch(() => {});
-    });
-  })();
-  pageDownloadGuards.set(page, guard);
-  try {
-    await guard;
-  } catch (error) {
-    pageDownloadGuards.delete(page);
-    throw error;
-  }
-}
-
 async function closeDownloadGuard() {
   const session = downloadCdpSession;
   downloadCdpSession = null;
   downloadGuardReady = false;
   currentDownloadBehavior = "deny";
-  attachedDownloadsDenied = false;
   if (session) {
     await session
       .send("Browser.setDownloadBehavior", { behavior: "default" })
       .catch(() => {});
     await session.detach().catch(() => {});
   }
-  const pageSessions = [...pageDownloadCdpSessions];
-  pageDownloadCdpSessions.clear();
-  pageDownloadGuards = new WeakMap();
-  await Promise.all(
-    pageSessions.map(async (pageSession) => {
-      await pageSession
-        .send("Page.setDownloadBehavior", { behavior: "default" })
-        .catch(() => {});
-      await pageSession.detach().catch(() => {});
-    }),
-  );
 }
 
 function redactText(value) {
   let text = String(value ?? "");
-  const cdpEndpoint = String(launchConfig?.cdpEndpoint || "").trim();
-  if (cdpEndpoint) {
-    const candidates = new Set([cdpEndpoint]);
-    try {
-      const parsed = new URL(cdpEndpoint);
-      candidates.add(parsed.href);
-      candidates.add(parsed.origin);
-      candidates.add(parsed.host);
-    } catch {
-      /* invalid endpoints are still redacted by their exact configured value */
-    }
-    for (const candidate of candidates) {
-      if (candidate) text = text.split(candidate).join("[REDACTED_CDP_ENDPOINT]");
-    }
-  }
   for (const secret of activeSecrets) {
     if (!secret || secret.length < 4) continue;
     text = text.split(secret).join("[REDACTED_PASSWORD]");
@@ -1007,16 +921,12 @@ function adoptPage(page, sessionId) {
     page.on("popup", (popup) => {
       const owner =
         pageToSession.get(page) || activeExecutionSession || session.id;
-      void denyAttachedPageDownloads(browserContext, popup)
-        .then(() => {
-          adoptPage(popup, owner);
-          pushEvent(sessionFor(owner), {
-            type: "popup",
-            pageId: pageId(popup),
-            openerPageId: id,
-          });
-        })
-        .catch(() => popup.close().catch(() => {}));
+      adoptPage(popup, owner);
+      pushEvent(sessionFor(owner), {
+        type: "popup",
+        pageId: pageId(popup),
+        openerPageId: id,
+      });
     });
   }
   return page;
@@ -1026,14 +936,10 @@ async function ensureSessionPage(session) {
   const selected = session.currentId
     ? session.pages.get(session.currentId)
     : null;
-  if (selected && !selected.isClosed()) {
-    await denyAttachedPageDownloads(browserContext, selected);
-    return selected;
-  }
+  if (selected && !selected.isClosed()) return selected;
   for (const [id, page] of session.pages) {
     if (!page.isClosed()) {
       session.currentId ||= id;
-      await denyAttachedPageDownloads(browserContext, page);
       return page;
     }
   }
@@ -1048,7 +954,6 @@ async function ensureSessionPage(session) {
     );
   }
   const page = unowned || (await browserContext.newPage());
-  await denyAttachedPageDownloads(browserContext, page);
   return adoptPage(page, session.id);
 }
 
@@ -1238,46 +1143,46 @@ async function installContextGuard(context) {
       await route.abort("blockedbyclient").catch(() => {});
     }
   });
-  // WebSocket routing is not supported on every transport (notably some
-  // connectOverCDP targets). It is a best-effort layer on top of the HTTP guard
-  // above, so a target that rejects it must not abort the whole attach.
-  try {
-    await context.routeWebSocket("**/*", async (webSocket) => {
-      const executeId = activeExecutionSession
-        ? `active:${activeExecutionSession}`
-        : "background";
-      try {
-        const decision = await guardUrl(
-          webSocket.url(),
-          { method: "GET", resourceType: "websocket" },
-          executeId,
-        );
-        if (decision?.allowed) webSocket.connectToServer();
-        else
-          await webSocket.close({
-            code: 1008,
-            reason: "Blocked by browser policy",
-          });
-      } catch {
-        await webSocket
-          .close({ code: 1011, reason: "Browser policy unavailable" })
-          .catch(() => {});
-      }
-    });
-  } catch (error) {
-    if (!connectedMode) throw error;
-    process.stderr.write(
-      `WebSocket routing unavailable in attach mode: ${error?.message}\n`,
-    );
-  }
+  await context.routeWebSocket("**/*", async (webSocket) => {
+    const executeId = activeExecutionSession
+      ? `active:${activeExecutionSession}`
+      : "background";
+    try {
+      const decision = await guardUrl(
+        webSocket.url(),
+        { method: "GET", resourceType: "websocket" },
+        executeId,
+      );
+      if (decision?.allowed) webSocket.connectToServer();
+      else
+        await webSocket.close({
+          code: 1008,
+          reason: "Blocked by browser policy",
+        });
+    } catch {
+      await webSocket
+        .close({ code: 1011, reason: "Browser policy unavailable" })
+        .catch(() => {});
+    }
+  });
 }
 
 async function ensureBrowser(config) {
   const browserFlavor = String(config.browserFlavor || "cloak")
     .trim()
     .toLowerCase();
-  if (browserFlavor !== "cloak" && browserFlavor !== "chromium") {
-    throw new Error('browserFlavor must be "cloak" or "chromium".');
+  if (browserFlavor !== "cloak") {
+    throw new Error('BetterWright only supports browserFlavor "cloak".');
+  }
+  if (String(config.cdpEndpoint || "").trim()) {
+    throw new Error(
+      "CDP attach is disabled; BetterWright only launches managed CloakBrowser.",
+    );
+  }
+  if (String(config.executablePath || "").trim()) {
+    throw new Error(
+      "Custom executables are disabled; use CLOAKBROWSER_BINARY_PATH for an official CloakBrowser binary.",
+    );
   }
   const publicSearchPolicy = String(config.publicSearchPolicy || "block")
     .trim()
@@ -1294,50 +1199,6 @@ async function ensureBrowser(config) {
   launchConfig = { ...config };
   launchPromise = (async () => {
     mkdirPrivate(launchConfig.artifactsDir);
-
-    // Attach mode: connect to a Chrome/Chromium the user started with
-    // --remote-debugging-port instead of launching our own. This exposes their
-    // real, already-open tabs. The launch-time floor (resolver rules, forced
-    // transport proxy, WebRTC pinning) cannot be applied to a browser we did
-    // not start, so only the per-request policy guard below is in force here.
-    const cdpEndpoint = String(launchConfig.cdpEndpoint || "").trim();
-    if (cdpEndpoint) {
-      connectedMode = true;
-      connectedBrowser = await chromium.connectOverCDP(cdpEndpoint, {
-        isLocal: true,
-        noDefaults: true,
-      });
-      const contexts = connectedBrowser.contexts();
-      browserContext = contexts.length
-        ? contexts[0]
-        : await connectedBrowser.newContext();
-      const attachedContext = browserContext;
-      profileMode = "attached";
-      profileWarning =
-        "Attached to an external browser over CDP; BetterWright's launch-time " +
-        "network floor (metadata resolver rules and the forced transport proxy) " +
-        "is not active. Only the per-request network policy applies.";
-      attachedContext.on("close", () => {
-        if (browserContext === attachedContext) browserContext = null;
-        downloadGuardReady = false;
-      });
-      await installContextGuard(attachedContext);
-      await installDownloadGuard(attachedContext);
-      attachedContext.on("page", (page) => {
-        const owner = activeExecutionSession || "default";
-        void denyAttachedPageDownloads(attachedContext, page)
-          .then(() => {
-            if (!pageToSession.has(page)) adoptPage(page, owner);
-          })
-          .catch(() => page.close().catch(() => {}));
-      });
-      // Adopt the tabs that are already open so the agent sees them immediately.
-      for (const page of attachedContext.pages()) {
-        if (!page.isClosed() && !pageToSession.has(page))
-          adoptPage(page, "default");
-      }
-      return attachedContext;
-    }
 
     mkdirPrivate(launchConfig.runtimeDir);
     profileLock = acquireProfile(
@@ -1364,67 +1225,37 @@ async function ensureBrowser(config) {
       bypass: "<-loopback>",
     };
 
-    if (launchConfig.browserFlavor === "cloak") {
-      // Cloak's wrapper supplies its source-level fingerprint flags, coherent
-      // viewport defaults, and automation-safe Chromium arguments. BetterWright
-      // pins one random seed to the persistent profile so the same identity does
-      // not appear to change hardware on every restart. Its blanket humanizer is
-      // intentionally disabled; BetterWright's frame-safe human helpers remain
-      // the only model-facing interaction layer.
-      args.push(`--fingerprint=${fingerprintSeedForProfile(profileLock.profileDir)}`);
-      const binaryInfo = await cloakBinaryInfo();
-      // Cloak ships an older Chromium than the stock fallback; fail clearly if
-      // this persistent profile was already upgraded by a newer binary rather
-      // than crashing opaquely on launch.
-      if (!profileLock.ephemeral) {
-        assertProfileNotNewer(profileLock.profileDir, binaryInfo?.version);
-      }
-      // Patched Cloak builds can report stale lifecycle events to Playwright's
-      // protocol-level setContent implementation. The document-write fallback
-      // below preserves Page/Frame setContent semantics across Cloak versions.
-      useSetContentCompatibility = true;
-      const viewport = managedCloakViewport(binaryInfo, headless);
-      browserContext = await launchCloakPersistentContext({
-        userDataDir: profileLock.profileDir,
-        headless,
-        humanize: false,
-        ...(viewport ? { viewport } : {}),
-        proxy,
-        args,
-        contextOptions: {
-          acceptDownloads: true,
-          serviceWorkers: "block",
-        },
-        launchOptions: {
-          downloadsPath: launchConfig.downloadsDir,
-        },
-      });
-    } else {
-      useSetContentCompatibility = false;
-      profileWarning = [
-        profileWarning,
-        "Using the explicit Chromium fallback, which exposes automation signals; " +
-          "use the default Cloak backend for managed agent browsing.",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const options = {
-        headless,
-        viewport: { width: 1440, height: 900 },
+    // Cloak's wrapper supplies its source-level fingerprint flags, coherent
+    // viewport defaults, and automation-safe Chromium arguments. BetterWright
+    // pins one random seed to the persistent profile so the same identity does
+    // not appear to change hardware on every restart. Its blanket humanizer is
+    // intentionally disabled; BetterWright's frame-safe human helpers remain
+    // the only model-facing interaction layer.
+    args.push(`--fingerprint=${fingerprintSeedForProfile(profileLock.profileDir)}`);
+    const binaryInfo = await cloakBinaryInfo();
+    if (!profileLock.ephemeral) {
+      assertProfileNotNewer(profileLock.profileDir, binaryInfo?.version);
+    }
+    // Patched Cloak builds can report stale lifecycle events to Playwright's
+    // protocol-level setContent implementation. The document-write fallback
+    // below preserves Page/Frame setContent semantics across Cloak versions.
+    useSetContentCompatibility = true;
+    const viewport = managedCloakViewport(binaryInfo, headless);
+    browserContext = await launchCloakPersistentContext({
+      userDataDir: profileLock.profileDir,
+      headless,
+      humanize: false,
+      ...(viewport ? { viewport } : {}),
+      proxy,
+      args,
+      contextOptions: {
         acceptDownloads: true,
         serviceWorkers: "block",
+      },
+      launchOptions: {
         downloadsPath: launchConfig.downloadsDir,
-        args,
-        proxy,
-      };
-      if (launchConfig.executablePath)
-        options.executablePath = launchConfig.executablePath;
-      else options.channel = "chromium";
-      browserContext = await chromium.launchPersistentContext(
-        profileLock.profileDir,
-        options,
-      );
-    }
+      },
+    });
     const launchedContext = browserContext;
     launchedContext.on("close", () => {
       if (browserContext === launchedContext) browserContext = null;
@@ -1795,10 +1626,7 @@ function wrap(value, realm) {
             ? setContentCompatible(value, prepared[0], prepared[1])
             : member.apply(value, prepared);
         if (result && typeof result.then === "function") {
-          return result.then(async (item) => {
-            await guardReturnedPages(item);
-            return wrap(item, realm);
-          });
+          return result.then((item) => wrap(item, realm));
         }
         return wrap(result, realm);
       });
@@ -1824,15 +1652,6 @@ function wrap(value, realm) {
   realm.cache.set(value, facade);
   facadeToRaw.set(facade, value);
   return facade;
-}
-
-async function guardReturnedPages(value) {
-  if (Array.isArray(value)) {
-    await Promise.all(value.map((item) => guardReturnedPages(item)));
-    return;
-  }
-  if (objectKind(value) === "Page")
-    await denyAttachedPageDownloads(browserContext, value);
 }
 
 async function currentOrigin(session) {
@@ -2306,7 +2125,6 @@ function buildSandbox(session, consoleMessages) {
       );
     }
     const rawPage = await browserContext.newPage();
-    await denyAttachedPageDownloads(browserContext, rawPage);
     const page = adoptPage(rawPage, session.id);
     if (url) {
       assertModelNavigationUrl(url);
@@ -3477,22 +3295,6 @@ async function execute(message) {
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  // Attach mode: we did not launch this browser, so disconnect from it without
-  // closing the user's context or tabs. connectOverCDP's close() detaches the
-  // client; it leaves the externally-started browser running.
-  if (connectedMode) {
-    await closeDownloadGuard();
-    try {
-      await connectedBrowser?.close();
-    } catch {
-      /* parent/process exit */
-    }
-    browserContext = null;
-    connectedBrowser = null;
-    connectedMode = false;
-    await guardProxy.close();
-    return;
-  }
   // Chromium can emit BrowserContext.close before its process finishes the
   // final profile writes. Preserve the temporary path so shutdown performs a
   // second removal after close() has fully resolved, even if the close event
