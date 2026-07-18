@@ -255,8 +255,11 @@ async function cmdInteractive(flags) {
   rl.on("SIGINT", () => rl.close());
 
   const modelLabel = () => `${model}${modelOptions.model ? ` (${modelOptions.model})` : ""}`;
+  const reasoningLabel = () => modelOptions.effort || "low";
   console.log(bold("BetterWright") + " — interactive agent console");
-  console.log(dim(`model ${modelLabel()} · session ${session} · ${headless ? "headless" : "headed"}`));
+  console.log(
+    dim(`model ${modelLabel()} · reasoning ${reasoningLabel()} · session ${session} · ${headless ? "headless" : "headed"}`),
+  );
   console.log(dim("Type a task and press Enter. Follow-ups keep the session; /new starts fresh."));
   console.log(dim("/help for commands, /exit or Ctrl-D to quit.\n"));
 
