@@ -164,6 +164,50 @@ test("login tool is offered only with a vault and runs fillCredential", async ()
   assert.ok(!model2.seen[0].tools.some((t) => t.name === "login"));
 });
 
+test("ask tool is offered only with an askUser handler and routes to it", async () => {
+  const browser = fakeBrowser();
+  const asked = [];
+  const askUser = async ({ question, options }) => {
+    asked.push({ question, options });
+    return "the blue one";
+  };
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "a1", name: "ask", input: { question: "Which?", options: ["blue", "red"] } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "picked blue" } }] },
+  ]);
+
+  const result = await runAgentTask({ task: "choose", model, browser, askUser });
+
+  // The tool list handed to the model included ask, and the handler ran.
+  assert.ok(model.seen[0].tools.some((t) => t.name === "ask"));
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0], { question: "Which?", options: ["blue", "red"] });
+  // The user's answer was fed back to the model as the tool result.
+  const toolTurn = result.transcript.find((m) => m.role === "tool");
+  assert.match(toolTurn.results[0].content, /the blue one/);
+  // ask + done both count as tool calls.
+  assert.equal(result.toolCalls, 2);
+
+  // Without askUser, no ask tool is offered and the loop stays autonomous.
+  const noAsk = fakeBrowser();
+  const model2 = scriptedModel([{ text: "done", toolCalls: [] }]);
+  await runAgentTask({ task: "x", model: model2, browser: noAsk });
+  assert.ok(!model2.seen[0].tools.some((t) => t.name === "ask"));
+});
+
+test("interactive preamble invites the ask tool; headless does not", async () => {
+  const browser = fakeBrowser();
+  const withAsk = scriptedModel([{ text: "hi", toolCalls: [] }]);
+  await runAgentTask({ task: "x", model: withAsk, browser, askUser: async () => "" });
+  assert.match(withAsk.seen[0].system, /interactive session/);
+  assert.match(withAsk.seen[0].system, /`ask` tool/);
+
+  const headless = scriptedModel([{ text: "hi", toolCalls: [] }]);
+  await runAgentTask({ task: "x", model: headless, browser: fakeBrowser() });
+  assert.match(headless.seen[0].system, /operating autonomously/);
+  assert.doesNotMatch(headless.seen[0].system, /`ask` tool/);
+});
+
 test("resolveModel maps names, passes objects through, rejects unknown", () => {
   const custom = { name: "mine", complete: async () => ({ text: "", toolCalls: [] }) };
   assert.equal(resolveModel(custom), custom);

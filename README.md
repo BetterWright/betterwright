@@ -132,7 +132,19 @@ call the ChatGPT / xAI backends directly — no API key to paste, no router; `cl
 uses the Anthropic SDK (`npm install @anthropic-ai/sdk`, `ANTHROPIC_API_KEY`). The
 model is a small pluggable interface, so you can also plug in your own model or
 agent. The loop observes with `snapshot`, acts, verifies, captures a proof
-screenshot, and finishes — see [docs/agent.md](docs/agent.md).
+screenshot, and finishes, reporting the tokens and tool calls it used — see
+[docs/agent.md](docs/agent.md).
+
+Run **`betterwright`** with no arguments for the interactive counterpart — a
+console (like `aside` on its own) where you type tasks and watch the agent work:
+each step streams as it happens, the browser session persists across tasks, and
+the agent can ask you a question through its `ask` tool when it genuinely needs
+input.
+
+```bash
+betterwright --model codex
+▸ find the top Hacker News story and give me its title and points
+```
 
 ### Pi Coding Agent (native package)
 
