@@ -12,6 +12,7 @@ import {
   resolveModel,
   runAgentTask,
 } from "../../src/agent.mjs";
+import { formatAgentUsage, uncachedInputTokens } from "../../src/agent-usage.mjs";
 
 function base64url(buffer) {
   return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -83,7 +84,7 @@ test("runAgentTask drives browser then finishes on done", async () => {
   assert.match(toolTurn.results[0].content, /"result":"HN"/);
 });
 
-test("runAgentTask sums token usage and counts every tool call", async () => {
+test("runAgentTask reports uncached input, cache usage, and full final context", async () => {
   const browser = fakeBrowser({
     runs: [
       { ok: true, result: "a", artifacts: [], durationMs: 1 },
@@ -112,15 +113,44 @@ test("runAgentTask sums token usage and counts every tool call", async () => {
 
   // 2 browser + 1 done = 3 tool calls across 2 steps.
   assert.equal(result.toolCalls, 3);
-  assert.equal(result.usage.inputTokens, 150);
+  // User-facing input excludes cache reads per turn: (100 - 60) + (50 - 30).
+  assert.equal(result.usage.inputTokens, 60);
   assert.equal(result.usage.outputTokens, 30);
-  // Cache read/write sum across turns; context is the LAST turn's input size.
+  // Cache read/write sum across turns; context is the LAST turn's full input size.
   assert.equal(result.usage.cacheReadTokens, 90);
   assert.equal(result.usage.cacheWriteTokens, 40);
   assert.equal(result.usage.context, 50);
   // Wall-clock is reported as a non-negative number of milliseconds.
   assert.equal(typeof result.durationMs, "number");
   assert.ok(result.durationMs >= 0);
+});
+
+test("cache-aware usage formatting is shared by every CLI summary", () => {
+  assert.equal(
+    formatAgentUsage({
+      inputTokens: 6880,
+      outputTokens: 1330,
+      cacheReadTokens: 40000,
+      cacheWriteTokens: 2000,
+      context: 20000,
+    }),
+    "6,880 in / 1,330 out · 40,000 cache read · 2,000 cache write · context 20,000",
+  );
+  assert.equal(
+    formatAgentUsage({
+      inputTokens: 6880,
+      outputTokens: 1330,
+      cacheReadTokens: 40000,
+      cacheWriteTokens: 0,
+      context: 20000,
+    }),
+    "6,880 in / 1,330 out · 40,000 cache read · context 20,000",
+  );
+});
+
+test("uncached input cannot become negative when provider usage is inconsistent", () => {
+  assert.equal(uncachedInputTokens(50, 60), 0);
+  assert.equal(uncachedInputTokens(50, 30), 20);
 });
 
 test("runAgentTask reports zeroed usage when the model omits a usage block", async () => {
@@ -532,7 +562,7 @@ test("responsesModel parses batched function_call items from the SSE stream and 
     'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"fc_1","name":"browser","arguments":"{\\"code\\":\\"return 1\\"}"}}',
     'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"fc_2","name":"browser","arguments":"{\\"code\\":\\"return 2\\"}"}}',
     'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"fc_1","name":"browser","arguments":"{\\"code\\":\\"return 1\\"}"}}',
-    'data: {"type":"response.completed","response":{"status":"completed"}}',
+    'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":64,"cache_write_tokens":16}}}}',
   ].join("\n\n");
   const fetchImpl = async (url, init) => {
     captured = { url, body: JSON.parse(init.body) };
@@ -549,6 +579,12 @@ test("responsesModel parses batched function_call items from the SSE stream and 
   assert.deepEqual(out.toolCalls.map((c) => c.id), ["fc_1", "fc_2"]);
   assert.deepEqual(out.toolCalls[0].input, { code: "return 1" });
   assert.equal(out.stopReason, "completed");
+  assert.deepEqual(out.usage, {
+    inputTokens: 100,
+    outputTokens: 20,
+    cacheReadTokens: 64,
+    cacheWriteTokens: 16,
+  });
   // Batched tool calls are enabled on the request.
   assert.equal(captured.body.parallel_tool_calls, true);
   assert.match(captured.url, /\/responses$/);
