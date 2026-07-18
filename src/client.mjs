@@ -215,6 +215,7 @@ export class BetterWright {
       artifactsDir: artifacts,
       downloadsDir: downloads,
       browserFlavor: this.browserFlavor,
+      stealthRuntimeFix: this.stealthRuntimeFix,
       headless: this.headless,
       searchMinIntervalMs: this.searchMinIntervalMs,
       publicSearchPolicy: this.publicSearchPolicy,
