@@ -187,15 +187,13 @@ function formatDuration(ms) {
   return n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`;
 }
 
-// The token portion of a run summary, shared by `exec` and the console:
-//   46,880 in / 1,330 out · 40,000 cache read · 2,000 cache write · context 20,000
+// The token portion of a run summary, shared by `exec` and the console. Input and
+// output are cumulative across turns; `context` is the final prompt size. The
+// cache read/write breakdown stays in the JSON usage but is kept out of this line.
+//   46,880 in / 1,330 out · context 20,000
 function formatUsage(usage) {
   const n = (x) => Number(x || 0).toLocaleString();
-  return (
-    `${n(usage.inputTokens)} in / ${n(usage.outputTokens)} out · ` +
-    `${n(usage.cacheReadTokens)} cache read · ${n(usage.cacheWriteTokens)} cache write · ` +
-    `context ${n(usage.context)}`
-  );
+  return `${n(usage.inputTokens)} in / ${n(usage.outputTokens)} out · context ${n(usage.context)}`;
 }
 
 // ANSI helpers that no-op when stdout is not a TTY or NO_COLOR is set.
@@ -211,6 +209,7 @@ const INTERACTIVE_HELP = `Commands:
   /help               show this help
   /model <name>       switch model (claude | codex | grok | a model id)
   /reasoning <level>  set reasoning effort (low | medium | high | xhigh | max)
+  /headed             show the browser window (/headless to hide it again)
   /new                start a fresh session (clear memory + close open tabs)
   /clear              clear the screen
   /exit               quit (or Ctrl-D)
@@ -237,7 +236,9 @@ async function cmdInteractive(flags) {
   const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
   if (effort) modelOptions.effort = effort;
   const session = flagValue(argv, "--session", "default");
-  const headless = !flags.has("--headed");
+  // Mutable so `/headed` and `/headless` can switch it (each recreates the
+  // browser, since headless is fixed at construction).
+  let headless = !flags.has("--headed");
 
   const newBrowser = () =>
     new BetterWright({
@@ -290,6 +291,21 @@ async function cmdInteractive(flags) {
         if (cmd === "effort" || cmd === "reasoning") {
           if (arg) modelOptions.effort = arg;
           console.log(dim(`reasoning effort is ${modelOptions.effort || "low"}`));
+          continue;
+        }
+        if (cmd === "headed" || cmd === "headless") {
+          const wantHeadless = cmd === "headless";
+          if (wantHeadless === headless) {
+            console.log(dim(`already ${headless ? "headless" : "headed"}`));
+            continue;
+          }
+          // Headless is fixed at construction, so recreate the browser. The
+          // on-disk profile (logins/cookies) and the conversation carry over;
+          // open tabs do not.
+          headless = wantHeadless;
+          await browser.close();
+          browser = newBrowser();
+          console.log(dim(`switched to ${headless ? "headless" : "headed"} (fresh browser; you stay signed in)`));
           continue;
         }
         if (cmd === "new" || cmd === "reset") {

@@ -141,22 +141,19 @@ function anthropicUsage(usage) {
   };
 }
 
-// Chat Completions uses prompt_/completion_tokens; the Responses API uses
-// input_/output_tokens — accept either. Both count cached tokens *inside* the
-// prompt total and expose them under a `*_tokens_details.cached_tokens` field.
-// Neither reports a cache-write count directly, so derive it: the input not
-// served from cache is the fresh input processed (and written to) the cache this
-// turn, and it keeps `input = cacheRead + cacheWrite` exact for these backends.
+// Chat Completions uses prompt_/completion_tokens under `prompt_tokens_details`;
+// the Responses API uses input_/output_tokens under `input_tokens_details` —
+// accept either. Cached (read) and cache-written tokens are reported directly by
+// GPT-5.6+ as descriptive fields inside that details object (both are portions of
+// the prompt total); older models omit `cache_write_tokens`, so it reads as 0.
 function openaiUsage(usage) {
   if (!usage) return null;
-  const inputTokens = usage.prompt_tokens ?? usage.input_tokens ?? 0;
-  const cacheRead =
-    usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens ?? 0;
+  const details = usage.prompt_tokens_details ?? usage.input_tokens_details ?? {};
   return {
-    inputTokens,
+    inputTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0,
     outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
-    cacheReadTokens: cacheRead,
-    cacheWriteTokens: Math.max(0, inputTokens - cacheRead),
+    cacheReadTokens: details.cached_tokens ?? 0,
+    cacheWriteTokens: details.cache_write_tokens ?? 0,
   };
 }
 
