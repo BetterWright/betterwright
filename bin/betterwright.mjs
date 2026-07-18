@@ -23,6 +23,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import { formatAgentUsage } from "../src/agent-usage.mjs";
 import { makeLineReader } from "../src/cli-io.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
@@ -187,15 +188,6 @@ function formatDuration(ms) {
   return n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`;
 }
 
-// The token portion of a run summary, shared by `exec` and the console. Input and
-// output are cumulative across turns; `context` is the final prompt size. The
-// cache read/write breakdown stays in the JSON usage but is kept out of this line.
-//   46,880 in / 1,330 out · context 20,000
-function formatUsage(usage) {
-  const n = (x) => Number(x || 0).toLocaleString();
-  return `${n(usage.inputTokens)} in / ${n(usage.outputTokens)} out · context ${n(usage.context)}`;
-}
-
 // ANSI helpers that no-op when stdout is not a TTY or NO_COLOR is set.
 function styler() {
   const on = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
@@ -358,7 +350,7 @@ async function cmdInteractive(flags) {
         dim(
           `${result.ok ? "done" : "unfinished"} · ${result.steps} step${result.steps === 1 ? "" : "s"} · ` +
             `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"} · ${formatDuration(result.durationMs)} · ` +
-            `${formatUsage(result.usage)}\n`,
+            `${formatAgentUsage(result.usage)}\n`,
         ),
       );
     }
@@ -414,7 +406,7 @@ async function cmdExec(flags) {
   process.stderr.write(
     `  done in ${result.steps} step${result.steps === 1 ? "" : "s"}, ` +
       `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"}, ` +
-      `${formatDuration(result.durationMs)}, ${formatUsage(result.usage)}\n`,
+      `${formatDuration(result.durationMs)}, ${formatAgentUsage(result.usage)}\n`,
   );
   console.log(
     JSON.stringify(

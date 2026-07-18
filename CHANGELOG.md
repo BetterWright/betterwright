@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] — 2026-07-18
+
+### Changed
+
+- **Cache-aware cost reporting.** `usage.inputTokens` now means fresh input: the
+  provider's total input minus `cacheReadTokens` on every turn. The full final
+  prompt size remains available as `usage.context`. Both `betterwright exec` and
+  the interactive console show cache reads in their summaries, and show cache
+  writes only when a provider reports a positive real count. The JSON result
+  continues to expose the provider-reported cache read/write totals; cache writes
+  are never derived from fresh input.
+
 ## [0.8.2] — 2026-07-18
 
 ### Changed
