@@ -4,7 +4,95 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] — 2026-07-18
+
+### Added
+
+- **Built-in agent harness (`betterwright exec`)** — BetterWright can now drive
+  itself. Alongside the existing "bring your own agent" model (an external
+  harness driving BetterWright through `run()`, MCP, or Pi — the `aside repl`
+  shape), it now ships its own browser-tuned agent loop that a model plugs into
+  (the `aside exec` shape). `betterwright exec "<task>" --model claude|codex|grok`
+  runs a natural-language task to completion: observe with `snapshot`, act,
+  verify with `snapshot({diff})`, capture proof, finish. The model is a small
+  pluggable interface (`{ complete({system, messages, tools}) }`), so the three
+  built-in adapters — `claude` (Anthropic SDK, an optional peer dependency),
+  `codex` (the ChatGPT-backend Responses API over codex OAuth creds from
+  `~/.codex`, or OpenAI-compatible with an API key), and `grok`
+  (OpenAI-compatible over grok OAuth creds) — are just defaults; pass your own
+  object to drive the loop with any model or agent. New `betterwright/agent`
+  export (`runAgentTask`, `resolveModel`, `claudeModel`, `codexModel`,
+  `grokModel`, `openaiModel`) and a `login` tool inside the loop when a vault is
+  configured. See [docs/agent.md](docs/agent.md).
+- **Native OAuth sign-in (`betterwright auth --login codex|grok`)** — the built-in
+  agent's `codex` and `grok` backends now authenticate through BetterWright's own
+  OAuth 2.0 PKCE flow instead of depending on an external router. `auth --login
+  codex` opens the "Sign in to Codex with ChatGPT" consent page, captures the
+  redirect on a loopback server, and stores the tokens in `~/.codex/auth.json`
+  (shared with the codex CLI); `auth --login grok` does the same for xAI
+  (SuperGrok / X Premium+), storing to `~/.grok/auth.json`. The adapters then call
+  the ChatGPT backend (codex) and xAI's OpenAI-compatible endpoint (grok)
+  directly, refreshing the access token per request. `betterwright auth --status`
+  reports the signed-in accounts. New `betterwright/auth` export (`loginProvider`,
+  `loadCodexAuth`, `loadGrokAuth`, `codexAccessToken`, `grokAccessToken`).
+- **Skill packs** — on-demand site and provider knowledge a host agent reads
+  when it is relevant, instead of one static prompt carrying everything. Packs
+  ship in `skills/` (`credential-manager`, `1password`, `bitwarden`, `github`)
+  as `SKILL.md` files with `autoInject` keyword/URL triggers. Every run result
+  now carries a `skills` array of packs whose `autoInject.url` matches an open
+  page (`{name, description, path}`), and the operator prompt tells the agent to
+  read the pack before improvising site-specific behavior. New CLI
+  `betterwright skills list|show <name>`, user packs under
+  `$BETTERWRIGHT_HOME/skills` overriding packaged ones, and a `betterwright/skills`
+  export (`listSkills`, `readSkill`, `matchSkillsForUrl`, `matchSkillsForText`,
+  `skillHintsForPages`, `parseSkillDocument`). See [docs/skills.md](docs/skills.md).
+- **`browser_login` on MCP and Pi** — trusted credential fill is no longer
+  SDK-only. Both the MCP server and the native Pi package expose a
+  `browser_login` tool that fills a saved or freshly generated credential
+  (`generate: true` for signup) without the secret ever being returned; the fill
+  runs as a dedicated worker message, never as model JavaScript. The fill is
+  **origin-scoped** — like an unlocked password-manager extension (and like
+  Aside's vault), it can only fill the credential for the page's current origin,
+  not harvest other sites' secrets. It requires a configured vault: pass one to
+  `runMcpServer(env, { vault })` or via Pi `browserOptions.vault`; without a
+  vault (e.g. plain `npx betterwright mcp`), logins go through a password-manager
+  extension's autofill instead — see the `1password`/`bitwarden` skill packs.
+- **Credential categories and search** — `credentials.list({text, category})`
+  filters the current origin's records, and `credentials.save({category})`
+  stores non-login records (`credit-card`, `identity`, `api-credential`,
+  `secure-note`, `ssh-key`) that carry their own metadata instead of a password.
+
+### Changed
+
+- The operator prompt now steers the agent to ask through its **host's** own
+  question mechanism with short, secret-masked options, and to read a hinted
+  skill pack (and always the `credential-manager` pack before a login, signup,
+  or checkout).
+- The `exec` harness batches multi-page work into a single `browser` call
+  (`parallel_tool_calls`), closing most of the step-count gap with Aside on
+  multi-step navigation and search tasks (see
+  [benchmarks/exec-headtohead](benchmarks/exec-headtohead/REPORT.md)).
+- **Removed the vestigial local OAuth-router machinery.** After native OAuth
+  login shipped, the auto-spawned `grok-codex-router` bridge was dead weight; the
+  codex/grok adapters now resolve through an API key, a `betterwright auth` OAuth
+  session, or an explicit `CODEX_BASE_URL` / `GROK_BASE_URL` base URL only.
+- Repo-wide readability pass across the runtime source: duplicated blocks folded
+  into local helpers, dead code and unused parameters removed, and house style
+  (nullish coalescing, guard shape, single-source `codexHome`) made consistent.
+
+### Fixed
+
+- **`snapshot()` no longer leaks filled password values.** Playwright's aria
+  snapshot includes input values, so a snapshot taken after a password was typed
+  (by the agent or a password-manager extension) surfaced the secret in the
+  model-facing tree. Password-input values are now replaced with `[redacted]`
+  (other fields read normally) before the snapshot is stored, diffed, or
+  returned. Found by the AsideWright head-to-head benchmark.
+- **OAuth login hardening.** The loopback callback server is now closed on a
+  sign-in timeout (no leaked port), token refresh is single-flight so concurrent
+  requests rotate the refresh token only once and validates that a fresh access
+  token was actually returned, and a non-JSON token-endpoint response surfaces a
+  readable error instead of a `SyntaxError`.
 
 ## [0.6.1] — 2026-07-17
 

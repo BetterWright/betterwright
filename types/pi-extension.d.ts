@@ -4,7 +4,10 @@ import type { BetterWrightOptions } from "./public.js";
 
 export interface PiExtensionOptions {
   autoScreenshot?: boolean;
-  browser?: Pick<BetterWright, "run" | "close" | "downloadPolicy">;
+  browser?: Pick<
+    BetterWright,
+    "run" | "close" | "downloadPolicy" | "fillCredential"
+  >;
   browserOptions?: BetterWrightOptions;
   closeBrowserOnShutdown?: boolean;
   guardrails?: Guardrails;
@@ -42,6 +45,7 @@ export interface PiExtensionApiLike {
 export type PiExtension = (pi: PiExtensionApiLike) => void;
 
 export const PI_BROWSER_PARAMETERS: Readonly<object>;
+export const PI_LOGIN_PARAMETERS: Readonly<object>;
 export const PI_EVIDENCE_PARAMETERS: Readonly<object>;
 export function createPiExtension(options?: PiExtensionOptions): PiExtension;
 

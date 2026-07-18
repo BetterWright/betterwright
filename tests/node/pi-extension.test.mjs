@@ -38,10 +38,21 @@ class FakePi {
 class FakeBrowser {
   constructor({ screenshot, downloadPolicy = "ask", startFails = false } = {}) {
     this.calls = [];
+    this.fills = [];
     this.closeCount = 0;
     this.downloadPolicy = downloadPolicy;
     this.screenshot = screenshot;
     this.startFails = startFails;
+  }
+
+  async fillCredential(options) {
+    this.fills.push(options);
+    return {
+      ok: true,
+      result: { filled: ["username", "password"], submitted: true },
+      pages: [{ url: "https://example.com/account", active: true }],
+      artifacts: [],
+    };
   }
 
   async run(code, options) {
@@ -106,6 +117,7 @@ test("native Pi extension registers persistent tools and records its supplied st
 
     assert.deepEqual([...pi.tools.keys()], [
       "browser",
+      "browser_login",
       "browser_evidence",
       "browser_download",
     ]);
@@ -272,6 +284,43 @@ test("native Pi extension enforces its browser step budget", async () => {
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test("native Pi extension exposes trusted credential fill", async () => {
+  const browser = new FakeBrowser({});
+  const pi = new FakePi();
+  createPiExtension({ browser })(pi);
+  const tool = pi.tools.get("browser_login");
+  assert.ok(tool, "browser_login should be registered");
+
+  const result = await tool.execute(
+    "call-1",
+    {
+      passwordSelector: "#pw",
+      usernameSelector: "#user",
+      submitSelector: "#go",
+      generate: true,
+      length: 20,
+      // Unknown keys must be dropped before reaching fillCredential.
+      note: "ignored",
+    },
+    new AbortController().signal,
+  );
+
+  assert.equal(browser.fills.length, 1);
+  assert.deepEqual(browser.fills[0], {
+    session: "pi",
+    passwordSelector: "#pw",
+    usernameSelector: "#user",
+    submitSelector: "#go",
+    generate: true,
+    length: 20,
+  });
+  assert.equal(result.details.ok, true);
+  const summary = JSON.parse(result.content[0].text);
+  assert.deepEqual(summary.result.filled, ["username", "password"]);
+  // The fill never runs model JavaScript.
+  assert.equal(browser.calls.length, 0);
 });
 
 test("native Pi extension fails closed for downloads without approval UI", async () => {

@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { normalizeDownloadPolicy } from "./downloads.mjs";
 import { NetworkPolicy } from "./policy.mjs";
+import { listSkills, skillHintsForPages } from "./skills.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./worker.mjs", import.meta.url));
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -134,8 +135,7 @@ const STEALTH_REGISTER_URL = new URL("./stealth-register.mjs", import.meta.url).
  * unaffected. Off by default so normal runs keep full main-world access.
  */
 function resolveStealthRuntimeFix(value) {
-  const raw =
-    value != null ? value : process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
+  const raw = value ?? process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
   if (raw == null) return false;
   if (typeof raw === "boolean") return raw;
   return ["1", "true", "yes", "on"].includes(String(raw).trim().toLowerCase());
@@ -316,7 +316,11 @@ export class BetterWright {
         const { url, ...details } = payload;
         result = this.policy.check(url, details);
       } else if (message.method === "vault") {
-        if (!this.vault) throw new Error("No credential vault is configured for this browser.");
+        if (!this.vault)
+          throw new Error(
+            "No credential vault is configured for this browser. Configure one, " +
+              "or use an unlocked password-manager extension's autofill instead.",
+          );
         result = await this.vault.handleRequest(
           String(payload.action || ""),
           payload.payload || {},
@@ -342,7 +346,11 @@ export class BetterWright {
    * @param {object} [options] { session, note, timeout, approvedDownloads }
    */
   run(code, options = {}) {
-    const task = this._queue.then(() => this._runNow(code, options));
+    return this._enqueue(() => this._runNow(code, options));
+  }
+
+  _enqueue(job) {
+    const task = this._queue.then(job);
     // Keep the chain alive even if one run rejects.
     this._queue = task.then(
       () => {},
@@ -448,14 +456,16 @@ export class BetterWright {
     const id = `${process.pid}-${Math.round(performance.now() * 1000)}-${this._pending.size}`;
     const response = await new Promise((resolve) => {
       let settled = false;
+      let timer;
       const done = (result) => {
         if (settled) return;
         settled = true;
+        clearTimeout(timer);
         this._pending.delete(id);
         resolve(result);
       };
       this._pending.set(id, done);
-      const timer = setTimeout(async () => {
+      timer = setTimeout(async () => {
         await this.close();
         this._closed = false;
         done({ ok: false, error: `Execution timed out after ${timeoutSeconds}s; the worker was restarted.` });
@@ -463,14 +473,8 @@ export class BetterWright {
       try {
         this._send({ ...message, id });
       } catch (error) {
-        clearTimeout(timer);
         done({ ok: false, error: String(error?.message || error) });
-        return;
       }
-      this._pending.set(id, (result) => {
-        clearTimeout(timer);
-        done(result);
-      });
     });
 
     delete response.type;
@@ -483,6 +487,15 @@ export class BetterWright {
         envelope = this.vault.redact(response);
       } catch {
         /* redaction must never throw out */
+      }
+    }
+    if (Array.isArray(envelope.pages) && envelope.pages.length) {
+      try {
+        this._skills ??= listSkills();
+        const skills = skillHintsForPages(envelope.pages, { skills: this._skills });
+        if (skills.length) envelope.skills = skills;
+      } catch {
+        /* skill hints must never break a result */
       }
     }
     if (restart) {

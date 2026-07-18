@@ -1,4 +1,19 @@
 export {
+  claudeModel,
+  codexModel,
+  grokModel,
+  openaiModel,
+  resolveModel,
+  runAgentTask,
+} from "./agent.mjs";
+export {
+  codexAccessToken,
+  grokAccessToken,
+  loadCodexAuth,
+  loadGrokAuth,
+  loginProvider,
+} from "./auth.mjs";
+export {
   buildSolveResult,
   CAPTCHA_SOLVE_STATUSES,
   CAPTCHA_STAGES,
@@ -8,11 +23,23 @@ export {
   solveTimeoutMs,
 } from "./captcha-solver.mjs";
 export { detectBotChallenge } from "./challenges.mjs";
-export { BetterWright, BrowserError, NetworkPolicy } from "./client.mjs";
+export { BetterWright, BrowserError } from "./client.mjs";
 export {
   piImageArtifacts,
   piImageContent,
   piPrimaryImageArtifact,
 } from "./pi.mjs";
-export { METADATA_ADDRESSES, METADATA_HOSTNAMES } from "./policy.mjs";
+export {
+  METADATA_ADDRESSES,
+  METADATA_HOSTNAMES,
+  NetworkPolicy,
+} from "./policy.mjs";
 export { agentSystemPrompt } from "./prompt.mjs";
+export {
+  listSkills,
+  matchSkillsForText,
+  matchSkillsForUrl,
+  parseSkillDocument,
+  readSkill,
+  skillHintsForPages,
+} from "./skills.mjs";

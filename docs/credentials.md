@@ -17,15 +17,25 @@ await credentials.save({ username: "alice", password: "…" });
 // Inspect what is stored for this origin — metadata only, never the password
 await credentials.list();
 
+// Filter the current origin's records by text and/or category
+await credentials.list({ text: "work", category: "login" });
+
+// Non-login records carry their own metadata instead of a password
+await credentials.save({ category: "identity", label: "Home address", fields: { … } });
+
 await credentials.update({ id: "cred_…", label: "work account" });
 await credentials.remove({ id: "cred_…" });
 ```
 
 `save`, `list`, `update`, and `remove` return only metadata — `id`, `origin`,
-`username`, `label`, timestamps. `fill` and `generateAndFill` fail explicitly in
-`run()` because filling a normal DOM input would let the same snippet read,
-encode, or transmit the secret. To actually fill, call the trusted host method
-below — never a `run()` snippet.
+`username`, `label`, `category`, timestamps. `list()` accepts an optional
+`{text, category}` filter, applied by the vault backend. `category` defaults to
+`login`; other categories (`credit-card`, `identity`, `api-credential`,
+`secure-note`, `ssh-key`) store their own non-secret metadata and do not require
+a `password`. `fill` and `generateAndFill` fail explicitly in `run()` because
+filling a normal DOM input would let the same snippet read, encode, or transmit
+the secret. To actually fill, use the trusted path below — never a `run()`
+snippet.
 
 ## Filling from trusted host code
 
@@ -61,6 +71,23 @@ so forms that validate the match on blur (not just on input) run their check.
 Pass `submitSelector` to submit in the same call, so no model turn ever sees the
 secret sitting in a field. The return value lists which `filled` fields were set
 and whether it `submitted`.
+
+**From MCP and Pi, not just the SDK.** The same trusted fill is exposed as a
+`browser_login` tool by both the MCP server and the native Pi package, so all
+three embeddings can log in and sign up — not only the in-process JS client. The
+tool takes the same selectors (`passwordSelector` required, plus
+`usernameSelector`/`confirmPasswordSelector`/`submitSelector`), `id`/`username`
+to pick a record, and `generate`/`length`/`includeSymbols`/`label` for signup.
+The fill still runs as a dedicated worker message, never as model JavaScript, and
+the vault RPC is **origin-scoped**: `browser_login` can only fill the credential
+for the page's current origin — the same reach an unlocked password-manager
+extension gives, never a way to harvest another site's secret.
+
+`browser_login` needs a configured vault. Pass one to `runMcpServer(env, {
+vault })` or Pi `browserOptions.vault`. Without a vault — for example plain `npx
+betterwright mcp` — the tool reports that none is configured; log in through a
+password-manager extension's autofill instead (see the `1password` and
+`bitwarden` [skill packs](skills.md)).
 
 **Using a password-manager extension instead.** Install and unlock 1Password (or
 a similar extension) once in BetterWright's persistent headed Cloak profile.

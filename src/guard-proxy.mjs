@@ -15,13 +15,10 @@ const SOCKS_HANDSHAKE_TIMEOUT_MS = 15_000;
 const SOCKS_CONNECT_TIMEOUT_MS = 10_000;
 const MAX_SOCKS_HANDSHAKE_BYTES = 8_192;
 
-function urlHost(host) {
-  return net.isIP(host) === 6 ? `[${host}]` : host;
-}
-
 function transportUrl(host, port) {
   const scheme = port === 80 ? "http:" : "https:";
-  return `${scheme}//${urlHost(host)}:${port}/`;
+  const urlHost = net.isIP(host) === 6 ? `[${host}]` : host;
+  return `${scheme}//${urlHost}:${port}/`;
 }
 
 function proxyBlockedError(reason = "Blocked by browser network policy") {
@@ -196,7 +193,7 @@ export function createGuardProxy({ guardUrl, executeId }) {
           if (addressType === 1) {
             total = 10;
             if (buffer.length < total) return;
-            host = [...buffer.subarray(4, 8)].join(".");
+            host = buffer.subarray(4, 8).join(".");
           } else if (addressType === 3) {
             if (buffer.length < 5) return;
             const length = buffer[4];
@@ -267,12 +264,10 @@ export function createGuardProxy({ guardUrl, executeId }) {
     if (guardProxyServer && guardProxyPort) return guardProxyPort;
     const server = net.createServer(handleGuardProxyClient);
     const port = await new Promise((resolve, reject) => {
-      const onError = (error) => reject(error);
-      server.once("error", onError);
+      server.once("error", reject);
       server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
-        server.off("error", onError);
-        const address = server.address();
-        resolve(address.port);
+        server.off("error", reject);
+        resolve(server.address().port);
       });
     });
     guardProxyServer = server;
