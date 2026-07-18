@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // BetterWright command-line interface (Node).
 //
+//   betterwright                  interactive agent console (type tasks, watch
+//                                 progress, answer the agent's questions)
 //   betterwright setup            install the managed Cloak browser
 //   betterwright doctor           report runtime readiness
 //   betterwright run <file|-|-c>  execute a Playwright snippet
@@ -21,6 +23,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
+import { makeLineReader } from "../src/cli-io.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
 
@@ -178,6 +181,149 @@ function flagValue(argv, flag, fallback) {
   return index !== -1 && index + 1 < argv.length ? argv[index + 1] : fallback;
 }
 
+// ANSI helpers that no-op when stdout is not a TTY or NO_COLOR is set.
+function styler() {
+  const on = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+  return {
+    dim: (s) => (on ? `\x1b[2m${s}\x1b[0m` : s),
+    bold: (s) => (on ? `\x1b[1m${s}\x1b[0m` : s),
+  };
+}
+
+const INTERACTIVE_HELP = `Commands:
+  /help            show this help
+  /model <name>    switch model (claude | codex | grok | a model id)
+  /effort <level>  set reasoning effort (low | medium | high | xhigh | max)
+  /new             start a fresh browser session (close open tabs)
+  /clear           clear the screen
+  /exit            quit (or Ctrl-D)
+
+Anything else is a task: BetterWright drives the browser to complete it,
+streams what it is doing, and asks you a question if it genuinely needs one.`;
+
+// Bare `betterwright` (no subcommand): an interactive agent console — the
+// counterpart to `aside`. You type natural-language tasks; BetterWright's own
+// agent loop drives the browser, streams each step it takes, prints the answer
+// and what the run cost, and can ask you a question through the `ask` tool when
+// it genuinely needs input. One browser session persists across tasks until you
+// exit.
+async function cmdInteractive(flags) {
+  const { runAgentTask } = await import("../src/agent.mjs");
+  const argv = process.argv;
+  const { dim, bold } = styler();
+
+  let model = flagValue(argv, "--model", "claude");
+  const modelOptions = {};
+  const modelId = flagValue(argv, "--model-id");
+  if (modelId) modelOptions.model = modelId;
+  const effort = flagValue(argv, "--effort");
+  if (effort) modelOptions.effort = effort;
+  const session = flagValue(argv, "--session", "default");
+  const headless = !flags.has("--headed");
+
+  const newBrowser = () =>
+    new BetterWright({
+      policy: policyFromFlags(flags),
+      headless,
+      stealthRuntimeFix: flags.has("--stealth") || undefined,
+    });
+  let browser = newBrowser();
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const nextLine = makeLineReader(rl);
+  rl.on("SIGINT", () => rl.close());
+
+  const modelLabel = () => `${model}${modelOptions.model ? ` (${modelOptions.model})` : ""}`;
+  console.log(bold("BetterWright") + " — interactive agent console");
+  console.log(dim(`model ${modelLabel()} · session ${session} · ${headless ? "headless" : "headed"}`));
+  console.log(dim("Type a task and press Enter. /help for commands, /exit or Ctrl-D to quit.\n"));
+
+  try {
+    for (;;) {
+      const raw = await nextLine(bold("▸ "));
+      if (raw === null) break; // Ctrl-D / closed
+      const task = raw.trim();
+      if (!task) continue;
+
+      if (task.startsWith("/")) {
+        const [cmd, ...args] = task.slice(1).split(/\s+/);
+        const arg = args.join(" ").trim();
+        if (cmd === "exit" || cmd === "quit" || cmd === "q") break;
+        if (cmd === "help" || cmd === "h" || cmd === "") {
+          console.log(INTERACTIVE_HELP);
+          continue;
+        }
+        if (cmd === "clear") {
+          console.clear();
+          continue;
+        }
+        if (cmd === "model") {
+          if (arg) model = arg;
+          console.log(dim(`model is ${modelLabel()}`));
+          continue;
+        }
+        if (cmd === "effort") {
+          if (arg) modelOptions.effort = arg;
+          console.log(dim(`effort is ${modelOptions.effort || "low"}`));
+          continue;
+        }
+        if (cmd === "new" || cmd === "reset") {
+          await browser.close();
+          browser = newBrowser();
+          console.log(dim("started a fresh browser session"));
+          continue;
+        }
+        console.log(dim(`unknown command /${cmd} — /help for the list`));
+        continue;
+      }
+
+      let result;
+      try {
+        result = await runAgentTask({
+          task,
+          browser,
+          model,
+          modelOptions,
+          session,
+          onStep: ({ step, tool, note }) => {
+            // `ask` is rendered by the askUser handler below; skip it here.
+            if (tool === "ask") return;
+            process.stdout.write(`${dim(`  · [${step}] ${tool}${note ? `: ${note}` : ""}`)}\n`);
+          },
+          askUser: async ({ question, options }) => {
+            const lines = [bold(`  ? ${question}`)];
+            if (options?.length)
+              for (const [i, o] of options.entries()) lines.push(dim(`      ${i + 1}. ${o}`));
+            console.log(lines.join("\n"));
+            const ans = await nextLine("  answer ▸ ");
+            return ans === null ? "" : ans.trim();
+          },
+        });
+      } catch (error) {
+        // A failed task must not kill the console — report and keep going.
+        console.log(dim(`  ! ${error?.message || error}`));
+        continue;
+      }
+
+      const { inputTokens, outputTokens, totalTokens } = result.usage;
+      console.log(result.answer ? `\n${bold(result.answer)}` : dim("\n(no answer returned)"));
+      if (result.proof) console.log(dim(`proof: ${result.proof}`));
+      console.log(
+        dim(
+          `${result.ok ? "done" : "unfinished"} · ${result.steps} step${result.steps === 1 ? "" : "s"} · ` +
+            `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"} · ` +
+            `${totalTokens.toLocaleString()} tokens (${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out)\n`,
+        ),
+      );
+    }
+  } finally {
+    rl.close();
+    await browser.close();
+  }
+  console.log(dim("bye"));
+  return 0;
+}
+
 // `exec <task>`: BetterWright's own agent harness (the `aside exec` shape).
 // A model (Claude SDK / codex OAuth / grok OAuth) plugs into the browser-tuned
 // loop and drives the task to completion. Progress notes (ending with a cost
@@ -313,8 +459,27 @@ async function cmdSkills(rest) {
 }
 
 async function main() {
-  const [command, ...rest] = process.argv.slice(2);
-  const flags = new Set(rest.filter((token) => token.startsWith("--")));
+  const tokens = process.argv.slice(2);
+  const flags = new Set(tokens.filter((token) => token.startsWith("--")));
+  const first = tokens[0];
+  // No subcommand (nothing, or only flags like `betterwright --headed`): launch
+  // the interactive agent console. `--version`/`--help` are still honored.
+  if (!first || first.startsWith("-")) {
+    if (flags.has("--version")) {
+      console.log(require("../package.json").version);
+      return 0;
+    }
+    if (flags.has("--help") || tokens.includes("-h")) {
+      console.error(
+        "Usage: betterwright [interactive] | <setup|doctor|run|repl|exec|auth|skill|skills|mcp> [options]\n" +
+          "Run `betterwright` with no arguments for the interactive agent console.",
+      );
+      return 0;
+    }
+    return cmdInteractive(flags);
+  }
+  const command = first;
+  const rest = tokens.slice(1);
   const positional = rest.find((token) => !token.startsWith("-"));
   switch (command) {
     case "setup":
@@ -338,14 +503,12 @@ async function main() {
       await runMcpServer();
       return 0;
     }
-    case "--version":
-      console.log(require("../package.json").version);
-      return 0;
     default:
       console.error(
-        "Usage: betterwright <setup|doctor|run|repl|exec|auth|skill|skills|mcp> [options]",
+        "Usage: betterwright [interactive] | <setup|doctor|run|repl|exec|auth|skill|skills|mcp> [options]\n" +
+          "Run `betterwright` with no arguments for the interactive agent console.",
       );
-      return command ? 1 : 0;
+      return 1;
   }
 }
 
