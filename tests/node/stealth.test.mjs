@@ -43,11 +43,12 @@ test("stealth hook leaves unrelated specifiers untouched", async () => {
 });
 
 test("stealthRuntimeFix defaults off and honors the explicit option", () => {
-  assert.equal(new BetterWright().stealthRuntimeFix, false);
-  assert.equal(
-    new BetterWright({ stealthRuntimeFix: true }).stealthRuntimeFix,
-    true,
-  );
+  const disabled = new BetterWright();
+  const enabled = new BetterWright({ stealthRuntimeFix: true });
+  assert.equal(disabled.stealthRuntimeFix, false);
+  assert.equal(disabled._workerConfig().stealthRuntimeFix, false);
+  assert.equal(enabled.stealthRuntimeFix, true);
+  assert.equal(enabled._workerConfig().stealthRuntimeFix, true);
   assert.equal(
     new BetterWright({ stealthRuntimeFix: false }).stealthRuntimeFix,
     false,
