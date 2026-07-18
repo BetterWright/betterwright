@@ -3,7 +3,6 @@ import { test } from "node:test";
 
 import {
   downloadBehaviorParams,
-  isUnsupportedBrowserDownloadGuard,
   normalizeDownloadPolicy,
 } from "../../src/downloads.mjs";
 
@@ -24,22 +23,4 @@ test("download behavior is denied until an approved run enables it", () => {
     downloadPath: "/tmp/downloads",
     eventsEnabled: true,
   });
-});
-
-test("recognizes the attach-mode browser context limitation", () => {
-  assert.equal(
-    isUnsupportedBrowserDownloadGuard(
-      new Error(
-        "cdpSession.send: Protocol error (Browser.setDownloadBehavior): " +
-          "Browser context management is not supported.",
-      ),
-    ),
-    true,
-  );
-  assert.equal(
-    isUnsupportedBrowserDownloadGuard(
-      new Error("Protocol error (Browser.setDownloadBehavior): Not allowed"),
-    ),
-    false,
-  );
 });

@@ -6,36 +6,21 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { cloakRuntime } from "../../src/doctor.mjs";
 import { BetterWright } from "../../src/index.mjs";
 
-const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(__dirname, "fixtures", "captcha");
 
-process.env.BETTERWRIGHT_BROWSER = "chromium";
-
-function runtimeReady() {
-  try {
-    const core = process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH
-      ? path.join(process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH, "index.js")
-      : "playwright-core";
-    const { chromium } = require(core);
-    return fs.existsSync(chromium.executablePath());
-  } catch {
-    return false;
-  }
-}
-
-const ready = runtimeReady();
+const ready = (await cloakRuntime()).installed;
 if (!ready && process.env.BETTERWRIGHT_REQUIRE_BROWSER) {
   throw new Error(
-    "BETTERWRIGHT_REQUIRE_BROWSER is set but no Chromium build is resolvable.",
+    "BETTERWRIGHT_REQUIRE_BROWSER is set but managed CloakBrowser is unavailable.",
   );
 }
 const opts = { skip: ready ? false : "browser runtime not installed" };
@@ -89,7 +74,6 @@ async function withBrowser(fn) {
   const bw = new BetterWright({
     home,
     headless: true,
-    browser: "chromium",
   });
   try {
     return await fn(bw);

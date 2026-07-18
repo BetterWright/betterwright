@@ -17,13 +17,12 @@ export class BetterWright {
   home: string;
   policy: NetworkPolicy;
   vault: CredentialVault | null;
-  browserFlavor: "cloak" | "chromium";
-  executablePath: string;
+  browserFlavor: "cloak";
   headless: boolean;
-  connectOverCdp: string;
   searchMinIntervalMs: number;
   publicSearchPolicy: "block" | "allow";
   downloadPolicy: "ask" | "allow" | "deny";
+  stealthRuntimeFix: boolean;
   defaultTimeout: number;
 
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;

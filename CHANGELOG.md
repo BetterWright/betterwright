@@ -6,6 +6,48 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-17
+
+### Added
+
+- **Runtime.enable stealth (opt-in)** — `new BetterWright({ stealthRuntimeFix: true })`,
+  the `--stealth` CLI flag, or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1` route the
+  driver through the pre-patched `patchright-core` drop-in so every `run()`
+  snippet executes in an isolated world. This defeats main-world automation
+  detection (rebrowser's `mainWorldExecution` test goes from flagged to
+  untriggered) that the managed Cloak browser leaves open — Cloak already
+  neutralizes the `Runtime.enable` and `navigator.webdriver` signals, but
+  `page.evaluate` otherwise still runs in the page's main world. A module-
+  resolution hook applies the swap process-wide, including the Cloak wrapper's
+  own `import("playwright-core")`. Trade-off (surfaced as a run warning while
+  active): snippets can no longer read page-defined main-world globals such as
+  `window.__NEXT_DATA__`; DOM access, clicks, and typing are unaffected.
+  `patchright-core` is an optional dependency, pinned to the same 1.61.x line as
+  `playwright-core`; `betterwright doctor` reports `stealth_available`. Off by
+  default.
+
+### Changed
+
+- Headed and headless runs now always launch the managed CloakBrowser with the
+  same persistent profile and full network floor. The desktop default no longer
+  diverts headed sessions into ordinary Google Chrome over CDP.
+- Browser integration CI now installs and exercises CloakBrowser directly,
+  including a headed Xvfb smoke, instead of using Playwright's stock test
+  Chromium as the broad-suite backend.
+
+### Removed
+
+- Removed the stock-Chromium backend, `executablePath`, Chrome CDP attach mode,
+  the `betterwright/chrome` export, and `betterwright setup --chromium`.
+  Legacy options and environment variables fail clearly instead of weakening
+  the managed Cloak launch.
+
+### Fixed
+
+- `--headed`, `headless: false`, `headless: "auto"` on desktops, and
+  `BETTERWRIGHT_HEADLESS=0` now exercise actual headed CloakBrowser rather than
+  an unrelated Chrome launch path.
+
 ## [0.6.0] — 2026-07-17
 
 ### Added

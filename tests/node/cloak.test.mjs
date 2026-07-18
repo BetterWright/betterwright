@@ -71,6 +71,38 @@ test("assertProfileNotNewer rejects a profile upgraded by a newer Chromium", () 
   }
 });
 
+test("managed Cloak headed mode opens a coherent visible window", opts, async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-cloak-headed-"));
+  const browser = new BetterWright({ home, headless: false });
+  try {
+    assert.equal(browser.browserFlavor, "cloak");
+    assert.equal(browser._workerConfig().browserFlavor, "cloak");
+    assert.equal(browser._workerConfig().headless, false);
+    const result = await browser.run(`
+      return page.evaluate(() => ({
+        webdriver: navigator.webdriver,
+        userAgent: navigator.userAgent,
+        viewport: { width: innerWidth, height: innerHeight },
+        outer: { width: outerWidth, height: outerHeight },
+        screen: { width: screen.width, height: screen.height },
+      }));
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.profileMode, "persistent");
+    assert.equal(result.result.webdriver, false);
+    assert.doesNotMatch(result.result.userAgent, /HeadlessChrome|Chrome for Testing/i);
+    assert.ok(result.result.viewport.width > 0);
+    assert.ok(result.result.viewport.height > 0);
+    assert.ok(result.result.outer.width >= result.result.viewport.width);
+    assert.ok(result.result.outer.height >= result.result.viewport.height);
+    assert.ok(result.result.screen.width >= result.result.viewport.width);
+    assert.ok(result.result.screen.height >= result.result.viewport.height);
+  } finally {
+    await browser.close().catch(() => {});
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("managed Cloak browser hides test-browser signals and keeps one profile identity", opts, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-cloak-"));
   const server = http.createServer((request, response) => {

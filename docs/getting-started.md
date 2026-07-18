@@ -46,22 +46,6 @@ doctor` reports both versions. For a reproducible deployment, set a full
 `CLOAKBROWSER_VERSION`; to keep an already installed build from checking for a
 newer stable build, set `CLOAKBROWSER_AUTO_UPDATE=false`.
 
-### Explicit Chromium fallback
-
-Use stock Playwright Chromium only when you need compatibility or a deterministic
-test browser:
-
-```bash
-betterwright setup --chromium
-export BETTERWRIGHT_BROWSER=chromium
-```
-
-Or select it per client with `browser: "chromium"`.
-Supplying `executablePath` also selects this fallback. Stock
-Chromium can expose obvious automation signals, including headless branding and
-`navigator.webdriver`; it is a degraded fallback, not the recommended backend
-for normal agent browsing.
-
 ## Your first run
 
 A snippet is a string of async Playwright JavaScript. The last expression is
@@ -119,8 +103,8 @@ await bw.run("await page.goto('https://example.com')");
 - [The browser API](browser-api.md) — every global available inside a snippet.
 - [Agent guidance](agent-prompt.md) — make a model drive the browser decisively,
   with configurable guardrails.
-- [Attach mode & headed browsing](attach-mode.md) — watch the browser, or drive
-  a Chrome you already have open.
+- [Headed and headless browsing](attach-mode.md) — run the same managed Cloak
+  profile with or without a visible window.
 - [Network policy](network-policy.md) — controlling what the browser can reach.
 - [Credentials](credentials.md) — encrypted storage and trusted host-side use.
 - [Native CAPTCHA helpers](captcha.md) — resumable handling for authorized flows.

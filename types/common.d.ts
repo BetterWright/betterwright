@@ -1,4 +1,4 @@
-export type BrowserFlavor = "cloak" | "chromium";
+export type BrowserFlavor = "cloak";
 export type HeadlessMode = boolean | "auto";
 export type PublicSearchPolicy = "block" | "allow";
 export type DownloadPolicy = "ask" | "allow" | "deny";
