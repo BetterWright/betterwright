@@ -78,6 +78,11 @@ export interface RunAgentTaskOptions {
    * `ask` tool.
    */
   askUser?: (question: { question: string; options: string[] }) => string | Promise<string>;
+  /**
+   * A prior transcript (from a previous call's `transcript`) to continue from, so
+   * a follow-up task can refer back to earlier work. Omit for a fresh run.
+   */
+  history?: AgentMessage[];
 }
 
 export interface AgentResult {
@@ -89,17 +94,19 @@ export interface AgentResult {
   toolCalls: number;
   /**
    * Token usage summed across turns (fields are 0 when unavailable).
-   * `cacheReadTokens`/`cacheWriteTokens` are the cached portion of the input;
-   * `contextTokens` is the prompt size at the end of the task (the last turn's
-   * input), i.e. how much context the model was holding when it finished.
+   * `inputTokens` is the full prompt size (cached tokens included);
+   * `cacheReadTokens` is the part served from cache and `cacheWriteTokens` the
+   * fresh input processed/written to the cache (`inputTokens = cacheRead +
+   * cacheWrite` on OpenAI-style backends). `context` is the prompt size at the
+   * end of the task (the last turn's input) — how much context the model was
+   * holding when it finished.
    */
   usage: {
     inputTokens: number;
     outputTokens: number;
-    totalTokens: number;
     cacheReadTokens: number;
     cacheWriteTokens: number;
-    contextTokens: number;
+    context: number;
   };
   /** Task wall-clock in milliseconds (excludes owned-browser teardown). */
   durationMs: number;

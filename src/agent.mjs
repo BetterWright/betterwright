@@ -141,19 +141,19 @@ function anthropicUsage(usage) {
   };
 }
 
-// Chat Completions uses prompt_/completion_tokens; the Responses API uses
-// input_/output_tokens — accept either. Both count cached tokens *inside* the
-// prompt total and expose them under a `*_tokens_details.cached_tokens` field;
-// neither reports a separate cache-write count, so that stays 0.
+// Chat Completions uses prompt_/completion_tokens under `prompt_tokens_details`;
+// the Responses API uses input_/output_tokens under `input_tokens_details` —
+// accept either. Cached (read) and cache-written tokens are reported directly by
+// GPT-5.6+ as descriptive fields inside that details object (both are portions of
+// the prompt total); older models omit `cache_write_tokens`, so it reads as 0.
 function openaiUsage(usage) {
   if (!usage) return null;
-  const cacheRead =
-    usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens ?? 0;
+  const details = usage.prompt_tokens_details ?? usage.input_tokens_details ?? {};
   return {
     inputTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0,
     outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
-    cacheReadTokens: cacheRead,
-    cacheWriteTokens: 0,
+    cacheReadTokens: details.cached_tokens ?? 0,
+    cacheWriteTokens: details.cache_write_tokens ?? 0,
   };
 }
 
@@ -241,7 +241,10 @@ function loginOptionsFromInput(input = {}, session) {
  *   when provided, the loop exposes an `ask` tool so the model can put a question
  *   to the user mid-task; the returned string is fed back as the answer. Omit it
  *   (the `exec` default) to run fully autonomously with no `ask` tool.
- * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, totalTokens: number, cacheReadTokens: number, cacheWriteTokens: number, contextTokens: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
+ * @param {object[]} [options.history] a prior transcript (from a previous call's
+ *   `transcript`) to continue from, so a follow-up task can refer back to earlier
+ *   work. Omit for a fresh, single-shot run.
+ * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
  */
 export async function runAgentTask(options = {}) {
   const task = String(options.task || "").trim();
@@ -266,7 +269,11 @@ export async function runAgentTask(options = {}) {
 
   const system = `${harnessPreamble({ withAsk })}\n\n${agentSystemPrompt(options.guardrails || {})}`;
   const tools = toolsForHarness({ withLogin, withAsk });
-  const messages = [{ role: "user", text: task }];
+  // Seed from a prior transcript when continuing a session (the interactive
+  // console passes the previous task's transcript), so a follow-up task can refer
+  // back to earlier work; otherwise start fresh.
+  const history = Array.isArray(options.history) ? options.history : [];
+  const messages = [...history, { role: "user", text: task }];
 
   let answer = "";
   let proof = null;
@@ -387,12 +394,11 @@ export async function runAgentTask(options = {}) {
     usage: {
       inputTokens,
       outputTokens,
-      totalTokens: inputTokens + outputTokens,
       // Cached-input breakdown (subsets of the input total, summed across turns)
-      // and the context size at the end of the task (the last turn's prompt).
+      // and `context` = the prompt size at the end of the task (last turn's input).
       cacheReadTokens,
       cacheWriteTokens,
-      contextTokens,
+      context: contextTokens,
     },
     // Task wall-clock in milliseconds (excludes owned-browser teardown).
     durationMs,
@@ -441,7 +447,7 @@ export function resolveModel(model, modelOptions = {}) {
 // --- Claude (Anthropic SDK) ------------------------------------------------
 
 function anthropicMessages(messages) {
-  return messages.map((m) => {
+  const mapped = messages.map((m) => {
     if (m.role === "user") return { role: "user", content: [{ type: "text", text: m.text }] };
     if (m.role === "tool")
       return {
@@ -458,6 +464,17 @@ function anthropicMessages(messages) {
       content.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.input || {} });
     return { role: "assistant", content };
   });
+  // The Messages API requires roles to alternate. Tool results are user-role, so
+  // continuing a session (a carried transcript ending in a tool result, then a
+  // new user task) yields two user turns in a row — coalesce adjacent same-role
+  // messages into one so the request stays valid.
+  const merged = [];
+  for (const msg of mapped) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === msg.role) last.content.push(...msg.content);
+    else merged.push({ role: msg.role, content: [...msg.content] });
+  }
+  return merged;
 }
 
 function parseAnthropicResponse(message) {

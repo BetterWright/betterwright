@@ -187,15 +187,13 @@ function formatDuration(ms) {
   return n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`;
 }
 
-// The token portion of a run summary, shared by `exec` and the console:
-//   48,210 tokens (46,880 in / 1,330 out · 40,000 cache read · 2,000 cache write) · ctx 20,000
+// The token portion of a run summary, shared by `exec` and the console. Input and
+// output are cumulative across turns; `context` is the final prompt size. The
+// cache read/write breakdown stays in the JSON usage but is kept out of this line.
+//   46,880 in / 1,330 out · context 20,000
 function formatUsage(usage) {
   const n = (x) => Number(x || 0).toLocaleString();
-  return (
-    `${n(usage.totalTokens)} tokens (${n(usage.inputTokens)} in / ${n(usage.outputTokens)} out · ` +
-    `${n(usage.cacheReadTokens)} cache read · ${n(usage.cacheWriteTokens)} cache write) · ` +
-    `ctx ${n(usage.contextTokens)}`
-  );
+  return `${n(usage.inputTokens)} in / ${n(usage.outputTokens)} out · context ${n(usage.context)}`;
 }
 
 // ANSI helpers that no-op when stdout is not a TTY or NO_COLOR is set.
@@ -208,12 +206,13 @@ function styler() {
 }
 
 const INTERACTIVE_HELP = `Commands:
-  /help            show this help
-  /model <name>    switch model (claude | codex | grok | a model id)
-  /effort <level>  set reasoning effort (low | medium | high | xhigh | max)
-  /new             start a fresh browser session (close open tabs)
-  /clear           clear the screen
-  /exit            quit (or Ctrl-D)
+  /help               show this help
+  /model <name>       switch model (claude | codex | grok | a model id)
+  /reasoning <level>  set reasoning effort (low | medium | high | xhigh | max)
+  /headed             show the browser window (/headless to hide it again)
+  /new                start a fresh session (clear memory + close open tabs)
+  /clear              clear the screen
+  /exit               quit (or Ctrl-D)
 
 Anything else is a task: BetterWright drives the browser to complete it,
 streams what it is doing, and asks you a question if it genuinely needs one.`;
@@ -233,10 +232,13 @@ async function cmdInteractive(flags) {
   const modelOptions = {};
   const modelId = flagValue(argv, "--model-id");
   if (modelId) modelOptions.model = modelId;
-  const effort = flagValue(argv, "--effort");
+  // `--reasoning` is an alias for `--effort` (both set the reasoning effort).
+  const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
   if (effort) modelOptions.effort = effort;
   const session = flagValue(argv, "--session", "default");
-  const headless = !flags.has("--headed");
+  // Mutable so `/headed` and `/headless` can switch it (each recreates the
+  // browser, since headless is fixed at construction).
+  let headless = !flags.has("--headed");
 
   const newBrowser = () =>
     new BetterWright({
@@ -245,15 +247,22 @@ async function cmdInteractive(flags) {
       stealthRuntimeFix: flags.has("--stealth") || undefined,
     });
   let browser = newBrowser();
+  // The running transcript, so a follow-up task remembers earlier ones. `/new`
+  // clears it (and the browser) to start a clean session.
+  let history = [];
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const nextLine = makeLineReader(rl);
   rl.on("SIGINT", () => rl.close());
 
   const modelLabel = () => `${model}${modelOptions.model ? ` (${modelOptions.model})` : ""}`;
+  const reasoningLabel = () => modelOptions.effort || "low";
   console.log(bold("BetterWright") + " — interactive agent console");
-  console.log(dim(`model ${modelLabel()} · session ${session} · ${headless ? "headless" : "headed"}`));
-  console.log(dim("Type a task and press Enter. /help for commands, /exit or Ctrl-D to quit.\n"));
+  console.log(
+    dim(`model ${modelLabel()} · reasoning ${reasoningLabel()} · session ${session} · ${headless ? "headless" : "headed"}`),
+  );
+  console.log(dim("Type a task and press Enter. Follow-ups keep the session; /new starts fresh."));
+  console.log(dim("/help for commands, /exit or Ctrl-D to quit.\n"));
 
   try {
     for (;;) {
@@ -279,15 +288,31 @@ async function cmdInteractive(flags) {
           console.log(dim(`model is ${modelLabel()}`));
           continue;
         }
-        if (cmd === "effort") {
+        if (cmd === "effort" || cmd === "reasoning") {
           if (arg) modelOptions.effort = arg;
-          console.log(dim(`effort is ${modelOptions.effort || "low"}`));
+          console.log(dim(`reasoning effort is ${modelOptions.effort || "low"}`));
+          continue;
+        }
+        if (cmd === "headed" || cmd === "headless") {
+          const wantHeadless = cmd === "headless";
+          if (wantHeadless === headless) {
+            console.log(dim(`already ${headless ? "headless" : "headed"}`));
+            continue;
+          }
+          // Headless is fixed at construction, so recreate the browser. The
+          // on-disk profile (logins/cookies) and the conversation carry over;
+          // open tabs do not.
+          headless = wantHeadless;
+          await browser.close();
+          browser = newBrowser();
+          console.log(dim(`switched to ${headless ? "headless" : "headed"} (fresh browser; you stay signed in)`));
           continue;
         }
         if (cmd === "new" || cmd === "reset") {
           await browser.close();
           browser = newBrowser();
-          console.log(dim("started a fresh browser session"));
+          history = [];
+          console.log(dim("started a fresh session (browser and memory cleared)"));
           continue;
         }
         console.log(dim(`unknown command /${cmd} — /help for the list`));
@@ -302,6 +327,7 @@ async function cmdInteractive(flags) {
           model,
           modelOptions,
           session,
+          history,
           onStep: ({ step, tool, note }) => {
             // `ask` is rendered by the askUser handler below; skip it here.
             if (tool === "ask") return;
@@ -317,10 +343,14 @@ async function cmdInteractive(flags) {
           },
         });
       } catch (error) {
-        // A failed task must not kill the console — report and keep going.
+        // A failed task must not kill the console — report and keep going. History
+        // is left untouched so the next task still has the prior context.
         console.log(dim(`  ! ${error?.message || error}`));
         continue;
       }
+
+      // Carry the transcript forward so the next task remembers this one.
+      history = result.transcript;
 
       console.log(result.answer ? `\n${bold(result.answer)}` : dim("\n(no answer returned)"));
       if (result.proof) console.log(dim(`proof: ${result.proof}`));
@@ -351,14 +381,15 @@ async function cmdExec(flags) {
   const task = argv.slice(3).find((token) => !token.startsWith("-"));
   if (!task) {
     console.error(
-      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort <level>] [--max-steps <n>] [--session <name>] [--headed]',
+      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort|--reasoning <level>] [--max-steps <n>] [--session <name>] [--headed]',
     );
     return 1;
   }
   const modelOptions = {};
   const modelId = flagValue(argv, "--model-id");
   if (modelId) modelOptions.model = modelId;
-  const effort = flagValue(argv, "--effort");
+  // `--reasoning` is an alias for `--effort` (both set the reasoning effort).
+  const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
   if (effort) modelOptions.effort = effort;
 
   let result;

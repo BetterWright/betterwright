@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] — 2026-07-18
+
+### Changed
+
+- **Slimmer run summary.** The one-line summary now shows just input, output, and
+  context — `done in 6 steps, 7 tool calls, 11.4s, 46,880 in / 1,330 out · context
+  20,000`. Input/output are cumulative across turns; `context` is the prompt size
+  at the end of the task.
+- **Cache tokens read from each provider's real fields** (no longer derived) and
+  kept in the JSON `usage` as `cacheReadTokens` / `cacheWriteTokens`: the Responses
+  API's `input_tokens_details.cached_tokens` / `cache_write_tokens`, the Chat
+  Completions `prompt_tokens_details` equivalents, and Anthropic's
+  `cache_read_input_tokens` / `cache_creation_input_tokens`. Note: the codex
+  ChatGPT backend surfaces cache *reads* but always returns `0` for cache writes,
+  which is why cache is left out of the one-line summary (it's still in the JSON).
+- **Dropped `usage.totalTokens`** from the result and the summary line — input and
+  output tokens price differently, so a combined total was misleading.
+- **Renamed `usage.contextTokens` → `usage.context`**.
+
+### Added
+
+- **The interactive console now carries the conversation across tasks.** A
+  follow-up task remembers what earlier tasks did and can refer back to them
+  without repeating the work — not just the browser session (which already
+  persisted), but the transcript too. `/new` clears the memory (and the browser)
+  to start fresh. `runAgentTask` gained a `history` option (a prior call's
+  `transcript`) that seeds this; `betterwright exec` stays single-shot. The
+  Anthropic adapter now coalesces adjacent same-role turns so a continued session
+  stays a valid request.
+- **`--reasoning` as an alias for `--effort`** (and `/reasoning` for `/effort` in
+  the interactive console) — the reasoning-effort control under its more intuitive
+  name. `--effort` continues to work unchanged.
+
 ## [0.8.1] — 2026-07-18
 
 ### Added
