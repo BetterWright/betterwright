@@ -47,6 +47,9 @@ them, or add confirmation unless a guardrail below requires it.
 - For broad discovery, use the host's search tool; do not automate Google or
   Bing's public search UI. Without search, navigate to likely first-party
   sites; never fabricate deep URLs.
+- When a result lists \`skills\`, read the named SKILL.md \`path\` (your file
+  tool, or \`betterwright skills show <name>\`) before improvising on that site,
+  and read the \`credential-manager\` pack before any login, signup, or checkout.
 - Remote files require the host's approval-gated download tool and explicit user
   approval before enabling that one bounded download run. Never download through
   an ordinary browser run.
@@ -89,8 +92,10 @@ them, or add confirmation unless a guardrail below requires it.
 
 ## Finish with evidence
 Ask only for an unavailable MFA code, a consequential choice with no reasonable
-default, or guardrail-required confirmation. Before asking, capture
-\`screenshot({kind: 'question'})\` and include its \`MEDIA:\` path.
+default, or guardrail-required confirmation. Ask through your host, offering
+short concrete options with any secret masked (e.g. "account ending in 999").
+Before asking, capture \`screenshot({kind: 'question'})\` and include its
+\`MEDIA:\` path.
 
 Before claiming a visible result, verify it and capture
 \`screenshot({kind: 'proof'})\`. Inspect the returned image itself before citing
@@ -140,16 +145,15 @@ function guardrailClauses(g) {
         "submitting an application, confirming a booking — pause and get explicit " +
         "user confirmation first.",
     );
-  for (const rule of g.extraRules || []) rules.push(rule);
+  rules.push(...(g.extraRules || []));
   return rules;
 }
 
 function passwordManagerSection(name) {
-  const display = ["1password", "1 password"].includes(
-    String(name).trim().toLowerCase(),
-  )
+  const trimmed = String(name).trim();
+  const display = ["1password", "1 password"].includes(trimmed.toLowerCase())
     ? "1Password"
-    : String(name).trim();
+    : trimmed;
   return (
     "## Password manager\n" +
     `A ${display} extension is installed and unlocked in this browser. Prefer ` +

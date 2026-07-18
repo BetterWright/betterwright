@@ -16,6 +16,14 @@ import {
   piPrimaryImageArtifact,
   type RunResult,
 } from "betterwright";
+import {
+  type AgentModel,
+  type AgentResult,
+  claudeModel,
+  resolveModel,
+  runAgentTask,
+} from "betterwright/agent";
+import { type CodexAuth, type LoginResult, loadCodexAuth, loginProvider } from "betterwright/auth";
 import type { PiImageContentBlock } from "betterwright/pi";
 import createBetterWrightPiExtension, {
   createPiExtension,
@@ -63,6 +71,23 @@ const challenge = detectBotChallenge({
   url: "https://example.com",
   text: "Verify you are human",
 });
+const customModel: AgentModel = {
+  name: "custom",
+  async complete({ system, messages, tools }) {
+    void [system, messages, tools];
+    return { text: "", toolCalls: [] };
+  },
+};
+const resolvedModel: AgentModel = resolveModel("claude");
+const claudeAdapter: AgentModel = claudeModel({ model: "claude-fable-5", effort: "low" });
+const agentResult: Promise<AgentResult> = runAgentTask({
+  task: "read the page title",
+  model: customModel,
+  maxSteps: 12,
+  onStep: ({ step, tool, note }) => void [step, tool, note],
+});
+const login: Promise<LoginResult> = loginProvider({ provider: "codex", open: false });
+const codexAuth: CodexAuth | null = loadCodexAuth();
 
 // @ts-expect-error BetterWright supports only managed CloakBrowser.
 new BetterWright({ browser: "firefox" });
@@ -89,4 +114,9 @@ void [
   captchaStatus,
   captchaStageName,
   challenge,
+  resolvedModel,
+  claudeAdapter,
+  agentResult,
+  login,
+  codexAuth,
 ];

@@ -1,6 +1,6 @@
 {
   "name": "betterwright",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "A persistent, policy-guarded Playwright browser for AI agents with network controls, trusted credential filling, proof screenshots, and CAPTCHA helpers.",
   "type": "module",
   "main": "src/index.mjs",
@@ -10,6 +10,16 @@
       "types": "./types/index.d.ts",
       "import": "./src/index.mjs",
       "default": "./src/index.mjs"
+    },
+    "./agent": {
+      "types": "./types/agent.d.ts",
+      "import": "./src/agent.mjs",
+      "default": "./src/agent.mjs"
+    },
+    "./auth": {
+      "types": "./types/auth.d.ts",
+      "import": "./src/auth.mjs",
+      "default": "./src/auth.mjs"
     },
     "./policy": {
       "types": "./types/policy.d.ts",
@@ -41,6 +51,11 @@
       "import": "./src/mcp-server.mjs",
       "default": "./src/mcp-server.mjs"
     },
+    "./skills": {
+      "types": "./types/skills.d.ts",
+      "import": "./src/skills.mjs",
+      "default": "./src/skills.mjs"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -50,6 +65,7 @@
     "src",
     "bin",
     "types",
+    "skills",
     "examples/javascript",
     "CHANGELOG.md",
     "SETUP.md",
@@ -84,9 +100,13 @@
     "playwright-core": "1.61.1"
   },
   "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.30.0",
     "@modelcontextprotocol/sdk": ">=1.13.0"
   },
   "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
     "@modelcontextprotocol/sdk": {
       "optional": true
     }

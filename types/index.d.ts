@@ -1,4 +1,19 @@
 export {
+  claudeModel,
+  codexModel,
+  grokModel,
+  openaiModel,
+  resolveModel,
+  runAgentTask,
+} from "./agent.js";
+export {
+  codexAccessToken,
+  grokAccessToken,
+  loadCodexAuth,
+  loadGrokAuth,
+  loginProvider,
+} from "./auth.js";
+export {
   buildSolveResult,
   CAPTCHA_SOLVE_STATUSES,
   CAPTCHA_STAGES,
@@ -16,4 +31,12 @@ export {
   piPrimaryImageArtifact,
 } from "./pi.js";
 export { agentSystemPrompt } from "./prompt.js";
+export {
+  listSkills,
+  matchSkillsForText,
+  matchSkillsForUrl,
+  parseSkillDocument,
+  readSkill,
+  skillHintsForPages,
+} from "./skills.js";
 export type * from "./public.js";

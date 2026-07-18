@@ -635,9 +635,7 @@ async function assertScreenshotPixelLimit(page, options) {
             document.body?.scrollHeight || 0,
           ),
         }))
-      : {
-          ...(page.viewportSize() || { width: 1440, height: 900 }),
-        };
+      : page.viewportSize() || { width: 1440, height: 900 };
   const pixels =
     Math.ceil(metrics.width * scale) * Math.ceil(metrics.height * scale);
   const limit = configuredLimit(
@@ -741,6 +739,15 @@ async function handleDownload(page, download) {
   );
   const limit = downloadByteLimit();
   let releaseReservation = null;
+  const rejectDownload = async (reason) => {
+    await download.cancel();
+    await download.delete().catch(() => {});
+    pushEvent(session, {
+      type: "download-rejected",
+      name: download.suggestedFilename(),
+      reason,
+    });
+  };
   try {
     const policyAllowsAll =
       normalizeDownloadPolicy(launchConfig?.downloadPolicy) === "allow";
@@ -750,35 +757,17 @@ async function handleDownload(page, download) {
       approvedDownloadSession === ownerSid &&
       activeExecutionSession === ownerSid;
     if (!policyAllowsAll && !runApprovalMatchesOwner) {
-      await download.cancel();
-      await download.delete().catch(() => {});
-      pushEvent(session, {
-        type: "download-rejected",
-        name: download.suggestedFilename(),
-        reason: "explicit user approval required",
-      });
+      await rejectDownload("explicit user approval required");
       return;
     }
     if (!downloadGuardReady) {
-      await download.cancel();
-      await download.delete().catch(() => {});
-      pushEvent(session, {
-        type: "download-rejected",
-        name: download.suggestedFilename(),
-        reason: "bounded download guard unavailable",
-      });
+      await rejectDownload("bounded download guard unavailable");
       return;
     }
     try {
       releaseReservation = reserveArtifactQuota(session, limit);
     } catch (error) {
-      await download.cancel();
-      await download.delete().catch(() => {});
-      pushEvent(session, {
-        type: "download-rejected",
-        name: download.suggestedFilename(),
-        reason: error?.message || "artifact quota unavailable",
-      });
+      await rejectDownload(error?.message || "artifact quota unavailable");
       return;
     }
     const source = await download.path();
@@ -961,6 +950,39 @@ async function ensureSessionPage(session) {
 // `diff: true` always compares like against like.
 const lastSnapshots = new WeakMap();
 
+// Replace any `<input type=password>` value with "[redacted]" in an aria
+// snapshot. The values are read in the privileged worker (never handed to the
+// sandbox) only to scrub them from the returned text and register them with the
+// redaction net; nothing about them is returned. Empty when the page has no
+// filled password field, so ordinary pages pay only one cheap evaluate.
+async function redactPasswordValues(page, text) {
+  if (!text) return text;
+  let values;
+  try {
+    const perFrame = await Promise.all(
+      page.frames().map((frame) =>
+        frame
+          .evaluate(() =>
+            Array.from(document.querySelectorAll("input[type=password]"))
+              .map((element) => element.value)
+              .filter((value) => typeof value === "string" && value.length > 0),
+          )
+          .catch(() => []),
+      ),
+    );
+    values = [...new Set(perFrame.flat())];
+  } catch {
+    // A page mid-navigation may refuse evaluate; the snapshot still returns.
+    return text;
+  }
+  let out = text;
+  for (const value of values) {
+    trackSecret(value);
+    out = out.split(value).join("[redacted]");
+  }
+  return out;
+}
+
 async function snapshotPage(page, options = {}) {
   const depth = Math.floor(Number(options?.depth) || 0);
   const ref = options?.ref ? String(options.ref) : "";
@@ -978,6 +1000,11 @@ async function snapshotPage(page, options = {}) {
     timeout: Number(options?.timeout || 10_000),
     ...(depth > 0 ? { depth } : {}),
   });
+  // Playwright's aria snapshot includes filled input values, including
+  // `<input type=password>`. Scrub those before the text is stored (for diffs),
+  // truncated, or returned, so a routine read never slurps a just-typed or
+  // extension-filled secret into model context. Aside redacts the same way.
+  text = await redactPasswordValues(page, text);
   if (options?.interactive) text = filterInteractive(text);
 
   const key = JSON.stringify([
@@ -1082,9 +1109,7 @@ async function humanClickTarget(page, session, value, options = {}) {
 async function installContextGuard(context) {
   await context.route("**/*", async (route) => {
     const request = route.request();
-    const executeId = activeExecutionSession
-      ? `active:${activeExecutionSession}`
-      : "background";
+    const executeId = transportExecuteId();
     try {
       const publicSearch =
         request.isNavigationRequest() &&
@@ -1135,8 +1160,7 @@ async function installContextGuard(context) {
           await searchPacingQueue;
         }
         await route.continue();
-      }
-      else await route.abort("blockedbyclient");
+      } else await route.abort("blockedbyclient");
     } catch {
       // Policy infrastructure errors fail closed. A broken guard must never
       // silently become an unrestricted browser.
@@ -1144,9 +1168,7 @@ async function installContextGuard(context) {
     }
   });
   await context.routeWebSocket("**/*", async (webSocket) => {
-    const executeId = activeExecutionSession
-      ? `active:${activeExecutionSession}`
-      : "background";
+    const executeId = transportExecuteId();
     try {
       const decision = await guardUrl(
         webSocket.url(),
@@ -1677,15 +1699,36 @@ async function vaultCall(session, action, payload = {}) {
 
 function buildCredentials(session, realm) {
   const credentials = Object.create(null);
-  credentials.list = realm.safeFunction(async () => {
-    const response = await vaultCall(session, "list");
+  // `list()` returns metadata for the current origin. Pass `{text}` to filter
+  // and `{category}` to scope (e.g. "credit-card"); the vault backend applies
+  // the filter and always strips secret values.
+  credentials.list = realm.safeFunction(async (query) => {
+    const payload =
+      query && typeof query === "object"
+        ? {
+            ...(query.text != null ? { text: String(query.text) } : {}),
+            ...(query.category != null ? { category: String(query.category) } : {}),
+          }
+        : {};
+    const response = await vaultCall(session, "list", payload);
     return response.credentials || [];
   });
   credentials.save = realm.safeFunction(async (options) => {
-    if (!options?.password)
-      throw new Error("credentials.save requires password.");
-    trackSecret(options.password);
-    const response = await vaultCall(session, "save", options);
+    // Login records need a password; other categories (identity, credit-card,
+    // api-credential, secure-note) carry their own metadata instead.
+    const category = options?.category ? String(options.category) : "login";
+    if (category === "login" && !options?.password)
+      throw new Error("credentials.save requires password for a login record.");
+    if (options?.password) trackSecret(options.password);
+    // A non-login record's `fields` can themselves be the secret (an API key,
+    // a private key, a card number). Track their values so the redaction net
+    // scrubs them from any output, matching how passwords are handled.
+    if (options?.fields && typeof options.fields === "object") {
+      for (const value of Object.values(options.fields)) {
+        if (typeof value === "string" && value) trackSecret(value);
+      }
+    }
+    const response = await vaultCall(session, "save", { ...options, category });
     const { secret: _secret, ...publicResult } = response;
     return publicResult;
   });
@@ -1791,18 +1834,21 @@ async function credentialFill(message) {
     const action = spec.action === "generate" ? "generate" : "fill";
     let vaultPayload;
     if (action === "generate") {
-      const g = spec.generate && typeof spec.generate === "object" ? spec.generate : {};
+      const generateSpec =
+        spec.generate && typeof spec.generate === "object" ? spec.generate : {};
       vaultPayload = {
-        username: typeof g.username === "string" ? g.username : "",
-        label: g.label ?? null,
-        length: Number(g.length) || 24,
-        include_symbols: g.includeSymbols !== false,
+        username:
+          typeof generateSpec.username === "string" ? generateSpec.username : "",
+        label: generateSpec.label ?? null,
+        length: Number(generateSpec.length) || 24,
+        include_symbols: generateSpec.includeSymbols !== false,
       };
     } else {
-      const r = spec.record && typeof spec.record === "object" ? spec.record : {};
+      const recordSpec =
+        spec.record && typeof spec.record === "object" ? spec.record : {};
       vaultPayload = {};
-      if (r.id != null) vaultPayload.id = r.id;
-      if (r.username != null) vaultPayload.username = r.username;
+      if (recordSpec.id != null) vaultPayload.id = recordSpec.id;
+      if (recordSpec.username != null) vaultPayload.username = recordSpec.username;
     }
 
     const record = await rpc(
@@ -2807,7 +2853,7 @@ async function dragSliderOnPage(page, session, provider) {
   return { ok: true, from: start, to: end };
 }
 
-async function runCaptchaSolveAction(page, session, classification, action, _attemptIndex) {
+async function runCaptchaSolveAction(page, session, classification, action) {
   const provider = classification.provider;
   const scopes = [page, ...candidateFrames(page, provider)];
   switch (action.action) {
@@ -2847,10 +2893,8 @@ async function runCaptchaSolveAction(page, session, classification, action, _att
       });
       return { ok: true, point, target: "verify" };
     }
-    case "drag_slider": {
-      const dragged = await dragSliderOnPage(page, session, provider);
-      return dragged;
-    }
+    case "drag_slider":
+      return dragSliderOnPage(page, session, provider);
     case "capture_tiles": {
       const captured = await captureTiles(page, session, provider);
       return {
@@ -3029,7 +3073,6 @@ async function solveCaptchaOnPage(page, session, options = {}) {
       session,
       lastClassification,
       action,
-      stageIndex,
     );
     attempts.push({
       stageIndex,

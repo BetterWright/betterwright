@@ -20,6 +20,12 @@ export interface BetterWrightArtifact {
   [key: string]: unknown;
 }
 
+export interface SkillHint {
+  name: string;
+  description: string;
+  path: string;
+}
+
 export interface ResultEnvelopeBase {
   console?: unknown[];
   events?: unknown[];
@@ -27,6 +33,8 @@ export interface ResultEnvelopeBase {
   warnings?: string[];
   challenges?: unknown[];
   pages?: unknown[];
+  /** Skill packs whose autoInject.url patterns match an open page. */
+  skills?: SkillHint[];
   profileMode?: string;
   durationMs?: number;
   envelopeTruncated?: boolean;

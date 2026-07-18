@@ -56,9 +56,9 @@ try {
   const missing = required.filter((name) => !paths.has(name));
   if (missing.length) throw new Error(`npm tarball is missing: ${missing.join(", ")}`);
 
-  const forbidden = packed.files
-    .map((entry) => entry.path)
-    .filter((name) => /(^|\/)(node_modules|tests|artifacts|\.betterwright)(\/|$)/.test(name));
+  const forbidden = [...paths].filter((name) =>
+    /(^|\/)(node_modules|tests|artifacts|\.betterwright)(\/|$)/.test(name),
+  );
   if (forbidden.length) throw new Error(`npm tarball contains private/dev files: ${forbidden.join(", ")}`);
   if (packed.size > 1_000_000) throw new Error(`npm tarball is unexpectedly large: ${packed.size} bytes`);
 
@@ -121,11 +121,11 @@ try {
       "void [result, decision, blocks, guardrails, createPiExtension, METADATA_RESOLVER_RULES, runMcpServer];",
     ].join("\n"),
   );
-  const typescript = path.join(root, "node_modules", "typescript", "bin", "tsc");
+  const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");
   run(
     process.execPath,
     [
-      typescript,
+      tsc,
       "--noEmit",
       "--strict",
       "--target",

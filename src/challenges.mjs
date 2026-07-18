@@ -81,11 +81,7 @@ function normalizeMetadata(metadata) {
   const input = isRecord(metadata) ? metadata : {};
   const nestedMain = [input.main, input.mainPage, input.page].find(isRecord);
   const main = normalizeSource(nestedMain || input, "main", null, input);
-  const frameValues = Array.isArray(input.frames)
-    ? input.frames
-    : Array.isArray(input.childFrames)
-      ? input.childFrames
-      : [];
+  const frameValues = [input.frames, input.childFrames].find(Array.isArray) || [];
   const frames = frameValues
     .filter(isRecord)
     .map((frame, index) => normalizeSource(frame, "frame", index));
@@ -198,16 +194,10 @@ function genericTextSignal(source) {
   const text = `${title} ${body}`.trim();
   if (!text) return null;
 
-  const shortHumanPrompt =
-    body.length <= 240 &&
-    /^(?:please )?(?:verify|confirm|prove)(?: that)? you(?: are|'re) (?:a )?human[.!]?$/.test(
-      body,
-    );
-  const humanHeading =
-    title.length <= 120 &&
-    /^(?:please )?(?:verify|confirm|prove)(?: that)? you(?: are|'re) (?:a )?human[.!]?$/.test(
-      title,
-    );
+  const humanPromptPattern =
+    /^(?:please )?(?:verify|confirm|prove)(?: that)? you(?: are|'re) (?:a )?human[.!]?$/;
+  const shortHumanPrompt = body.length <= 240 && humanPromptPattern.test(body);
+  const humanHeading = title.length <= 120 && humanPromptPattern.test(title);
   const blockingHumanPrompt =
     /(?:please )?(?:verify|confirm|prove)(?: that)? you(?: are|'re) (?:a )?human (?:to|before you) (?:continue|proceed|access|submit|search)/.test(
       text,
@@ -245,12 +235,11 @@ function genericTextSignal(source) {
 }
 
 function challengeResult(main, match) {
-  const challengeUrl = match.source.url || main.url;
   return {
     type: "bot_challenge",
     provider: match.provider,
     url: main.url,
-    challengeUrl,
+    challengeUrl: match.source.url || main.url,
     detectedIn: match.source.kind,
     signal: match.signal,
     solve: {
@@ -282,37 +271,22 @@ export function isPublicSearchNavigation(url) {
 /** Detect a visible CAPTCHA/bot challenge from serializable page and frame metadata. */
 export function detectBotChallenge(metadata = {}) {
   const { main, frames, solvedProviders } = normalizeMetadata(metadata);
-  const searchMatch = searchProviderTextSignal(main);
-  if (
-    searchMatch &&
-    !main.completed &&
-    !solvedProviders.has(searchMatch.provider)
-  ) {
-    return challengeResult(main, searchMatch);
-  }
+  const firstMatch = (sources, signalFor) => {
+    for (const source of sources) {
+      const match = signalFor(source);
+      if (match && !source.completed && !solvedProviders.has(match.provider)) {
+        return match;
+      }
+    }
+    return null;
+  };
 
   const sources = [main, ...frames];
-  for (const source of sources) {
-    const urlMatch = challengeUrlSignal(source);
-    if (
-      urlMatch &&
-      !source.completed &&
-      !solvedProviders.has(urlMatch.provider)
-    ) {
-      return challengeResult(main, urlMatch);
-    }
-  }
-  for (const source of sources) {
-    const textMatch = genericTextSignal(source);
-    if (
-      textMatch &&
-      !source.completed &&
-      !solvedProviders.has(textMatch.provider)
-    ) {
-      return challengeResult(main, textMatch);
-    }
-  }
-  return null;
+  const match =
+    firstMatch([main], searchProviderTextSignal) ||
+    firstMatch(sources, challengeUrlSignal) ||
+    firstMatch(sources, genericTextSignal);
+  return match ? challengeResult(main, match) : null;
 }
 
 export { PUBLIC_SEARCH_BLOCK_ADVICE, SEARCH_CHALLENGE_ADVICE };

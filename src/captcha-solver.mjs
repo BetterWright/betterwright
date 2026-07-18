@@ -98,7 +98,7 @@ function providerFromUrl(url) {
   const host = parsed?.hostname.toLowerCase() || "";
   if (!host) return "generic";
   if (hostIs(host, "hcaptcha.com")) return "hcaptcha";
-  if (hostIs(host, "challenges.cloudflare.com") || hostIs(host, "cloudflare.com")) {
+  if (hostIs(host, "cloudflare.com")) {
     return parsed.pathname.toLowerCase().includes("turnstile") ? "turnstile" : "cloudflare";
   }
   if (isGoogleHost(host) || hostIs(host, "recaptcha.net")) {
@@ -146,8 +146,9 @@ export function classifyChallengeStage(metadata = {}) {
 
   for (const candidate of sources) {
     const text = normalizedText(`${candidate.title}\n${candidate.text}`);
-    const url = stringValue(candidate.url).toLowerCase();
-    const path = parsedUrl(candidate.url)?.pathname.toLowerCase() || "";
+    const url = candidate.url.toLowerCase();
+    const parsed = parsedUrl(candidate.url);
+    const path = parsed?.pathname.toLowerCase() || "";
     const fromUrl = providerFromUrl(candidate.url);
     if (fromUrl !== "generic") provider = fromUrl;
 
@@ -171,7 +172,7 @@ export function classifyChallengeStage(metadata = {}) {
       stage = CAPTCHA_STAGES.MANAGED;
       signal = "cloudflare_managed";
       source = candidate;
-      provider = provider === "generic" ? "cloudflare" : provider;
+      if (provider === "generic") provider = "cloudflare";
       // Keep scanning frames for an image-grid escalation; do not let main copy win.
       if (candidate.kind === "frame") continue;
       break;
@@ -219,7 +220,7 @@ export function classifyChallengeStage(metadata = {}) {
     }
 
     if (
-      (stage === CAPTCHA_STAGES.NONE || stage === CAPTCHA_STAGES.UNKNOWN) &&
+      stage === CAPTCHA_STAGES.NONE &&
       TEXT_CAPTCHA_TEXT.test(text) &&
       /captcha|challenge|security/i.test(text)
     ) {
