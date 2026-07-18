@@ -5,8 +5,8 @@
 // The model writes normal Playwright JavaScript, but it never receives Node's
 // process, module loader, filesystem, or the route APIs that protect the host's
 // network policy.  This is defense in depth, not a claim that node:vm is a
-// security boundary.  The non-removable metadata endpoint floor is installed
-// on Chromium's command line before any model code can run.
+// security boundary.  The non-removable metadata endpoint floor is enforced by
+// the transport guard and NetworkPolicy before model code can reach the network.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -38,6 +38,7 @@ import {
   assertProfileNotNewer,
   cloakBinaryInfo,
   launchCloakPersistentContext,
+  managedCloakArgs,
   managedCloakViewport,
 } from "./cloak.mjs";
 import {
@@ -75,9 +76,11 @@ const DEFAULT_SCREENSHOT_PIXEL_LIMIT = 40_000_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const MAX_ACTIVE_SECRETS = 200;
 
-// Chromium applies these mappings below page/network routing.  They remain in
-// force even if evaluated code finds a way around the best-effort JS facades.
-// Current Chromium spells the resolver failure sentinel "^NOTFOUND".
+/**
+ * @deprecated Retained for source compatibility. BetterWright no longer passes
+ * `--host-resolver-rules` because Chromium displays a persistent unsupported
+ * command-line warning whenever that flag is present.
+ */
 export const METADATA_RESOLVER_RULES = [
   "MAP metadata.google.internal ^NOTFOUND",
   "MAP metadata.goog ^NOTFOUND",
@@ -1232,13 +1235,9 @@ async function ensureBrowser(config) {
     const transportProxyPort = await guardProxy.ensure();
 
     const headless = launchConfig.headless !== false;
-    const args = [
-      `--host-resolver-rules=${METADATA_RESOLVER_RULES}`,
-      // WebRTC is not represented by Playwright request routing and can
-      // otherwise send STUN/data-channel UDP directly around a TCP proxy.
-      // Force it onto the configured proxy/TCP path instead.
-      "--webrtc-ip-handling-policy=disable_non_proxied_udp",
-    ];
+    const args = managedCloakArgs(
+      fingerprintSeedForProfile(profileLock.profileDir),
+    );
     const proxy = {
       server: `socks5://127.0.0.1:${transportProxyPort}`,
       // Chromium otherwise bypasses the proxy for localhost/link-local
@@ -1253,7 +1252,6 @@ async function ensureBrowser(config) {
     // not appear to change hardware on every restart. Its blanket humanizer is
     // intentionally disabled; BetterWright's frame-safe human helpers remain
     // the only model-facing interaction layer.
-    args.push(`--fingerprint=${fingerprintSeedForProfile(profileLock.profileDir)}`);
     const binaryInfo = await cloakBinaryInfo();
     if (!profileLock.ephemeral) {
       assertProfileNotNewer(profileLock.profileDir, binaryInfo?.version);
