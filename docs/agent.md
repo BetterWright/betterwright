@@ -81,7 +81,7 @@ where you type tasks and watch the agent work:
 ```
 $ betterwright --model codex
 BetterWright — interactive agent console
-model codex · session default · headless
+model codex · reasoning low · session default · headless
 Type a task and press Enter. /help for commands, /exit or Ctrl-D to quit.
 
 ▸ what is the page title of example.com
