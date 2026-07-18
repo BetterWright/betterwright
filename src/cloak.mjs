@@ -36,28 +36,20 @@ export function assertProfileNotNewer(profileDir, runningVersion) {
   }
 }
 
-function isFreeDarwinV145(binaryInfo) {
+function isFreeBinary(binaryInfo, platformPrefix, versionPrefix) {
   return (
     binaryInfo?.tier === "free" &&
-    String(binaryInfo?.platform || "").startsWith("darwin-") &&
-    String(binaryInfo?.version || "").startsWith("145.")
-  );
-}
-
-function isFreeLinuxV146(binaryInfo) {
-  return (
-    binaryInfo?.tier === "free" &&
-    String(binaryInfo?.platform || "").startsWith("linux-") &&
-    String(binaryInfo?.version || "").startsWith("146.")
+    String(binaryInfo?.platform || "").startsWith(platformPrefix) &&
+    String(binaryInfo?.version || "").startsWith(versionPrefix)
   );
 }
 
 /** Keep known Cloak/X11 viewport combinations coherent and non-zero. */
 export function managedCloakViewport(binaryInfo, headless) {
-  if (headless && isFreeDarwinV145(binaryInfo)) {
+  if (headless && isFreeBinary(binaryInfo, "darwin-", "145.")) {
     return { width: 1438, height: 679 };
   }
-  if (!headless && isFreeLinuxV146(binaryInfo)) {
+  if (!headless && isFreeBinary(binaryInfo, "linux-", "146.")) {
     return { width: 1365, height: 900 };
   }
   return undefined;
@@ -74,12 +66,12 @@ export async function loadCloakBrowser() {
   if (!cloakModulePromise) {
     cloakModulePromise = import(cloakEntrypoint()).catch((error) => {
       cloakModulePromise = null;
-      const wrapped = new Error(
+      throw new Error(
         "CloakBrowser is the managed BetterWright browser but its wrapper is not " +
           "available. Run `betterwright setup` to install the managed CloakBrowser runtime.",
+        { cause: error },
       );
-      wrapped.cause = error;
-      throw wrapped;
+
     });
   }
   return cloakModulePromise;

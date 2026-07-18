@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+// Head-to-head: BetterWright's built-in agent harness (`betterwright exec`) vs
+// Aside's agent (`aside exec`), both plugged into the SAME model
+// (codex / gpt-5.6-sol) at the SAME reasoning effort (low). Matching the model
+// isolates the AGENT SCAFFOLD — the observe/act/verify loop — which is the thing
+// this benchmark measures. The browser runtime itself was already at parity in
+// benchmarks/asidewright-headtohead.
+//
+//   node benchmarks/exec-headtohead/run.mjs [--only <substr>] [--timeout <ms>]
+//
+// Writes results.json next to this file; REPORT.md is authored from it.
+
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.resolve(HERE, "..", "..");
+const MODEL = "gpt-5.6-sol";
+const EFFORT = "low";
+
+const argv = process.argv.slice(2);
+const onlyIndex = argv.indexOf("--only");
+const only = onlyIndex !== -1 ? argv[onlyIndex + 1] : null;
+const timeoutIndex = argv.indexOf("--timeout");
+const TIMEOUT_MS = timeoutIndex !== -1 ? Number(argv[timeoutIndex + 1]) : 150_000;
+
+// Varied scenarios, escalating from a trivial baseline to multi-step,
+// multi-tab, form interaction, and synthesis.
+const TASKS = [
+  {
+    id: "baseline-title",
+    scenario: "Trivial baseline",
+    task: "Go to https://example.com and tell me the exact page title.",
+  },
+  {
+    id: "hn-top",
+    scenario: "Single extract (dynamic)",
+    task: "Go to news.ycombinator.com and tell me the title and points of the current #1 story.",
+  },
+  {
+    id: "wikipedia-fact",
+    scenario: "Static lookup",
+    task: "On Wikipedia, what is the height of the Eiffel Tower in metres (including antennas)?",
+  },
+  {
+    id: "github-release",
+    scenario: "Multi-step navigation",
+    task: "Go to the GitHub repository microsoft/playwright and tell me the tag name of its latest release.",
+  },
+  {
+    id: "compare-heights",
+    scenario: "Multi-tab compare",
+    task: "Which is taller: the Eiffel Tower or the Statue of Liberty (ground to torch)? Give both heights and the answer.",
+  },
+  {
+    id: "hn-top3",
+    scenario: "Read + synthesize",
+    task: "Go to news.ycombinator.com and list the titles of the top 3 stories, in order.",
+  },
+  {
+    id: "wiki-search",
+    scenario: "Form / search interaction",
+    task: "Use the search box on wikipedia.org to search for 'Playwright (software)', open the article, and give me the first sentence.",
+  },
+];
+
+// Strip ANSI SGR sequences (ESC [ … m). The ESC byte is built from its char
+// code so there is no literal control character in the source.
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+function stripAnsi(s) {
+  return s.replace(ANSI, "");
+}
+
+function run(cmd, args, { cwd } = {}) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    // stdin = ignore so children that read stdin (aside exec) get EOF instead of
+    // blocking on an open, dataless pipe.
+    const child = spawn(cmd, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, TIMEOUT_MS);
+    child.stdout.on("data", (d) => {
+      stdout += d;
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d;
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr, elapsedMs: Date.now() - start, timedOut });
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr: String(err), elapsedMs: Date.now() - start, timedOut });
+    });
+  });
+}
+
+function lastMeaningfulLine(text) {
+  const lines = stripAnsi(text)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return lines[lines.length - 1] || "";
+}
+
+async function runBetterwright(task) {
+  const r = await run(
+    "node",
+    ["bin/betterwright.mjs", "exec", task, "--model", "codex", "--effort", EFFORT, "--max-steps", "16"],
+    { cwd: REPO },
+  );
+  let parsed = null;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch {
+    // non-JSON (error) — leave null
+  }
+  return {
+    elapsedMs: r.elapsedMs,
+    timedOut: r.timedOut,
+    ok: parsed?.ok ?? false,
+    steps: parsed?.steps ?? null,
+    answer: parsed?.answer ?? lastMeaningfulLine(r.stderr) ?? "",
+    proof: parsed?.proof ?? null,
+    raw: r.stdout.slice(0, 4000),
+  };
+}
+
+async function runAside(task) {
+  const r = await run("aside", ["exec", "-m", `openai-codex/${MODEL}`, "--effort", EFFORT, task]);
+  // Count `repl(` invocations as a rough step proxy for Aside.
+  const steps = (stripAnsi(r.stdout).match(/^\s*repl\(/gm) || []).length || null;
+  return {
+    elapsedMs: r.elapsedMs,
+    timedOut: r.timedOut,
+    ok: r.code === 0 && !r.timedOut,
+    steps,
+    answer: lastMeaningfulLine(r.stdout),
+    raw: stripAnsi(r.stdout).slice(-4000),
+  };
+}
+
+async function main() {
+  const tasks = only ? TASKS.filter((t) => t.id.includes(only) || t.scenario.includes(only)) : TASKS;
+  const results = [];
+  for (const t of tasks) {
+    process.stderr.write(`\n### ${t.id} — ${t.scenario}\n`);
+    process.stderr.write("  betterwright… ");
+    const bw = await runBetterwright(t.task);
+    process.stderr.write(`${(bw.elapsedMs / 1000).toFixed(1)}s ${bw.ok ? "ok" : "FAIL"} (${bw.steps} steps)\n`);
+    process.stderr.write("  aside……… ");
+    const aside = await runAside(t.task);
+    process.stderr.write(`${(aside.elapsedMs / 1000).toFixed(1)}s ${aside.ok ? "ok" : "FAIL"} (${aside.steps} steps)\n`);
+    results.push({ ...t, betterwright: bw, aside });
+    fs.writeFileSync(path.join(HERE, "results.json"), JSON.stringify({ model: MODEL, effort: EFFORT, results }, null, 2));
+  }
+  process.stderr.write("\nDone. results.json written.\n");
+}
+
+main();

@@ -113,11 +113,32 @@ navigate, result, clean shutdown — completes in about a second.
 by an AI agent: point your coding agent at it and it can wire any host end to
 end.
 
+### Or let BetterWright drive itself (`betterwright exec`)
+
+Everything above is the *bring your own agent* shape — an external harness drives
+BetterWright. BetterWright also ships its own browser-tuned agent loop, so you
+can hand it a task and a model and let it run:
+
+```bash
+betterwright auth --login codex        # opens "Sign in to Codex with ChatGPT"
+betterwright exec "find the top Hacker News story and give me its title and points" --model codex
+```
+
+Pick the model with `--model claude|codex|grok`. `codex` and `grok` sign in
+through BetterWright's own OAuth flow (`betterwright auth --login codex|grok`) and
+call the ChatGPT / xAI backends directly — no API key to paste, no router; `claude`
+uses the Anthropic SDK (`npm install @anthropic-ai/sdk`, `ANTHROPIC_API_KEY`). The
+model is a small pluggable interface, so you can also plug in your own model or
+agent. The loop observes with `snapshot`, acts, verifies, captures a proof
+screenshot, and finishes — see [docs/agent.md](docs/agent.md).
+
 ### Pi Coding Agent (native package)
 
 BetterWright is a native Pi package. Its manifest loads a persistent `browser`
-tool, an approval-gated `browser_download` tool, vision screenshots, and the
-operator prompt — no skill file or MCP hop needed:
+tool, a trusted `browser_login` tool that fills saved or generated credentials
+without the secret ever entering the conversation, an approval-gated
+`browser_download` tool, vision screenshots, and the operator prompt — no skill
+file or MCP hop needed:
 
 ```bash
 pi install npm:betterwright
@@ -131,6 +152,7 @@ See the [Pi integration guide](SETUP.md#2--pi-coding-agent) and the reproducible
 ### MCP (if you prefer it)
 
 For MCP clients, BetterWright also ships a stdio server with `browser`,
+`browser_login` (trusted credential fill, secret never returned),
 `browser_download`, and `browser_doctor` tools:
 
 ```bash

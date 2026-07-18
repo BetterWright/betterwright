@@ -71,6 +71,10 @@ Refs are assigned fresh on every snapshot and go stale when the page changes —
 re-snapshot after navigations or re-renders before using one, and never guess a
 ref you have not seen in the current snapshot.
 
+Filled `<input type="password">` values are replaced with `[redacted]` in the
+snapshot (username and other fields read normally), so a routine read never
+pulls a just-typed or extension-filled secret into model context.
+
 | Option | Default | Notes |
 | --- | --- | --- |
 | `interactive` | `false` | Keep only actionable elements (buttons, links, inputs, `cursor: pointer`, …) plus their ancestors. The cheapest way to see what you can do on a page. |
@@ -223,15 +227,19 @@ filling is done from trusted host code instead.
 ```js
 await credentials.save({ username: "alice", password: "…" });
 await credentials.list();                          // metadata only, no passwords
+await credentials.list({ text: "work", category: "login" }); // filtered
 await credentials.update({ id, label: "work" });
 await credentials.remove({ id });
 ```
 
 All operations are scoped to the current page's origin, which must be `http(s)`.
-To actually fill a login or signup form, the host calls `bw.fillCredential(...)`
-/ `bw.generateAndFillCredential(...)` — the
-worker types the password and any confirm-password field outside the sandbox and
-returns only metadata. See [credentials.md](credentials.md) for the full contract.
+`list()` accepts a `{text, category}` filter; `category` defaults to `login`,
+with `credit-card`, `identity`, `api-credential`, `secure-note`, and `ssh-key`
+available for non-login records. To actually fill a login or signup form, the
+host calls `bw.fillCredential(...)` / `bw.generateAndFillCredential(...)`, or the
+MCP/Pi `browser_login` tool — the worker types the password and any
+confirm-password field outside the sandbox and returns only metadata. See
+[credentials.md](credentials.md) for the full contract.
 
 ## Console
 

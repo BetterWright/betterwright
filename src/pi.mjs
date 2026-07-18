@@ -18,31 +18,16 @@ const IMAGE_MIME_TYPES = new Map([
 
 function artifactImagePath(artifact) {
   const media = String(artifact?.media || "");
-  const candidate = media.startsWith("MEDIA:")
-    ? media.slice("MEDIA:".length)
-    : String(artifact?.path || "");
+  const isMedia = media.startsWith("MEDIA:");
+  const candidate = isMedia ? media.slice("MEDIA:".length) : String(artifact?.path || "");
   const mimeType = IMAGE_MIME_TYPES.get(path.extname(candidate).toLowerCase());
   if (!path.isAbsolute(candidate) || !mimeType) return null;
   const kind = String(artifact?.kind || "");
-  if (!SCREENSHOT_KINDS.has(kind) && !media.startsWith("MEDIA:")) return null;
+  if (!isMedia && !SCREENSHOT_KINDS.has(kind)) return null;
   return { path: candidate, mimeType, kind };
 }
 
-/** Return safe, local image artifacts that Pi can receive as vision input. */
-export function piImageArtifacts(result) {
-  const images = [];
-  const seen = new Set();
-  for (const artifact of result?.artifacts || []) {
-    const image = artifactImagePath(artifact);
-    if (!image || seen.has(image.path)) continue;
-    seen.add(image.path);
-    images.push({ path: image.path, mimeType: image.mimeType });
-  }
-  return images;
-}
-
-/** Select the screenshot that best represents the browser step in a trace. */
-export function piPrimaryImageArtifact(result) {
+function dedupedImages(result) {
   const images = [];
   const seen = new Set();
   for (const artifact of result?.artifacts || []) {
@@ -51,6 +36,17 @@ export function piPrimaryImageArtifact(result) {
     seen.add(image.path);
     images.push(image);
   }
+  return images;
+}
+
+/** Return safe, local image artifacts that Pi can receive as vision input. */
+export function piImageArtifacts(result) {
+  return dedupedImages(result).map((image) => ({ path: image.path, mimeType: image.mimeType }));
+}
+
+/** Select the screenshot that best represents the browser step in a trace. */
+export function piPrimaryImageArtifact(result) {
+  const images = dedupedImages(result);
   const selected = images.findLast((image) => image.kind !== "captcha") || images.at(-1);
   return selected ? { path: selected.path, mimeType: selected.mimeType } : null;
 }

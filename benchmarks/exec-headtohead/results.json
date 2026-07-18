@@ -1,0 +1,160 @@
+{
+  "model": "gpt-5.6-sol",
+  "effort": "low",
+  "results": [
+    {
+      "id": "baseline-title",
+      "scenario": "Trivial baseline",
+      "task": "Go to https://example.com and tell me the exact page title.",
+      "betterwright": {
+        "elapsedMs": 7205,
+        "timedOut": false,
+        "ok": true,
+        "steps": 2,
+        "answer": "The exact page title is **Example Domain**.",
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360511452-cf218e.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The exact page title is **Example Domain**.\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360511452-cf218e.png\"\n}\n"
+      },
+      "aside": {
+        "elapsedMs": 6905,
+        "timedOut": false,
+        "ok": true,
+        "steps": 1,
+        "answer": "The exact page title is **“Example Domain”**.",
+        "raw": "Thinking: **Planning simple webpage setup**\n\n\n\nrepl(title: 'Checking example.com title',\n     code: \"const p1 = await openTab('https://example.com'); const s1 = await snapshot(p1, {interactive:true}); console.log(s1.tree);\")\n\n > ✔︎ Opened a new tab and set it active: tabs[0], page → Example Domain (https://example.com/)\n# note: interactive (clickable / focusable) elements only.\n- title: \"Example Domain\" [url=https://example.com/]\n- heading \"Example Domain\" [level=1]\n- text: \"This domain is for use in documentation examples without needing permission. Avoid use in operations.\"\n- link \"Learn more\" [ref=e1]\nThe exact page title is **“Example Domain”**.\n"
+      }
+    },
+    {
+      "id": "hn-top",
+      "scenario": "Single extract (dynamic)",
+      "task": "Go to news.ycombinator.com and tell me the title and points of the current #1 story.",
+      "betterwright": {
+        "elapsedMs": 9595,
+        "timedOut": false,
+        "ok": true,
+        "steps": 2,
+        "answer": "The current #1 Hacker News story is **“Regressive JPEGs”** with **144 points**.",
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360528266-c35fea.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The current #1 Hacker News story is **“Regressive JPEGs”** with **144 points**.\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360528266-c35fea.png\"\n}\n"
+      },
+      "aside": {
+        "elapsedMs": 10107,
+        "timedOut": false,
+        "ok": true,
+        "steps": 1,
+        "answer": "The current #1 Hacker News story is **“Regressive JPEGs”** with **144 points**.",
+        "raw": " text: \"(\"\n    - link \"crowdsupply.com\" [ref=e155]\n    - text: \")96 points  by\"\n    - link \"surprisetalk\" [ref=e156]\n    - link \"10 hours ago\" [ref=e157]\n    - text: \"|\"\n    - link \"hide\" [ref=e158]\n    - text: \"|\"\n    - link \"35 comments\" [ref=e159]\n    - text: \"23.\"\n    - link \"upvote\" [ref=e160]\n    - link \"The Isomorphic Labs Drug Design Engine unlocks a new frontier beyond AlphaFold\" [ref=e161]\n    - text: \"(\"\n    - link \"isomorphiclabs.com\" [ref=e162]\n    - text: \")68 points  by\"\n    - link \"andsoitis\" [ref=e163]\n    - link \"8 hours ago\" [ref=e164]\n    - text: \"|\"\n    - link \"hide\" [ref=e165]\n    - text: \"|\"\n    - link \"6 comments\" [ref=e166]\n    - text: \"24.\"\n    - link \"upvote\" [ref=e167]\n    - link \"Kaiser nurses say AI, surveillance are making their jobs and patient care worse\" [ref=e168]\n    - text: \"(\"\n    - link \"localnewsmatters.org\" [ref=e169]\n    - text: \")483 points  by\"\n    - link \"gnabgib\" [ref=e170]\n    - link \"9 hours ago\" [ref=e171]\n    - text: \"|\"\n    - link \"hide\" [ref=e172]\n    - text: \"|\"\n    - link \"307 comments\" [ref=e173]\n    - text: \"25.\"\n    - link \"upvote\" [ref=e174]\n    - link \"The state of open source AI\" [ref=e175]\n    - text: \"(\"\n    - link \"stateofopensource.ai\" [ref=e176]\n    - text: \")419 points  by\"\n    - link \"rellem\" [ref=e177]\n    - link \"17 hours ago\" [ref=e178]\n    - text: \"|\"\n    - link \"hide\" [ref=e179]\n    - text: \"|\"\n    - link \"302 comments\" [ref=e180]\n    - text: \"26.\"\n    - link \"upvote\" [ref=e181]\n    - link \"Painting the sides of railroad rails white to reduce derailment\" [ref=e182]\n    - text: \"(\"\n    - link \"up.com\" [ref=e183]\n    - text: \")84 points  by\"\n    - link \"zdw\" [ref=e184]\n    - link \"11 hours ago\" [ref=e185]\n    - text: \"|\"\n    - link \"hide\" [ref=e186]\n    - text: \"|\"\n    - link \"44 comments\" [ref=e187]\n    - text: \"27.\"\n    - link \"upvote\" [ref=e188]\n    - link \"Show HN: A zoomable timeline of 4M Wikipedia events\" [ref=e189]\n    - text: \"(\"\n    - link \"diena.co\" [ref=e190]\n    - text: \")87 points  by\"\n    - link \"lortex\" [ref=e191]\n    - link \"13 hours ago\" [ref=e192]\n    - text: \"|\"\n    - link \"hide\" [ref=e193]\n    - text: \"|\"\n    - link \"30 comments\" [ref=e194]\n    - text: \"28.\"\n    - link \"upvote\" [ref=e195]\n    - link \"Frank Lloyd Wright’s first home\" [ref=e196]\n    - text: \"(\"\n    - link \"architecturaldigest.com\" [ref=e197]\n    - text: \")99 points  by\"\n    - link \"NaOH\" [ref=e198]\n    - link \"15 hours ago\" [ref=e199]\n    - text: \"|\"\n    - link \"hide\" [ref=e200]\n    - text: \"|\"\n    - link \"49 comments\" [ref=e201]\n    - text: \"29.\"\n    - link \"upvote\" [ref=e202]\n    - link \"Three ways people respond to a problem (other than solving it)\" [ref=e203]\n    - text: \"(\"\n    - link \"improvesomething.today\" [ref=e204]\n    - text: \")228 points  by\"\n    - link \"surprisetalk\" [ref=e205]\n    - link \"17 hours ago\" [ref=e206]\n    - text: \"|\"\n    - link \"hide\" [ref=e207]\n    - text: \"|\"\n    - link \"127 comments\" [ref=e208]\n    - text: \"30.\"\n    - link \"upvote\" [ref=e209]\n    - link \"Show HN: Watch bots interact with an SSH honeypot in real time\" [ref=e210]\n    - text: \"(\"\n    - link \"honeypotlive.cc\" [ref=e211]\n    - text: \")156 points  by\"\n    - link \"tusksm\" [ref=e212]\n    - link \"17 hours ago\" [ref=e213]\n    - text: \"|\"\n    - link \"hide\" [ref=e214]\n    - text: \"|\"\n    - link \"57 comments\" [ref=e215]\n    - link \"More\" [ref=e216]\n  - table\n  - link \"Consider applying for YC's Fall 2026 batch! are open till July 27.\" [ref=e217]: \"Consider applying for YC's Fall 2026 batch! Applications  are open till July 27.\"\n  - link \"Guidelines\" [ref=e218]\n  - text: \"|\"\n  - link \"FAQ\" [ref=e219]\n  - text: \"|\"\n  - link \"Lists\" [ref=e220]\n  - text: \"|\"\n  - link \"API\" [ref=e221]\n  - text: \"|\"\n  - link \"Security\" [ref=e222]\n  - text: \"|\"\n  - link \"Legal\" [ref=e223]\n  - text: \"|\"\n  - link \"Apply to YC\" [ref=e224]\n  - text: \"|\"\n  - link \"Contact\" [ref=e225]\n  - form:\n    - text: \"Search:\"\n    - textbox [ref=e226]\nThe current #1 Hacker News story is **“Regressive JPEGs”** with **144 points**.\n"
+      }
+    },
+    {
+      "id": "wikipedia-fact",
+      "scenario": "Static lookup",
+      "task": "On Wikipedia, what is the height of the Eiffel Tower in metres (including antennas)?",
+      "betterwright": {
+        "elapsedMs": 7036,
+        "timedOut": false,
+        "ok": true,
+        "steps": 2,
+        "answer": "According to Wikipedia, the Eiffel Tower is **330 metres** tall, including antennas.",
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360546767-6535c1.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"According to Wikipedia, the Eiffel Tower is **330 metres** tall, including antennas.\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360546767-6535c1.png\"\n}\n"
+      },
+      "aside": {
+        "elapsedMs": 14315,
+        "timedOut": false,
+        "ok": true,
+        "steps": null,
+        "answer": "The Eiffel Tower is **330 metres** tall, including antennas. <citation refs=\"6KW5_VndQf1A9MxT8QxrF\">Wikipedia states the tower is 330 metres (1,083 ft) tall.</citation>",
+        "raw": "he time.\\n\\nExperimental programmes were organised and performers were invited to them, such as Sacha Guitry and Yvonne Printemps.\\n\\n**The Beginnings of Television**\\n\\nIn 1935, a television studio was set up in rue de Grenelle and the Eiffel Tower transmitter began to operate. From 60 lines at the beginning of the installation, they then passed to a high definition of 180 lines.\\n\\nOn the 2 nd June 1953, thanks to the Eiffel Tower’s transmitter, television showed the whole of France the celebrations for the Queen of England’s coronation live. This was the beginning of Eurovision.\\n\\n**The Tower Has Grown with Television’s Progress**\\n\\nIn 1957, live satellite dishes were installed, providing the three television channels’ programmes using 819 lines, along with the frequency modulation radio transmitter. The new antenna made the Eiffel Tower reach a height of 320.75 metres.\\nIn 2000, a new UHF (Ultra High Frequency) antenna led to another modification in the Tower’s height, which was now 324 m.\\n\\nIn 2010, considerable work on the TDF equipment has been done to prepare for the complete changeover to digital television in Ile-de-France.\\n\\n## Current key figures\\n\\n* Number of TV channels broadcast: 30\\n* Number of radio stations: 32\\n\\nAntennas\\n\\n120\\n\\nThe number\\n\\n**Cet article vous a plu ? Partagez-le**\\n\\n* [Facebook](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fwww.toureiffel.paris%2Fen%2Fthe-monument%2Feiffel-tower-and-science&title=The+Eiffel+Tower+Laboratory)\\n* [Twitter](https://twitter.com/intent/tweet?url=https%3A%2F%2Fwww.toureiffel.paris%2Fen%2Fthe-monument%2Feiffel-tower-and-science&text=The+Eiffel+Tower+Laboratory)\\n* Whatsapp\\n* Email\\n\\n### On the same theme\\n\\nGustave Eiffel\\n\\n#### Gustave Eiffel\\n\\nThe Tower is not Gustave Eiffel’s only creation.\"]},{\"source_id\":\"mjgCTGFPiI9Nb-l5dhRul\",\"url\":\"https://en.wikipedia.org/wiki/List_of_tallest_buildings_in_the_Paris_region\",\"title\":\"List of tallest buildings in the Paris region - Wikipedia\",\"publish_date\":\"2026-07-10\",\"excerpts\":[\"|Tall buildings in the Paris region |\\n| --- | --- |\\n|\\n\\nSkyline of La Défense in 2023 |\\n|Tallest building |The Link\\\") (2025) |\\n|Tallest building height |242 m (794 ft) |\\n|Tallest structure |Eiffel Tower (1889) |\\n|Tallest structure height |330 m (1,083 ft) |\\n|Major clusters |La Défense  \\n13th arrondissement  \\nFront de Seine |\\n|First 150 m+ building |Tour Les Poissons (1970) |\\n|Number of tall buildings (2026) |\\n|Taller than 100 m (328 ft) |85 |\\n|Taller than 150 m (492 ft) |24 |\\n|Taller than 200 m (656 ft) |4 |\\n\\n Towers in the 13th arrondissement  The Front de Seine project in the 15th arrondissement\\n\\nWith a population of over 12 million, Île-de-France , often called the Paris region, is home to most of the tallest buildings in France. Many of the tallest buildings in the Paris metropolitan area are located outside of the city boundaries of Paris, especially in the business district of La Défense .\\nThe tallest structure in Paris is the Eiffel Tower in the city's 7th arrondissement at a height of 330 metres (1,083 ft). Completed in 1889 as the gateway to the Exposition Universelle\\\") , the Eiffel Tower was the first man-made structure in the world to exceed 300 m (984 ft), and has since become the city's most famous landmark. The tallest habitable building in the Paris region is The Link\\\") , a 242 metre (794 ft), 52-storey office skyscraper in La Défense built in 2025. As of 2026, there are 85 high-rise buildings in the Paris region that stand over 100 m (328 ft), the most of any metropolitan area in the European Union . 24 skyscrapers in the Paris region are taller than 150 m (492 ft), the fourth-most in Europe after Moscow , Istanbul , and London .\\n\\nVery few high-rises were built in Paris in the first half of the 20th century.\"]}]}\nThe Eiffel Tower is **330 metres** tall, including antennas. <citation refs=\"6KW5_VndQf1A9MxT8QxrF\">Wikipedia states the tower is 330 metres (1,083 ft) tall.</citation>\n"
+      }
+    },
+    {
+      "id": "github-release",
+      "scenario": "Multi-step navigation",
+      "task": "Go to the GitHub repository microsoft/playwright and tell me the tag name of its latest release.",
+      "betterwright": {
+        "elapsedMs": 9339,
+        "timedOut": false,
+        "ok": true,
+        "steps": 2,
+        "answer": "The latest release tag for `microsoft/playwright` is **`v1.61.1`**.",
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360570402-841952.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The latest release tag for `microsoft/playwright` is **`v1.61.1`**.\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360570402-841952.png\"\n}\n"
+      },
+      "aside": {
+        "elapsedMs": 12019,
+        "timedOut": false,
+        "ok": true,
+        "steps": 1,
+        "answer": "The latest release tag is **`v1.61.1`**.",
+        "raw": "unread notifications(g then n)\" [ref=e16]\n  - button \"Open user navigation menu\" [ref=e17]:\n    - image \"CuriosityOS\"\n  - navigation \"Repository\" [ref=e18]:\n    - list:\n      - listitem:\n        - link \"Code\" [ref=e19]\n      - listitem:\n        - link \"Issues (147)\" [ref=e20]\n      - listitem:\n        - link \"Pull requests (17)\" [ref=e21]\n      - listitem:\n        - link \"Agents\" [ref=e22]\n      - listitem:\n        - link \"Actions\" [ref=e23]\n      - listitem:\n        - link \"Models\" [ref=e24]\n      - listitem:\n        - link \"Security and quality\" [ref=e25]\n      - listitem:\n        - link \"Insights\" [ref=e26]\n- main:\n  - navigation \"Breadcrumb\" [ref=e27]:\n    - list:\n      - listitem \"Releases\" [ref=e28]:\n        - link \"Releases\" [ref=e29]\n      - listitem \"v1.61.1\" [ref=e30]:\n        - link \"v1.61.1\" [ref=e31]\n  - heading \"v1.61.1\" [level=1]\n  - link \"Latest\" [ref=e32]\n  - button \"Compare\" [ref=e33]\n  - image \"@dgozman\"\n  - link \"dgozman\" [ref=e34]\n  - text: \"released this\\n\\n       \\n        23 Jun 19:47\\n       last month\"\n  - link [ref=e35]:\n    - img \"Tag\"\n    - text: \"v1.61.1\"\n  - link \"Commit\" [ref=e36]:\n    - img \"Commit\"\n    - text: \"39e3553\"\n  - heading \"Bug Fixes\" [level=3]\n  - list:\n    - listitem \"#41365 [Bug]: Expect.Extend matcher with same name as default matcher in same expect instance overri\" [ref=e37]:\n      - link \"#41365\" [ref=e38]\n      - text: \"[Bug]: Expect.Extend matcher with same name as default matcher in same expect instance overrides default matchers implementation to custom matcher\"\n    - listitem \"#41351 [Bug]: Playwright UI mode: apiRequestContext._wrapApiCall reports unexpected number of bytes \" [ref=e39]:\n      - link \"#41351\" [ref=e40]\n      - text: \"[Bug]: Playwright UI mode: apiRequestContext._wrapApiCall reports unexpected number of bytes (same test passes in headed mode)\"\n    - listitem \"#41360 [Bug]: Trace viewer: message times in websockets are downscaled by 1000\" [ref=e41]:\n      - link \"#41360\" [ref=e42]\n      - text: \"[Bug]: Trace viewer: message times in websockets are downscaled by 1000\"\n    - listitem \"#41311 [Bug]: [Regression]: Sync loader throws \\\"context.conditions?.includes is not a function\\\" on N\" [ref=e43]:\n      - link \"#41311\" [ref=e44]\n      - text: \"[Bug]: [Regression]: Sync loader throws \\\"context.conditions?.includes is not a function\\\" on Node 22.15\"\n    - listitem \"#41371 [Regression]: Sync ESM loader (registerHooks) fails to resolve extensionless .ts subpath impo\" [ref=e45]:\n      - link \"#41371\" [ref=e46]\n      - text: \"[Regression]: Sync ESM loader (registerHooks) fails to resolve extensionless .ts subpath imports across pnpm workspace symlinks\"\n  - generic [ref=e47]:\n    - button \"Assets 2\" [ref=e48]\n    - list:\n      - listitem:\n        - link \"Source code (zip)\" [ref=e49]\n        - text: \"2026-06-22T14:47:10Z last month\"\n      - listitem:\n        - link \"Source code (tar.gz)\" [ref=e50]\n        - text: \"2026-06-22T14:47:10Z last month\"\n  - form:\n    - button \"heart (6): dgozman, 10:47PM on June 22\" [ref=e53]: \"❤️\\n            6\"\n  - text: \"6 people reacted\"\n- contentinfo:\n  - heading \"Footer\" [level=2]\n  - link \"GitHub Homepage\" [ref=e54]\n  - text: \"© 2026 GitHub, Inc.\"\n  - navigation \"Footer\" [ref=e55]:\n    - heading \"Footer navigation\" [level=3]\n    - list \"Footer navigation\":\n      - listitem \"Terms\" [ref=e56]:\n        - link \"Terms\" [ref=e57]\n      - listitem \"Privacy\" [ref=e58]:\n        - link \"Privacy\" [ref=e59]\n      - listitem \"Security\" [ref=e60]:\n        - link \"Security\" [ref=e61]\n      - listitem \"Status\" [ref=e62]:\n        - link \"Status\" [ref=e63]\n      - listitem \"Community\" [ref=e64]:\n        - link \"Community\" [ref=e65]\n      - listitem \"Docs\" [ref=e66]:\n        - link \"Docs\" [ref=e67]\n      - listitem \"Contact\" [ref=e68]:\n        - link \"Contact\" [ref=e69]\n      - listitem:\n        - button \"Manage cookies\" [ref=e70]\n      - listitem:\n        - button \"Do not share my personal information\" [ref=e71]\nThe latest release tag is **`v1.61.1`**.\n"
+      }
+    },
+    {
+      "id": "compare-heights",
+      "scenario": "Multi-tab compare",
+      "task": "Which is taller: the Eiffel Tower or the Statue of Liberty (ground to torch)? Give both heights and the answer.",
+      "betterwright": {
+        "elapsedMs": 36040,
+        "timedOut": false,
+        "ok": true,
+        "steps": 4,
+        "answer": "The **Eiffel Tower is taller**.\n\n- **Eiffel Tower:** 1,083 ft (330 m), including its current antennas\n- **Statue of Liberty (ground to tip of torch):** 305 ft 1 in (92.99 m)\n\nThe Eiffel Tower is about **778 ft (237 m) taller**.",
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360616449-493e79.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The **Eiffel Tower is taller**.\\n\\n- **Eiffel Tower:** 1,083 ft (330 m), including its current antennas\\n- **Statue of Liberty (ground to tip of torch):** 305 ft 1 in (92.99 m)\\n\\nThe Eiffel Tower is about **778 ft (237 m) taller**.\",\n  \"steps\": 4,\n  \"reason\": \"done\",\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360616449-493e79.png\"\n}\n"
+      },
+      "aside": {
+        "elapsedMs": 4199,
+        "timedOut": false,
+        "ok": true,
+        "steps": null,
+        "answer": "**The Eiffel Tower is taller**, by about 237 m (778 ft).",
+        "raw": "- **Eiffel Tower:** 330 m (1,083 ft)\n- **Statue of Liberty, ground to torch:** 93 m (305 ft)\n\n**The Eiffel Tower is taller**, by about 237 m (778 ft).\n"
+      }
+    },
+    {
+      "id": "hn-top3",
+      "scenario": "Read + synthesize",
+      "task": "Go to news.ycombinator.com and list the titles of the top 3 stories, in order.",
+      "betterwright": {
+        "elapsedMs": 8797,
+        "timedOut": false,
+        "ok": true,
+        "steps": 2,
+        "answer": "The top 3 Hacker News stories, in order, are:\n\n1. **Regressive JPEGs**\n2. **AWS: Inaccurate Estimated Billing Data – $1.7 billion**\n3. **Reviving a 15-year-old netbook with Arch Linux**",
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360630554-eb2b3b.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The top 3 Hacker News stories, in order, are:\\n\\n1. **Regressive JPEGs**\\n2. **AWS: Inaccurate Estimated Billing Data – $1.7 billion**\\n3. **Reviving a 15-year-old netbook with Arch Linux**\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360630554-eb2b3b.png\"\n}\n"
+      },
+      "aside": {
+        "elapsedMs": 7544,
+        "timedOut": false,
+        "ok": true,
+        "steps": 1,
+        "answer": "3. Reviving a 15-year-old netbook with Arch Linux",
+        "raw": "    - text: \")98 points  by\"\n    - link \"surprisetalk\" [ref=e156]\n    - link \"10 hours ago\" [ref=e157]\n    - text: \"|\"\n    - link \"hide\" [ref=e158]\n    - text: \"|\"\n    - link \"35 comments\" [ref=e159]\n    - text: \"23.\"\n    - link \"upvote\" [ref=e160]\n    - link \"The Isomorphic Labs Drug Design Engine unlocks a new frontier beyond AlphaFold\" [ref=e161]\n    - text: \"(\"\n    - link \"isomorphiclabs.com\" [ref=e162]\n    - text: \")68 points  by\"\n    - link \"andsoitis\" [ref=e163]\n    - link \"8 hours ago\" [ref=e164]\n    - text: \"|\"\n    - link \"hide\" [ref=e165]\n    - text: \"|\"\n    - link \"6 comments\" [ref=e166]\n    - text: \"24.\"\n    - link \"upvote\" [ref=e167]\n    - link \"Kaiser nurses say AI, surveillance are making their jobs and patient care worse\" [ref=e168]\n    - text: \"(\"\n    - link \"localnewsmatters.org\" [ref=e169]\n    - text: \")483 points  by\"\n    - link \"gnabgib\" [ref=e170]\n    - link \"9 hours ago\" [ref=e171]\n    - text: \"|\"\n    - link \"hide\" [ref=e172]\n    - text: \"|\"\n    - link \"308 comments\" [ref=e173]\n    - text: \"25.\"\n    - link \"upvote\" [ref=e174]\n    - link \"The state of open source AI\" [ref=e175]\n    - text: \"(\"\n    - link \"stateofopensource.ai\" [ref=e176]\n    - text: \")419 points  by\"\n    - link \"rellem\" [ref=e177]\n    - link \"17 hours ago\" [ref=e178]\n    - text: \"|\"\n    - link \"hide\" [ref=e179]\n    - text: \"|\"\n    - link \"302 comments\" [ref=e180]\n    - text: \"26.\"\n    - link \"upvote\" [ref=e181]\n    - link \"Painting the sides of railroad rails white to reduce derailment\" [ref=e182]\n    - text: \"(\"\n    - link \"up.com\" [ref=e183]\n    - text: \")84 points  by\"\n    - link \"zdw\" [ref=e184]\n    - link \"11 hours ago\" [ref=e185]\n    - text: \"|\"\n    - link \"hide\" [ref=e186]\n    - text: \"|\"\n    - link \"44 comments\" [ref=e187]\n    - text: \"27.\"\n    - link \"upvote\" [ref=e188]\n    - link \"Show HN: A zoomable timeline of 4M Wikipedia events\" [ref=e189]\n    - text: \"(\"\n    - link \"diena.co\" [ref=e190]\n    - text: \")87 points  by\"\n    - link \"lortex\" [ref=e191]\n    - link \"13 hours ago\" [ref=e192]\n    - text: \"|\"\n    - link \"hide\" [ref=e193]\n    - text: \"|\"\n    - link \"31 comments\" [ref=e194]\n    - text: \"28.\"\n    - link \"upvote\" [ref=e195]\n    - link \"Frank Lloyd Wright’s first home\" [ref=e196]\n    - text: \"(\"\n    - link \"architecturaldigest.com\" [ref=e197]\n    - text: \")99 points  by\"\n    - link \"NaOH\" [ref=e198]\n    - link \"15 hours ago\" [ref=e199]\n    - text: \"|\"\n    - link \"hide\" [ref=e200]\n    - text: \"|\"\n    - link \"49 comments\" [ref=e201]\n    - text: \"29.\"\n    - link \"upvote\" [ref=e202]\n    - link \"Three ways people respond to a problem (other than solving it)\" [ref=e203]\n    - text: \"(\"\n    - link \"improvesomething.today\" [ref=e204]\n    - text: \")228 points  by\"\n    - link \"surprisetalk\" [ref=e205]\n    - link \"17 hours ago\" [ref=e206]\n    - text: \"|\"\n    - link \"hide\" [ref=e207]\n    - text: \"|\"\n    - link \"127 comments\" [ref=e208]\n    - text: \"30.\"\n    - link \"upvote\" [ref=e209]\n    - link \"Show HN: Watch bots interact with an SSH honeypot in real time\" [ref=e210]\n    - text: \"(\"\n    - link \"honeypotlive.cc\" [ref=e211]\n    - text: \")156 points  by\"\n    - link \"tusksm\" [ref=e212]\n    - link \"17 hours ago\" [ref=e213]\n    - text: \"|\"\n    - link \"hide\" [ref=e214]\n    - text: \"|\"\n    - link \"57 comments\" [ref=e215]\n    - link \"More\" [ref=e216]\n  - table\n  - link \"Consider applying for YC's Fall 2026 batch! are open till July 27.\" [ref=e217]: \"Consider applying for YC's Fall 2026 batch! Applications  are open till July 27.\"\n  - link \"Guidelines\" [ref=e218]\n  - text: \"|\"\n  - link \"FAQ\" [ref=e219]\n  - text: \"|\"\n  - link \"Lists\" [ref=e220]\n  - text: \"|\"\n  - link \"API\" [ref=e221]\n  - text: \"|\"\n  - link \"Security\" [ref=e222]\n  - text: \"|\"\n  - link \"Legal\" [ref=e223]\n  - text: \"|\"\n  - link \"Apply to YC\" [ref=e224]\n  - text: \"|\"\n  - link \"Contact\" [ref=e225]\n  - form:\n    - text: \"Search:\"\n    - textbox [ref=e226]\n1. Regressive JPEGs  \n2. AWS: Inaccurate Estimated Billing Data – $1.7 billion  \n3. Reviving a 15-year-old netbook with Arch Linux\n"
+      }
+    },
+    {
+      "id": "wiki-search",
+      "scenario": "Form / search interaction",
+      "task": "Use the search box on wikipedia.org to search for 'Playwright (software)', open the article, and give me the first sentence.",
+      "betterwright": {
+        "elapsedMs": 22788,
+        "timedOut": false,
+        "ok": true,
+        "steps": 4,
+        "answer": "The first sentence is: “Playwright is an open-source automation library for browser testing and web scraping developed by Microsoft and launched on 31 January 2020, which has since become popular among programmers and web developers.”",
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360653740-dfb4b4.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The first sentence is: “Playwright is an open-source automation library for browser testing and web scraping developed by Microsoft and launched on 31 January 2020, which has since become popular among programmers and web developers.”\",\n  \"steps\": 4,\n  \"reason\": \"done\",\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784360653740-dfb4b4.png\"\n}\n"
+      },
+      "aside": {
+        "elapsedMs": 10087,
+        "timedOut": false,
+        "ok": false,
+        "steps": null,
+        "answer": "",
+        "raw": ""
+      }
+    }
+  ]
+}

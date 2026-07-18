@@ -31,4 +31,12 @@ export function contentForResult(result: unknown): Promise<McpContentBlock[]>;
  */
 export function runMcpServer(
   env?: Record<string, string | undefined>,
+  options?: {
+    /** Credential vault enabling `browser_login`; omit and logins use an
+     * unlocked password-manager extension instead. */
+    vault?: {
+      handleRequest(action: string, payload: unknown, origin: string): Promise<unknown>;
+      redact?(value: unknown): unknown;
+    };
+  },
 ): Promise<void>;

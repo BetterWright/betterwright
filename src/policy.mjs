@@ -73,7 +73,7 @@ function ipv4FromMappedIpv6(host) {
     return null;
   const groups = [
     ...left,
-    ...Array.from({ length: Math.max(0, missing) }, () => "0"),
+    ...Array.from({ length: missing }, () => "0"),
     ...right,
   ];
   if (
