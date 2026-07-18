@@ -7,12 +7,12 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import { findChromeExecutable } from "./chrome.mjs";
 import { normalizeDownloadPolicy } from "./downloads.mjs";
 import { NetworkPolicy } from "./policy.mjs";
 
@@ -41,38 +41,30 @@ function resolveHeadless(headless) {
   return headless !== false;
 }
 
-function resolveBrowser(browser) {
-  const value = String(
-    browser ?? process.env.BETTERWRIGHT_BROWSER ?? "cloak",
+function assertManagedCloakOnly(options) {
+  const browser = String(
+    options.browser ?? process.env.BETTERWRIGHT_BROWSER ?? "cloak",
   )
     .trim()
     .toLowerCase();
-  if (!["cloak", "chromium"].includes(value)) {
-    throw new TypeError('browser must be "cloak" or "chromium".');
+  if (browser !== "cloak") {
+    throw new TypeError(
+      'BetterWright only supports the managed CloakBrowser backend; browser must be "cloak".',
+    );
   }
-  return value;
-}
-
-/**
- * Resolve the connect-over-CDP target, including the display-aware default.
- * Precedence: an explicit option (including `""` to force the launched
- * sandbox) > the `BETTERWRIGHT_CONNECT_OVER_CDP` env override > the default.
- * The default tracks the resolved `headless` decision (which already folds in
- * display detection): when the browser would run headed and a real Google
- * Chrome is installed, attach to that Chrome over CDP; when headless (a server,
- * container, CI, or an explicit `headless: true`) or Chrome is absent, launch
- * the managed sandbox and keep its network floor. `defaulted` marks the
- * auto-selected case so a Chrome that unexpectedly fails to attach can fall
- * back to the sandbox instead of failing the browser outright.
- */
-function resolveConnectOverCdp(value, headless) {
-  if (value != null) return { endpoint: String(value).trim(), defaulted: false };
-  const env = (process.env.BETTERWRIGHT_CONNECT_OVER_CDP || "").trim();
-  if (env) return { endpoint: env, defaulted: false };
-  if (!headless && findChromeExecutable()) {
-    return { endpoint: "auto", defaulted: true };
+  if (String(options.executablePath || "").trim()) {
+    throw new TypeError(
+      "executablePath is not supported. Use CLOAKBROWSER_BINARY_PATH to select an official CloakBrowser binary.",
+    );
   }
-  return { endpoint: "", defaulted: true };
+  const cdp = String(
+    options.connectOverCdp ?? process.env.BETTERWRIGHT_CONNECT_OVER_CDP ?? "",
+  ).trim();
+  if (cdp) {
+    throw new TypeError(
+      "connectOverCdp is not supported because BetterWright only launches its managed CloakBrowser.",
+    );
+  }
 }
 
 function resolvePublicSearchPolicy(policy) {
@@ -127,6 +119,39 @@ function resolvePlaywrightCore() {
   return "";
 }
 
+const STEALTH_REGISTER_URL = new URL("./stealth-register.mjs", import.meta.url).href;
+
+/**
+ * Resolve the opt-in Runtime.enable stealth fix. Precedence: an explicit
+ * option > the `BETTERWRIGHT_STEALTH_RUNTIME_FIX` env override > off.
+ * When on, the worker process is spawned with a module-resolution hook that
+ * redirects `playwright-core` to the pre-patched `patchright-core` drop-in, so
+ * every `page.evaluate` runs in an isolated world (defeating main-world
+ * automation detection) instead of the page's main world. It applies to the
+ * managed Cloak browser too, because the hook intercepts the wrapper's own
+ * `import("playwright-core")`. Cost: model snippets can no longer read
+ * page-defined main-world globals (e.g. `window.__NEXT_DATA__`); DOM access is
+ * unaffected. Off by default so normal runs keep full main-world access.
+ */
+function resolveStealthRuntimeFix(value) {
+  const raw =
+    value != null ? value : process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
+  if (raw == null) return false;
+  if (typeof raw === "boolean") return raw;
+  return ["1", "true", "yes", "on"].includes(String(raw).trim().toLowerCase());
+}
+
+/** Confirm the pre-patched driver is installed before enabling stealth. */
+function stealthDriverAvailable() {
+  const require = createRequire(import.meta.url);
+  try {
+    require.resolve("patchright-core");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A persistent, policy-guarded Playwright browser. */
 export class BetterWright {
   /**
@@ -134,25 +159,10 @@ export class BetterWright {
    * @param {string} [options.home] state directory (default ~/.betterwright)
    * @param {NetworkPolicy} [options.policy] network policy
    * @param {object} [options.vault] optional vault with `handleRequest(action, payload, origin)`
-   * @param {"cloak"|"chromium"} [options.browser="cloak"] managed browser;
-   *   stock Chromium is an explicit degraded fallback
-   * @param {string} [options.executablePath] explicit Chromium binary; selecting
-   *   one also selects the Chromium fallback
+   * @param {"cloak"} [options.browser="cloak"] managed CloakBrowser backend
    * @param {boolean|"auto"} [options.headless="auto"] "auto" shows a window when
    *   a display is available and runs headless otherwise; true/false force it
    * @param {number} [options.defaultTimeout=30] per-snippet timeout, seconds
-   * @param {string} [options.connectOverCdp] attach to a Chrome started with
-   *   --remote-debugging-port at this endpoint (e.g. "http://127.0.0.1:9222")
-   *   instead of launching one; the launch-time network floor is inactive in
-   *   this mode — only the per-request policy applies. Pass "auto" to reuse a
-   *   debug Chrome if one is already running, or otherwise launch a real Google
-   *   Chrome with a persistent BetterWright profile (where you install and unlock
-   *   a password-manager extension once) and attach to that. When omitted, the
-   *   default follows the resolved headless decision: a headed run with Google
-   *   Chrome installed uses "auto" (real Chrome, no launch-time floor), while a
-   *   headless run (server/CI or headless:true) or a machine without Chrome
-   *   launches the managed sandbox with the floor intact. Pass "" to force the
-   *   launched sandbox regardless.
    * @param {number} [options.searchMinIntervalMs=0] minimum spacing between
    *   allowed top-level Google, Bing, or DuckDuckGo search navigations
    * @param {"block"|"allow"} [options.publicSearchPolicy="allow"] set "block"
@@ -161,24 +171,25 @@ export class BetterWright {
    * @param {"ask"|"allow"|"deny"} [options.downloadPolicy="ask"] require a
    *   trusted host to mark an individual run approved, allow every run, or
    *   deny downloads entirely
+   * @param {boolean} [options.stealthRuntimeFix=false] run model snippets in an
+   *   isolated world (via the pre-patched `patchright-core` driver) so
+   *   `page.evaluate` no longer trips main-world automation detection. Applies
+   *   to the managed Cloak browser. Off by default. Trade-off: snippets can no
+   *   longer read page-defined main-world globals (e.g. `window.__NEXT_DATA__`);
+   *   DOM access and clicks are unaffected. Requires the optional
+   *   `patchright-core` dependency to be installed.
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
     this.policy = options.policy || new NetworkPolicy();
     this.vault = options.vault || null;
-    const requestedBrowser = resolveBrowser(options.browser);
-    this.browserFlavor = options.executablePath ? "chromium" : requestedBrowser;
-    const cloakExecutable = (process.env.CLOAKBROWSER_BINARY_PATH || "").trim();
-    this.executablePath =
-      options.executablePath ||
-      (this.browserFlavor === "cloak" ? cloakExecutable : "");
+    assertManagedCloakOnly(options);
+    this.browserFlavor = "cloak";
     this.headless = resolveHeadless(options.headless);
-    const cdp = resolveConnectOverCdp(options.connectOverCdp, this.headless);
-    this.connectOverCdp = cdp.endpoint;
-    this._cdpDefaulted = cdp.defaulted;
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
     this.publicSearchPolicy = resolvePublicSearchPolicy(options.publicSearchPolicy);
     this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
+    this.stealthRuntimeFix = resolveStealthRuntimeFix(options.stealthRuntimeFix);
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
 
     this._process = null;
@@ -188,7 +199,6 @@ export class BetterWright {
     this._queue = Promise.resolve();
     this._stderrTail = [];
     this._closed = false;
-    this._cdpResolved = false;
   }
 
   _workerConfig() {
@@ -200,23 +210,13 @@ export class BetterWright {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     return {
-      // Each browser flavor gets its own profile directory. Cloak and the
-      // stock-Chromium fallback ship different Chromium versions; sharing one
-      // profile lets the newer binary silently upgrade it out from under the
-      // older one, after which the older binary crashes on launch (a newer
-      // profile is not downgrade-safe). Cloak keeps the historical "profile"
-      // path so existing saved logins survive an upgrade.
-      profileDir: path.join(
-        root,
-        this.browserFlavor === "chromium" ? "profile-chromium" : "profile",
-      ),
+      profileDir: path.join(root, "profile"),
       runtimeDir: runtime,
       artifactsDir: artifacts,
       downloadsDir: downloads,
-      executablePath: this.executablePath,
       browserFlavor: this.browserFlavor,
+      stealthRuntimeFix: this.stealthRuntimeFix,
       headless: this.headless,
-      cdpEndpoint: this.connectOverCdp,
       searchMinIntervalMs: this.searchMinIntervalMs,
       publicSearchPolicy: this.publicSearchPolicy,
       downloadPolicy: this.downloadPolicy,
@@ -234,7 +234,23 @@ export class BetterWright {
     const core = resolvePlaywrightCore();
     if (core) env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = core;
 
-    const child = spawn(process.execPath, [WORKER_PATH], {
+    // Stealth: redirect the worker's (and the Cloak wrapper's) playwright-core
+    // to patchright-core by registering a resolve hook at process start, before
+    // any driver import runs. `--import` must precede the worker script.
+    const execArgv = [];
+    if (this.stealthRuntimeFix) {
+      if (!stealthDriverAvailable()) {
+        throw new BrowserError(
+          "stealthRuntimeFix is enabled but the optional 'patchright-core' " +
+            "dependency is not installed. Install it with " +
+            "`npm install patchright-core`, or disable stealthRuntimeFix.",
+        );
+      }
+      execArgv.push("--import", STEALTH_REGISTER_URL);
+      env.BETTERWRIGHT_STEALTH_ACTIVE = "1";
+    }
+
+    const child = spawn(process.execPath, [...execArgv, WORKER_PATH], {
       cwd: path.dirname(WORKER_PATH),
       stdio: ["pipe", "pipe", "pipe"],
       env,
@@ -409,10 +425,8 @@ export class BetterWright {
     );
   }
 
-  /** Resolve a "auto" CDP endpoint (launch/reuse a real Chrome), restart the
-   * worker on a config change, and return the current worker config. */
+  /** Restart the worker on a config change and return the current config. */
   async _prepare() {
-    await this._resolveCdpEndpoint();
     const config = this._workerConfig();
     if (
       this._process &&
@@ -425,23 +439,6 @@ export class BetterWright {
     await this._start();
     this._lastConfig = config;
     return config;
-  }
-
-  async _resolveCdpEndpoint() {
-    if (this._cdpResolved) return;
-    if (String(this.connectOverCdp || "").trim().toLowerCase() === "auto") {
-      try {
-        const { ensureChromeCdp } = await import("./chrome.mjs");
-        const { endpoint } = await ensureChromeCdp({ home: this.home });
-        this.connectOverCdp = endpoint;
-      } catch (error) {
-        // An explicit "auto" request surfaces the failure; the display-aware
-        // default instead falls back to the launched sandbox (floor intact).
-        if (!this._cdpDefaulted) throw error;
-        this.connectOverCdp = "";
-      }
-    }
-    this._cdpResolved = true;
   }
 
   /** Send one worker command keyed by a fresh id and await its result envelope,

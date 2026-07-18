@@ -197,10 +197,9 @@ servers) and confirm a `browser` tool appears. Then do **§5**.
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
-Managed launches use CloakBrowser by default to reduce common automation false
-positives. This is not a guarantee of undetectability. Set
-`BETTERWRIGHT_BROWSER=chromium` only for the explicit stock-browser fallback;
-run `npx betterwright setup --chromium` once before selecting it.
+Managed launches use CloakBrowser exclusively in headed and headless modes to
+reduce common automation false positives. This is not a guarantee of
+undetectability.
 
 Broad discovery should use the host's web-search tool, then open selected
 first-party pages in BetterWright; the operator guidance says so. Set
@@ -268,9 +267,9 @@ in `ask`, skips the prompt in `allow`, refuses in `deny`, and only then calls
 `browser.run(code, { approvedDownloads: true })`. Never expose
 `approvedDownloads` as a model-controlled tool parameter. Then do **§5**.
 
-Do not expose `connectOverCdp`, a CDP endpoint, the raw browser object, or
-`newCDPSession` through either tool. CDP is an optional trusted host transport;
-the model receives only BetterWright's guarded Playwright facade and helpers.
+Do not expose a CDP session, the raw browser object, or `newCDPSession` through
+either tool. The model receives only BetterWright's guarded Playwright facade
+and helpers.
 
 ---
 
@@ -316,7 +315,6 @@ or the MCP env vars):
 | Ask before each download | `downloadPolicy: "ask"` (default) | `BETTERWRIGHT_DOWNLOAD_POLICY=ask` |
 | Remove download approval | `downloadPolicy: "allow"` | `BETTERWRIGHT_DOWNLOAD_POLICY=allow` |
 | Disable all downloads | `downloadPolicy: "deny"` | `BETTERWRIGHT_DOWNLOAD_POLICY=deny` |
-| Use stock Chromium fallback | `browser: "chromium"` | `BETTERWRIGHT_BROWSER=chromium` |
 | Block public search-result UIs | `publicSearchPolicy: "block"` | `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block` |
 
 Cloud metadata endpoints can never be allowlisted. See

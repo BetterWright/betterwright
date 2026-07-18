@@ -14,6 +14,15 @@ const require = createRequire(import.meta.url);
 export const PINNED_PLAYWRIGHT_VERSION = "1.61.1";
 export const PINNED_CLOAKBROWSER_VERSION = "0.4.10";
 
+/** Version of the optional patchright-core stealth driver, or null if absent. */
+export function stealthDriverVersion() {
+  try {
+    return require("patchright-core/package.json").version;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveCoreDir() {
   const override = (process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "").trim();
   if (override && fs.existsSync(path.join(override, "package.json"))) return override;
@@ -82,15 +91,9 @@ export async function doctorReport() {
   const core = resolveCoreDir();
   const cloak = await cloakRuntime();
   let version = null;
-  let chromium = null;
   if (core) {
     try {
       version = require(path.join(core, "package.json")).version;
-    } catch {
-      /* ignore */
-    }
-    try {
-      chromium = require(path.join(core, "index.js")).chromium.executablePath();
     } catch {
       /* ignore */
     }
@@ -111,14 +114,14 @@ export async function doctorReport() {
     cloakbrowser_binary: cloak.binary,
     cloakbrowser_ok:
       cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed,
-    chromium,
-    chromium_ok: Boolean(chromium && fs.existsSync(chromium)),
   };
-  const backend = (process.env.BETTERWRIGHT_BROWSER || "cloak").trim().toLowerCase();
-  report.browser = backend;
+  const stealth = stealthDriverVersion();
+  report.stealth_driver = stealth;
+  report.stealth_available = Boolean(stealth);
+  report.browser = "cloak";
   report.ready =
     report.worker_ok &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (backend === "chromium" ? report.chromium_ok : report.cloakbrowser_ok);
+    report.cloakbrowser_ok;
   return report;
 }

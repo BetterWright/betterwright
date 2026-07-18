@@ -7,8 +7,11 @@
 //   betterwright repl             run blank-line-separated snippets from stdin
 //   betterwright skill            print paste-ready agent instructions
 //   betterwright mcp              serve the MCP stdio server (needs the MCP SDK)
+//
+// run/repl flags: --headed, network flags (--block-private-network,
+// --block-loopback, --allow-host/--block-host), and --stealth (isolated-world
+// driver that evades main-world automation detection; needs patchright-core).
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -46,6 +49,12 @@ async function cmdDoctor() {
 }
 
 async function cmdSetup(flags) {
+  if (flags.has("--chromium")) {
+    console.error(
+      "The stock Chromium fallback was removed. BetterWright setup installs only managed CloakBrowser.",
+    );
+    return 1;
+  }
   const core = resolveCoreDir();
   if (!core) {
     console.error(
@@ -63,15 +72,6 @@ async function cmdSetup(flags) {
   console.log("Installing the managed CloakBrowser binary ...");
   const binary = await cloak.ensureBinary();
   console.log(`Installed ${binary}`);
-  if (flags.has("--chromium")) {
-    console.log("Downloading the optional Playwright Chromium fallback ...");
-    const result = spawnSync(
-      process.execPath,
-      [path.join(core, "cli.js"), "install", "chromium", "--no-shell"],
-      { stdio: "inherit" },
-    );
-    if (result.status !== 0) return result.status || 1;
-  }
   console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
   return 0;
 }
@@ -85,7 +85,7 @@ async function readSnippet(arg) {
 
 async function cmdRun(arg, flags) {
   const code = await readSnippet(arg);
-  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed") });
+  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), stealthRuntimeFix: flags.has("--stealth") || undefined });
   try {
     const result = await bw.run(code);
     console.log(JSON.stringify(result, null, 2));
@@ -143,7 +143,7 @@ function cmdSkill(flags) {
 }
 
 async function cmdRepl(flags) {
-  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed") });
+  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), stealthRuntimeFix: flags.has("--stealth") || undefined });
   console.log("BetterWright REPL — blank line runs a snippet, Ctrl-D quits.\n");
   const rl = readline.createInterface({ input: process.stdin });
   let buffer = [];

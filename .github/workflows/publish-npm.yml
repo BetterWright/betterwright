@@ -49,14 +49,17 @@ jobs:
       - name: Install locked dependencies
         if: steps.existing.outputs.published != 'true'
         run: npm ci --ignore-scripts
-      - name: Install deterministic Chromium test backend
+      - name: Install managed CloakBrowser
         if: steps.existing.outputs.published != 'true'
-        run: node node_modules/playwright-core/cli.js install chromium --no-shell
+        run: node bin/betterwright.mjs setup
       - name: Run browser integration suite
         if: steps.existing.outputs.published != 'true'
         run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
+      - name: Test managed CloakBrowser headed mode
+        if: steps.existing.outputs.published != 'true'
+        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 node --test tests/node/cloak.test.mjs
       - name: Publish to npm with provenance
         if: steps.existing.outputs.published != 'true'
         run: npm publish --access public

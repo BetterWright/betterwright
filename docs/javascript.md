@@ -14,22 +14,19 @@ new BetterWright({
   home,             // state dir; default $BETTERWRIGHT_HOME or ~/.betterwright
   policy,           // a NetworkPolicy; default: safe policy
   vault,            // optional { handleRequest(action, payload, origin), redact? }
-  browser: "cloak", // managed default; "chromium" is the explicit fallback
-  executablePath,   // explicit binary; also selects the Chromium fallback
+  browser: "cloak", // the only backend; may be omitted
   headless: "auto", // visible with a display, headless on servers/CI
-  connectOverCdp,   // host-only attach endpoint; see attach mode
   publicSearchPolicy: "allow", // default; set "block" to force host-tool search
   searchMinIntervalMs: 0,
   defaultTimeout: 30,   // per-snippet seconds, min 5
   downloadPolicy: "ask", // "ask" (default), "allow", or "deny"
+  stealthRuntimeFix: false, // isolated-world driver; evades main-world detection
 });
 ```
 
-The managed Cloak backend is the default. It keeps BetterWright's persistent
-profile and policy while reducing common stock-browser automation signals; it
-does not guarantee undetectability. `browser: "chromium"` is useful for tests
-and compatibility, but stock Chromium exposes more automation signals. Set
-`BETTERWRIGHT_BROWSER` to choose a process-wide default.
+The managed Cloak backend is the only browser backend. Headed and headless modes
+keep BetterWright's persistent profile and policy while reducing common
+stock-browser automation signals; they do not guarantee undetectability.
 
 Public Google, Bing, and DuckDuckGo result UIs are permitted by default; prefer
 routing broad discovery through the host's search tool anyway, and set
@@ -37,9 +34,19 @@ routing broad discovery through the host's search tool anyway, and set
 have the worker enforce that. `searchMinIntervalMs` spaces public-search
 navigations while they are permitted.
 
-`connectOverCdp` is a trusted host configuration option, not part of the browser
-tool given to the model. Model-authored snippets cannot access CDP, the raw
-browser object, or `newCDPSession`.
+Model-authored snippets cannot access CDP, the raw browser object, or
+`newCDPSession`.
+
+`stealthRuntimeFix` (off by default; also `--stealth` or
+`BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`) runs every snippet in an isolated world via
+the optional `patchright-core` driver, so `page.evaluate` no longer trips
+main-world automation detection. The managed Cloak backend already hides the
+`Runtime.enable` and `navigator.webdriver` signals; this closes the remaining
+main-world-execution vector. Trade-off: snippets can no longer read page-defined
+main-world globals (e.g. `window.__NEXT_DATA__`, `dataLayer`) — DOM queries,
+clicks, and typing are unaffected, and a run warning flags when it is active.
+Install the optional dependency (`npm install patchright-core`) to use it;
+`betterwright doctor` reports `stealth_available`.
 
 | Method | Description |
 | --- | --- |
@@ -98,10 +105,9 @@ try {
 }
 ```
 
-For long-lived desktop agents, `ensureChromeCdp()` can start or reuse a dedicated
-Google Chrome profile for host-controlled attach mode. For broad discovery, use
-the host's web-search tool and open returned results in BetterWright instead of
-automating Google or Bing's public search UI. See [attach mode](attach-mode.md).
+For broad discovery, use the host's web-search tool and open returned results in
+BetterWright instead of automating Google or Bing's public search UI. See
+[headed and headless browsing](attach-mode.md).
 
 ### Pi tool-result images
 
