@@ -37,7 +37,13 @@ export interface AgentModel {
     system: string;
     messages: AgentMessage[];
     tools: AgentTool[];
-  }): Promise<{ text: string; toolCalls: AgentToolCall[]; stopReason?: string }>;
+  }): Promise<{ text: string; toolCalls: AgentToolCall[]; stopReason?: string; usage?: AgentUsage | null }>;
+}
+
+/** Token usage, normalized across model adapters (0 when a provider omits it). */
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
 }
 
 export interface AgentStepEvent {
@@ -66,6 +72,10 @@ export interface AgentResult {
   answer: string;
   steps: number;
   reason: "max-steps" | "answered" | "stopped" | "done";
+  /** How many tool calls the model issued; can exceed `steps` when a turn batches several. */
+  toolCalls: number;
+  /** Summed token usage the model adapters reported (fields are 0 when unavailable). */
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number };
   transcript: AgentMessage[];
   proof: string | null;
 }

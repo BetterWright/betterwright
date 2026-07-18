@@ -180,8 +180,9 @@ function flagValue(argv, flag, fallback) {
 
 // `exec <task>`: BetterWright's own agent harness (the `aside exec` shape).
 // A model (Claude SDK / codex OAuth / grok OAuth) plugs into the browser-tuned
-// loop and drives the task to completion. Progress notes go to stderr; the
-// final {ok, answer, steps, proof} goes to stdout.
+// loop and drives the task to completion. Progress notes (ending with a cost
+// summary) go to stderr; the final {ok, answer, steps, reason, toolCalls,
+// usage, proof} goes to stdout.
 async function cmdExec(flags) {
   const { runAgentTask } = await import("../src/agent.mjs");
   const argv = process.argv;
@@ -217,8 +218,26 @@ async function cmdExec(flags) {
     console.error(error?.message || String(error));
     return 1;
   }
+  const { inputTokens, outputTokens, totalTokens } = result.usage;
+  process.stderr.write(
+    `  done in ${result.steps} step${result.steps === 1 ? "" : "s"}, ` +
+      `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"}, ` +
+      `${totalTokens.toLocaleString()} tokens (${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out)\n`,
+  );
   console.log(
-    JSON.stringify({ ok: result.ok, answer: result.answer, steps: result.steps, reason: result.reason, proof: result.proof }, null, 2),
+    JSON.stringify(
+      {
+        ok: result.ok,
+        answer: result.answer,
+        steps: result.steps,
+        reason: result.reason,
+        toolCalls: result.toolCalls,
+        usage: result.usage,
+        proof: result.proof,
+      },
+      null,
+      2,
+    ),
   );
   return result.ok ? 0 : 1;
 }

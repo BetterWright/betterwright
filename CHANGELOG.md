@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.7.1] — 2026-07-18
 
+### Added
+
+- **`betterwright exec` now reports what the run cost.** The result JSON carries
+  `toolCalls` (how many `browser`/`login`/`done` calls the model issued) and
+  `usage` (`{ inputTokens, outputTokens, totalTokens }`, summed across turns), and
+  the final stderr line prints a one-line summary — e.g. `done in 6 steps, 7 tool
+  calls, 48,210 tokens (46,880 in / 1,330 out)`. `runAgentTask` returns the same
+  fields. Token counts come from each provider's usage block (Anthropic cache
+  tokens fold into the input total); a field is `0` when a provider omits usage.
+
 ### Fixed
 
 - **`--model` (and `runAgentTask`'s `model`) now accepts a bare model id.**
