@@ -23,6 +23,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { uncachedInputTokens } from "./agent-usage.mjs";
 import { codexAccessToken, codexHome, grokAccessToken, loadCodexAuth, loadGrokAuth } from "./auth.mjs";
 import { BetterWright, NetworkPolicy } from "./client.mjs";
 import { agentSystemPrompt } from "./prompt.mjs";
@@ -296,7 +297,10 @@ export async function runAgentTask(options = {}) {
       const response = await model.complete({ system, messages, tools });
       const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
       if (response.usage) {
-        inputTokens += response.usage.inputTokens || 0;
+        // Provider input totals include cached reads. Keep the full last-turn
+        // value for context, but report only the portion that was not read from
+        // cache as the run's user-facing input cost.
+        inputTokens += uncachedInputTokens(response.usage.inputTokens, response.usage.cacheReadTokens);
         outputTokens += response.usage.outputTokens || 0;
         cacheReadTokens += response.usage.cacheReadTokens || 0;
         cacheWriteTokens += response.usage.cacheWriteTokens || 0;
@@ -389,13 +393,14 @@ export async function runAgentTask(options = {}) {
     reason,
     // How many tool calls the model issued (browser/login/done) — can exceed
     // `steps` when a turn batches several — and the token usage the adapters
-    // reported (null fields when the provider didn't return a usage block).
+    // reported. `inputTokens` excludes the cached-read portion so it reflects
+    // fresh input work; `context` below retains the full final prompt size.
     toolCalls: toolCallCount,
     usage: {
       inputTokens,
       outputTokens,
-      // Cached-input breakdown (subsets of the input total, summed across turns)
-      // and `context` = the prompt size at the end of the task (last turn's input).
+      // Cached-input counts summed across turns, and `context` = the full prompt
+      // size at the end of the task (last turn's provider input total).
       cacheReadTokens,
       cacheWriteTokens,
       context: contextTokens,

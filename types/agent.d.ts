@@ -94,12 +94,12 @@ export interface AgentResult {
   toolCalls: number;
   /**
    * Token usage summed across turns (fields are 0 when unavailable).
-   * `inputTokens` is the full prompt size (cached tokens included);
-   * `cacheReadTokens` is the part served from cache and `cacheWriteTokens` the
-   * fresh input processed/written to the cache (`inputTokens = cacheRead +
-   * cacheWrite` on OpenAI-style backends). `context` is the prompt size at the
-   * end of the task (the last turn's input) — how much context the model was
-   * holding when it finished.
+   * `inputTokens` excludes the portion served from cache; `cacheReadTokens` is
+   * that cached portion. `cacheWriteTokens` is reported only from a provider's
+   * real cache-write field (0 when unavailable), and can overlap fresh input.
+   * `context` is the full prompt size at the end of the task (the last turn's
+   * provider input total) — how much context the model was holding when it
+   * finished.
    */
   usage: {
     inputTokens: number;
