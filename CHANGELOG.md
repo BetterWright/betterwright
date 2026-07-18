@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] — 2026-07-18
+
+### Changed
+
+- **Cache-write is now reported for OpenAI-style backends (codex, grok).** Those
+  APIs report only cache *reads*, so `cacheWriteTokens` was always `0`; it is now
+  derived as the fresh input processed this turn (`inputTokens − cacheReadTokens`),
+  the tokens written to the cache. `inputTokens = cacheReadTokens + cacheWriteTokens`
+  holds for these backends; Anthropic keeps its directly reported read and
+  cache-creation counts.
+- **Dropped `usage.totalTokens`** from the result and the summary line — input and
+  output tokens price differently, so a combined total was misleading.
+- **Renamed `usage.contextTokens` → `usage.context`** (the summary label is now
+  `context …` instead of `ctx …`).
+
+  The run summary now reads: `done in 6 steps, 7 tool calls, 11.4s, 46,880 in /
+  1,330 out · 40,000 cache read · 6,880 cache write · context 20,000`.
+
+### Added
+
+- **`--reasoning` as an alias for `--effort`** (and `/reasoning` for `/effort` in
+  the interactive console) — the reasoning-effort control under its more intuitive
+  name. `--effort` continues to work unchanged.
+
 ## [0.8.1] — 2026-07-18
 
 ### Added
