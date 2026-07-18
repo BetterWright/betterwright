@@ -188,7 +188,7 @@ async function cmdExec(flags) {
   const task = argv.slice(3).find((token) => !token.startsWith("-"));
   if (!task) {
     console.error(
-      'Usage: betterwright exec "<task>" [--model claude|codex|grok] [--model-id <id>] [--effort <level>] [--max-steps <n>] [--session <name>] [--headed]',
+      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort <level>] [--max-steps <n>] [--session <name>] [--headed]',
     );
     return 1;
   }
