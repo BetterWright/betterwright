@@ -320,6 +320,77 @@ async function approveDownload(server, note) {
   }
 }
 
+function mcpTools(withLogin) {
+  const tools = [
+    { name: "browser", description: BROWSER_DESCRIPTION, inputSchema: RUN_INPUT_SCHEMA },
+    {
+      name: "browser_download",
+      description: BROWSER_DOWNLOAD_DESCRIPTION,
+      inputSchema: RUN_INPUT_SCHEMA,
+    },
+  ];
+  if (withLogin) {
+    tools.push({
+      name: "browser_login",
+      description: LOGIN_DESCRIPTION,
+      inputSchema: LOGIN_INPUT_SCHEMA,
+    });
+  }
+  tools.push({
+    name: "browser_doctor",
+    description: "Report whether the BetterWright browser runtime is installed and ready.",
+    inputSchema: { type: "object", properties: {} },
+  });
+  return tools;
+}
+
+function createMcpHandlers({ browser, server, downloadPolicy }) {
+  const withLogin = Boolean(browser.vault);
+  return {
+    listTools: async () => ({ tools: mcpTools(withLogin) }),
+    callTool: async (request) => {
+      const { name, arguments: args = {} } = request.params;
+      try {
+        if (name === "browser_doctor") {
+          return {
+            content: [{ type: "text", text: JSON.stringify(await doctorReport()) }],
+          };
+        }
+        if (name === "browser_login" && withLogin) {
+          const result = await browser.fillCredential(loginOptionsFromArgs(args));
+          return { content: await contentForResult(result) };
+        }
+        if (name !== "browser" && name !== "browser_download") {
+          throw new Error(`Unknown tool: ${name}`);
+        }
+        const options = {
+          session: String(args.session || "default"),
+          note: String(args.note || "") || undefined,
+        };
+        if (name === "browser_download") {
+          if (downloadPolicy === "deny") {
+            throw new Error(
+              "Downloads are disabled by BETTERWRIGHT_DOWNLOAD_POLICY=deny.",
+            );
+          }
+          if (downloadPolicy === "ask") await approveDownload(server, options.note);
+          options.approvedDownloads = true;
+        }
+        const result = await browser.run(String(args.code || ""), options);
+        return { content: await contentForResult(result) };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error?.message || String(error) }],
+          isError: true,
+        };
+      }
+    },
+  };
+}
+
+// A narrow pure seam for protocol capability tests without opening stdio.
+export const _createMcpHandlersForTest = createMcpHandlers;
+
 export async function runMcpServer(env = process.env, options = {}) {
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
     await loadSdk();
@@ -340,63 +411,9 @@ export async function runMcpServer(env = process.env, options = {}) {
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      { name: "browser", description: BROWSER_DESCRIPTION, inputSchema: RUN_INPUT_SCHEMA },
-      {
-        name: "browser_download",
-        description: BROWSER_DOWNLOAD_DESCRIPTION,
-        inputSchema: RUN_INPUT_SCHEMA,
-      },
-      {
-        name: "browser_login",
-        description: LOGIN_DESCRIPTION,
-        inputSchema: LOGIN_INPUT_SCHEMA,
-      },
-      {
-        name: "browser_doctor",
-        description:
-          "Report whether the BetterWright browser runtime is installed and ready.",
-        inputSchema: { type: "object", properties: {} },
-      },
-    ],
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args = {} } = request.params;
-    try {
-      if (name === "browser_doctor") {
-        return {
-          content: [{ type: "text", text: JSON.stringify(await doctorReport()) }],
-        };
-      }
-      if (name === "browser_login") {
-        const result = await browser.fillCredential(loginOptionsFromArgs(args));
-        return { content: await contentForResult(result) };
-      }
-      if (name !== "browser" && name !== "browser_download") {
-        throw new Error(`Unknown tool: ${name}`);
-      }
-      const options = {
-        session: String(args.session || "default"),
-        note: String(args.note || "") || undefined,
-      };
-      if (name === "browser_download") {
-        if (downloadPolicy === "deny") {
-          throw new Error("Downloads are disabled by BETTERWRIGHT_DOWNLOAD_POLICY=deny.");
-        }
-        if (downloadPolicy === "ask") await approveDownload(server, options.note);
-        options.approvedDownloads = true;
-      }
-      const result = await browser.run(String(args.code || ""), options);
-      return { content: await contentForResult(result) };
-    } catch (error) {
-      return {
-        content: [{ type: "text", text: error?.message || String(error) }],
-        isError: true,
-      };
-    }
-  });
+  const handlers = createMcpHandlers({ browser, server, downloadPolicy });
+  server.setRequestHandler(ListToolsRequestSchema, handlers.listTools);
+  server.setRequestHandler(CallToolRequestSchema, handlers.callTool);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

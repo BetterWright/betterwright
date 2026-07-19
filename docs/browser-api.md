@@ -234,7 +234,6 @@ filled, never returned.
 
 ```js
 await credentials.inspect();                       // detected field roles, no values
-await credentials.save({ username: "alice", password: "…" });
 await credentials.list();                          // metadata only, no passwords
 const accounts = await credentials.list({ text: "work", category: "login" });
 if (accounts.length !== 1) return { accounts, needsAccountSelection: true };
@@ -245,6 +244,12 @@ await credentials.commitGenerated({ pendingId: pending.pendingId }); // only aft
 await credentials.update({ id, label: "work" });
 await credentials.remove({ id });
 ```
+
+Do not put a password in model-authored `bw.run()` source. `credentials.save()`
+is reserved for a trusted host-authored snippet receiving a user-supplied
+secret through an application-controlled channel; agent code should use the
+metadata-only lookup and trusted fill/generate operations above. Generated
+passwords never enter either host or model source.
 
 All operations are gated to the current HTTP(S) site. Login items use PSL-backed
 base-domain matching by default, with per-item `host`, `exact-origin`, and

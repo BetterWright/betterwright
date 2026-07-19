@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { collectCredentialFrameDetections } from "../../src/credential-target-scan.mjs";
 import { cloakRuntime } from "../../src/doctor.mjs";
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
 
@@ -15,6 +16,33 @@ const opts = { skip: ready ? false : "browser runtime not installed" };
 function tempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-credential-test-"));
 }
+
+test("frame detection disposes earlier handles before propagating a later scan failure", async () => {
+  const disposed = [];
+  const frames = [
+    { id: "first", isDetached: () => false },
+    { id: "second", isDetached: () => false },
+    { id: "failing", isDetached: () => false },
+  ];
+  await assert.rejects(
+    collectCredentialFrameDetections({
+      frames,
+      requestedAction: "fill",
+      originForFrame: async (frame) => `https://${frame.id}.example`,
+      detectInFrame: async (frame) => {
+        if (frame.id === "failing") throw new Error("frame scan failed");
+        return {
+          async dispose() {
+            disposed.push(frame.id);
+            if (frame.id === "first") throw new Error("dispose failed");
+          },
+        };
+      },
+    }),
+    /frame scan failed/,
+  );
+  assert.deepEqual(disposed.sort(), ["first", "second"]);
+});
 
 async function fixtureServer() {
   const pages = new Map();
@@ -1134,6 +1162,64 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       });
     });
 
+    await t.test("finalizes generated credentials at their recorded origin after navigation", async () => {
+      for (const [method, action, resultKey] of [
+        ["commitGenerated", "commit", "committed"],
+        ["discardGenerated", "discard", "discarded"],
+      ]) {
+        await visit("/signup");
+        const pendingId = `pending-cross-origin-${action}`;
+        nextPendingId = pendingId;
+        const generated = await bw.generateAndFillCredential({
+          passwordSelector: "#signup-password",
+        });
+        assert.equal(generated.ok, true, generated.error);
+        assert.equal(generated.result.pendingId, pendingId);
+
+        const navigated = await bw.run(
+          `await page.goto(${JSON.stringify(`${frameServer.origin}/frame-login`)}); return page.url();`,
+        );
+        assert.equal(navigated.ok, true, navigated.error);
+        const before = calls.length;
+        const finalized = await bw.run(
+          `return credentials.${method}({pendingId: ${JSON.stringify(pendingId)}});`,
+        );
+        assert.equal(finalized.ok, true, finalized.error);
+        assert.equal(finalized.result[resultKey], true);
+        assert.deepEqual(
+          calls
+            .slice(before)
+            .filter((call) => call.action === action)
+            .map(({ origin }) => origin),
+          [server.origin],
+        );
+      }
+    });
+
+    await t.test("fails closed when host and worker pending origins disagree", async () => {
+      await visit("/signup");
+      const pendingId = "pending-origin-mismatch";
+      nextPendingId = pendingId;
+      const generated = await bw.generateAndFillCredential({
+        passwordSelector: "#signup-password",
+      });
+      assert.equal(generated.ok, true, generated.error);
+
+      bw._pendingCredentialOrigins.set(pendingId, frameServer.origin);
+      const before = calls.length;
+      const mismatched = await bw.commitGeneratedCredential({ pendingId });
+      assert.equal(mismatched.ok, false);
+      assert.match(mismatched.error, /origin does not match/i);
+      assert.equal(
+        calls.slice(before).some(({ action }) => action === "commit"),
+        false,
+      );
+
+      bw._pendingCredentialOrigins.set(pendingId, server.origin);
+      const discarded = await bw.discardGeneratedCredential({ pendingId });
+      assert.equal(discarded.ok, true, discarded.error);
+    });
+
     await t.test("finalizes iframe generation after worker restart and navigation", async () => {
       await visit("/iframe-signup-host");
       const before = calls.length;
@@ -1186,7 +1272,7 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
           .slice(beforeCommit)
           .filter(({ action }) => action === "commit")
           .map(({ origin }) => origin),
-        [server.origin, frameServer.origin],
+        [frameServer.origin],
       );
     });
 
