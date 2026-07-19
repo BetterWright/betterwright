@@ -343,12 +343,144 @@ function proofRejection(requirement, evidence) {
   return null;
 }
 
+// TUI rendering support. Loaded lazily because these packages only resolve
+// inside a running Pi process (the extension loader aliases them); plain Node
+// consumers of this module (tests, other hosts) must keep working without
+// them. When unavailable the renderers throw, which makes Pi fall back to its
+// raw-text rendering.
+let TuiText = null;
+let tuiKeyHint = null;
+let tuiLoadStarted = false;
+
+async function importHostModule(specifier) {
+  try {
+    return await import(specifier);
+  } catch {
+    // The extension loader imports .mjs files natively, so bare host
+    // specifiers do not resolve from this package. Resolve them from the
+    // host entry point (realpathed: the CLI is usually launched through a
+    // bin symlink) instead.
+    const [{ createRequire }, fs, { pathToFileURL }] = await Promise.all([
+      import("node:module"),
+      import("node:fs"),
+      import("node:url"),
+    ]);
+    const entry = fs.realpathSync(process.argv[1]);
+    const resolved = createRequire(entry).resolve(specifier);
+    return await import(pathToFileURL(resolved).href);
+  }
+}
+
+function loadTuiSupport() {
+  if (tuiLoadStarted) return;
+  tuiLoadStarted = true;
+  void (async () => {
+    try {
+      ({ Text: TuiText } = await importHostModule("@earendil-works/pi-tui"));
+    } catch {
+      TuiText = null;
+    }
+    try {
+      const agent = await importHostModule("@earendil-works/pi-coding-agent");
+      if (typeof agent.keyHint === "function") tuiKeyHint = agent.keyHint;
+    } catch {
+      tuiKeyHint = null;
+    }
+  })();
+}
+
+function firstLine(text, max = 100) {
+  const line = String(text || "").split("\n", 1)[0];
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+// Reuse the previous slot component when possible, as the renderer contract
+// recommends, so expanded toggles update in place instead of re-instantiating.
+function slotText(context, content) {
+  const text =
+    context?.lastComponent instanceof TuiText
+      ? context.lastComponent
+      : new TuiText("", 0, 0);
+  text.setText(content);
+  return text;
+}
+
+// Compact one-line header for the tool call; the full code only when expanded.
+function makeRenderCall(label) {
+  return (args, theme, context) => {
+    if (!TuiText) throw new Error("pi-tui unavailable");
+    let text = theme.fg("toolTitle", theme.bold(label));
+    if (args?.note) text += " " + theme.fg("muted", args.note);
+    if (args?.code) {
+      text += context?.expanded
+        ? "\n" + theme.fg("dim", String(args.code))
+        : "\n" + theme.fg("dim", firstLine(args.code));
+    } else if (args && !args.note) {
+      text += " " + theme.fg("dim", firstLine(JSON.stringify(args)));
+    }
+    return slotText(context, text);
+  };
+}
+
+// Collapsed: a status summary that keeps errors, warnings, and budget/evidence
+// state visible. Expanded (ctrl+o): the full JSON envelope the model saw.
+function summaryRenderResult(result, { expanded, isPartial }, theme, context) {
+  if (!TuiText) throw new Error("pi-tui unavailable");
+  if (isPartial)
+    return slotText(context, theme.fg("muted", "Running browser step…"));
+  const raw = (result.content || [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+  if (expanded || context?.isError)
+    return slotText(context, theme.fg("toolOutput", raw));
+  const details = result.details || {};
+  const lines = [];
+  let head = details.ok === false ? theme.fg("error", "✗") : theme.fg("success", "✓");
+  if (typeof details.step === "number")
+    head += theme.fg("muted", ` step ${details.step}`);
+  if (typeof details.durationMs === "number")
+    head += theme.fg("muted", ` ${Math.round(details.durationMs)}ms`);
+  const active = (details.pages || []).find((page) => page?.active);
+  if (active)
+    head +=
+      " " +
+      theme.fg("dim", firstLine(`${active.title || ""} — ${active.url || ""}`, 120));
+  lines.push(head);
+  if (details.ok === false && details.error)
+    lines.push(theme.fg("error", String(details.error)));
+  for (const warning of details.warnings || [])
+    lines.push(theme.fg("warning", `⚠ ${warning}`));
+  if (details.budgetExhausted)
+    lines.push(theme.fg("warning", "Browser step budget exhausted."));
+  const checklist = details.evidenceChecklist || (details.requirements && details);
+  if (checklist)
+    lines.push(
+      theme.fg(
+        "muted",
+        checklist.ready
+          ? "evidence: complete"
+          : `evidence pending: ${(checklist.pending || []).join(", ") || "none"}`,
+      ),
+    );
+  if (details.artifacts?.length)
+    lines.push(theme.fg("muted", `${details.artifacts.length} artifact(s)`));
+  lines.push(
+    theme.fg(
+      "dim",
+      tuiKeyHint ? `(${tuiKeyHint("app.tools.expand", "for full output")})` : "(ctrl+o for full output)",
+    ),
+  );
+  return slotText(context, lines.join("\n"));
+}
+
 /**
  * Build a native Pi Coding Agent extension around one persistent BetterWright.
  * The default export below resolves runtime knobs from BETTERWRIGHT_PI_* env vars.
  */
 export function createPiExtension(options = {}) {
   return function betterWrightPiExtension(pi) {
+    loadTuiSupport();
     const autoScreenshot =
       options.autoScreenshot ??
       envBoolean("BETTERWRIGHT_PI_AUTO_SCREENSHOT", true);
@@ -506,6 +638,9 @@ export function createPiExtension(options = {}) {
         details: {
           step,
           ok: combined?.ok === true,
+          error: combined?.error,
+          durationMs: combined?.durationMs,
+          warnings: combined?.warnings || [],
           pages: combined?.pages || [],
           artifacts: combined?.artifacts || [],
           budgetExhausted,
@@ -622,6 +757,8 @@ export function createPiExtension(options = {}) {
       parameters: PI_BROWSER_PARAMETERS,
       execute: (_id, params, signal) =>
         executeBrowser("browser", params, signal, false),
+      renderCall: makeRenderCall("browser"),
+      renderResult: summaryRenderResult,
     });
 
     pi.registerTool({
@@ -649,9 +786,11 @@ export function createPiExtension(options = {}) {
             { type: "text", text: JSON.stringify(result, null, 2) },
             ...(await piImageContent(result)),
           ],
-          details: { ok: result?.ok === true, pages: result?.pages || [] },
+          details: { ok: result?.ok === true, error: result?.error, pages: result?.pages || [] },
         };
       },
+      renderCall: makeRenderCall("browser_login"),
+      renderResult: summaryRenderResult,
     });
 
     pi.registerTool({
@@ -666,6 +805,8 @@ export function createPiExtension(options = {}) {
       ],
       parameters: PI_EVIDENCE_PARAMETERS,
       execute: (_id, params, signal) => executeEvidence(params, signal),
+      renderCall: makeRenderCall("browser_evidence"),
+      renderResult: summaryRenderResult,
     });
 
     pi.registerTool({
@@ -692,6 +833,8 @@ export function createPiExtension(options = {}) {
         }
         return executeBrowser("browser_download", params, signal, true);
       },
+      renderCall: makeRenderCall("browser_download"),
+      renderResult: summaryRenderResult,
     });
 
     pi.on("before_agent_start", (event) => ({
