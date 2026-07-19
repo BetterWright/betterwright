@@ -124,6 +124,10 @@ test("native Pi extension registers persistent tools and records its supplied st
       "browser_evidence",
       "browser_download",
     ]);
+    for (const tool of pi.tools.values()) {
+      assert.equal(typeof tool.renderCall, "function");
+      assert.equal(typeof tool.renderResult, "function");
+    }
     assert.match(pi.tools.get("browser").description, /usePage\(indexOrPageId\)/);
     assert.match(pi.tools.get("browser").description, /must not receive a Page object/);
     assert.ok(pi.handlers.has("before_agent_start"));

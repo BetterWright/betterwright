@@ -410,13 +410,13 @@ function makeRenderCall(label) {
   return (args, theme, context) => {
     if (!TuiText) throw new Error("pi-tui unavailable");
     let text = theme.fg("toolTitle", theme.bold(label));
-    if (args?.note) text += " " + theme.fg("muted", args.note);
+    if (args?.note) text += ` ${theme.fg("muted", args.note)}`;
     if (args?.code) {
       text += context?.expanded
-        ? "\n" + theme.fg("dim", String(args.code))
-        : "\n" + theme.fg("dim", firstLine(args.code));
+        ? `\n${theme.fg("dim", String(args.code))}`
+        : `\n${theme.fg("dim", firstLine(args.code))}`;
     } else if (args && !args.note) {
-      text += " " + theme.fg("dim", firstLine(JSON.stringify(args)));
+      text += ` ${theme.fg("dim", firstLine(JSON.stringify(args)))}`;
     }
     return slotText(context, text);
   };
