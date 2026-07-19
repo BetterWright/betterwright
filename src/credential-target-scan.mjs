@@ -13,9 +13,9 @@ export async function collectCredentialFrameDetections({
   const detections = [];
   try {
     for (const frame of frames) {
-      const origin = await originForFrame(frame);
-      if (!origin) continue;
       try {
+        const origin = await originForFrame(frame);
+        if (!origin) continue;
         const detection = await detectInFrame(frame, requestedAction);
         detection.origin = origin;
         detections.push(detection);

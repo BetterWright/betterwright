@@ -120,6 +120,7 @@ function buildFillSpec(options) {
   const fields = {};
   for (const key of [
     "passwordSelector",
+    "currentPasswordSelector",
     "usernameSelector",
     "confirmPasswordSelector",
     "submitSelector",
@@ -734,6 +735,8 @@ export class BetterWright {
    * targets remain available when a page is ambiguous.
    *
    * @param {string} [options.passwordSelector] explicit password field target
+   * @param {string} [options.currentPasswordSelector] explicit current-password
+   *   target for rotation with generateAndFillCredential
    * @param {string} [options.usernameSelector] explicit username/email target
    * @param {string} [options.confirmPasswordSelector] explicit confirmation target
    *   (signup); filled with the same secret and blurred to trigger match checks

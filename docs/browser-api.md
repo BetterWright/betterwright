@@ -274,6 +274,10 @@ accepts the signup or rotation; discard it on failure. Rotation commits back to
 the same record id and preserves its URL scope; new records accept `matchMode`
 to narrow their URL scope.
 
+For an ambiguous rotation form, pass `currentPasswordSelector`,
+`passwordSelector`, and `confirmPasswordSelector` together; the worker pins all
+three exact handles and their origin before reading either password.
+
 The same operations are available to the host as `bw.fillCredential(...)` /
 `bw.generateAndFillCredential(...)`, followed by
 `commitGeneratedCredential(...)` / `discardGeneratedCredential(...)`;

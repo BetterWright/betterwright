@@ -323,12 +323,13 @@ test("runAgentTask stops at maxSteps without a done", async () => {
 test("login tool is offered only with a vault and runs fillCredential", async () => {
   const withVault = fakeBrowser({ vault: {} });
   const model = scriptedModel([
-    { text: "", toolCalls: [{ id: "l1", name: "login", input: { username: "alice", submit: true, generate: true, matchMode: "exact-origin" } }] },
+    { text: "", toolCalls: [{ id: "l1", name: "login", input: { username: "alice", currentPasswordSelector: "#old-password", submit: true, generate: true, matchMode: "exact-origin" } }] },
     { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "in" } }] },
   ]);
   await runAgentTask({ task: "log in", model, browser: withVault });
   assert.equal(withVault.calls.fill.length, 1);
   assert.equal(withVault.calls.fill[0].passwordSelector, undefined);
+  assert.equal(withVault.calls.fill[0].currentPasswordSelector, "#old-password");
   assert.equal(withVault.calls.fill[0].submit, true);
   assert.equal(withVault.calls.fill[0].matchMode, "exact-origin");
   // The tool list handed to the model included login.
@@ -341,6 +342,10 @@ test("login tool is offered only with a vault and runs fillCredential", async ()
     "never",
   ]);
   assert.ok(!loginTool.parameters.required?.includes("passwordSelector"));
+  assert.equal(
+    loginTool.parameters.properties.currentPasswordSelector.type,
+    "string",
+  );
   assert.match(model.seen[0].system, /Loaded skill: credential-manager/);
 
   const noVault = fakeBrowser({ vault: null });

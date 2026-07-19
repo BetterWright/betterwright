@@ -76,7 +76,9 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
   assert.deepEqual(
     loginOptionsFromArgs({
       passwordSelector: "#pw",
+      currentPasswordSelector: "#old-pw",
       usernameSelector: "#user",
+      confirmPasswordSelector: "#confirm-pw",
       submitSelector: "#go",
       id: "rec-1",
       generate: true,
@@ -90,8 +92,10 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
     {
       session: "default",
       passwordSelector: "#pw",
+      currentPasswordSelector: "#old-pw",
       generate: true,
       usernameSelector: "#user",
+      confirmPasswordSelector: "#confirm-pw",
       submitSelector: "#go",
       id: "rec-1",
       length: 18,
@@ -111,6 +115,10 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
     "exact-origin",
     "never",
   ]);
+  assert.equal(
+    LOGIN_INPUT_SCHEMA.properties.currentPasswordSelector.type,
+    "string",
+  );
   assert.throws(
     () => loginOptionsFromArgs({ generate: true, matchMode: "same-site" }),
     /matchMode.*exact-origin/,
@@ -167,6 +175,7 @@ test("contentForResult separates screenshots from file paths", async () => {
       matchMode: "host",
       username: "",
       label: null,
+      secret: "generated-secret-that-must-not-leak",
       expiresAt: "2030-01-01T00:00:00.000Z",
     },
     challenges: [],

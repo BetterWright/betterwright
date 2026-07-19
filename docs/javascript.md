@@ -173,6 +173,8 @@ selector-free form detection without receiving a secret:
 ```js
 await bw.run(`
   const accounts = await credentials.list({text: "work"});
+  if (!accounts.length) return {filled: false, reason: "no-match"};
+  if (accounts.length > 1) return {filled: false, reason: "ambiguous", accounts};
   return credentials.fill({id: accounts[0].id, submit: true});
 `);
 ```
@@ -204,8 +206,9 @@ omit the hook rather than implementing a no-op.
 commits or discards generated values after verification with
 `commitGeneratedCredential()` / `discardGeneratedCredential()`, and recovers
 interrupted attempts with `listPendingCredentials()`. Use explicit
-selectors only when detection reports ambiguity. Set `vault: false` (or `null`)
-to disable credential helpers entirely.
+selectors only when detection reports ambiguity. Rotation forms can pin
+`currentPasswordSelector`, `passwordSelector`, and `confirmPasswordSelector`
+together. Set `vault: false` (or `null`) to disable credential helpers entirely.
 
 ## Sessions
 

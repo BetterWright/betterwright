@@ -71,6 +71,8 @@ export interface RunOptions {
 export interface FillCredentialOptions {
   /** Optional CSS or current `aria-ref=eN` target; omit for semantic detection. */
   passwordSelector?: string;
+  /** Explicit current-password target for rotation with generated credentials. */
+  currentPasswordSelector?: string;
   usernameSelector?: string;
   confirmPasswordSelector?: string;
   submitSelector?: string;

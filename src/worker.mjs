@@ -2012,6 +2012,7 @@ function buildCredentials(session, realm, execution) {
     for (const key of [
       "usernameSelector",
       "passwordSelector",
+      "currentPasswordSelector",
       "confirmPasswordSelector",
       "submitSelector",
     ])
@@ -2661,6 +2662,7 @@ async function pinnedCredentialOrigin(frame, handles) {
       return await frame.evaluate((elements) => {
         if (
           !elements.length ||
+          new Set(elements).size !== elements.length ||
           elements.some(
             (element) =>
               !(element instanceof Element) ||
@@ -2704,12 +2706,14 @@ async function prepareCredentialTargets(page, action, fields) {
   const selectors = {
     username: String(fields.usernameSelector || "").trim(),
     password: String(fields.passwordSelector || "").trim(),
+    currentPassword: String(fields.currentPasswordSelector || "").trim(),
     confirmPassword: String(fields.confirmPasswordSelector || "").trim(),
     submit: String(fields.submitSelector || "").trim(),
   };
   const explicit = {
     username: null,
     password: null,
+    currentPassword: null,
     confirmPassword: null,
     submit: null,
   };
@@ -2728,6 +2732,11 @@ async function prepareCredentialTargets(page, action, fields) {
   };
 
   try {
+    if (selectors.currentPassword && action !== "generate") {
+      throw new Error(
+        "currentPasswordSelector is only available when generating a password for rotation.",
+      );
+    }
     if (selectors.password) {
       retain(
         "password",
@@ -2763,6 +2772,7 @@ async function prepareCredentialTargets(page, action, fields) {
 
     for (const [name, label] of [
       ["username", "username"],
+      ["currentPassword", "current password"],
       ["confirmPassword", "confirmation password"],
       ["submit", "submit"],
     ]) {
@@ -2778,15 +2788,11 @@ async function prepareCredentialTargets(page, action, fields) {
     }
 
     const pinnedHandles = [
-      explicit.username,
-      explicit.password,
-      explicit.confirmPassword,
-      explicit.submit,
-      detection?.username,
-      detection?.currentPassword,
-      detection?.password,
-      detection?.confirmPassword,
-      detection?.submit,
+      explicit.username || detection?.username,
+      explicit.currentPassword || detection?.currentPassword,
+      explicit.password || detection?.password,
+      explicit.confirmPassword || detection?.confirmPassword,
+      explicit.submit || detection?.submit,
     ].filter(Boolean);
     const origin = await pinnedCredentialOrigin(targetFrame, pinnedHandles);
     return {
@@ -2893,7 +2899,10 @@ async function performCredentialFill(
     }
 
     let currentSecret = "";
-    if (action === "generate" && detection?.currentPassword) {
+    if (
+      action === "generate" &&
+      (explicit.currentPassword || detection?.currentPassword)
+    ) {
       const currentPayload = {};
       if (generateSpec.id != null) currentPayload.id = generateSpec.id;
       else if (typeof generateSpec.username === "string")
@@ -2966,8 +2975,9 @@ async function performCredentialFill(
     const usernameTarget =
       explicit.username || (!selectors.password ? detection?.username : null);
     const currentPasswordTarget =
-      action === "generate" && !selectors.password
-        ? detection?.currentPassword
+      action === "generate"
+        ? explicit.currentPassword ||
+          (!selectors.password ? detection?.currentPassword : null)
         : null;
     const passwordTarget = explicit.password || detection?.password;
     const confirmTarget =
