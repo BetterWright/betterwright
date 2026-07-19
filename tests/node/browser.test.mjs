@@ -844,6 +844,61 @@ test("timed-out challenge runs report that the page must be reopened", opts, asy
   }
 });
 
+test("timeout restart flushes recent persistent-profile changes", opts, async () => {
+  const server = await listen((_req, res) => {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<title>Profile flush</title><h1>Profile flush</h1>");
+  });
+  const home = tempHome();
+  const seed = new BetterWright({ home, headless: true });
+  try {
+    const stored = await seed.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      return page.evaluate(() => {
+        document.cookie = 'seeded=alive; Max-Age=3600; Path=/; SameSite=Lax';
+        return document.cookie;
+      });
+    `);
+    assert.equal(stored.ok, true, stored.error);
+    assert.match(stored.result, /seeded=alive/);
+  } finally {
+    await seed.close();
+  }
+
+  const bw = new BetterWright({ home, headless: true });
+  try {
+    const stored = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      return page.evaluate(() => {
+        document.cookie = 'recent=alive; Max-Age=3600; Path=/; SameSite=Lax';
+        return document.cookie;
+      });
+    `);
+    assert.equal(stored.ok, true, stored.error);
+    assert.equal(stored.profileMode, "persistent");
+    assert.match(stored.result, /seeded=alive/);
+    assert.match(stored.result, /recent=alive/);
+
+    const timedOut = await bw.run("await new Promise(() => {})", {
+      timeout: 5,
+    });
+    assert.equal(timedOut.ok, false);
+    assert.match(timedOut.error, /timed out/i);
+
+    const restarted = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      return page.evaluate(() => document.cookie);
+    `);
+    assert.equal(restarted.ok, true, restarted.error);
+    assert.equal(restarted.profileMode, "persistent");
+    assert.match(restarted.result, /seeded=alive/);
+    assert.match(restarted.result, /recent=alive/);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
 test("captcha.click activates a checkbox-style challenge and returns a fresh snapshot", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
