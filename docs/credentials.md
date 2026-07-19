@@ -129,17 +129,25 @@ for the current site after a complete process restart.
 
 ## Save and manage records
 
-Use `save` only for a supplied secret the user explicitly wants remembered,
-and only after the site accepts it:
+Use `save` only from a trusted host-authored channel, for a user-supplied secret
+the application has confirmed the site accepted. Never let a model author or
+inspect this payload; agent-facing code should remain metadata-only:
 
 ```js
-await credentials.save({
-  username: "alice",
-  password: "task-supplied password",
-  label: "work",
-  matchMode: "base-domain",
-});
+async function rememberAcceptedCredential({ username, password }) {
+  const payload = JSON.stringify({
+    username,
+    password,
+    label: "work",
+    matchMode: "base-domain",
+  });
+  return bw.run(`return credentials.save(${payload});`);
+}
+```
 
+Metadata-only agent code may update or remove an existing record:
+
+```js
 await credentials.update({ id, label: "primary work account" });
 await credentials.remove({ id });
 ```

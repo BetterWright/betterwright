@@ -109,6 +109,11 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
     session: "default",
     generate: false,
   });
+  assert.deepEqual(loginOptionsFromArgs({ session: "work", submit: false }), {
+    session: "work",
+    generate: false,
+    submit: false,
+  });
   assert.deepEqual(LOGIN_INPUT_SCHEMA.properties.matchMode.enum, [
     "base-domain",
     "host",

@@ -312,9 +312,10 @@ test("native Pi extension exposes trusted credential fill", async () => {
       generate: true,
       id: "rec-1",
       currentPasswordSelector: "#old-password",
-      submit: true,
+      submit: false,
       length: 20,
       matchMode: "exact-origin",
+      session: "untrusted",
       // Unknown keys must be dropped before reaching fillCredential.
       note: "ignored",
     },
@@ -329,7 +330,7 @@ test("native Pi extension exposes trusted credential fill", async () => {
     currentPasswordSelector: "#old-password",
     length: 20,
     matchMode: "exact-origin",
-    submit: true,
+    submit: false,
   });
   assert.deepEqual(PI_LOGIN_PARAMETERS.properties.matchMode.enum, [
     "base-domain",
