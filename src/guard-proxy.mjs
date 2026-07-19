@@ -15,6 +15,17 @@ const SOCKS_HANDSHAKE_TIMEOUT_MS = 15_000;
 const SOCKS_CONNECT_TIMEOUT_MS = 10_000;
 const MAX_SOCKS_HANDSHAKE_BYTES = 8_192;
 
+// Repeated identical CONNECT failures back off before the SOCKS failure
+// reply. Browsers retry immediately on a failure reply, so an instant reject
+// (~1 ms for ENETUNREACH literals or DNS misses) lets a single unreachable
+// target spin the worker at thousands of connections per second and peg a
+// core. Delaying only *repeated* failures caps that loop at a harmless rate
+// while leaving first attempts and reachable targets untouched.
+const FAILURE_BACKOFF_INITIAL_MS = 250;
+const FAILURE_BACKOFF_MAX_MS = 5_000;
+const FAILURE_BACKOFF_FORGET_MS = 30_000;
+const FAILURE_BACKOFF_MAX_KEYS = 1_024;
+
 function transportUrl(host, port) {
   const scheme = port === 80 ? "http:" : "https:";
   const urlHost = net.isIP(host) === 6 ? `[${host}]` : host;
@@ -42,6 +53,54 @@ export function createGuardProxy({ guardUrl, executeId }) {
   let guardProxyServer = null;
   let guardProxyPort = null;
   const guardProxySockets = new Set();
+  const connectFailures = new Map();
+
+  // Returns how long to hold the failure reply for this target. Entries decay
+  // after FAILURE_BACKOFF_FORGET_MS so a recovered target is retried for real,
+  // and the map is bounded because a hostile page can spray distinct targets.
+  function noteConnectFailure(host, port) {
+    const key = `${host}|${port}`;
+    const now = Date.now();
+    const entry = connectFailures.get(key);
+    const count =
+      entry && now - entry.last <= FAILURE_BACKOFF_FORGET_MS
+        ? entry.count + 1
+        : 1;
+    connectFailures.delete(key);
+    connectFailures.set(key, { count, last: now });
+    if (connectFailures.size > FAILURE_BACKOFF_MAX_KEYS) {
+      for (const [staleKey, stale] of connectFailures)
+        if (now - stale.last > FAILURE_BACKOFF_FORGET_MS)
+          connectFailures.delete(staleKey);
+      // Still over the cap: insertion order approximates least-recently-failed
+      // because every update re-inserts, so evict from the front.
+      while (connectFailures.size > FAILURE_BACKOFF_MAX_KEYS)
+        connectFailures.delete(connectFailures.keys().next().value);
+    }
+    if (count < 2) return 0;
+    return Math.min(
+      FAILURE_BACKOFF_INITIAL_MS * 2 ** (count - 2),
+      FAILURE_BACKOFF_MAX_MS,
+    );
+  }
+
+  function clearConnectFailure(host, port) {
+    connectFailures.delete(`${host}|${port}`);
+  }
+
+  // Abortable hold: resolves early if the client goes away mid-delay so a
+  // closed socket never pins a timer for seconds.
+  function holdReply(socket, ms) {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        socket.off("close", done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      socket.once("close", done);
+    });
+  }
 
   async function guardedTransportAddresses(host, port) {
     const attribution = executeId();
@@ -224,6 +283,7 @@ export function createGuardProxy({ guardUrl, executeId }) {
           client.off("data", onData);
           try {
             const upstream = await connectGuardedTarget(host, port);
+            clearConnectFailure(host, port);
             if (client.destroyed) {
               upstream.destroy();
               return;
@@ -234,6 +294,14 @@ export function createGuardProxy({ guardUrl, executeId }) {
             client.pipe(upstream).pipe(client);
             client.resume();
           } catch (error) {
+            // Policy denials stay instant: they are deliberate decisions, not
+            // transient network failures, and pages routinely re-request
+            // blocked resources during normal use.
+            if (error?.code !== "BW_PROXY_BLOCKED") {
+              const delayMs = noteConnectFailure(host, port);
+              if (delayMs && !client.destroyed)
+                await holdReply(client, delayMs);
+            }
             reject(
               error?.code === "BW_PROXY_BLOCKED"
                 ? 2
@@ -284,6 +352,7 @@ export function createGuardProxy({ guardUrl, executeId }) {
     const server = guardProxyServer;
     guardProxyServer = null;
     guardProxyPort = null;
+    connectFailures.clear();
     for (const socket of guardProxySockets) socket.destroy();
     guardProxySockets.clear();
     if (!server) return;
