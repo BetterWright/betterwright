@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] — 2026-07-19
+
+### Changed
+
+- **Second Aside-parity pass over the operator prompt.** Four additions drawn
+  from Aside's system prompt: a confirmed action's state is trusted until a
+  concrete contradiction (cuts redundant re-verification loops); an empty or
+  suspiciously thin result list unexplained by active filters means retry a
+  different strategy before concluding no result exists; the untrusted-data
+  rule now covers downloads and API responses, not just page content; and
+  archive.org is named as the last-resort fallback for dead pages. The harness
+  preamble also now forbids truncating snapshot strings in code
+  (`slice`/`substring`) in favor of `{ref}`/`{selector}` scoping or a higher
+  `{maxChars}`. Prompt bloat guard raised 5,500 → 5,900 chars (prompt is now
+  5,687).
+
 ## [0.8.6] — 2026-07-18
 
 ### Fixed
