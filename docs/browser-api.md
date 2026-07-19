@@ -219,15 +219,16 @@ await page.click («the button that opens the dialog»);
 
 ## Credentials
 
-The `credentials` helpers manage non-secret metadata in the
-[encrypted vault](credentials.md). Secret-bearing fill operations are disabled
-inside model-authored `run()` snippets (`credentials.fill` throws on purpose);
-filling is done from trusted host code instead.
+The `credentials` helpers manage records in the
+[encrypted vault](credentials.md). Metadata is readable; secret values are
+filled, never returned.
 
 ```js
 await credentials.save({ username: "alice", password: "…" });
 await credentials.list();                          // metadata only, no passwords
 await credentials.list({ text: "work", category: "login" }); // filtered
+await credentials.fill({ usernameSelector: "#u", passwordSelector: "#p", submitSelector: "#go" });
+await credentials.generateAndFill({ username: "alice", passwordSelector: "#p" }); // signup
 await credentials.update({ id, label: "work" });
 await credentials.remove({ id });
 ```
@@ -235,11 +236,19 @@ await credentials.remove({ id });
 All operations are scoped to the current page's origin, which must be `http(s)`.
 `list()` accepts a `{text, category}` filter; `category` defaults to `login`,
 with `credit-card`, `identity`, `api-credential`, `secure-note`, and `ssh-key`
-available for non-login records. To actually fill a login or signup form, the
-host calls `bw.fillCredential(...)` / `bw.generateAndFillCredential(...)`, or the
-MCP/Pi `browser_login` tool — the worker types the password and any
-confirm-password field outside the sandbox and returns only metadata. See
-[credentials.md](credentials.md) for the full contract.
+available for non-login records.
+
+`fill` selects the record by `{id}` or `{username}` (or the origin's only
+record), then the worker types the username/password — and any
+confirm-password field — with trusted human-shaped input and optionally clicks
+`submitSelector`, returning only metadata (`{filled, submitted, username, …}`).
+`generateAndFill` creates a strong password (`length`, `includeSymbols`),
+fills it the same way, and saves it to the vault without ever returning it.
+The same operations are available to the host as `bw.fillCredential(...)` /
+`bw.generateAndFillCredential(...)` and the MCP/Pi `browser_login` tool. The
+filled value is scrubbed from every output channel by the redaction net; like
+a password-manager extension's autofill, the value does exist in the live DOM
+after filling. See [credentials.md](credentials.md) for the full contract.
 
 ## Console
 

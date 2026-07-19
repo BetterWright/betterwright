@@ -1739,16 +1739,49 @@ function buildCredentials(session, realm) {
   credentials.remove = realm.safeFunction(async (options) =>
     vaultCall(session, "remove", options || {}),
   );
-  const disabledFill = realm.safeFunction(() => {
-    throw new Error(
-      "Credential filling is disabled in untrusted run() snippets because page " +
-        "DOM access would expose the filled value. Call the trusted host method " +
-        "bw.fillCredential(...) / bw.fill_credential(...) instead, which types " +
-        "the secret outside the sandbox and never returns it.",
+  // Model-callable fill, the Aside-style shape: origin-scoped to the CURRENT
+  // page, the secret is fetched and typed on the worker side and never
+  // returned, and every output channel passes the redaction net. Reach matches
+  // an unlocked password-manager extension (a field an extension filled is
+  // equally visible to page JS), which is the accepted posture.
+  const fillFieldSpec = (options) => {
+    const fields = {};
+    for (const key of [
+      "usernameSelector",
+      "passwordSelector",
+      "confirmPasswordSelector",
+      "submitSelector",
+    ])
+      if (options?.[key] != null) fields[key] = String(options[key]);
+    return fields;
+  };
+  credentials.fill = realm.safeFunction(async (options) => {
+    const record = {};
+    if (options?.id != null) record.id = String(options.id);
+    if (options?.username != null) record.username = String(options.username);
+    return redactDeep(
+      await performCredentialFill(session, {
+        action: "fill",
+        record,
+        fields: fillFieldSpec(options),
+      }),
     );
   });
-  credentials.fill = disabledFill;
-  credentials.generateAndFill = disabledFill;
+  credentials.generateAndFill = realm.safeFunction(async (options) => {
+    const generate = {};
+    if (options?.username != null) generate.username = String(options.username);
+    if (options?.label != null) generate.label = String(options.label);
+    if (options?.length != null) generate.length = Number(options.length);
+    if (typeof options?.includeSymbols === "boolean")
+      generate.includeSymbols = options.includeSymbols;
+    return redactDeep(
+      await performCredentialFill(session, {
+        action: "generate",
+        generate,
+        fields: fillFieldSpec(options),
+      }),
+    );
+  });
   return Object.freeze(credentials);
 }
 
@@ -1809,11 +1842,96 @@ async function buildEnvelope(
   };
 }
 
-// Native, trusted credential fill. Reachable only through the host client's
-// fillCredential/generateAndFillCredential methods — never from a model-authored
-// run() snippet — so the secret is fetched, typed, and (optionally) submitted
-// entirely outside the sandbox. Only non-secret metadata is returned; the active
-// redaction net still scrubs the value from every field of this response.
+// Core credential fill: fetch the secret for the CURRENT origin over the vault
+// RPC, type it with trusted human-shaped input, optionally submit, and return
+// only non-secret metadata. The secret value never leaves the worker. Shared by
+// the host client's fillCredential/generateAndFillCredential and the
+// model-callable credentials.fill/generateAndFill (the Aside-style shape).
+async function performCredentialFill(session, spec) {
+  const fields = spec.fields && typeof spec.fields === "object" ? spec.fields : {};
+  const { page, origin } = await currentOrigin(session);
+  if (!fields.passwordSelector)
+    throw new Error("credential fill requires fields.passwordSelector.");
+
+  const action = spec.action === "generate" ? "generate" : "fill";
+  let vaultPayload;
+  if (action === "generate") {
+    const generateSpec =
+      spec.generate && typeof spec.generate === "object" ? spec.generate : {};
+    vaultPayload = {
+      username:
+        typeof generateSpec.username === "string" ? generateSpec.username : "",
+      label: generateSpec.label ?? null,
+      length: Number(generateSpec.length) || 24,
+      include_symbols: generateSpec.includeSymbols !== false,
+    };
+  } else {
+    const recordSpec =
+      spec.record && typeof spec.record === "object" ? spec.record : {};
+    vaultPayload = {};
+    if (recordSpec.id != null) vaultPayload.id = recordSpec.id;
+    if (recordSpec.username != null) vaultPayload.username = recordSpec.username;
+  }
+
+  const record = await rpc(
+    "vault",
+    { action, origin, payload: vaultPayload },
+    `credfill:${session.id}`,
+  );
+  const secret = record?.secret == null ? "" : String(record.secret);
+  if (!secret)
+    throw new Error("The vault did not return a credential to fill for this origin.");
+  trackSecret(secret);
+
+  const filled = [];
+  let lastLocator = null;
+  if (fields.usernameSelector) {
+    const username = typeof record.username === "string" ? record.username : "";
+    lastLocator = await fillCredentialField(
+      page,
+      session,
+      fields.usernameSelector,
+      username,
+    );
+    filled.push("username");
+  }
+  lastLocator = await fillCredentialField(
+    page,
+    session,
+    fields.passwordSelector,
+    secret,
+  );
+  filled.push("password");
+  if (fields.confirmPasswordSelector) {
+    lastLocator = await fillCredentialField(
+      page,
+      session,
+      fields.confirmPasswordSelector,
+      secret,
+    );
+    filled.push("confirmPassword");
+  }
+  // Fire blur so forms that validate the password/confirm match on blur (not
+  // just on input) run their check before any submit.
+  if (lastLocator) {
+    await lastLocator.evaluate((element) => element.blur?.()).catch(() => {});
+  }
+
+  let submitted = false;
+  if (fields.submitSelector) {
+    await humanClickTarget(page, session, String(fields.submitSelector), {
+      timeout: 10_000,
+    });
+    submitted = true;
+  }
+
+  const { secret: _secret, ...publicRecord } = record || {};
+  return { ...publicRecord, filled, submitted };
+}
+
+// The host-client entry point for trusted credential fill (fillCredential /
+// generateAndFillCredential): wraps performCredentialFill in the usual result
+// envelope. The active redaction net still scrubs the secret from every field.
 async function credentialFill(message) {
   const started = performance.now();
   const session = sessionFor(message.sessionId);
@@ -1821,93 +1939,15 @@ async function credentialFill(message) {
   const firstEvent = session.events.length;
   activeExecutionSession = session.id;
   const spec = message.spec && typeof message.spec === "object" ? message.spec : {};
-  const fields = spec.fields && typeof spec.fields === "object" ? spec.fields : {};
   try {
     await ensureBrowser(message.config);
     await ensureSessionPage(session);
-    const { page, origin } = await currentOrigin(session);
-    if (!fields.passwordSelector)
-      throw new Error("credential fill requires fields.passwordSelector.");
-
-    const action = spec.action === "generate" ? "generate" : "fill";
-    let vaultPayload;
-    if (action === "generate") {
-      const generateSpec =
-        spec.generate && typeof spec.generate === "object" ? spec.generate : {};
-      vaultPayload = {
-        username:
-          typeof generateSpec.username === "string" ? generateSpec.username : "",
-        label: generateSpec.label ?? null,
-        length: Number(generateSpec.length) || 24,
-        include_symbols: generateSpec.includeSymbols !== false,
-      };
-    } else {
-      const recordSpec =
-        spec.record && typeof spec.record === "object" ? spec.record : {};
-      vaultPayload = {};
-      if (recordSpec.id != null) vaultPayload.id = recordSpec.id;
-      if (recordSpec.username != null) vaultPayload.username = recordSpec.username;
-    }
-
-    const record = await rpc(
-      "vault",
-      { action, origin, payload: vaultPayload },
-      `credfill:${session.id}`,
-    );
-    const secret = record?.secret == null ? "" : String(record.secret);
-    if (!secret)
-      throw new Error("The vault did not return a credential to fill for this origin.");
-    trackSecret(secret);
-
-    const filled = [];
-    let lastLocator = null;
-    if (fields.usernameSelector) {
-      const username = typeof record.username === "string" ? record.username : "";
-      lastLocator = await fillCredentialField(
-        page,
-        session,
-        fields.usernameSelector,
-        username,
-      );
-      filled.push("username");
-    }
-    lastLocator = await fillCredentialField(
-      page,
-      session,
-      fields.passwordSelector,
-      secret,
-    );
-    filled.push("password");
-    if (fields.confirmPasswordSelector) {
-      lastLocator = await fillCredentialField(
-        page,
-        session,
-        fields.confirmPasswordSelector,
-        secret,
-      );
-      filled.push("confirmPassword");
-    }
-    // Fire blur so forms that validate the password/confirm match on blur (not
-    // just on input) run their check before any submit.
-    if (lastLocator) {
-      await lastLocator.evaluate((element) => element.blur?.()).catch(() => {});
-    }
-
-    let submitted = false;
-    if (fields.submitSelector) {
-      await humanClickTarget(page, session, String(fields.submitSelector), {
-        timeout: 10_000,
-      });
-      submitted = true;
-    }
-
-    const { secret: _secret, ...publicRecord } = record || {};
     sendResult(
       await buildEnvelope(session, message, started, {
         firstEvent,
         drainSessionWarnings: true,
         ok: true,
-        result: redactDeep({ ...publicRecord, filled, submitted }),
+        result: redactDeep(await performCredentialFill(session, spec)),
       }),
     );
   } catch (error) {
