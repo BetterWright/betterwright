@@ -64,7 +64,7 @@ release only:
 
 ### Normal releases
 
-1. Update `CHANGELOG.md` and bump the package version.
+1. Bump the package version.
 2. Run `npm ci` followed by `npm run release:check`.
 3. Merge the release commit, create the matching `vX.Y.Z` tag from `main`, and
    publish a GitHub Release for that tag.
