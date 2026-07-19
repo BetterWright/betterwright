@@ -28,8 +28,8 @@ import { codexAccessToken, codexHome, grokAccessToken, loadCodexAuth, loadGrokAu
 import {
   BetterWright,
   NetworkPolicy,
-  validateCredentialMatchMode,
 } from "./client.mjs";
+import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
 import { agentSystemPrompt } from "./prompt.mjs";
 import { matchSkillsForText, readSkill } from "./skills.mjs";
 import { VAULT_MATCH_MODES } from "./vault.mjs";
@@ -242,30 +242,6 @@ function finalAnswerFromResult(result) {
   return null;
 }
 
-function loginOptionsFromInput(input = {}, session) {
-  const options = {
-    session,
-    generate: input.generate === true,
-  };
-  for (const key of [
-    "passwordSelector",
-    "currentPasswordSelector",
-    "usernameSelector",
-    "confirmPasswordSelector",
-    "submitSelector",
-    "id",
-    "username",
-    "label",
-  ])
-    if (input[key] != null) options[key] = String(input[key]);
-  if (input.length != null) options.length = Number(input.length);
-  if (typeof input.includeSymbols === "boolean") options.includeSymbols = input.includeSymbols;
-  if (input.matchMode !== undefined)
-    options.matchMode = validateCredentialMatchMode(input.matchMode);
-  if (typeof input.submit === "boolean") options.submit = input.submit;
-  return options;
-}
-
 /**
  * Run a natural-language task through BetterWright's own agent harness.
  *
@@ -390,7 +366,9 @@ export async function runAgentTask(options = {}) {
         if (call.name === "login") {
           onStep({ step: steps, tool: "login", note: "filling credential" });
           try {
-            const result = await browser.fillCredential(loginOptionsFromInput(call.input, session));
+            const result = await browser.fillCredential(
+              normalizeCredentialToolOptions(call.input, { session }),
+            );
             results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
           } catch (error) {
             results.push({ id: call.id, name: call.name, content: `login error: ${error?.message || error}` });

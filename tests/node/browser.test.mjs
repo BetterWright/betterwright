@@ -366,123 +366,129 @@ test("built-in password manager signs up, persists, and logs in through the agen
 
   const signupUrl = `http://signup.acme.localhost:${server.port}/signup`;
   const loginUrl = `http://login.acme.localhost:${server.port}/login`;
-  const signupBrowser = new BetterWright({ home, headless: true });
   try {
-    const signupModel = scriptedAgentModel([
-      {
-        toolCalls: [
-          {
-            id: "open-signup",
-            name: "browser",
-            input: {
-              note: "Opening the signup form",
-              code: `await page.goto(${JSON.stringify(signupUrl)}); return snapshot({interactive: true})`,
-            },
-          },
-        ],
-      },
-      {
-        toolCalls: [
-          {
-            id: "generate-password",
-            name: "login",
-            input: { generate: true, username: account.username, submit: true },
-          },
-        ],
-      },
-      (request) => {
-        const pendingId = JSON.stringify(request.messages).match(
-          /pending_[0-9a-f-]+/i,
-        )?.[0];
-        assert.ok(pendingId, "generated credential observation should include a pending id");
-        return {
+    const signupBrowser = new BetterWright({ home, headless: true });
+    try {
+      const signupModel = scriptedAgentModel([
+        {
           toolCalls: [
             {
-              id: "verify-signup",
+              id: "open-signup",
               name: "browser",
               input: {
-                note: "Verifying the new account",
-                code:
-                  "const heading = await page.getByRole('heading').textContent(); " +
-                  `if (heading === 'Account created') await credentials.commitGenerated({pendingId: ${JSON.stringify(pendingId)}}); ` +
-                  "return {finalAnswer: heading === 'Account created' ? 'Account created' : ''}",
+                note: "Opening the signup form",
+                code: `await page.goto(${JSON.stringify(signupUrl)}); return snapshot({interactive: true})`,
               },
             },
           ],
-        };
-      },
-    ]);
-    const signup = await runAgentTask({
-      task: "Create an account using a generated password.",
-      model: signupModel,
-      browser: signupBrowser,
-    });
-    assert.equal(signup.ok, true, signup.answer);
-    assert.equal(signup.answer, "Account created");
-    assert.equal(submissions.length, 1);
-    assert.equal(submissions[0].path, "/signup");
-    assert.equal(submissions[0].form.email, account.username);
-    assert.equal(submissions[0].form.password, submissions[0].form.confirm);
-    assert.ok(account.password.length >= 16);
-    assert.ok(!JSON.stringify(signup.transcript).includes(account.password));
-    assert.ok(signupModel.seen[0].tools.some((tool) => tool.name === "login"));
-  } finally {
-    await signupBrowser.close();
-  }
+        },
+        {
+          toolCalls: [
+            {
+              id: "generate-password",
+              name: "login",
+              input: { generate: true, username: account.username, submit: true },
+            },
+          ],
+        },
+        (request) => {
+          const pendingId = JSON.stringify(request.messages).match(
+            /pending_[0-9a-f-]+/i,
+          )?.[0];
+          assert.ok(
+            pendingId,
+            "generated credential observation should include a pending id",
+          );
+          return {
+            toolCalls: [
+              {
+                id: "verify-signup",
+                name: "browser",
+                input: {
+                  note: "Verifying the new account",
+                  code:
+                    "const heading = await page.getByRole('heading').textContent(); " +
+                    `if (heading === 'Account created') await credentials.commitGenerated({pendingId: ${JSON.stringify(pendingId)}}); ` +
+                    "return {finalAnswer: heading === 'Account created' ? 'Account created' : ''}",
+                },
+              },
+            ],
+          };
+        },
+      ]);
+      const signup = await runAgentTask({
+        task: "Create an account using a generated password.",
+        model: signupModel,
+        browser: signupBrowser,
+      });
+      assert.equal(signup.ok, true, signup.answer);
+      assert.equal(signup.answer, "Account created");
+      assert.equal(submissions.length, 1);
+      assert.equal(submissions[0].path, "/signup");
+      assert.equal(submissions[0].form.email, account.username);
+      assert.equal(submissions[0].form.password, submissions[0].form.confirm);
+      assert.ok(account.password.length >= 16);
+      assert.ok(!JSON.stringify(signup.transcript).includes(account.password));
+      assert.ok(signupModel.seen[0].tools.some((tool) => tool.name === "login"));
+    } finally {
+      await signupBrowser.close();
+    }
 
-  const loginBrowser = new BetterWright({ home, headless: true });
-  try {
-    const loginModel = scriptedAgentModel([
-      {
-        toolCalls: [
-          {
-            id: "open-login",
-            name: "browser",
-            input: {
-              note: "Opening the login form",
-              code: `await page.goto(${JSON.stringify(loginUrl)}); return snapshot({interactive: true})`,
+    const loginBrowser = new BetterWright({ home, headless: true });
+    try {
+      const loginModel = scriptedAgentModel([
+        {
+          toolCalls: [
+            {
+              id: "open-login",
+              name: "browser",
+              input: {
+                note: "Opening the login form",
+                code: `await page.goto(${JSON.stringify(loginUrl)}); return snapshot({interactive: true})`,
+              },
             },
-          },
-        ],
-      },
-      {
-        toolCalls: [
-          {
-            id: "fill-login",
-            name: "login",
-            input: { username: account.username, submit: true },
-          },
-        ],
-      },
-      {
-        toolCalls: [
-          {
-            id: "verify-login",
-            name: "browser",
-            input: {
-              note: "Verifying the signed-in state",
-              code:
-                "const heading = await page.getByRole('heading').textContent(); " +
-                "return {finalAnswer: heading === 'Signed in' ? 'Signed in' : ''}",
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              id: "fill-login",
+              name: "login",
+              input: { username: account.username, submit: true },
             },
-          },
-        ],
-      },
-    ]);
-    const login = await runAgentTask({
-      task: "Sign in with the saved account.",
-      model: loginModel,
-      browser: loginBrowser,
-    });
-    assert.equal(login.ok, true, login.answer);
-    assert.equal(login.answer, "Signed in");
-    assert.equal(submissions.length, 2);
-    assert.equal(submissions[1].path, "/login");
-    assert.equal(submissions[1].form.email, account.username);
-    assert.equal(submissions[1].form.password, account.password);
-    assert.ok(!JSON.stringify(login.transcript).includes(account.password));
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              id: "verify-login",
+              name: "browser",
+              input: {
+                note: "Verifying the signed-in state",
+                code:
+                  "const heading = await page.getByRole('heading').textContent(); " +
+                  "return {finalAnswer: heading === 'Signed in' ? 'Signed in' : ''}",
+              },
+            },
+          ],
+        },
+      ]);
+      const login = await runAgentTask({
+        task: "Sign in with the saved account.",
+        model: loginModel,
+        browser: loginBrowser,
+      });
+      assert.equal(login.ok, true, login.answer);
+      assert.equal(login.answer, "Signed in");
+      assert.equal(submissions.length, 2);
+      assert.equal(submissions[1].path, "/login");
+      assert.equal(submissions[1].form.email, account.username);
+      assert.equal(submissions[1].form.password, account.password);
+      assert.ok(!JSON.stringify(login.transcript).includes(account.password));
+    } finally {
+      await loginBrowser.close();
+    }
   } finally {
-    await loginBrowser.close();
     await server.close();
   }
 });

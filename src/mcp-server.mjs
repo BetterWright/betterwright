@@ -33,8 +33,8 @@ import { createRequire } from "node:module";
 import {
   BetterWright,
   NetworkPolicy,
-  validateCredentialMatchMode,
 } from "./client.mjs";
+import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
 import { doctorReport } from "./doctor.mjs";
 import { piImageArtifacts, piImageContent } from "./pi.mjs";
 import { VAULT_MATCH_MODES } from "./vault.mjs";
@@ -246,29 +246,7 @@ export const LOGIN_INPUT_SCHEMA = {
  * keeping only the recognized keys so the trusted fill sees a clean spec.
  */
 export function loginOptionsFromArgs(args = {}) {
-  const options = {
-    session: String(args.session || "default"),
-    generate: args.generate === true,
-  };
-  for (const key of [
-    "passwordSelector",
-    "currentPasswordSelector",
-    "usernameSelector",
-    "confirmPasswordSelector",
-    "submitSelector",
-    "id",
-    "username",
-    "label",
-  ]) {
-    if (args[key] != null) options[key] = String(args[key]);
-  }
-  if (args.length != null) options.length = Number(args.length);
-  if (typeof args.includeSymbols === "boolean")
-    options.includeSymbols = args.includeSymbols;
-  if (args.matchMode !== undefined)
-    options.matchMode = validateCredentialMatchMode(args.matchMode);
-  if (args.submit === true) options.submit = true;
-  return options;
+  return normalizeCredentialToolOptions(args);
 }
 
 const RUN_INPUT_SCHEMA = {

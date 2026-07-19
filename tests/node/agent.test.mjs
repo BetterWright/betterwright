@@ -323,14 +323,16 @@ test("runAgentTask stops at maxSteps without a done", async () => {
 test("login tool is offered only with a vault and runs fillCredential", async () => {
   const withVault = fakeBrowser({ vault: {} });
   const model = scriptedModel([
-    { text: "", toolCalls: [{ id: "l1", name: "login", input: { username: "alice", currentPasswordSelector: "#old-password", submit: true, generate: true, matchMode: "exact-origin" } }] },
+    { text: "", toolCalls: [{ id: "l1", name: "login", input: { username: "alice", currentPasswordSelector: "#old-password", submit: false, generate: true, matchMode: "exact-origin", session: "untrusted", code: "danger()" } }] },
     { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "in" } }] },
   ]);
   await runAgentTask({ task: "log in", model, browser: withVault });
   assert.equal(withVault.calls.fill.length, 1);
   assert.equal(withVault.calls.fill[0].passwordSelector, undefined);
   assert.equal(withVault.calls.fill[0].currentPasswordSelector, "#old-password");
-  assert.equal(withVault.calls.fill[0].submit, true);
+  assert.equal(withVault.calls.fill[0].submit, false);
+  assert.equal(withVault.calls.fill[0].session, "default");
+  assert.equal(withVault.calls.fill[0].code, undefined);
   assert.equal(withVault.calls.fill[0].matchMode, "exact-origin");
   // The tool list handed to the model included login.
   const loginTool = model.seen[0].tools.find((t) => t.name === "login");

@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { BetterWright, validateCredentialMatchMode } from "./client.mjs";
+import { BetterWright } from "./client.mjs";
+import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
 import {
   piImageArtifacts,
   piImageContent,
@@ -173,32 +174,6 @@ function normalizedStartUrl(value) {
     throw new TypeError("Pi startUrl must use http or https.");
   }
   return parsed.href;
-}
-
-// Keep only recognized fillCredential keys from the tool params.
-function loginOptions(params = {}) {
-  const options = {
-    generate: params.generate === true,
-  };
-  for (const key of [
-    "passwordSelector",
-    "currentPasswordSelector",
-    "usernameSelector",
-    "confirmPasswordSelector",
-    "submitSelector",
-    "id",
-    "username",
-    "label",
-  ]) {
-    if (params[key] != null) options[key] = String(params[key]);
-  }
-  if (params.length != null) options.length = Number(params.length);
-  if (typeof params.includeSymbols === "boolean")
-    options.includeSymbols = params.includeSymbols;
-  if (params.matchMode !== undefined)
-    options.matchMode = validateCredentialMatchMode(params.matchMode);
-  if (params.submit === true) options.submit = true;
-  return options;
 }
 
 function normalizedMaxSteps(value) {
@@ -790,10 +765,9 @@ export function createPiExtension(options = {}) {
           if (typeof instance.fillCredential !== "function") {
             throw new Error("This BetterWright build has no credential fill available.");
           }
-          const result = await instance.fillCredential({
-            session,
-            ...loginOptions(params),
-          });
+          const result = await instance.fillCredential(
+            normalizeCredentialToolOptions(params, { session }),
+          );
           return {
             content: [
               { type: "text", text: JSON.stringify(result, null, 2) },
