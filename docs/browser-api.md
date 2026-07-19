@@ -75,6 +75,14 @@ Filled `<input type="password">` values are replaced with `[redacted]` in the
 snapshot (username and other fields read normally), so a routine read never
 pulls a just-typed or extension-filled secret into model context.
 
+The tree is compressed before it reaches the model: bare `generic` wrappers
+are unwrapped, text-only paragraphs and small text-only containers collapse to
+single lines, refs and cursor hints that cannot serve as action targets are
+dropped, nameless images disappear, names are capped at 100 characters, and
+link `/url` lines are omitted (pass `{urls: true}` to keep them, or read an
+href via `page.locator('aria-ref=eN').getAttribute('href')`). This typically
+halves the size of a real page's tree without losing anything actionable.
+
 | Option | Default | Notes |
 | --- | --- | --- |
 | `interactive` | `false` | Keep only actionable elements (buttons, links, inputs, `cursor: pointer`, …) plus their ancestors. The cheapest way to see what you can do on a page. |
@@ -82,7 +90,8 @@ pulls a just-typed or extension-filled secret into model context.
 | `ref` | — | Scope the snapshot to one element's subtree by its ref from the previous snapshot, e.g. `{ref: 'e31'}` — no CSS selector needed. |
 | `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
 | `depth` | — | Limit tree depth. |
-| `maxChars` | `10000` | Truncation limit, capped at 20000. |
+| `urls` | `false` | Keep `- /url:` property lines on links. |
+| `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns an error with the actual size and scoping hints instead of a silently cut-off tree. |
 | `timeout` | `10000` | Milliseconds. |
 
 Escalate reading only as far as the task needs: `snapshot({interactive: true})`

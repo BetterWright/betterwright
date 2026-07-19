@@ -7,9 +7,9 @@ password manager without bloating every request. Skill packs solve that — smal
 Markdown files the host agent reads **on demand**, only when a page or task
 makes them relevant.
 
-This mirrors how Aside ships per-site and per-provider guidance, but stays true
-to BetterWright's role: the packs are plain files the controlling agent reads
-with the file tool it already has. BetterWright never becomes an agent itself.
+Per-site and per-provider guidance stays true to BetterWright's role: the packs
+are plain files the controlling agent reads with the file tool it already has.
+BetterWright never becomes an agent itself.
 
 ## What a pack looks like
 

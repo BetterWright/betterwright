@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-07-20
+
+### Added
+
+- **Snapshot compression.** `snapshot()` output now goes through
+  `compressSnapshot`, which strips everything from the accessibility tree
+  that costs tokens without informing an agent: link `/url` property lines
+  are dropped (opt back in with `{urls: true}`), bare `generic` wrappers are
+  unwrapped and their children hoisted, text-only paragraphs become text
+  lines, adjacent text merges, a value repeating the accessible name is
+  deduped, small text-only containers collapse to one line, refs and
+  `[cursor=pointer]` hints that cannot serve as action targets are removed,
+  nameless images are dropped, and names are capped at 100 characters.
+  Measured on real pages (github.com repo, HN front page, a long Wikipedia
+  article, amazon.com) this shrinks full snapshots 38–67% and
+  `{interactive: true}` snapshots 45–77%, with refs still resolving through
+  `aria-ref` locators.
+
+### Changed
+
+- **Snapshots refuse instead of truncating.** A snapshot over `maxChars` now
+  returns an error carrying the actual size and scoping hints
+  (`interactive`, `ref`/`selector`, `depth`, `maxChars`) instead of a
+  silently cut-off tree that reads as complete and sends the model acting on
+  half a page.
+- **README overhauled.** Centered header with functional badges, install and
+  first command up front, collapsible per-host integration guides, and the
+  feature list as a linked table.
+
 ## [0.9.0] — 2026-07-19
 
 ### Added
@@ -14,16 +43,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   costs one model turn. The harness ignores `finalAnswer` on an errored run,
   and the preamble requires the code to check the extracted values actually
   satisfy the request (match a ranked row by its own rank cell, not position)
-  before finishing. In the 15-scenario head-to-head against `aside exec` (both
-  on `gpt-5.6-sol`, effort low, Aside restricted from subagents), this took
-  simple lookups from 2–3 turns / 10–20s to 1 turn / 5–9s — faster than Aside
-  on most scenarios, with equal-or-better correctness every round
-  (see `benchmarks/exec-headtohead/REPORT.md`).
+  before finishing. In the 15-scenario head-to-head against a baseline browser
+  agent (both on `gpt-5.6-sol`, effort low, the baseline restricted from
+  subagents), this took simple lookups from 2–3 turns / 10–20s to 1 turn /
+  5–9s — faster than the baseline on most scenarios, with equal-or-better
+  correctness every round (see `benchmarks/exec-headtohead/REPORT.md`).
 - **Model-callable vault fill.** `credentials.fill({id|username,
   usernameSelector, passwordSelector, confirmPasswordSelector?,
   submitSelector?})` and `credentials.generateAndFill(...)` now work inside
-  `run()` snippets — the same shape Aside's password manager exposes to its
-  agent. Both share the trusted worker fill path: the vault RPC stays
+  `run()` snippets — the same shape a first-class password manager exposes to
+  its agent. Both share the trusted worker fill path: the vault RPC stays
   origin-scoped to the current page, the secret is typed worker-side with
   human-shaped input and never returned, and the redaction net still scrubs
   the value from every output channel. The host-side
@@ -44,8 +73,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Second Aside-parity pass over the operator prompt.** Four additions drawn
-  from Aside's system prompt: a confirmed action's state is trusted until a
+- **Second capability pass over the operator prompt.** Four additions to
+  sharpen agent behavior: a confirmed action's state is trusted until a
   concrete contradiction (cuts redundant re-verification loops); an empty or
   suspiciously thin result list unexplained by active filters means retry a
   different strategy before concluding no result exists; the untrusted-data
@@ -130,9 +159,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Interactive agent console (`betterwright` with no subcommand).** The
-  counterpart to `aside` on its own: a REPL where you type natural-language tasks
-  and watch BetterWright's own agent loop drive the browser to complete them. Each
+- **Interactive agent console (`betterwright` with no subcommand).** A REPL
+  where you type natural-language tasks and watch BetterWright's own agent loop
+  drive the browser to complete them. Each
   step streams as it happens, then the answer, the proof-screenshot path, and a
   one-line cost summary. **One browser session persists across tasks**, so a later
   task builds on where an earlier one left off (still signed in, tabs open). Meta
@@ -169,9 +198,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Built-in agent harness (`betterwright exec`)** — BetterWright can now drive
   itself. Alongside the existing "bring your own agent" model (an external
-  harness driving BetterWright through `run()`, MCP, or Pi — the `aside repl`
-  shape), it now ships its own browser-tuned agent loop that a model plugs into
-  (the `aside exec` shape). `betterwright exec "<task>" --model claude|codex|grok`
+  harness driving BetterWright through `run()`, MCP, or Pi — the REPL shape), it
+  now ships its own browser-tuned agent loop that a model plugs into (the exec
+  shape). `betterwright exec "<task>" --model claude|codex|grok`
   runs a natural-language task to completion: observe with `snapshot`, act,
   verify with `snapshot({diff})`, capture proof, finish. The model is a small
   pluggable interface (`{ complete({system, messages, tools}) }`), so the three
@@ -210,8 +239,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `browser_login` tool that fills a saved or freshly generated credential
   (`generate: true` for signup) without the secret ever being returned; the fill
   runs as a dedicated worker message, never as model JavaScript. The fill is
-  **origin-scoped** — like an unlocked password-manager extension (and like
-  Aside's vault), it can only fill the credential for the page's current origin,
+  **origin-scoped** — like an unlocked password-manager extension, it can only
+  fill the credential for the page's current origin,
   not harvest other sites' secrets. It requires a configured vault: pass one to
   `runMcpServer(env, { vault })` or via Pi `browserOptions.vault`; without a
   vault (e.g. plain `npx betterwright mcp`), logins go through a password-manager
@@ -228,8 +257,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   skill pack (and always the `credential-manager` pack before a login, signup,
   or checkout).
 - The `exec` harness batches multi-page work into a single `browser` call
-  (`parallel_tool_calls`), closing most of the step-count gap with Aside on
-  multi-step navigation and search tasks (see
+  (`parallel_tool_calls`), closing most of the step-count gap with the baseline
+  browser agent on multi-step navigation and search tasks (see
   [benchmarks/exec-headtohead](benchmarks/exec-headtohead/REPORT.md)).
 - **Removed the vestigial local OAuth-router machinery.** After native OAuth
   login shipped, the auto-spawned `grok-codex-router` bridge was dead weight; the
@@ -246,7 +275,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (by the agent or a password-manager extension) surfaced the secret in the
   model-facing tree. Password-input values are now replaced with `[redacted]`
   (other fields read normally) before the snapshot is stored, diffed, or
-  returned. Found by the AsideWright head-to-head benchmark.
+  returned. Found by the head-to-head benchmark.
 - **OAuth login hardening.** The loopback callback server is now closed on a
   sign-in timeout (no leaked port), token refresh is single-flight so concurrent
   requests rotate the refresh token only once and validates that a fresh access
