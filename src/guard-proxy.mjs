@@ -14,6 +14,13 @@ import net from "node:net";
 const SOCKS_HANDSHAKE_TIMEOUT_MS = 15_000;
 const SOCKS_CONNECT_TIMEOUT_MS = 10_000;
 const MAX_SOCKS_HANDSHAKE_BYTES = 8_192;
+const FAMILY_UNREACHABLE_TTL_MS = 30_000;
+const FAILURE_BACKOFF_BASE_MS = 25;
+const FAILURE_BACKOFF_MAX_MS = 1_000;
+const FAILURE_BACKOFF_RESET_MS = 30_000;
+const FAILURE_COOLDOWN_MS = 1_000;
+const MAX_FAILURE_TARGETS = 256;
+const FAMILY_UNREACHABLE_CODES = new Set(["ENETUNREACH", "EAFNOSUPPORT"]);
 
 function transportUrl(host, port) {
   const scheme = port === 80 ? "http:" : "https:";
@@ -31,6 +38,15 @@ function socksReply(code) {
   return Buffer.from([5, code, 0, 1, 0, 0, 0, 0, 0, 0]);
 }
 
+function socksReplyCode(error) {
+  if (error?.code === "BW_PROXY_BLOCKED") return 2;
+  if (error?.code === "ENETUNREACH") return 3;
+  if (["BW_PROXY_DNS", "EHOSTUNREACH"].includes(error?.code)) return 4;
+  if (error?.code === "ECONNREFUSED") return 5;
+  if (error?.code === "EAFNOSUPPORT") return 8;
+  return 1;
+}
+
 function ipv6FromBytes(value) {
   const groups = [];
   for (let offset = 0; offset < 16; offset += 2)
@@ -38,28 +54,204 @@ function ipv6FromBytes(value) {
   return groups.join(":");
 }
 
-export function createGuardProxy({ guardUrl, executeId }) {
+function positiveInteger(value, fallback) {
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function waitFor(delayMs) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, delayMs);
+    timer.unref?.();
+  });
+}
+
+export function createGuardProxy({ guardUrl, executeId, transport = {} }) {
   let guardProxyServer = null;
   let guardProxyPort = null;
   const guardProxySockets = new Set();
+  const unavailableFamilies = new Map();
+  const targetFailures = new Map();
+  const pendingFailureDelays = new Set();
+  let stateGeneration = 0;
+  // Hooks make transport failures deterministic in tests without depending on
+  // the host's IPv6 configuration. Production uses Node's DNS, TCP, and clock.
+  const lookup =
+    typeof transport.lookup === "function" ? transport.lookup : dns.lookup;
+  const dial = typeof transport.connect === "function" ? transport.connect : null;
+  const now = typeof transport.now === "function" ? transport.now : Date.now;
+  const delay = typeof transport.delay === "function" ? transport.delay : waitFor;
+  const familyUnreachableTtlMs = positiveInteger(
+    transport.familyUnreachableTtlMs,
+    FAMILY_UNREACHABLE_TTL_MS,
+  );
+  const failureBackoffBaseMs = positiveInteger(
+    transport.failureBackoffBaseMs,
+    FAILURE_BACKOFF_BASE_MS,
+  );
+  const failureBackoffMaxMs = Math.max(
+    failureBackoffBaseMs,
+    positiveInteger(transport.failureBackoffMaxMs, FAILURE_BACKOFF_MAX_MS),
+  );
+  const failureBackoffResetMs = positiveInteger(
+    transport.failureBackoffResetMs,
+    FAILURE_BACKOFF_RESET_MS,
+  );
+  const failureCooldownMs = positiveInteger(
+    transport.failureCooldownMs,
+    FAILURE_COOLDOWN_MS,
+  );
+  const maxFailureTargets = positiveInteger(
+    transport.maxFailureTargets,
+    MAX_FAILURE_TARGETS,
+  );
 
-  async function guardedTransportAddresses(host, port) {
-    const attribution = executeId();
-    const target = transportUrl(host, port);
+  function targetKey(host, port) {
+    const normalized = String(host).toLowerCase();
+    return `${net.isIP(normalized) === 6 ? `[${normalized}]` : normalized}:${port}`;
+  }
+
+  function unavailableFamilyError(family) {
+    const cached = unavailableFamilies.get(family);
+    if (!cached) return null;
+    if (cached.expiresAt <= now()) {
+      unavailableFamilies.delete(family);
+      return null;
+    }
+    const error = new Error("Browser transport address family is temporarily unreachable");
+    error.code = cached.code;
+    return error;
+  }
+
+  function rememberUnavailableFamily(family, error) {
+    if (![4, 6].includes(family) || !FAMILY_UNREACHABLE_CODES.has(error?.code))
+      return;
+    unavailableFamilies.delete(family);
+    unavailableFamilies.set(family, {
+      code: error.code,
+      expiresAt: now() + familyUnreachableTtlMs,
+    });
+  }
+
+  function trimTargetFailures() {
+    while (targetFailures.size > maxFailureTargets) {
+      let candidate = null;
+      for (const [key, state] of targetFailures) {
+        candidate ??= key;
+        if (!state.probing) {
+          candidate = key;
+          break;
+        }
+      }
+      targetFailures.delete(candidate);
+    }
+  }
+
+  function beginTargetAttempt(key, generation) {
+    if (generation !== stateGeneration) return { stale: true };
+    const state = targetFailures.get(key);
+    if (!state) return { state: null };
+    targetFailures.delete(key);
+    targetFailures.set(key, state);
+    if (state.retryAt > now() || state.probing) return { suppressed: true, state };
+    state.probing = true;
+    return { state };
+  }
+
+  function rememberTargetFailure(
+    key,
+    error,
+    previous,
+    generation,
+    { probeCompleted = false } = {},
+  ) {
+    if (generation !== stateGeneration) return null;
+    const timestamp = now();
+    const current = targetFailures.get(key) || previous;
+    const failures =
+      current && timestamp - current.at < failureBackoffResetMs
+        ? current.failures + 1
+        : 1;
+    const exponent = Math.min(failures - 1, 30);
+    const delayMs = Math.min(
+      failureBackoffMaxMs,
+      failureBackoffBaseMs * 2 ** exponent,
+    );
+    targetFailures.delete(key);
+    targetFailures.set(key, {
+      at: timestamp,
+      code: error?.code || "BW_PROXY_CONNECT",
+      delayMs,
+      failures,
+      probing: probeCompleted ? false : Boolean(current?.probing),
+      retryAt: timestamp + failureCooldownMs,
+    });
+    trimTargetFailures();
+    return delayMs;
+  }
+
+  async function waitForFailureDelay(delayMs, generation) {
+    if (!delayMs || generation !== stateGeneration) return;
+    let cancel;
+    const cancelled = new Promise((resolve) => {
+      cancel = resolve;
+      pendingFailureDelays.add(resolve);
+    });
+    const scheduled = Promise.resolve()
+      .then(() => delay(delayMs))
+      .catch(() => {});
+    try {
+      await Promise.race([scheduled, cancelled]);
+    } finally {
+      pendingFailureDelays.delete(cancel);
+    }
+  }
+
+  function cachedTargetError(state) {
+    const error = new Error("Browser transport target is temporarily unavailable");
+    error.code = state?.code || "BW_PROXY_CONNECT";
+    return error;
+  }
+
+  async function rejectCachedTarget(state, generation) {
+    await waitForFailureDelay(state.delayMs, generation);
+    throw cachedTargetError(state);
+  }
+
+  async function rejectTargetFailure(
+    key,
+    error,
+    previous,
+    generation,
+    options,
+  ) {
+    const delayMs = rememberTargetFailure(
+      key,
+      error,
+      previous,
+      generation,
+      options,
+    );
+    await waitForFailureDelay(delayMs, generation);
+    throw error;
+  }
+
+  async function guardTransportTarget(host, port, attribution) {
     const targetDecision = await guardUrl(
-      target,
+      transportUrl(host, port),
       { method: "CONNECT", resourceType: "transport" },
       attribution,
     );
     if (!targetDecision?.allowed)
       throw proxyBlockedError(targetDecision?.reason);
+  }
 
+  async function guardedTransportAddresses(host, port, attribution) {
     let addresses;
     const family = net.isIP(host);
     if (family) addresses = [{ address: host, family }];
     else {
       try {
-        addresses = await dns.lookup(host, { all: true, verbatim: false });
+        addresses = await lookup(host, { all: true, verbatim: false });
       } catch {
         const error = new Error("Browser transport DNS resolution failed");
         error.code = "BW_PROXY_DNS";
@@ -99,7 +291,11 @@ export function createGuardProxy({ guardUrl, executeId }) {
     return socket;
   }
 
-  function connectAddress(address, port) {
+  function connectSocket(address, port) {
+    if (dial)
+      return Promise.resolve(
+        dial({ host: address.address, port, family: address.family }),
+      );
     return new Promise((resolve, reject) => {
       const socket = trackProxySocket(
         net.createConnection({
@@ -126,19 +322,65 @@ export function createGuardProxy({ guardUrl, executeId }) {
     });
   }
 
-  async function connectGuardedTarget(host, port) {
-    const addresses = await guardedTransportAddresses(host, port);
-    let lastError = null;
-    for (const address of addresses) {
-      try {
-        return await connectAddress(address, port);
-      } catch (error) {
-        lastError = error;
+  async function connectAddress(address, port, generation) {
+    if (generation !== stateGeneration) throw cachedTargetError();
+    const suppressed = unavailableFamilyError(address.family);
+    if (suppressed) throw suppressed;
+    try {
+      const socket = await connectSocket(address, port);
+      if (generation !== stateGeneration) {
+        socket.destroy();
+        throw cachedTargetError();
       }
+      unavailableFamilies.delete(address.family);
+      return dial ? trackProxySocket(socket) : socket;
+    } catch (error) {
+      if (generation === stateGeneration)
+        rememberUnavailableFamily(address.family, error);
+      throw error;
     }
-    const error = new Error("Browser transport could not reach the target");
-    error.code = lastError?.code || "BW_PROXY_CONNECT";
-    throw error;
+  }
+
+  async function connectGuardedTarget(host, port) {
+    const key = targetKey(host, port);
+    const generation = stateGeneration;
+    const attribution = executeId();
+    try {
+      await guardTransportTarget(host, port, attribution);
+    } catch (error) {
+      return rejectTargetFailure(
+        key,
+        error,
+        targetFailures.get(key),
+        generation,
+      );
+    }
+
+    const attempt = beginTargetAttempt(key, generation);
+    if (attempt.stale) throw cachedTargetError();
+    if (attempt.suppressed)
+      return rejectCachedTarget(attempt.state, generation);
+
+    try {
+      const addresses = await guardedTransportAddresses(host, port, attribution);
+      let lastError = null;
+      for (const address of addresses) {
+        try {
+          const socket = await connectAddress(address, port, generation);
+          if (generation === stateGeneration) targetFailures.delete(key);
+          return socket;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      const error = new Error("Browser transport could not reach the target");
+      error.code = lastError?.code || "BW_PROXY_CONNECT";
+      throw error;
+    } catch (error) {
+      return rejectTargetFailure(key, error, attempt.state, generation, {
+        probeCompleted: true,
+      });
+    }
   }
 
   function handleGuardProxyClient(client) {
@@ -234,13 +476,7 @@ export function createGuardProxy({ guardUrl, executeId }) {
             client.pipe(upstream).pipe(client);
             client.resume();
           } catch (error) {
-            reject(
-              error?.code === "BW_PROXY_BLOCKED"
-                ? 2
-                : error?.code === "BW_PROXY_DNS"
-                  ? 4
-                  : 5,
-            );
+            reject(socksReplyCode(error));
           }
           return;
         }
@@ -284,6 +520,11 @@ export function createGuardProxy({ guardUrl, executeId }) {
     const server = guardProxyServer;
     guardProxyServer = null;
     guardProxyPort = null;
+    stateGeneration += 1;
+    unavailableFamilies.clear();
+    targetFailures.clear();
+    for (const cancel of pendingFailureDelays) cancel();
+    pendingFailureDelays.clear();
     for (const socket of guardProxySockets) socket.destroy();
     guardProxySockets.clear();
     if (!server) return;
