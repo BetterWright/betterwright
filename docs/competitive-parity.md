@@ -1,40 +1,38 @@
-# AsideWright parity — design notes
+# Capability roadmap — design notes
 
-BetterWright and Aside solve the same problem: give a language model a browser
-it can drive safely. Aside ("AsideWright" is its browser runtime) is the current
-state of the art. This note records, from a study of the local Aside daemon and
-its skill/memory system, what makes it capable, and how BetterWright closes the
-gap **without changing what BetterWright is**: an add-on that a host agent
-(Claude Code, Codex, a Pi package, any MCP client) drives. The host keeps doing
-the asking, remembering, and sub-agenting; BetterWright gives that host the tool
-surface and knowledge to be as capable as Aside.
+This note records the capability bar BetterWright aims for — a language model
+that can drive a browser safely and get real work done — and how BetterWright
+reaches it **without changing what BetterWright is**: an add-on that a host
+agent (Claude Code, Codex, a Pi package, any MCP client) drives. The host keeps
+doing the asking, remembering, and sub-agenting; BetterWright gives that host
+the tool surface and knowledge to be fully capable.
 
 ## Scope decisions
 
 - **No standalone agent features.** BetterWright does not gain its own
-  ask-user, memory, or subagent tools. Those belong to the host. Where Aside's
-  capability comes from such a feature, BetterWright instead *steers the host's*
-  equivalent through the operator prompt.
+  ask-user, memory, or subagent tools. Those belong to the host. Where a
+  capability would come from such a feature, BetterWright instead *steers the
+  host's* equivalent through the operator prompt.
 - **No injecting into the user's existing Chrome sessions or tabs.** BetterWright
-  keeps its own managed CloakBrowser persistent profile. Aside attaches to the
-  user's live tabs (`listBrowserTabs`/`attachBrowserTab`); we deliberately do
-  not. Logins persist in *our* profile instead.
-- **Keep the hard secret boundary.** Aside redacts password fields in snapshots
-  and hands out opaque password refs, but a model snippet could still read a
-  filled value via `page.evaluate`. BetterWright's stronger guarantee — secret
-  fill happens outside the model's sandbox entirely — stays. We widen *what* the
-  trusted path can do and *who* can trigger it, not the boundary.
+  keeps its own managed CloakBrowser persistent profile rather than attaching to
+  the user's live tabs. Logins persist in *our* profile instead.
+- **Keep the hard secret boundary.** Redacting password fields in snapshots and
+  handing out opaque password refs is not enough on its own — a model snippet
+  could still read a filled value via `page.evaluate`. BetterWright's stronger
+  guarantee — secret fill happens outside the model's sandbox entirely — stays.
+  We widen *what* the trusted path can do and *who* can trigger it, not the
+  boundary.
 
-## What Aside does well (from the runtime study)
+## Capability targets
 
 - **One REPL primitive, tight loop.** `snapshot(page, {interactive})` →
   `{tree, diff}`; the prompt enforces "tree first, then always diff after an
   action," "an action is unconfirmed until a fresh snapshot shows it," "no
-  redundant sleeps," and a reading-escalation ladder. BetterWright already
-  matches this: `snapshot({interactive})` → full → wait → `screenshot({annotate})`,
+  redundant sleeps," and a reading-escalation ladder. BetterWright matches this:
+  `snapshot({interactive})` → full → wait → `screenshot({annotate})`,
   `snapshot({diff:true})` as the verification primitive, ref discipline, and the
-  same recovery ladder are all in `agentSystemPrompt()`.
-- **Credential manager as a first-class REPL surface.** `passwordManager` with
+  recovery ladder are all in `agentSystemPrompt()`.
+- **Credential manager as a first-class REPL surface.** A password manager with
   `listVaults/listItems/getItem/createItem/updateItem`, `autofillItem(page,id)`
   that fills logins *and* hosted card iframes, `generatePassword` → an opaque
   `GeneratedPasswordRef`, and `fillPassword(page, ref, passwordRef)`. Item
@@ -105,13 +103,14 @@ from the vault, and toggle user-verification — enough to register and sign in
 with a passkey. Secrets (the private key) stay in the vault/daemon.
 
 ### 6. Memory — out of scope for the library
-Aside's layered memory (L1/semantic/episodic + "dreaming") is an agent feature.
-BetterWright's contribution is the seam the provider skills already use: defer
-to host/user preference (e.g. which password source) rather than hardcoding.
+Layered agent memory (session/semantic/episodic + offline extraction) is an
+agent feature. BetterWright's contribution is the seam the provider skills
+already use: defer to host/user preference (e.g. which password source) rather
+than hardcoding.
 
 ## Verification
 
-Parity is proven by physical head-to-head runs, not on paper — see
+Capability is proven by physical head-to-head runs, not on paper — see
 `benchmarks/`. Identical tasks (a login via the provider skill, a form fill, a
-multi-tab read) run in both runtimes, comparing success, wall-clock, and token
-efficiency.
+multi-tab read) run against a strong baseline, comparing success, wall-clock,
+and token efficiency.

@@ -209,12 +209,11 @@ const INTERACTIVE_HELP = `Commands:
 Anything else is a task: BetterWright drives the browser to complete it,
 streams what it is doing, and asks you a question if it genuinely needs one.`;
 
-// Bare `betterwright` (no subcommand): an interactive agent console — the
-// counterpart to `aside`. You type natural-language tasks; BetterWright's own
-// agent loop drives the browser, streams each step it takes, prints the answer
-// and what the run cost, and can ask you a question through the `ask` tool when
-// it genuinely needs input. One browser session persists across tasks until you
-// exit.
+// Bare `betterwright` (no subcommand): an interactive agent console. You type
+// natural-language tasks; BetterWright's own agent loop drives the browser,
+// streams each step it takes, prints the answer and what the run cost, and can
+// ask you a question through the `ask` tool when it genuinely needs input. One
+// browser session persists across tasks until you exit.
 async function cmdInteractive(flags) {
   const { runAgentTask } = await import("../src/agent.mjs");
   const argv = process.argv;
@@ -362,7 +361,7 @@ async function cmdInteractive(flags) {
   return 0;
 }
 
-// `exec <task>`: BetterWright's own agent harness (the `aside exec` shape).
+// `exec <task>`: BetterWright's own agent harness (the exec shape).
 // A model (Claude SDK / codex OAuth / grok OAuth) plugs into the browser-tuned
 // loop and drives the task to completion. Progress notes (ending with a cost
 // summary) go to stderr; the final {ok, answer, steps, reason, toolCalls,

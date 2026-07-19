@@ -1,20 +1,21 @@
 # The built-in agent harness (`betterwright exec`)
 
-BetterWright works in two shapes, mirroring Aside's `repl` and `exec`:
+BetterWright works in two shapes:
 
-- **Bring your own agent** (like `aside repl`): some other harness — Claude Code,
+- **Bring your own agent** (the REPL shape): some other harness — Claude Code,
   Codex, Pi, an MCP client, or your own code — drives BetterWright through
   `run()`, the MCP `browser` tool, or the Pi package. This is the default and is
   covered everywhere else in these docs.
-- **Let BetterWright drive itself** (like `aside exec`): BetterWright supplies a
+- **Let BetterWright drive itself** (the exec shape): BetterWright supplies a
   browser-tuned agent loop, you plug a *model* into it, and you hand it a
   natural-language task. That is this page.
 
 The second shape exists because the browser runtime was never the slow part. In
-the [head-to-head](../benchmarks/asidewright-headtohead/REPORT.md) BetterWright's
-per-operation latency matched AsideWright's; the end-to-end gap was the *agent
-scaffold* — a browser-specialized loop takes fewer, tighter steps than a general
-coding agent. `betterwright exec` gives BetterWright that scaffold.
+the [head-to-head](../benchmarks/browser-agent-headtohead/REPORT.md) BetterWright's
+per-operation latency matched the fastest available browser agent's; the
+end-to-end gap was the *agent scaffold* — a browser-specialized loop takes
+fewer, tighter steps than a general coding agent. `betterwright exec` gives
+BetterWright that scaffold.
 
 ## CLI
 
@@ -79,8 +80,8 @@ Network flags (`--block-private-network`, `--allow-host`, …) work the same as 
 ## Interactive console (`betterwright`)
 
 `betterwright exec` runs one task and exits. Run **`betterwright`** with no
-subcommand for the interactive counterpart — a console, like `aside` on its own,
-where you type tasks and watch the agent work:
+subcommand for the interactive counterpart — a console where you type tasks and
+watch the agent work:
 
 ```
 $ betterwright --model codex

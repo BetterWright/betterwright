@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  compressSnapshot,
   diffSnapshots,
   filterInteractive,
   parseAnnotationBoxes,
@@ -110,6 +111,189 @@ test("parseAnnotationBoxes caps output without corrupting iframe offsets", () =>
   const boxes = parseAnnotationBoxes(lines.join("\n"), { max: 3 });
   assert.equal(boxes.length, 3);
   assert.equal(boxes[0].ref, "e2");
+});
+
+test("compressSnapshot drops /url lines by default and keeps them on request", () => {
+  const tree = [
+    '- link "Docs" [ref=e2] [cursor=pointer]:',
+    '  - /url: /docs',
+  ].join("\n");
+  assert.equal(compressSnapshot(tree), '- link "Docs" [ref=e2]');
+  assert.equal(
+    compressSnapshot(tree, { urls: true }),
+    ['- link "Docs" [ref=e2]:', "  - /url: /docs"].join("\n"),
+  );
+});
+
+test("compressSnapshot drops redundant cursor hints and nameless images", () => {
+  const tree = [
+    '- button "Go" [ref=e2] [cursor=pointer]',
+    "- img [ref=e3]",
+    '- img "Logo" [ref=e4]',
+    "- img [ref=e5] [cursor=pointer]",
+  ].join("\n");
+  const compressed = compressSnapshot(tree);
+  // Inherently interactive roles lose the hint; a clickable image keeps it
+  // (and its ref); a named image survives without its useless ref.
+  assert.equal(
+    compressed,
+    [
+      '- button "Go" [ref=e2]',
+      '- img "Logo"',
+      "- img [ref=e5] [cursor=pointer]",
+    ].join("\n"),
+  );
+});
+
+test("compressSnapshot parses single-quoted keys without corrupting the tree", () => {
+  const tree = [
+    "- generic [ref=e1]:",
+    `  - 'link "feat: roll to r1536 (" [ref=e3] [cursor=pointer]':`,
+    '    - /url: /pull/1',
+    '  - text: after',
+  ].join("\n");
+  assert.equal(
+    compressSnapshot(tree),
+    [`- 'link "feat: roll to r1536 (" [ref=e3]'`, "- text: after"].join("\n"),
+  );
+});
+
+test("compressSnapshot keeps non-url property lines", () => {
+  const tree = [
+    '- textbox "Search" [ref=e2]:',
+    '  - /placeholder: Type to search',
+  ].join("\n");
+  assert.equal(compressSnapshot(tree), tree);
+});
+
+test("compressSnapshot unwraps bare generic wrappers and hoists children", () => {
+  const tree = [
+    "- generic [ref=e1]:",
+    "  - generic [ref=e2]:",
+    '    - button "Go" [ref=e3]',
+    "  - generic [ref=e4]",
+  ].join("\n");
+  assert.equal(compressSnapshot(tree), '- button "Go" [ref=e3]');
+});
+
+test("compressSnapshot keeps generics with interaction or state markers", () => {
+  const tree = [
+    "- generic [ref=e1] [cursor=pointer]:",
+    '  - text: Open menu',
+    "- generic [active] [ref=e2]:",
+    '  - button "Save" [ref=e3]',
+  ].join("\n");
+  const compressed = compressSnapshot(tree);
+  // The div-button keeps its ref (it is the click target) and inlines its text.
+  assert.ok(
+    compressed.includes("- generic [ref=e1] [cursor=pointer]: Open menu"),
+  );
+  assert.ok(compressed.includes("- generic [active] [ref=e2]:"));
+});
+
+test("compressSnapshot strips refs from non-actionable roles only", () => {
+  const tree = [
+    '- heading "Title" [level=1] [ref=e2]',
+    '- paragraph [ref=e3]: Body text.',
+    '- heading "Toggle" [level=2] [ref=e4] [cursor=pointer]',
+    '- button "Go" [ref=e5]',
+  ].join("\n");
+  const compressed = compressSnapshot(tree);
+  assert.ok(compressed.includes('- heading "Title" [level=1]\n'));
+  assert.ok(compressed.includes("- text: Body text."));
+  // Interactive heading keeps its ref; buttons always do.
+  assert.ok(compressed.includes('- heading "Toggle" [level=2] [ref=e4] [cursor=pointer]'));
+  assert.ok(compressed.includes('- button "Go" [ref=e5]'));
+});
+
+test("compressSnapshot merges paragraphs and adjacent text into text lines", () => {
+  const tree = [
+    "- article [ref=e1]:",
+    "  - paragraph [ref=e2]: First sentence.",
+    "  - paragraph [ref=e3]: Second sentence.",
+    '  - text: Trailing note',
+  ].join("\n");
+  assert.equal(
+    compressSnapshot(tree),
+    "- article [ref=e1]: First sentence. Second sentence. Trailing note",
+  );
+});
+
+test("compressSnapshot dedupes a value equal to the accessible name", () => {
+  const tree = '- button "Submit" [ref=e2]: Submit';
+  assert.equal(compressSnapshot(tree), '- button "Submit" [ref=e2]');
+});
+
+test("compressSnapshot collapses small text-only containers into one line", () => {
+  const merged = compressSnapshot(
+    [
+      "- listitem [ref=e2]:",
+      '  - text: Milk',
+      '  - text: "2.49"',
+    ].join("\n"),
+  );
+  assert.equal(merged, '- listitem [ref=e2]: Milk 2.49');
+  // Four or more children stay structured.
+  const big = [
+    "- listitem [ref=e2]:",
+    '  - heading "A" [level=3]',
+    '  - text: b',
+    '  - text: c',
+  ].join("\n");
+  assert.ok(compressSnapshot(big).includes('- heading "A" [level=3]'));
+});
+
+test("compressSnapshot truncates names over 100 characters", () => {
+  const longName = "x".repeat(150);
+  const compressed = compressSnapshot(`- button "${longName}" [ref=e2]`);
+  assert.ok(compressed.includes(`"${"x".repeat(99)}…"`));
+  assert.ok(!compressed.includes(longName));
+});
+
+test("compressSnapshot leaves unrecognized lines untouched", () => {
+  const tree = [
+    "- button [checked] [ref=e2]",
+    "some stray line that is not a node",
+    '- weird!role "x"',
+  ].join("\n");
+  const compressed = compressSnapshot(tree);
+  assert.ok(compressed.includes("some stray line that is not a node"));
+  assert.ok(compressed.includes('- weird!role "x"'));
+});
+
+test("compressSnapshot is idempotent", () => {
+  const tree = [
+    "- generic [ref=e1]:",
+    "  - navigation [ref=e2]:",
+    '    - link "Home" [ref=e3] [cursor=pointer]:',
+    '      - /url: "#a"',
+    "  - main [ref=e5]:",
+    '    - heading "Title" [level=1] [ref=e6]',
+    "    - paragraph [ref=e7]: Static text.",
+    "    - generic [ref=e8]:",
+    '      - textbox "Email" [ref=e9]',
+    '      - button "Submit" [ref=e10]: Submit',
+  ].join("\n");
+  const once = compressSnapshot(tree);
+  assert.equal(compressSnapshot(once), once);
+});
+
+test("compressSnapshot output stays consumable by filterInteractive", () => {
+  const compressed = compressSnapshot(TREE);
+  assert.ok(compressed.length < TREE.length);
+  const filtered = filterInteractive(compressed);
+  assert.ok(filtered.includes('link "Home"'));
+  assert.ok(filtered.includes('textbox "Email"'));
+  assert.ok(filtered.includes('button "Submit"'));
+  assert.ok(!filtered.includes("Static text"));
+});
+
+test("compressSnapshot preserves iframe structure and frame refs", () => {
+  const tree = [
+    "- iframe [ref=e5]:",
+    '  - button "Inner" [ref=f1e2]',
+  ].join("\n");
+  assert.equal(compressSnapshot(tree), tree);
 });
 
 test("diffSnapshots flags oversized inputs instead of stalling", () => {

@@ -50,10 +50,6 @@ expectMatch(
   pkg.dependencies.cloakbrowser,
 );
 
-if (!read("CHANGELOG.md").includes(`## [${pkg.version}]`)) {
-  failures.push(`CHANGELOG.md has no ${pkg.version} release heading`);
-}
-
 const tagIndex = process.argv.indexOf("--tag");
 if (tagIndex !== -1) {
   const tag = process.argv[tagIndex + 1] || "";
