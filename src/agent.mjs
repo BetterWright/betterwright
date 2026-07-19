@@ -1,10 +1,10 @@
-// BetterWright's own agent harness — the `aside exec` mode.
+// BetterWright's own agent harness — the exec mode.
 //
 // BetterWright is normally an add-on: some other agent (Claude Code, Codex, Pi,
 // an MCP client) drives it through `run()`, the MCP `browser` tool, or the Pi
-// package. That is the `aside repl` shape — bring your own harness.
+// package. That is the REPL shape — bring your own harness.
 //
-// This module adds the other shape, `aside exec`: BetterWright supplies the
+// This module adds the other shape, exec: BetterWright supplies the
 // browser-tuned harness and you plug a *model* into it, then hand it a
 // natural-language task. The harness owns the observe → act → verify loop (the
 // part that made a browser-specialized agent faster than a general coding agent

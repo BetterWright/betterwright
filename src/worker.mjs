@@ -54,6 +54,7 @@ import {
   typeText,
 } from "./human.mjs";
 import {
+  compressSnapshot,
   diffSnapshots,
   filterInteractive,
   parseAnnotationBoxes,
@@ -1006,8 +1007,9 @@ async function snapshotPage(page, options = {}) {
   // Playwright's aria snapshot includes filled input values, including
   // `<input type=password>`. Scrub those before the text is stored (for diffs),
   // truncated, or returned, so a routine read never slurps a just-typed or
-  // extension-filled secret into model context. Aside redacts the same way.
+  // extension-filled secret into model context.
   text = await redactPasswordValues(page, text);
+  text = compressSnapshot(text, { urls: options?.urls === true });
   if (options?.interactive) text = filterInteractive(text);
 
   const key = JSON.stringify([
@@ -1042,7 +1044,23 @@ async function snapshotPage(page, options = {}) {
     1_000,
     Math.min(Number(options?.maxChars || 10_000), 20_000),
   );
-  return `${header}\n${text.length > limit ? `${text.slice(0, limit)}\n[truncated]` : text}`;
+  if (text.length <= limit) return `${header}\n${text}`;
+  // Refuse instead of truncating: a cut-off tree reads as complete and sends
+  // the model acting on half a page, while an error steers it to a scoped
+  // re-read.
+  const hints = [];
+  if (!options?.interactive)
+    hints.push("{interactive: true} to keep only actionable elements");
+  hints.push(
+    options?.ref || options?.selector
+      ? "a smaller {depth} or a deeper {ref}/{selector} to narrow this subtree"
+      : "{ref} or {selector} to scope to one element, or {depth} to limit nesting",
+  );
+  if (limit < 20_000) hints.push("{maxChars} up to 20000");
+  return (
+    `${header}\nSnapshot is ${text.length} chars, over the ${limit} limit. ` +
+    `Retry with ${hints.join(", ")}.`
+  );
 }
 
 function captchaBounds(value, label = "bounds") {
@@ -1739,9 +1757,9 @@ function buildCredentials(session, realm) {
   credentials.remove = realm.safeFunction(async (options) =>
     vaultCall(session, "remove", options || {}),
   );
-  // Model-callable fill, the Aside-style shape: origin-scoped to the CURRENT
-  // page, the secret is fetched and typed on the worker side and never
-  // returned, and every output channel passes the redaction net. Reach matches
+  // Model-callable fill: origin-scoped to the CURRENT page, the secret is
+  // fetched and typed on the worker side and never returned, and every output
+  // channel passes the redaction net. Reach matches
   // an unlocked password-manager extension (a field an extension filled is
   // equally visible to page JS), which is the accepted posture.
   const fillFieldSpec = (options) => {
@@ -1846,7 +1864,7 @@ async function buildEnvelope(
 // RPC, type it with trusted human-shaped input, optionally submit, and return
 // only non-secret metadata. The secret value never leaves the worker. Shared by
 // the host client's fillCredential/generateAndFillCredential and the
-// model-callable credentials.fill/generateAndFill (the Aside-style shape).
+// model-callable credentials.fill/generateAndFill.
 async function performCredentialFill(session, spec) {
   const fields = spec.fields && typeof spec.fields === "object" ? spec.fields : {};
   const { page, origin } = await currentOrigin(session);

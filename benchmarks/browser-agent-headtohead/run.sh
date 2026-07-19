@@ -5,7 +5,7 @@
 # runtime* (navigation, snapshot, tabs, redaction) from any LLM. Login-free and
 # deterministic. Requires `betterwright setup` and a signed-in `aside` CLI.
 #
-# Usage: zsh benchmarks/asidewright-headtohead/run.sh
+# Usage: zsh benchmarks/browser-agent-headtohead/run.sh
 set -e
 BW_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 now() { python3 -c 'import time;print(int(time.time()*1000))'; }

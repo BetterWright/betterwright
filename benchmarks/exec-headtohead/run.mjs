@@ -4,7 +4,7 @@
 // (codex / gpt-5.6-sol) at the SAME reasoning effort (low). Matching the model
 // isolates the AGENT SCAFFOLD — the observe/act/verify loop — which is the thing
 // this benchmark measures. The browser runtime itself was already at parity in
-// benchmarks/asidewright-headtohead.
+// benchmarks/browser-agent-headtohead.
 //
 //   node benchmarks/exec-headtohead/run.mjs [--only <substr>] [--timeout <ms>]
 //
