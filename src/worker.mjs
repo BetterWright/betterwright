@@ -120,7 +120,7 @@ const STEALTH_WARNING =
   "world, so page-defined main-world globals (e.g. window.__NEXT_DATA__) read " +
   "as undefined. DOM access, clicks, and typing are unaffected.";
 let useSetContentCompatibility = false;
-let shuttingDown = false;
+let shutdownPromise = null;
 let activeExecutionSession = null;
 let activeExecutionRequestId = null;
 let activePendingCredentialRecovery = null;
@@ -4334,9 +4334,12 @@ async function execute(message) {
   }
 }
 
-async function shutdown() {
-  if (shuttingDown) return;
-  shuttingDown = true;
+function shutdown() {
+  shutdownPromise ??= performShutdown();
+  return shutdownPromise;
+}
+
+async function performShutdown() {
   // Chromium can emit BrowserContext.close before its process finishes the
   // final profile writes. Preserve the temporary path so shutdown performs a
   // second removal after close() has fully resolved, even if the close event
@@ -4352,7 +4355,11 @@ async function shutdown() {
   }
   browserContext = null;
   releaseProfileLock();
-  await guardProxy.close();
+  try {
+    await guardProxy.close();
+  } catch {
+    /* parent/process exit */
+  }
   if (ephemeralProfileDir) {
     try {
       fs.rmSync(ephemeralProfileDir, { recursive: true, force: true });
