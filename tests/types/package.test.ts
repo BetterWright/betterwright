@@ -60,6 +60,7 @@ const run: Promise<RunResult<{ title: string }>> = browser.run<{ title: string }
 const generatedMatchMode: VaultMatchMode = "exact-origin";
 const generatedOptions: GenerateAndFillCredentialOptions = {
   matchMode: generatedMatchMode,
+  currentPasswordSelector: "#old-password",
 };
 browser.generateAndFillCredential(generatedOptions);
 const pendingCredentials: Promise<PendingCredentialListResult> =

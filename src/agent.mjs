@@ -110,7 +110,8 @@ const ASK_TOOL_PARAMETERS = {
 const LOGIN_TOOL_PARAMETERS = {
   type: "object",
   properties: {
-    passwordSelector: { type: "string", description: "Optional CSS or aria-ref target for the password field." },
+    passwordSelector: { type: "string", description: "Optional CSS or aria-ref target for the password or new-password field." },
+    currentPasswordSelector: { type: "string", description: "Optional CSS or aria-ref target for the current-password field during rotation." },
     usernameSelector: { type: "string", description: "Optional CSS or aria-ref target for the username/email field." },
     confirmPasswordSelector: { type: "string", description: "Optional CSS or aria-ref target for the confirmation field." },
     submitSelector: { type: "string", description: "Optional CSS or aria-ref target clicked to submit." },
@@ -248,6 +249,7 @@ function loginOptionsFromInput(input = {}, session) {
   };
   for (const key of [
     "passwordSelector",
+    "currentPasswordSelector",
     "usernameSelector",
     "confirmPasswordSelector",
     "submitSelector",

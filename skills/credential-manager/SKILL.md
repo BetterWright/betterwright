@@ -39,8 +39,10 @@ Work down this ladder; stop at the first source that works.
   password-only pages are detected.
 - Detection uses autocomplete/type/label/form context. If it reports multiple
   plausible forms, scope explicit `usernameSelector`, `passwordSelector`,
-  `confirmPasswordSelector`, or `submitSelector` from a fresh snapshot. Do not
-  guess selectors before detection fails.
+  `currentPasswordSelector`, `confirmPasswordSelector`, or `submitSelector`
+  from a fresh snapshot. For an ambiguous rotation, pin current, new, and
+  confirmation password roles together. Do not guess selectors before
+  detection fails.
 
 ## Signup and password rotation
 

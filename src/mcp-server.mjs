@@ -94,13 +94,21 @@ export async function contentForResult(result) {
   const files = (result.artifacts || [])
     .filter((artifact) => artifact.path && !imagePaths.has(artifact.path))
     .map((artifact) => ({ kind: artifact.kind, path: artifact.path }));
+  const pendingCredential =
+    result.pendingCredential && typeof result.pendingCredential === "object"
+      ? Object.fromEntries(
+          ["pendingId", "origin", "matchMode", "username", "label", "expiresAt"]
+            .filter((key) => Object.hasOwn(result.pendingCredential, key))
+            .map((key) => [key, result.pendingCredential[key]]),
+        )
+      : (result.pendingCredential ?? null);
   const summary = {
     ok: result.ok,
     // Coerce to null (not undefined) so the JSON keeps these keys, matching the
     // documented summary shape on both success and failure.
     result: result.result ?? null,
     error: result.error ?? null,
-    pendingCredential: result.pendingCredential ?? null,
+    pendingCredential,
     console: result.console || [],
     // Screenshots are returned as image content below, not as paths. Other
     // files (downloads, spilled output) are listed here as paths only.
@@ -178,7 +186,11 @@ export const LOGIN_INPUT_SCHEMA = {
   properties: {
     passwordSelector: {
       type: "string",
-      description: "Optional CSS or current aria-ref=eN target for the password field.",
+      description: "Optional CSS or current aria-ref=eN target for the password or new-password field.",
+    },
+    currentPasswordSelector: {
+      type: "string",
+      description: "Optional CSS or current aria-ref=eN target for the current-password field during rotation.",
     },
     usernameSelector: {
       type: "string",
@@ -240,6 +252,7 @@ export function loginOptionsFromArgs(args = {}) {
   };
   for (const key of [
     "passwordSelector",
+    "currentPasswordSelector",
     "usernameSelector",
     "confirmPasswordSelector",
     "submitSelector",

@@ -46,6 +46,10 @@ export const PI_LOGIN_PARAMETERS = {
       minLength: 1,
       description: "Optional CSS or current aria-ref=eN target for the password field.",
     },
+    currentPasswordSelector: {
+      type: "string",
+      description: "Optional CSS or current aria-ref=eN target for the current password field.",
+    },
     usernameSelector: {
       type: "string",
       description: "Optional CSS or current aria-ref=eN target for the username/email field.",
@@ -178,6 +182,7 @@ function loginOptions(params = {}) {
   };
   for (const key of [
     "passwordSelector",
+    "currentPasswordSelector",
     "usernameSelector",
     "confirmPasswordSelector",
     "submitSelector",
@@ -504,6 +509,10 @@ export function createPiExtension(options = {}) {
     let checklistInitialized = false;
     let completionNudges = 0;
     const evidenceChecklist = new Map();
+    const withLogin = browser
+      ? Boolean(browser.vault)
+      : !Object.hasOwn(options.browserOptions || {}, "vault") ||
+        Boolean(options.browserOptions.vault);
 
     function checklistState() {
       const requirements = [...evidenceChecklist.values()];
@@ -761,37 +770,46 @@ export function createPiExtension(options = {}) {
       renderResult: summaryRenderResult,
     });
 
-    pi.registerTool({
-      name: "browser_login",
-      label: "BetterWright Login",
-      description:
-        "Fill a saved or freshly generated credential without the secret ever entering the " +
-        "conversation. BetterWright detects visible fields; explicit CSS or current aria-ref " +
-        "targets are only needed after an ambiguity error. The password is fetched and typed " +
-        "inside the worker, and submitted only with submit=true or submitSelector. Set " +
-        "generate=true to stage a new password. After a later browser step visibly verifies " +
-        "success, call credentials.commitGenerated({pendingId}); call discardGenerated on " +
-        "failure. Generated credentials remain pending until committed. After a complete " +
-        "host restart, credentials.listPending() recovers secret-free pending metadata.",
-      parameters: PI_LOGIN_PARAMETERS,
-      async execute(_id, params, signal) {
-        if (signal?.aborted) throw new Error("Browser login cancelled.");
-        const instance = await getBrowser();
-        if (typeof instance.fillCredential !== "function") {
-          throw new Error("This BetterWright build has no credential fill available.");
-        }
-        const result = await instance.fillCredential({ session, ...loginOptions(params) });
-        return {
-          content: [
-            { type: "text", text: JSON.stringify(result, null, 2) },
-            ...(await piImageContent(result)),
-          ],
-          details: { ok: result?.ok === true, error: result?.error, pages: result?.pages || [] },
-        };
-      },
-      renderCall: makeRenderCall("browser_login"),
-      renderResult: summaryRenderResult,
-    });
+    if (withLogin) {
+      pi.registerTool({
+        name: "browser_login",
+        label: "BetterWright Login",
+        description:
+          "Fill a saved or freshly generated credential without the secret ever entering the " +
+          "conversation. BetterWright detects visible fields; explicit CSS or current aria-ref " +
+          "targets are only needed after an ambiguity error. The password is fetched and typed " +
+          "inside the worker, and submitted only with submit=true or submitSelector. Set " +
+          "generate=true to stage a new password. After a later browser step visibly verifies " +
+          "success, call credentials.commitGenerated({pendingId}); call discardGenerated on " +
+          "failure. Generated credentials remain pending until committed. After a complete " +
+          "host restart, credentials.listPending() recovers secret-free pending metadata.",
+        parameters: PI_LOGIN_PARAMETERS,
+        async execute(_id, params, signal) {
+          if (signal?.aborted) throw new Error("Browser login cancelled.");
+          const instance = await getBrowser();
+          if (typeof instance.fillCredential !== "function") {
+            throw new Error("This BetterWright build has no credential fill available.");
+          }
+          const result = await instance.fillCredential({
+            session,
+            ...loginOptions(params),
+          });
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(result, null, 2) },
+              ...(await piImageContent(result)),
+            ],
+            details: {
+              ok: result?.ok === true,
+              error: result?.error,
+              pages: result?.pages || [],
+            },
+          };
+        },
+        renderCall: makeRenderCall("browser_login"),
+        renderResult: summaryRenderResult,
+      });
+    }
 
     pi.registerTool({
       name: "browser_evidence",

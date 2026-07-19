@@ -39,13 +39,19 @@ class FakePi {
 }
 
 class FakeBrowser {
-  constructor({ screenshot, downloadPolicy = "ask", startFails = false } = {}) {
+  constructor({
+    screenshot,
+    downloadPolicy = "ask",
+    startFails = false,
+    vault = {},
+  } = {}) {
     this.calls = [];
     this.fills = [];
     this.closeCount = 0;
     this.downloadPolicy = downloadPolicy;
     this.screenshot = screenshot;
     this.startFails = startFails;
+    this.vault = vault;
   }
 
   async fillCredential(options) {
@@ -305,6 +311,7 @@ test("native Pi extension exposes trusted credential fill", async () => {
     {
       generate: true,
       id: "rec-1",
+      currentPasswordSelector: "#old-password",
       submit: true,
       length: 20,
       matchMode: "exact-origin",
@@ -319,6 +326,7 @@ test("native Pi extension exposes trusted credential fill", async () => {
     session: "pi",
     generate: true,
     id: "rec-1",
+    currentPasswordSelector: "#old-password",
     length: 20,
     matchMode: "exact-origin",
     submit: true,
@@ -329,6 +337,10 @@ test("native Pi extension exposes trusted credential fill", async () => {
     "exact-origin",
     "never",
   ]);
+  assert.equal(
+    PI_LOGIN_PARAMETERS.properties.currentPasswordSelector.type,
+    "string",
+  );
   assert.ok(!PI_LOGIN_PARAMETERS.required?.includes("passwordSelector"));
   assert.equal(result.details.ok, true);
   const summary = JSON.parse(result.content[0].text);
@@ -344,6 +356,18 @@ test("native Pi extension exposes trusted credential fill", async () => {
     /matchMode.*exact-origin/,
   );
   assert.equal(browser.fills.length, 1);
+});
+
+test("native Pi extension omits browser_login when the vault is disabled", () => {
+  const browser = new FakeBrowser({ vault: null });
+  const suppliedBrowserPi = new FakePi();
+  createPiExtension({ browser: browser })(suppliedBrowserPi);
+  assert.equal(suppliedBrowserPi.tools.has("browser_login"), false);
+  assert.equal(browser.fills.length, 0);
+
+  const browserOptionsPi = new FakePi();
+  createPiExtension({ browserOptions: { vault: false } })(browserOptionsPi);
+  assert.equal(browserOptionsPi.tools.has("browser_login"), false);
 });
 
 test("native Pi extension fails closed for downloads without approval UI", async () => {

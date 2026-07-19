@@ -109,6 +109,19 @@ new-password and confirmation values. Rotation preserves the record's existing
 URL scope; update its `matchMode` separately before rotating if the scope must
 change.
 
+If detection reports an ambiguous change-password form, pin each role from a
+fresh snapshot. BetterWright resolves and validates all handles before reading
+either secret:
+
+```js
+await credentials.generateAndFill({
+  id,
+  currentPasswordSelector: "aria-ref=e2",
+  passwordSelector: "aria-ref=e3",
+  confirmPasswordSelector: "aria-ref=e4",
+});
+```
+
 Trusted SDK hosts can call `generateAndFillCredential()`, verify success, then
 `commitGeneratedCredential()` or `discardGeneratedCredential()` with the
 returned pending id. `listPendingCredentials()` recovers provisional metadata

@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { collectCredentialFrameDetections } from "../../src/credential-target-scan.mjs";
+import {
+  collectCredentialFrameDetections,
+  disposeCredentialFrameDetections,
+} from "../../src/credential-target-scan.mjs";
 import { cloakRuntime } from "../../src/doctor.mjs";
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
 
@@ -42,6 +45,31 @@ test("frame detection disposes earlier handles before propagating a later scan f
     /frame scan failed/,
   );
   assert.deepEqual(disposed.sort(), ["first", "second"]);
+});
+
+test("frame detection tolerates origin lookup failure after a frame detaches", async () => {
+  const disposed = [];
+  const frames = [
+    { id: "ready", isDetached: () => false },
+    { id: "detached", isDetached: () => true },
+  ];
+  const detections = await collectCredentialFrameDetections({
+    frames,
+    requestedAction: "fill",
+    originForFrame: async (frame) => {
+      if (frame.id === "detached") throw new Error("frame was detached");
+      return `https://${frame.id}.example`;
+    },
+    detectInFrame: async (frame) => ({
+      async dispose() {
+        disposed.push(frame.id);
+      },
+    }),
+  });
+  assert.equal(detections.length, 1);
+  assert.equal(detections[0].origin, "https://ready.example");
+  await disposeCredentialFrameDetections(detections);
+  assert.deepEqual(disposed, ["ready"]);
 });
 
 async function fixtureServer() {
@@ -666,6 +694,22 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       <label>Confirm new password <input id="confirm" type="password" autocomplete="new-password"></label>
       <button>Change password</button>
     </form>`,
+  );
+  server.pages.set(
+    "/ambiguous-change",
+    `<!doctype html>
+      <form id="primary-change">
+        <label>Current password <input id="primary-current" type="password"></label>
+        <label>New password <input id="primary-new" type="password"></label>
+        <label>Confirm password <input id="primary-confirm" type="password"></label>
+        <button>Change password</button>
+      </form>
+      <form id="decoy-change">
+        <label>Current password <input id="decoy-current" type="password"></label>
+        <label>New password <input id="decoy-new" type="password"></label>
+        <label>Confirm password <input id="decoy-confirm" type="password"></label>
+        <button>Change password</button>
+      </form>`,
   );
   server.pages.set(
     "/explicit",
@@ -1400,6 +1444,83 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
         /cannot be changed.*existing credential/i,
       );
       assert.equal(calls.length, beforeInvalidRotation);
+    });
+
+    await t.test("explicit selectors disambiguate every password role during rotation", async () => {
+      for (const surface of ["host", "sandbox"]) {
+        await visit("/ambiguous-change");
+        const pendingId = `pending-explicit-rotation-${surface}`;
+        nextPendingId = pendingId;
+        const options = {
+          id: "login-1",
+          currentPasswordSelector: "#primary-current",
+          passwordSelector: "#primary-new",
+          confirmPasswordSelector: "#primary-confirm",
+        };
+        const before = calls.length;
+        const result =
+          surface === "host"
+            ? await bw.generateAndFillCredential(options)
+            : await bw.run(
+                `return credentials.generateAndFill(${JSON.stringify(options)});`,
+              );
+        assert.equal(result.ok, true, result.error);
+        assert.equal(result.result.pendingId, pendingId);
+        assert.deepEqual(result.result.filled, [
+          "currentPassword",
+          "password",
+          "confirmPassword",
+        ]);
+        assert.deepEqual(
+          calls.slice(before).map(({ action, origin }) => ({ action, origin })),
+          [
+            { action: "fill", origin: server.origin },
+            { action: "generate", origin: server.origin },
+          ],
+        );
+
+        const state = await bw.run(`return page.evaluate(() => ({
+          currentLength: document.querySelector('#primary-current').value.length,
+          newLength: document.querySelector('#primary-new').value.length,
+          confirmationMatches:
+            document.querySelector('#primary-new').value ===
+            document.querySelector('#primary-confirm').value,
+          decoyLengths: [
+            document.querySelector('#decoy-current').value.length,
+            document.querySelector('#decoy-new').value.length,
+            document.querySelector('#decoy-confirm').value.length,
+          ],
+        }));`);
+        assert.equal(state.ok, true, state.error);
+        assert.deepEqual(state.result, {
+          currentLength: loginSecret.length,
+          newLength: generatedSecret.length,
+          confirmationMatches: true,
+          decoyLengths: [0, 0, 0],
+        });
+        const discarded = await bw.discardGeneratedCredential({ pendingId });
+        assert.equal(discarded.ok, true, discarded.error);
+      }
+
+      await visit("/change");
+      const beforeInvalidFill = calls.length;
+      const invalidFill = await bw.fillCredential({
+        currentPasswordSelector: "#current",
+        passwordSelector: "#new",
+      });
+      assert.equal(invalidFill.ok, false);
+      assert.match(invalidFill.error, /only available when generating/i);
+      assert.equal(calls.length, beforeInvalidFill);
+
+      const duplicateRotation = await bw.generateAndFillCredential({
+        id: "login-1",
+        currentPasswordSelector: "#current",
+        passwordSelector: "#current",
+        confirmPasswordSelector: "#confirm",
+      });
+      assert.equal(duplicateRotation.ok, false);
+      assert.match(duplicateRotation.error, /detached|document changed/i);
+      assert.equal(calls.length, beforeInvalidFill);
     });
 
     await t.test("retains explicit selector compatibility", async () => {
