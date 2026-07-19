@@ -153,6 +153,25 @@ function trackSecret(value) {
   activeSecrets.add(secret);
 }
 
+function trackSecretValues(value, seen = new WeakSet()) {
+  if (typeof value === "string") {
+    trackSecret(value);
+    return;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    trackSecretValues(item, seen);
+  }
+}
+
+function trackCredentialWriteSecrets(options) {
+  if (!options || typeof options !== "object") return;
+  if (typeof options.password === "string") trackSecret(options.password);
+  if (typeof options.notes === "string") trackSecret(options.notes);
+  trackSecretValues(options.fields);
+}
+
 function redactionCapacityError() {
   const error = new Error(
     "Credential redaction capacity was reached; the browser worker must restart before handling another secret.",
@@ -383,7 +402,12 @@ function rpc(method, payload, executeId) {
   const requestId = `rpc-${process.pid}-${++rpcCounter}`;
   return new Promise((resolve, reject) => {
     pendingRpc.set(requestId, { resolve, reject });
-    send({ type: "rpc_request", id: executeId, requestId, method, payload });
+    try {
+      send({ type: "rpc_request", id: executeId, requestId, method, payload });
+    } catch (error) {
+      pendingRpc.delete(requestId);
+      reject(error);
+    }
   });
 }
 
@@ -1640,19 +1664,61 @@ function createRealm(context) {
       catch { return 'Playwright operation failed'; }
     };
     const adopt = value => ArrayCtor.isArray(value) ? ArrayCtor.from(value, adopt) : value;
-    const make = hostFunction => (...args) => {
+    const bridge = (result, markHandled = null) => {
+      const bridged = new PromiseCtor((resolve, reject) => {
+        result.then(
+          value => resolve(adopt(value)),
+          error => reject(new ErrorCtor(errorMessage(error))),
+        );
+      });
+      const silence = promise => {
+        PromiseCtor.prototype.catch.call(promise, () => {});
+        return promise;
+      };
+      silence(bridged);
+      if (typeof markHandled !== 'function') return bridged;
+      const tracked = promise => new Proxy(silence(promise), {
+        get(target, property) {
+          if (property === 'then') {
+            return (onFulfilled, onRejected) => {
+              if (typeof onRejected === 'function') markHandled();
+              return tracked(PromiseCtor.prototype.then.call(
+                target,
+                onFulfilled,
+                onRejected,
+              ));
+            };
+          }
+          if (property === 'catch') {
+            return onRejected => {
+              if (typeof onRejected === 'function') markHandled();
+              return tracked(PromiseCtor.prototype.catch.call(target, onRejected));
+            };
+          }
+          if (property === 'finally') {
+            return onFinally => tracked(
+              PromiseCtor.prototype.finally.call(target, onFinally),
+            );
+          }
+          return Reflect.get(target, property, target);
+        },
+      });
+      return tracked(bridged);
+    };
+    const call = (hostFunction, args) => {
       let result;
       try { result = hostFunction(...args); }
       catch (error) { throw new ErrorCtor(errorMessage(error)); }
-      if (result && typeof result.then === 'function') {
-        return new PromiseCtor((resolve, reject) => {
-          result.then(
-            value => resolve(adopt(value)),
-            error => reject(new ErrorCtor(errorMessage(error))),
-          );
-        });
-      }
+      return result;
+    };
+    const make = hostFunction => (...args) => {
+      const result = call(hostFunction, args);
+      if (result && typeof result.then === 'function') return bridge(result);
       return adopt(result);
+    };
+    const makeTracked = hostFunction => (...args) => {
+      const tracked = call(hostFunction, args);
+      return bridge(tracked.promise, tracked.markHandled);
     };
     const makePages = hostGetter => {
       const getPages = make(hostGetter);
@@ -1675,7 +1741,7 @@ function createRealm(context) {
         get: getPage,
       });
     };
-    return { adopt, installPage, make, makePages };
+    return { adopt, installPage, make, makePages, makeTracked };
   })()`,
     { filename: "browser-playwright-realm.js" },
   ).runInContext(context);
@@ -1685,6 +1751,7 @@ function createRealm(context) {
     adopt: factories.adopt,
     installPage: factories.installPage,
     safeFunction: factories.make,
+    safeTrackedFunction: factories.makeTracked,
     makePages: factories.makePages,
   };
 }
@@ -1823,12 +1890,52 @@ function recoveryFromError(error) {
   return redactDeep(recovery);
 }
 
-function buildCredentials(session, realm) {
+function buildCredentials(session, realm, execution) {
   const credentials = Object.create(null);
+  const safeCredentialFunction = (operation) =>
+    realm.safeTrackedFunction((...args) => {
+      if (!execution.acceptingCredentialTasks) {
+        const promise = Promise.reject(
+          new Error(
+            "Credential operations cannot outlive their browser execution.",
+          ),
+        );
+        promise.catch(() => {});
+        return { promise, markHandled() {} };
+      }
+      let task;
+      try {
+        task = Promise.resolve(operation(...args));
+      } catch (error) {
+        task = Promise.reject(error);
+      }
+      const record = {
+        error: null,
+        handled: false,
+        promise: task,
+        status: "pending",
+      };
+      task.then(
+        () => {
+          record.status = "fulfilled";
+        },
+        (error) => {
+          record.error = error;
+          record.status = "rejected";
+        },
+      );
+      execution.credentialTasks.push(record);
+      return {
+        promise: task,
+        markHandled() {
+          record.handled = true;
+        },
+      };
+    });
   // `list()` returns metadata for the current origin. Pass `{text}` to filter
   // and `{category}` to scope (e.g. "credit-card"); the vault backend applies
   // the filter and always strips secret values.
-  credentials.list = realm.safeFunction(async (query) => {
+  credentials.list = safeCredentialFunction(async (query) => {
     const payload =
       query && typeof query === "object"
         ? {
@@ -1839,36 +1946,31 @@ function buildCredentials(session, realm) {
     const response = await vaultCall(session, "list", payload);
     return response.credentials || [];
   });
-  credentials.listPending = realm.safeFunction(async () => {
+  credentials.listPending = safeCredentialFunction(async () => {
     const response = await vaultCall(session, "list-pending", {});
     return redactDeep(response.pendingCredentials || []);
   });
-  credentials.save = realm.safeFunction(async (options) => {
+  credentials.save = safeCredentialFunction(async (options) => {
     // Login records need a password; other categories (identity, credit-card,
     // api-credential, secure-note) carry their own metadata instead.
     const category = options?.category ? String(options.category) : "login";
     if (category === "login" && !options?.password)
       throw new Error("credentials.save requires password for a login record.");
-    if (options?.password) trackSecret(options.password);
-    // A non-login record's `fields` can themselves be the secret (an API key,
-    // a private key, a card number). Track their values so the redaction net
-    // scrubs them from any output, matching how passwords are handled.
-    if (options?.fields && typeof options.fields === "object") {
-      for (const value of Object.values(options.fields)) {
-        if (typeof value === "string" && value) trackSecret(value);
-      }
-    }
+    // Non-login fields and notes can themselves be the secret. Track nested
+    // values before the adapter sees them so every output path is covered even
+    // when a custom adapter does not implement its optional redaction hook.
+    trackCredentialWriteSecrets(options);
     const response = await vaultCall(session, "save", { ...options, category });
     const { secret: _secret, ...publicResult } = response;
     return publicResult;
   });
-  credentials.update = realm.safeFunction(async (options) => {
-    if (options?.password) trackSecret(options.password);
+  credentials.update = safeCredentialFunction(async (options) => {
+    trackCredentialWriteSecrets(options);
     const response = await vaultCall(session, "update", options || {});
     const { secret: _secret, ...publicResult } = response;
     return publicResult;
   });
-  credentials.remove = realm.safeFunction(async (options) =>
+  credentials.remove = safeCredentialFunction(async (options) =>
     vaultCall(session, "remove", options || {}),
   );
   // Model-callable fill: origin-scoped to the CURRENT page, the secret is
@@ -1888,7 +1990,7 @@ function buildCredentials(session, realm) {
     if (options?.submit === true) fields.submit = true;
     return fields;
   };
-  credentials.inspect = realm.safeFunction(async (options) => {
+  credentials.inspect = safeCredentialFunction(async (options) => {
     const page = await ensureSessionPage(session);
     const action = options?.generate === true ? "generate" : "fill";
     const detection = await detectCredentialTargets(page, action);
@@ -1898,7 +2000,7 @@ function buildCredentials(session, realm) {
       await detection.dispose();
     }
   });
-  credentials.fill = realm.safeFunction(async (options) => {
+  credentials.fill = safeCredentialFunction(async (options) => {
     const record = {};
     if (options?.id != null) record.id = String(options.id);
     if (options?.username != null) record.username = String(options.username);
@@ -1910,7 +2012,7 @@ function buildCredentials(session, realm) {
       }),
     );
   });
-  credentials.generateAndFill = realm.safeFunction(async (options) => {
+  credentials.generateAndFill = safeCredentialFunction(async (options) => {
     if (options?.id != null && options?.matchMode !== undefined) {
       throw new TypeError(
         "matchMode cannot be changed when rotating an existing credential; " +
@@ -1939,7 +2041,7 @@ function buildCredentials(session, realm) {
     ["commitGenerated", "commit"],
     ["discardGenerated", "discard"],
   ]) {
-    credentials[method] = realm.safeFunction(async (options) => {
+    credentials[method] = safeCredentialFunction(async (options) => {
       const pendingId = String(options?.pendingId ?? "").trim();
       if (!pendingId)
         throw new Error(`${method} requires a non-empty pendingId.`);
@@ -2516,6 +2618,173 @@ async function fillCredentialField(page, frame, session, target, value) {
   return locator;
 }
 
+async function resolveExplicitCredentialTarget(scope, selector, label) {
+  try {
+    const handle = await scope.locator(selector).first().elementHandle({
+      timeout: 10_000,
+    });
+    if (!handle) throw new Error("target was not found");
+    return handle;
+  } catch (error) {
+    throw new Error(
+      `The explicit credential ${label} target could not be resolved: ${String(
+        error?.message || error,
+      )}`,
+    );
+  }
+}
+
+async function pinnedCredentialOrigin(frame, handles) {
+  if (!frame || frame.isDetached()) {
+    throw new Error("The explicit credential target frame is detached.");
+  }
+  const inspectDocument = async () => {
+    try {
+      return await frame.evaluate((elements) => {
+        if (
+          !elements.length ||
+          elements.some(
+            (element) =>
+              !(element instanceof Element) ||
+              !element.isConnected ||
+              element.ownerDocument !== document,
+          )
+        ) {
+          return null;
+        }
+        return document.location.href;
+      }, handles);
+    } catch {
+      return null;
+    }
+  };
+
+  const documentUrlBefore = await inspectDocument();
+  if (documentUrlBefore == null) {
+    throw new Error(
+      "The explicit credential targets became detached or their document changed before vault access.",
+    );
+  }
+  const origin = await credentialOriginForFrame(frame);
+  const documentUrlAfter = await inspectDocument();
+  const documentOriginBefore = urlOrigin(documentUrlBefore);
+  const documentOriginAfter = urlOrigin(documentUrlAfter);
+  if (
+    documentUrlAfter == null ||
+    !origin ||
+    (documentOriginBefore && documentOriginBefore !== origin) ||
+    (documentOriginAfter && documentOriginAfter !== origin)
+  ) {
+    throw new Error(
+      "The explicit credential targets became detached or their document changed before vault access.",
+    );
+  }
+  return origin;
+}
+
+async function prepareCredentialTargets(page, action, fields) {
+  const selectors = {
+    username: String(fields.usernameSelector || "").trim(),
+    password: String(fields.passwordSelector || "").trim(),
+    confirmPassword: String(fields.confirmPasswordSelector || "").trim(),
+    submit: String(fields.submitSelector || "").trim(),
+  };
+  const explicit = {
+    username: null,
+    password: null,
+    confirmPassword: null,
+    submit: null,
+  };
+  const explicitHandles = [];
+  let detection = null;
+  let targetFrame = page.mainFrame();
+  const retain = (name, handle) => {
+    explicit[name] = handle;
+    explicitHandles.push(handle);
+  };
+  const dispose = async () => {
+    await Promise.all([
+      detection?.dispose(),
+      ...explicitHandles.map((handle) => handle.dispose().catch(() => {})),
+    ]);
+  };
+
+  try {
+    if (selectors.password) {
+      retain(
+        "password",
+        await resolveExplicitCredentialTarget(
+          page,
+          selectors.password,
+          "password",
+        ),
+      );
+      targetFrame = await explicit.password.ownerFrame();
+      if (!targetFrame) {
+        throw new Error("The explicit credential password target is detached.");
+      }
+    }
+
+    if (!selectors.password) {
+      detection = await detectCredentialTargets(page, action);
+    } else if (fields.submit === true && !selectors.submit) {
+      detection = await detectCredentialTargets(page, action, explicit.password);
+    }
+    if (detection && detection.metadata.status !== "ready") {
+      const { status, reason } = detection.metadata;
+      throw new Error(`credential form ${status}: ${reason}. Use explicit targets.`);
+    }
+    if (!selectors.password && !detection?.password) {
+      throw new Error("credential form detection found no password field.");
+    }
+    if (fields.submit === true && !selectors.submit && !detection?.submit) {
+      const reason = detection?.metadata?.reason || "no submit control was found";
+      throw new Error(`credential form submit detection failed: ${reason}.`);
+    }
+    if (detection?.frame) targetFrame = detection.frame;
+
+    for (const [name, label] of [
+      ["username", "username"],
+      ["confirmPassword", "confirmation password"],
+      ["submit", "submit"],
+    ]) {
+      if (!selectors[name]) continue;
+      retain(
+        name,
+        await resolveExplicitCredentialTarget(
+          targetFrame,
+          selectors[name],
+          label,
+        ),
+      );
+    }
+
+    const pinnedHandles = [
+      explicit.username,
+      explicit.password,
+      explicit.confirmPassword,
+      explicit.submit,
+      detection?.username,
+      detection?.currentPassword,
+      detection?.password,
+      detection?.confirmPassword,
+      detection?.submit,
+    ].filter(Boolean);
+    const origin = await pinnedCredentialOrigin(targetFrame, pinnedHandles);
+    return {
+      detection,
+      dispose,
+      explicit,
+      origin,
+      selectors,
+      targetFrame,
+    };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
+}
+
 // Assemble the wire envelope shared by execute() and credentialFill().
 // Callers pass only what differs; warnings always lead with the profile
 // warning, then the first challenge's advice, then (when the run completed
@@ -2567,74 +2836,44 @@ async function performCredentialFill(
   const fields = spec.fields && typeof spec.fields === "object" ? spec.fields : {};
   const action = spec.action === "generate" ? "generate" : "fill";
   const page = await ensureSessionPage(session);
-  const explicitPassword = String(fields.passwordSelector || "").trim();
-  let targetFrame = page.mainFrame();
-  let detection = null;
-  if (!explicitPassword) {
-    detection = await detectCredentialTargets(page, action);
-  } else if (fields.submit === true && !fields.submitSelector) {
-    const anchor = await targetFrame.locator(explicitPassword).first().elementHandle({
-      timeout: 10_000,
-    });
-    detection = await detectCredentialTargets(page, action, anchor);
-    await anchor?.dispose().catch(() => {});
-  }
-  if (detection && detection.metadata.status !== "ready") {
-    const { status, reason } = detection.metadata;
-    await detection.dispose();
-    throw new Error(`credential form ${status}: ${reason}. Use explicit targets.`);
-  }
-  if (!explicitPassword && !detection?.password) {
-    await detection?.dispose();
-    throw new Error("credential form detection found no password field.");
-  }
-  if (fields.submit === true && !fields.submitSelector && !detection?.submit) {
-    const reason = detection?.metadata?.reason || "no submit control was found";
-    await detection?.dispose();
-    throw new Error(`credential form submit detection failed: ${reason}.`);
-  }
-  if (detection?.frame) targetFrame = detection.frame;
-  const origin = detection?.origin || (await credentialOriginForFrame(targetFrame));
-  if (!origin) {
-    await detection?.dispose();
-    throw new Error("Credentials require the selected frame to have an http(s) origin.");
-  }
-
-  let vaultPayload;
-  let generateSpec = null;
-  if (action === "generate") {
-    generateSpec =
-      spec.generate && typeof spec.generate === "object" ? spec.generate : {};
-    if (generateSpec.id != null && generateSpec.matchMode !== undefined) {
-      throw new TypeError(
-        "matchMode cannot be changed when rotating an existing credential; " +
-          "omit matchMode to preserve the saved record scope.",
-      );
-    }
-    vaultPayload = {
-      length: Number(generateSpec.length) || 24,
-      include_symbols: generateSpec.includeSymbols !== false,
-      pendingId: `pending_${crypto.randomUUID()}`,
-    };
-    if (generateSpec.id != null) vaultPayload.id = generateSpec.id;
-    if (typeof generateSpec.username === "string")
-      vaultPayload.username = generateSpec.username;
-    if (Object.hasOwn(generateSpec, "label"))
-      vaultPayload.label = generateSpec.label;
-    if (generateSpec.matchMode !== undefined)
-      vaultPayload.matchMode = validateCredentialMatchMode(
-        generateSpec.matchMode,
-      );
-  } else {
-    const recordSpec =
-      spec.record && typeof spec.record === "object" ? spec.record : {};
-    vaultPayload = {};
-    if (recordSpec.id != null) vaultPayload.id = recordSpec.id;
-    if (recordSpec.username != null) vaultPayload.username = recordSpec.username;
-  }
+  const prepared = await prepareCredentialTargets(page, action, fields);
+  const { detection, explicit, origin, selectors, targetFrame } = prepared;
 
   let recovery = null;
   try {
+    let vaultPayload;
+    let generateSpec = null;
+    if (action === "generate") {
+      generateSpec =
+        spec.generate && typeof spec.generate === "object" ? spec.generate : {};
+      if (generateSpec.id != null && generateSpec.matchMode !== undefined) {
+        throw new TypeError(
+          "matchMode cannot be changed when rotating an existing credential; " +
+            "omit matchMode to preserve the saved record scope.",
+        );
+      }
+      vaultPayload = {
+        length: Number(generateSpec.length) || 24,
+        include_symbols: generateSpec.includeSymbols !== false,
+        pendingId: `pending_${crypto.randomUUID()}`,
+      };
+      if (generateSpec.id != null) vaultPayload.id = generateSpec.id;
+      if (typeof generateSpec.username === "string")
+        vaultPayload.username = generateSpec.username;
+      if (Object.hasOwn(generateSpec, "label"))
+        vaultPayload.label = generateSpec.label;
+      if (generateSpec.matchMode !== undefined)
+        vaultPayload.matchMode = validateCredentialMatchMode(
+          generateSpec.matchMode,
+        );
+    } else {
+      const recordSpec =
+        spec.record && typeof spec.record === "object" ? spec.record : {};
+      vaultPayload = {};
+      if (recordSpec.id != null) vaultPayload.id = recordSpec.id;
+      if (recordSpec.username != null) vaultPayload.username = recordSpec.username;
+    }
+
     let currentSecret = "";
     if (action === "generate" && detection?.currentPassword) {
       const currentPayload = {};
@@ -2706,15 +2945,16 @@ async function performCredentialFill(
 
     const filled = [];
     let lastLocator = null;
-    const usernameTarget = fields.usernameSelector ||
-      (!explicitPassword ? detection?.username : null);
+    const usernameTarget =
+      explicit.username || (!selectors.password ? detection?.username : null);
     const currentPasswordTarget =
-      action === "generate" && !explicitPassword
+      action === "generate" && !selectors.password
         ? detection?.currentPassword
         : null;
-    const passwordTarget = explicitPassword || detection?.password;
-    const confirmTarget = fields.confirmPasswordSelector ||
-      (action === "generate" && !explicitPassword
+    const passwordTarget = explicit.password || detection?.password;
+    const confirmTarget =
+      explicit.confirmPassword ||
+      (action === "generate" && !selectors.password
         ? detection?.confirmPassword
         : null);
     if (usernameTarget && typeof record.username === "string" && record.username) {
@@ -2762,14 +3002,10 @@ async function performCredentialFill(
     }
 
     let submitted = false;
-    const submitTarget = fields.submitSelector ||
-      (fields.submit === true ? detection?.submit : null);
+    const submitTarget =
+      explicit.submit || (fields.submit === true ? detection?.submit : null);
     if (submitTarget) {
-      const explicitSubmit =
-        typeof submitTarget === "string"
-          ? targetFrame.locator(submitTarget).first()
-          : submitTarget;
-      await humanClickTarget(page, session, explicitSubmit, {
+      await humanClickTarget(page, session, submitTarget, {
         timeout: 10_000,
       });
       submitted = true;
@@ -2786,7 +3022,7 @@ async function performCredentialFill(
     }
     throw error;
   } finally {
-    await detection?.dispose();
+    await prepared.dispose();
   }
 }
 
@@ -3106,7 +3342,7 @@ async function inspectMedia(page) {
   return { frames };
 }
 
-function buildSandbox(session, consoleMessages) {
+function buildSandbox(session, consoleMessages, execution) {
   const sandbox = Object.create(null);
   const context = vm.createContext(sandbox, {
     name: `betterwright-${session.id}`,
@@ -3368,7 +3604,7 @@ function buildSandbox(session, consoleMessages) {
   sandbox.overlays = Object.freeze(overlays);
   sandbox.controls = Object.freeze(controls);
   sandbox.media = Object.freeze(media);
-  sandbox.credentials = buildCredentials(session, realm);
+  sandbox.credentials = buildCredentials(session, realm, execution);
   realm.installPage(getCurrentPage);
   return { context, realm, sandbox };
 }
@@ -4162,6 +4398,84 @@ function markChallengesForWorkerRestart(challenges) {
   }));
 }
 
+function unhandledCredentialTaskError(error) {
+  const detail = error?.message || String(error || "Credential operation failed.");
+  const failure = new Error(`An unhandled credential operation failed: ${detail}`);
+  if (typeof error?.code === "string") failure.code = error.code;
+  if (error?.pendingCredential?.pendingId) {
+    failure.pendingCredential = error.pendingCredential;
+  }
+  return failure;
+}
+
+async function waitForCredentialTasks(execution) {
+  let cursor = 0;
+  try {
+    for (;;) {
+      const batch = execution.credentialTasks.slice(cursor);
+      cursor += batch.length;
+      if (batch.length) {
+        await Promise.allSettled(batch.map(({ promise }) => promise));
+      }
+      // Promise callbacks can start another credential operation after a task
+      // settles. Give that whole microtask chain one turn to register descendants,
+      // then keep draining under execute()'s existing overall timeout.
+      await new Promise((resolve) => setImmediate(resolve));
+      if (cursor === execution.credentialTasks.length) break;
+    }
+  } finally {
+    execution.acceptingCredentialTasks = false;
+  }
+
+  const unhandled = execution.credentialTasks.find(
+    ({ handled, status }) => status === "rejected" && !handled,
+  );
+  if (unhandled) throw unhandledCredentialTaskError(unhandled.error);
+}
+
+function resultContainsPendingId(value, pendingId, seen = new WeakSet(), depth = 0) {
+  if (typeof value === "string") return value === pendingId;
+  if (!value || typeof value !== "object" || depth > 8 || seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
+  if (value instanceof Map) {
+    return [...value.entries()].some(
+      ([key, item]) =>
+        resultContainsPendingId(key, pendingId, seen, depth + 1) ||
+        resultContainsPendingId(item, pendingId, seen, depth + 1),
+    );
+  }
+  if (value instanceof Set) {
+    return [...value].some((item) =>
+      resultContainsPendingId(item, pendingId, seen, depth + 1),
+    );
+  }
+  try {
+    if (String(value.pendingId ?? "") === pendingId) return true;
+  } catch {
+    return false;
+  }
+  for (const key of Object.keys(value).slice(0, 200)) {
+    try {
+      if (resultContainsPendingId(value[key], pendingId, seen, depth + 1)) {
+        return true;
+      }
+    } catch {
+      /* an accessor result cannot prove that recovery was returned */
+    }
+  }
+  return false;
+}
+
+function pendingCredentialNotReturnedError(recovery) {
+  const failure = new Error(
+    "A generated credential remained pending, but its recovery metadata was not returned by the browser script.",
+  );
+  failure.pendingCredential = recovery;
+  return failure;
+}
+
 async function execute(message) {
   const started = performance.now();
   const session = sessionFor(message.sessionId);
@@ -4173,6 +4487,10 @@ async function execute(message) {
   let downloadRunConfigured = false;
   let downloadPolicy = "ask";
   let downloadDeadline = 0;
+  const execution = {
+    acceptingCredentialTasks: true,
+    credentialTasks: [],
+  };
   activeExecutionSession = session.id;
   activeExecutionRequestId = String(message.id || "");
   activePendingCredentialRecovery = null;
@@ -4194,7 +4512,7 @@ async function execute(message) {
         : null;
     downloadRunConfigured = true;
     await ensureSessionPage(session);
-    const { context } = buildSandbox(session, consoleMessages);
+    const { context } = buildSandbox(session, consoleMessages, execution);
     const script = compileCode(String(message.code || ""));
     const promise = script.runInContext(context, {
       timeout: SAFE_SYNC_VM_TIMEOUT_MS,
@@ -4202,8 +4520,24 @@ async function execute(message) {
     const timeoutMs = Math.max(1_000, Number(message.timeoutMs || 30_000));
     downloadDeadline = Date.now() + timeoutMs;
     let timer;
+    const scriptOutcome = Promise.resolve(promise).then(
+      (result) => ({ ok: true, result }),
+      (error) => ({ ok: false, error }),
+    );
+    const executionOutcome = scriptOutcome.then(async (outcome) => {
+      await waitForCredentialTasks(execution);
+      if (!outcome.ok) throw outcome.error;
+      const recovery = activePendingCredentialRecovery;
+      if (
+        recovery?.pendingId &&
+        !resultContainsPendingId(outcome.result, String(recovery.pendingId))
+      ) {
+        throw pendingCredentialNotReturnedError(recovery);
+      }
+      return outcome.result;
+    });
     const result = await Promise.race([
-      Promise.resolve(promise),
+      executionOutcome,
       new Promise((_, reject) => {
         timer = setTimeout(() => {
           const error = new Error(
@@ -4322,6 +4656,7 @@ async function execute(message) {
       }),
     );
   } finally {
+    execution.acceptingCredentialTasks = false;
     if (approvedDownloadSession === session.id) approvedDownloadSession = null;
     activeExecutionSession = null;
     activeExecutionRequestId = null;

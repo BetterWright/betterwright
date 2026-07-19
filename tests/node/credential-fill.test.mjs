@@ -20,7 +20,9 @@ async function fixtureServer() {
   const pages = new Map();
   const server = http.createServer((request, response) => {
     response.setHeader("content-type", "text/html; charset=utf-8");
-    response.end(pages.get(new URL(request.url, "http://fixture").pathname) || "not found");
+    const route = pages.get(new URL(request.url, "http://fixture").pathname);
+    const body = typeof route === "function" ? route(request, response) : route;
+    if (!response.writableEnded) response.end(body ?? "not found");
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -373,11 +375,12 @@ test("vault-reported rotation recovery replaces provisional host metadata", asyn
   await bw.close();
 });
 
-test("definitive pre-persist generate failures do not retain recovery slots", async () => {
+for (const failureCode of ["VAULT_KEY_INVALID", "VAULT_SECRET_CAPACITY"]) {
+  test(`definitive ${failureCode} generate failures do not retain recovery slots`, async () => {
   const vault = {
     async handleRequest() {
-      throw Object.assign(new Error("invalid vault key"), {
-        code: "VAULT_KEY_INVALID",
+      throw Object.assign(new Error("definitive pre-persist failure"), {
+        code: failureCode,
       });
     },
   };
@@ -397,12 +400,13 @@ test("definitive pre-persist generate failures do not retain recovery slots", as
   });
 
   assert.equal(responses.at(-1).ok, false);
-  assert.equal(responses.at(-1).code, "VAULT_KEY_INVALID");
+  assert.equal(responses.at(-1).code, failureCode);
   assert.equal(responses.at(-1).pendingCredential, undefined);
   assert.equal(bw._pendingCredentialOrigins.size, 0);
   assert.equal(bw._pendingCredentialRecoveries.size, 0);
   await bw.close();
-});
+  });
+}
 
 test("worker exit resolves only requests owned by that child", async () => {
   const bw = new BetterWright({ vault: false });
@@ -468,6 +472,9 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
   let iframeOrigin = "";
   let nextPendingId = null;
   let killWorkerAfterGenerate = false;
+  let navigationRace = null;
+  let generationGate = null;
+  let omitGeneratedSecret = false;
   let bw;
   const vault = {
     async handleRequest(action, payload, origin) {
@@ -489,6 +496,7 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
             })),
         };
       }
+      if (action === "list") return { credentials: [] };
       if (action === "save") {
         return {
           id: "saved-test-record",
@@ -501,7 +509,25 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
           updatedAt: "2030-01-01T00:00:00.000Z",
         };
       }
+      if (action === "update") {
+        return {
+          id: String(payload.id || "saved-test-record"),
+          origin,
+          matchMode: payload.matchMode || "base-domain",
+          username: payload.username || "",
+          label: payload.label || null,
+          category: payload.category || "secure-note",
+          createdAt: "2030-01-01T00:00:00.000Z",
+          updatedAt: "2030-01-01T00:01:00.000Z",
+        };
+      }
       if (action === "fill") {
+        if (navigationRace?.action === action && navigationRace.origin === origin) {
+          const race = navigationRace;
+          race.vaultStartedResolve();
+          race.gateOpen = true;
+          await race.destinationLoaded;
+        }
         return {
           id: "login-1",
           username:
@@ -510,6 +536,18 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
         };
       }
       if (action === "generate") {
+        if (generationGate) {
+          const gate = generationGate;
+          generationGate = null;
+          gate.startedResolve();
+          await gate.release;
+        }
+        if (navigationRace?.action === action && navigationRace.origin === origin) {
+          const race = navigationRace;
+          race.vaultStartedResolve();
+          race.gateOpen = true;
+          await race.destinationLoaded;
+        }
         const pendingId =
           nextPendingId ||
           (origin === iframeOrigin ? "pending-frame-1" : "pending-1");
@@ -526,6 +564,10 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
           expiresAt: "2030-01-01T00:00:00.000Z",
           secret: generatedSecret,
         };
+        if (omitGeneratedSecret) {
+          omitGeneratedSecret = false;
+          delete generated.secret;
+        }
         if (killWorkerAfterGenerate) {
           killWorkerAfterGenerate = false;
           const worker = bw?._process;
@@ -603,6 +645,41 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       <label>User <input id="explicit-user"></label><label>Password <input id="explicit-password" type="password"></label><button id="explicit-submit">Go</button>
     </form>`,
   );
+  server.pages.set(
+    "/explicit-race-source",
+    `<!doctype html><form>
+      <input id="race-user"><input id="race-password" type="password"><input id="race-confirm" type="password"><button id="race-submit">Submit</button>
+    </form><script>
+      const poll = async () => {
+        const response = await fetch('/explicit-race-gate', {cache: 'no-store'});
+        if ((await response.text()) === 'go') {
+          location.replace(${JSON.stringify(`${frameServer.origin}/explicit-race-destination`)});
+          return;
+        }
+        setTimeout(poll, 5);
+      };
+      poll();
+    </script>`,
+  );
+  server.pages.set("/explicit-race-gate", () =>
+    navigationRace?.gateOpen ? "go" : "wait",
+  );
+  frameServer.pages.set(
+    "/explicit-race-destination",
+    `<!doctype html><form onsubmit="event.preventDefault(); window.raceSubmits=(window.raceSubmits||0)+1">
+      <input id="race-user"><input id="race-password" type="password"><input id="race-confirm" type="password"><button id="race-submit">Submit</button>
+    </form><script>
+      window.secretCharacters = 0;
+      document.addEventListener('beforeinput', (event) => {
+        window.secretCharacters += String(event.data || '').length;
+      });
+      fetch('/explicit-race-loaded', {cache: 'no-store'});
+    </script>`,
+  );
+  frameServer.pages.set("/explicit-race-loaded", () => {
+    navigationRace?.destinationLoadedResolve();
+    return "ok";
+  });
   server.pages.set(
     "/signup",
     `<!doctype html><form>
@@ -700,6 +777,25 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
     );
     assert.equal(result.ok, true, result.error);
   };
+  const armNavigationRace = (action) => {
+    let vaultStartedResolve;
+    let destinationLoadedResolve;
+    const vaultStarted = new Promise((resolve) => {
+      vaultStartedResolve = resolve;
+    });
+    const destinationLoaded = new Promise((resolve) => {
+      destinationLoadedResolve = resolve;
+    });
+    navigationRace = {
+      action,
+      destinationLoaded,
+      destinationLoadedResolve,
+      gateOpen: false,
+      origin: server.origin,
+      vaultStartedResolve,
+    };
+    return vaultStarted;
+  };
 
   try {
     await t.test("detects autocomplete fields and submits only when requested", async () => {
@@ -744,21 +840,185 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
     await t.test("redacts short, overlapping, and object-key secrets", async () => {
       await visit("/login");
       const result = await bw.run(`
+        const nested = 'nested-custom-vault-token';
+        const note = 'custom-vault-save-note';
+        const updated = 'updated-custom-vault-token';
+        const updatedNote = 'custom-vault-update-note';
         await credentials.save({username:'short', password:'x'});
         await credentials.save({username:'prefix', password:'pass'});
         await credentials.save({username:'longer', password:'password123'});
+        await credentials.save({
+          category: 'secure-note',
+          fields: {auth: {tokens: [nested]}},
+          notes: note,
+        });
+        await credentials.update({
+          id: 'saved-test-record',
+          fields: {auth: {tokens: [updated]}},
+          notes: updatedNote,
+        });
+        console.log(nested, note, updated, updatedNote);
         return {
           ['password123']: 'wrapped:password123',
           short: 'prefix:x:suffix',
           mapped: new Map([['password123', 'password123']]),
+          [nested]: note,
+          nested: {updated, updatedNote},
         };
       `);
       assert.equal(result.ok, true, result.error);
       const text = JSON.stringify(result.result);
-      for (const secret of ["x", "pass", "password123"]) {
+      const envelope = JSON.stringify(result);
+      for (const secret of [
+        "x",
+        "pass",
+        "password123",
+        "nested-custom-vault-token",
+        "custom-vault-save-note",
+        "updated-custom-vault-token",
+        "custom-vault-update-note",
+      ]) {
         assert.ok(!text.includes(secret), `result must redact ${secret}`);
+        assert.ok(!envelope.includes(secret), `envelope must redact ${secret}`);
       }
       assert.match(text, /REDACTED_PASSWORD/);
+    });
+
+    await t.test("joins unawaited credential work to its browser execution", async () => {
+      await visit("/signup");
+      nextPendingId = "pending-detached-task";
+      let releaseGeneration;
+      let startedResolve;
+      const started = new Promise((resolve) => {
+        startedResolve = resolve;
+      });
+      generationGate = {
+        release: new Promise((resolve) => {
+          releaseGeneration = resolve;
+        }),
+        startedResolve,
+      };
+
+      let firstSettled = false;
+      const first = bw
+        .run(`
+          void credentials.list().then(() =>
+            credentials.generateAndFill({
+              username: 'detached@example.com',
+              passwordSelector: '#signup-password',
+            })
+          );
+          return 'script-finished';
+        `)
+        .finally(() => {
+          firstSettled = true;
+        });
+      await started;
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(
+        firstSettled,
+        false,
+        "the execution must wait for its detached credential task",
+      );
+
+      releaseGeneration();
+      const firstResult = await first;
+      assert.equal(firstResult.ok, false);
+      assert.match(firstResult.error, /recovery metadata was not returned/i);
+      assert.deepEqual(firstResult.pendingCredential, {
+        pendingId: "pending-detached-task",
+        origin: server.origin,
+        matchMode: "base-domain",
+        username: "detached@example.com",
+        label: null,
+        expiresAt: "2030-01-01T00:00:00.000Z",
+      });
+      assert.equal(bw._pendingCredentialRecoveries.size, 0);
+
+      const unrelated = await bw.run("throw new Error('unrelated later failure');");
+      assert.equal(unrelated.ok, false);
+      assert.match(unrelated.error, /unrelated later failure/);
+      assert.equal(unrelated.pendingCredential, undefined);
+      assert.equal(bw._pendingCredentialRecoveries.size, 0);
+
+      const discarded = await bw.discardGeneratedCredential({
+        pendingId: "pending-detached-task",
+      });
+      assert.equal(discarded.ok, true, discarded.error);
+    });
+
+    await t.test(
+      "fails ignored credential rejection while preserving an explicit catch",
+      async () => {
+        await visit("/signup");
+        const handled = await bw.run(`
+          try {
+            await credentials.save({});
+          } catch (error) {
+            return {caught: String(error.message)};
+          }
+        `);
+        assert.equal(handled.ok, true, handled.error);
+        assert.match(handled.result.caught, /credentials\.save requires/i);
+
+        nextPendingId = "pending-ignored-rejection";
+        omitGeneratedSecret = true;
+        const ignored = await bw.run(`
+          void credentials.generateAndFill({
+            username: 'ignored@example.com',
+            passwordSelector: '#signup-password',
+          });
+          return 'script-finished';
+        `);
+        assert.equal(ignored.ok, false);
+        assert.match(
+          ignored.error,
+          /unhandled credential operation.*did not return a credential/i,
+        );
+        assert.deepEqual(ignored.pendingCredential, {
+          pendingId: "pending-ignored-rejection",
+          origin: server.origin,
+          matchMode: "base-domain",
+          username: "ignored@example.com",
+          label: null,
+          expiresAt: "2030-01-01T00:00:00.000Z",
+        });
+        assert.equal(bw._pendingCredentialRecoveries.size, 0);
+
+        const unrelated = await bw.run("return 'unrelated-success';");
+        assert.equal(unrelated.ok, true, unrelated.error);
+        assert.equal(unrelated.result, "unrelated-success");
+        assert.equal(unrelated.pendingCredential, undefined);
+
+        const discarded = await bw.discardGeneratedCredential({
+          pendingId: "pending-ignored-rejection",
+        });
+        assert.equal(discarded.ok, true, discarded.error);
+      },
+    );
+
+    await t.test("rejects cyclic credential writes without poisoning later RPCs", async () => {
+      await visit("/login");
+      const result = await bw.run(`
+        const secret = 'cyclic-custom-vault-token';
+        const fields = {token: secret};
+        fields.self = fields;
+        let cycleError = '';
+        try {
+          await credentials.save({category: 'secure-note', fields});
+        } catch (error) {
+          cycleError = String(error.message);
+        }
+        const saved = await credentials.save({
+          category: 'secure-note',
+          fields: {token: secret},
+        });
+        return {cycleError, saved, secret};
+      `);
+      assert.equal(result.ok, true, result.error);
+      assert.match(result.result.cycleError, /circular|json/i);
+      assert.equal(result.result.saved.id, "saved-test-record");
+      assert.ok(!JSON.stringify(result).includes("cyclic-custom-vault-token"));
     });
 
     await t.test("restarts instead of evicting secrets at redaction capacity", async () => {
@@ -1094,6 +1354,55 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       assert.equal(byRef.result.submitted, true);
     });
 
+    await t.test(
+      "pins explicit targets and origin before a delayed vault lookup",
+      { timeout: 20_000 },
+      async () => {
+        await visit("/explicit-race-source");
+        const vaultStarted = armNavigationRace("fill");
+        try {
+          const before = calls.length;
+          const filling = bw.fillCredential({
+            usernameSelector: "#race-user",
+            passwordSelector: "#race-password",
+            confirmPasswordSelector: "#race-confirm",
+            submitSelector: "#race-submit",
+          });
+          await vaultStarted;
+          const result = await filling;
+          assert.equal(result.ok, false);
+          assert.match(result.error, /attached|detached|document|execution context/i);
+          assert.deepEqual(
+            calls
+              .slice(before)
+              .filter(({ action }) => action === "fill")
+              .map(({ origin }) => origin),
+            [server.origin],
+          );
+
+          const state = await bw.run(`return page.evaluate(() => ({
+            origin: location.origin,
+            username: document.querySelector('#race-user').value,
+            password: document.querySelector('#race-password').value,
+            confirmation: document.querySelector('#race-confirm').value,
+            secretCharacters: window.secretCharacters,
+            submits: window.raceSubmits || 0,
+          }));`);
+          assert.equal(state.ok, true, state.error);
+          assert.deepEqual(state.result, {
+            origin: frameServer.origin,
+            username: "",
+            password: "",
+            confirmation: "",
+            secretCharacters: 0,
+            submits: 0,
+          });
+        } finally {
+          navigationRace = null;
+        }
+      },
+    );
+
     await t.test("omits absent signup metadata and preserves a prefilled username", async () => {
       await visit("/prefilled-signup");
       const before = calls.length;
@@ -1141,15 +1450,19 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
     });
 
     await t.test("returns pending recovery when host or sandbox filling fails after generation", async () => {
-      await visit("/signup");
+      await visit("/explicit-race-source");
       nextPendingId = "pending-host-recovery";
-      const hostFailure = await bw.generateAndFillCredential({
+      const hostVaultStarted = armNavigationRace("generate");
+      const hostFilling = bw.generateAndFillCredential({
         username: "",
         label: null,
         matchMode: "exact-origin",
-        passwordSelector: "#signup-password",
-        submitSelector: "[",
+        passwordSelector: "#race-password",
+        submitSelector: "#race-submit",
       });
+      await hostVaultStarted;
+      const hostFailure = await hostFilling;
+      navigationRace = null;
       assert.equal(hostFailure.ok, false);
       assert.deepEqual(hostFailure.pendingCredential, {
         pendingId: "pending-host-recovery",
@@ -1170,17 +1483,21 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       });
       assert.equal(discardedHost.ok, true, discardedHost.error);
 
-      await visit("/signup");
+      await visit("/explicit-race-source");
       nextPendingId = "pending-sandbox-recovery";
-      const sandboxFailure = await bw.run(`
+      const sandboxVaultStarted = armNavigationRace("generate");
+      const sandboxFilling = bw.run(`
         return credentials.generateAndFill({
           username: '',
           label: null,
           matchMode: 'host',
-          passwordSelector: '#signup-password',
-          submitSelector: '[',
+          passwordSelector: '#race-password',
+          submitSelector: '#race-submit',
         });
       `);
+      await sandboxVaultStarted;
+      const sandboxFailure = await sandboxFilling;
+      navigationRace = null;
       assert.equal(sandboxFailure.ok, false);
       assert.deepEqual(sandboxFailure.pendingCredential, {
         pendingId: "pending-sandbox-recovery",
