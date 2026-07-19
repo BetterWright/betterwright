@@ -19,6 +19,7 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import {
+  _windowsProcessIdentityForTest,
   createLocalCredentialVault,
   LocalCredentialVault,
   LocalCredentialVaultError,
@@ -742,6 +743,41 @@ test("post-persist generation failures carry recovery metadata", async () => {
   }
 });
 
+test("definitive pre-write generation failures do not invent recovery metadata", async () => {
+  const pendingId = "pending_not_persisted";
+  const context = await fixture({
+    _beforeGeneratePersistForTest: async () => {
+      throw new LocalCredentialVaultError("snapshot is too large", "VAULT_TOO_LARGE");
+    },
+  });
+  try {
+    await assert.rejects(
+      context.vault.handleRequest(
+        "generate",
+        { pendingId },
+        "https://too-large.example.com",
+      ),
+      (error) => {
+        assert.equal(error.code, "VAULT_TOO_LARGE");
+        assert.equal(error.pendingCredential, undefined);
+        return true;
+      },
+    );
+    assert.deepEqual(
+      (
+        await new LocalCredentialVault(context.dir).handleRequest(
+          "list-pending",
+          {},
+          "https://too-large.example.com",
+        )
+      ).pendingCredentials,
+      [],
+    );
+  } finally {
+    await context.cleanup();
+  }
+});
+
 test("never-match generated credentials require their exact creation origin", async () => {
   const context = await fixture();
   const origin = "https://never-pending.example.com:8443/signup";
@@ -1378,6 +1414,65 @@ test("a verified live owner remains serialized while heartbeat spans the stale t
     resume?.();
     await context.cleanup();
   }
+});
+
+test("Windows process identity uses bounded locale-independent creation ticks", async () => {
+  const calls = [];
+  const systemRoot = "D:\\Windows";
+  const execute = async (...args) => {
+    calls.push(args);
+    return { stdout: "638885440001234567\r\n" };
+  };
+  assert.equal(
+    await _windowsProcessIdentityForTest(4242, execute, systemRoot),
+    "win32:638885440001234567",
+  );
+  assert.equal(calls.length, 1);
+  const [command, args, options] = calls[0];
+  assert.equal(
+    command,
+    "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  );
+  assert.deepEqual(args.slice(0, 4), [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+  ]);
+  assert.match(args[4], /Get-Process -Id 4242 -ErrorAction Stop/);
+  assert.match(args[4], /StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.equal(options.timeout, 2_000);
+  assert.equal(options.maxBuffer, 1_024);
+  assert.equal(options.windowsHide, true);
+
+  assert.equal(
+    await _windowsProcessIdentityForTest(
+      4242,
+      async () => ({ stdout: "localized date" }),
+      systemRoot,
+    ),
+    null,
+  );
+  assert.equal(
+    await _windowsProcessIdentityForTest(
+      4242,
+      async () => {
+        throw new Error("access denied");
+      },
+      systemRoot,
+    ),
+    null,
+  );
+  assert.equal(await _windowsProcessIdentityForTest(0, execute, systemRoot), null);
+  assert.equal(calls.length, 1, "invalid PIDs must not launch PowerShell");
+
+  for (const unsafeRoot of [undefined, "Windows", "\\\\server\\share", "C:\\Windows\\..\\Temp"]) {
+    assert.equal(
+      await _windowsProcessIdentityForTest(4242, execute, unsafeRoot),
+      null,
+    );
+  }
+  assert.equal(calls.length, 1, "unsafe system roots must not launch PowerShell");
 });
 
 test("a lock is recoverable when its live PID has a different identity", async (t) => {

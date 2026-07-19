@@ -22,6 +22,7 @@ import { createLocalCredentialVault, VAULT_MATCH_MODES } from "./vault.mjs";
 const WORKER_PATH = fileURLToPath(new URL("./worker.mjs", import.meta.url));
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const WORKER_START_TIMEOUT_MS = 15_000;
+const WORKER_RPC_DRAIN_TIMEOUT_MS = 250;
 const MAX_PENDING_CREDENTIAL_ORIGINS = 100;
 const VAULT_MATCH_MODE_SET = new Set(VAULT_MATCH_MODES);
 const PENDING_CREDENTIAL_FINALIZE_ACTIONS = new Set(["commit", "discard"]);
@@ -37,6 +38,7 @@ const DEFINITIVE_GENERATE_FAILURE_CODES = new Set([
   "VAULT_KEY_INVALID",
   "VAULT_KEY_MISSING",
   "VAULT_LOCK_TIMEOUT",
+  "VAULT_SECRET_CAPACITY",
   "VAULT_TOO_LARGE",
 ]);
 
@@ -288,6 +290,8 @@ export class BetterWright {
     this._pendingCredentialRecoveries = new Map();
     this._workerClosePromises = new WeakMap();
     this._workerClosePreservesPending = new WeakSet();
+    this._workerCloseBarrier = Promise.resolve();
+    this._vaultRedactionOwner = null;
     this._ready = null;
     this._lastConfig = null;
     this._queue = Promise.resolve();
@@ -329,6 +333,16 @@ export class BetterWright {
     )
       return;
     if (this._closed) throw new BrowserError("This browser has been closed.");
+    // An exited worker can still have buffered stdio. Wait for its `close`
+    // cleanup before a replacement is allowed to own the vault redaction set.
+    await this._workerCloseBarrier;
+    if (
+      this._process &&
+      this._process.exitCode === null &&
+      this._process.signalCode === null
+    )
+      return;
+    if (this._closed) throw new BrowserError("This browser has been closed.");
     const env = { ...process.env, NODE_NO_WARNINGS: "1" };
     const core = resolvePlaywrightCore();
     if (core) env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = core;
@@ -355,6 +369,7 @@ export class BetterWright {
       env,
     });
     this._process = child;
+    this._vaultRedactionOwner = child;
     this._stderrTail = [];
 
     const stdout = readline.createInterface({ input: child.stdout });
@@ -364,6 +379,7 @@ export class BetterWright {
       (resolve) => (resolveWorkerClose = resolve),
     );
     this._workerClosePromises.set(child, workerClosePromise);
+    this._workerCloseBarrier = workerClosePromise;
     let resolveReady;
     this._ready = new Promise((resolve) => (resolveReady = resolve));
     stdout.on("line", (line) => {
@@ -377,7 +393,12 @@ export class BetterWright {
       else if (message.type === "rpc_request") {
         const task = this._serviceRpc(message, child);
         rpcTasks.add(task);
-        void task.finally(() => rpcTasks.delete(task));
+        // Custom RPC providers cannot currently be aborted. Their settlement
+        // must therefore be observed, but must never hold worker shutdown open.
+        void task.then(
+          () => rpcTasks.delete(task),
+          () => rpcTasks.delete(task),
+        );
       }
       else if (message.type === "result") {
         const pending = this._pending.get(String(message.id));
@@ -398,20 +419,39 @@ export class BetterWright {
     });
     child.on("close", () => {
       void (async () => {
-        await Promise.allSettled([...rpcTasks]);
-        if (!this._workerClosePreservesPending.has(child)) {
-          this._resolvePendingForWorkerExit(child);
+        let drainTimer;
+        try {
+          if (rpcTasks.size) {
+            await Promise.race([
+              Promise.allSettled([...rpcTasks]),
+              new Promise((resolve) => {
+                drainTimer = setTimeout(resolve, WORKER_RPC_DRAIN_TIMEOUT_MS);
+              }),
+            ]);
+          }
+          if (!this._workerClosePreservesPending.has(child)) {
+            this._resolvePendingForWorkerExit(child);
+          }
+        } finally {
+          clearTimeout(drainTimer);
+          await this._resetVaultRedactionForWorker(child);
+          resolveWorkerClose();
         }
-      })().finally(resolveWorkerClose);
+      })().catch(() => {});
     });
 
-    const timer = new Promise((_, reject) =>
-      setTimeout(
+    let startTimer;
+    const timer = new Promise((_, reject) => {
+      startTimer = setTimeout(
         () => reject(new BrowserError(`Worker did not start.\n${this._stderrTail.slice(-8).join("\n")}`)),
         WORKER_START_TIMEOUT_MS,
-      ),
-    );
-    await Promise.race([this._ready, timer]);
+      );
+    });
+    try {
+      await Promise.race([this._ready, timer]);
+    } finally {
+      clearTimeout(startTimer);
+    }
   }
 
   _send(message, child = this._process) {
@@ -446,6 +486,26 @@ export class BetterWright {
         }),
       );
     }
+  }
+
+  async _resetVaultRedactionForWorker(child) {
+    if (!child || this._vaultRedactionOwner !== child) return;
+    // Retire ownership before calling user code so repeated lifecycle events
+    // cannot reset the same generation twice. The worker-close barrier remains
+    // pending until this hook settles, so a replacement cannot claim ownership
+    // while an older generation's asynchronous reset is still running.
+    this._vaultRedactionOwner = null;
+    try {
+      await this.vault?.resetRedactionSecrets?.();
+    } catch {
+      /* lifecycle cleanup must never mask worker shutdown */
+    }
+  }
+
+  _tracksPendingExecution(executionId, child) {
+    if (!executionId) return false;
+    if (!child) return true;
+    return this._pending.get(executionId)?.child === child;
   }
 
   async _serviceRpc(message, child = this._process) {
@@ -556,7 +616,10 @@ export class BetterWright {
             requestPayload,
             currentOrigin,
           );
-          if (recovery && generationExecutionId) {
+          if (
+            recovery &&
+            this._tracksPendingExecution(generationExecutionId, child)
+          ) {
             this._pendingCredentialRecoveries.set(
               generationExecutionId,
               recovery,
@@ -585,7 +648,10 @@ export class BetterWright {
       const reportedRecovery = error?.pendingCredential?.pendingId
         ? error.pendingCredential
         : null;
-      if (reportedRecovery && generationExecutionId) {
+      if (
+        reportedRecovery &&
+        this._tracksPendingExecution(generationExecutionId, child)
+      ) {
         const reportedPendingId = String(reportedRecovery.pendingId);
         if (generatedPendingId && generatedPendingId !== reportedPendingId) {
           this._pendingCredentialOrigins.delete(generatedPendingId);
@@ -872,20 +938,12 @@ export class BetterWright {
     this._closed = true;
     const child = requestedChild || this._process;
     const closesActiveWorker = !requestedChild || this._process === child;
-    const resetVaultRedaction = () => {
-      if (!closesActiveWorker || this._process) return;
-      try {
-        this.vault?.resetRedactionSecrets?.();
-      } catch {
-        /* lifecycle cleanup must never mask worker shutdown */
-      }
-    };
     if (closesActiveWorker) {
       this._process = null;
       this._lastConfig = null;
     }
     if (!child) {
-      resetVaultRedaction();
+      await this._workerCloseBarrier;
       return;
     }
     if (preservePending) this._workerClosePreservesPending.add(child);
@@ -905,7 +963,7 @@ export class BetterWright {
       await closed;
     } finally {
       clearTimeout(killer);
-      resetVaultRedaction();
+      await this._resetVaultRedactionForWorker(child);
     }
   }
 }

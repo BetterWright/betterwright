@@ -43,6 +43,7 @@ const DEFAULT_PENDING_TTL_MS = 60_000;
 const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
 const DEFAULT_STALE_LOCK_MS = 30_000;
 const PROCESS_IDENTITY_TIMEOUT_MS = 250;
+const WINDOWS_PROCESS_IDENTITY_TIMEOUT_MS = 2_000;
 const PROCESS_IDENTITY_MAX_BUFFER = 1024;
 const MUTATION_AUDIT_WARNING = Object.freeze({
   code: "AUDIT_WRITE_FAILED",
@@ -729,10 +730,60 @@ async function bsdProcessIdentity(pid) {
   }
 }
 
+function windowsPowerShellPath(systemRoot) {
+  const root = typeof systemRoot === "string" ? systemRoot.trim() : "";
+  if (!/^[A-Za-z]:[\\/]/.test(root) || root.split(/[\\/]+/).includes("..")) {
+    return null;
+  }
+  return path.win32.join(
+    path.win32.normalize(root),
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+}
+
+async function windowsProcessIdentity(
+  pid,
+  execute = execFileAsync,
+  systemRoot = process.env.SystemRoot ?? process.env.windir,
+) {
+  const powershell = windowsPowerShellPath(systemRoot);
+  if (!powershell) return null;
+  try {
+    const script =
+      `$target = Get-Process -Id ${pid} -ErrorAction Stop; ` +
+      "[Console]::Out.Write($target.StartTime.ToUniversalTime().Ticks)";
+    const { stdout } = await execute(
+      powershell,
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      {
+        encoding: "utf8",
+        maxBuffer: PROCESS_IDENTITY_MAX_BUFFER,
+        timeout: WINDOWS_PROCESS_IDENTITY_TIMEOUT_MS,
+        windowsHide: true,
+      },
+    );
+    const ticks = String(stdout || "").trim();
+    return /^\d{1,32}$/.test(ticks) && BigInt(ticks) > 0n
+      ? `win32:${ticks}`
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function _windowsProcessIdentityForTest(pid, execute, systemRoot) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  return windowsProcessIdentity(pid, execute, systemRoot);
+}
+
 async function readProcessIdentity(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   if (process.platform === "linux") return linuxProcessIdentity(pid);
   if (BSD_PROCESS_PLATFORMS.has(process.platform)) return bsdProcessIdentity(pid);
+  if (process.platform === "win32") return windowsProcessIdentity(pid);
   return null;
 }
 
@@ -795,6 +846,7 @@ async function lockIsReclaimable(observation, staleMs) {
   const age = Date.now() - leaseMtimeMs;
   if (!hasOwnerPid) return age >= staleMs;
   if (!processIsAlive(pid)) return true;
+  if (age < staleMs) return false;
 
   const storedIdentity = observation.owner?.processIdentity;
   if (typeof storedIdentity !== "string" || !storedIdentity) return false;
@@ -1126,6 +1178,7 @@ function metadataSearch(record, query) {
 export class LocalCredentialVault {
   #activeSecrets = new Set();
   #lockAcquiredForTest = null;
+  #beforeGeneratePersistForTest = null;
   #afterGeneratePersistForTest = null;
   #afterLockPublishForTest = null;
 
@@ -1170,6 +1223,9 @@ export class LocalCredentialVault {
     }
     if (typeof resolved._afterGeneratePersistForTest === "function") {
       this.#afterGeneratePersistForTest = resolved._afterGeneratePersistForTest;
+    }
+    if (typeof resolved._beforeGeneratePersistForTest === "function") {
+      this.#beforeGeneratePersistForTest = resolved._beforeGeneratePersistForTest;
     }
     if (typeof resolved._afterLockPublishForTest === "function") {
       this.#afterLockPublishForTest = resolved._afterLockPublishForTest;
@@ -1544,6 +1600,7 @@ export class LocalCredentialVault {
     snapshot.pending.push(pending);
     this.#trackSecret(secret);
     try {
+      await this.#beforeGeneratePersistForTest?.(this.paths.data);
       await persistSnapshot(this.paths, key, snapshot);
       await this.#afterGeneratePersistForTest?.(this.paths.data);
     } catch (error) {

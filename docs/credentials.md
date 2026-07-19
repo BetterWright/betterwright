@@ -180,6 +180,11 @@ the successful result contains the bounded, secret-free
 `auditWarning.code === "AUDIT_WRITE_FAILED"`. Treat the mutation as committed
 and repair audit storage instead of retrying it blindly.
 
+Handled secrets remain in the worker's redaction set for as long as its pages
+can still expose them. If that bounded set fills, BetterWright returns a static
+failure and restarts the worker instead of evicting old plaintext while an old
+page is alive.
+
 The default key file protects against plaintext logs, support bundles, casual
 file inspection, and copying only the ciphertext. It is not a defense against
 malware or another process already able to read files as the same OS user.
@@ -206,7 +211,14 @@ must enforce its own URL and access policy and must return `secret` only for the
 internal `fill`/`generate` response. BetterWright removes it from public results
 and tracks it for worker-side output redaction. An adapter may also implement
 the optional `redact(value)` hook as a second host-side pass, but it must replace
-every active secret rather than returning its input unchanged.
+every active secret rather than returning its input unchanged. Adapters that
+retain their own redaction material may implement `resetRedactionSecrets()`;
+BetterWright calls it only after the owning worker and all its pages close.
+For `save` and `update`, passwords, notes, and every nested string value under
+`fields` are registered with the worker redaction net before the adapter runs.
+Credential promises started by sandbox code are joined to that browser
+execution even if the snippet forgets to await them, so recovery state cannot
+bleed into the next run.
 
 For `generate`, BetterWright supplies an opaque `pendingId` before storage. A
 custom adapter must persist and echo that id, and retries with the same id and
