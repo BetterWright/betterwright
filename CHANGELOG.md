@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-07-19
+
+### Added
+
+- **Single-call finish for the agent harness.** A `browser` call whose code
+  returns `{ finalAnswer: "…" }` ends the task in that same turn — no separate
+  `done` round-trip — so a read-only task (look up, extract, compare, compute)
+  costs one model turn. The harness ignores `finalAnswer` on an errored run,
+  and the preamble requires the code to check the extracted values actually
+  satisfy the request (match a ranked row by its own rank cell, not position)
+  before finishing. In the 15-scenario head-to-head against `aside exec` (both
+  on `gpt-5.6-sol`, effort low, Aside restricted from subagents), this took
+  simple lookups from 2–3 turns / 10–20s to 1 turn / 5–9s — faster than Aside
+  on most scenarios, with equal-or-better correctness every round
+  (see `benchmarks/exec-headtohead/REPORT.md`).
+- **Model-callable vault fill.** `credentials.fill({id|username,
+  usernameSelector, passwordSelector, confirmPasswordSelector?,
+  submitSelector?})` and `credentials.generateAndFill(...)` now work inside
+  `run()` snippets — the same shape Aside's password manager exposes to its
+  agent. Both share the trusted worker fill path: the vault RPC stays
+  origin-scoped to the current page, the secret is typed worker-side with
+  human-shaped input and never returned, and the redaction net still scrubs
+  the value from every output channel. The host-side
+  `bw.fillCredential`/`bw.generateAndFillCredential` and the MCP/Pi
+  `browser_login` tool are unchanged.
+
+### Changed
+
+- **Operator prompt.** Vault guidance rewritten around the model-callable fill
+  (search `credentials.list`, fill the matching record, `generateAndFill` on
+  signup); a credential the user wrote into the task itself may be typed
+  directly (never one from any other source); transient server failures
+  (5xx/timeouts) are retried with growing backoff for 30–60s before a site is
+  treated as down; multi-page reference lookups batch text extraction instead
+  of spending snapshot round-trips.
+
 ## [0.8.7] — 2026-07-19
 
 ### Changed

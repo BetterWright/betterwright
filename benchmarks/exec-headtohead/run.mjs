@@ -64,7 +64,53 @@ const TASKS = [
     scenario: "Form / search interaction",
     task: "Use the search box on wikipedia.org to search for 'Playwright (software)', open the article, and give me the first sentence.",
   },
+  {
+    id: "compare-3way",
+    scenario: "Multi-tab compare (3-way)",
+    task: "Which of these is tallest: Burj Khalifa, Shanghai Tower, or Merdeka 118? Give all three heights in metres and name the tallest.",
+  },
+  {
+    id: "table-extract",
+    scenario: "Large-table extraction",
+    task: "On the Wikipedia article 'List of tallest buildings', what is the 5th tallest building in the world and its height in metres?",
+  },
+  {
+    id: "pagination",
+    scenario: "Pagination",
+    task: "Go to news.ycombinator.com, navigate to the second page of stories (the 'More' link), and tell me the title of the first story on that second page.",
+  },
+  {
+    id: "cross-site-hop",
+    scenario: "Deep multi-hop (cross-site)",
+    task: "Find the current LTS version of Node.js from nodejs.org, then on the GitHub nodejs/node releases page find that version's release and tell me its release date.",
+  },
+  {
+    id: "form-fill",
+    scenario: "Form fill + submit",
+    task: "Go to https://httpbin.org/forms/post, enter customer name 'Ada Lovelace', telephone '555-0100', pick pizza size Large, submit the form, and tell me what value the response JSON shows for 'custname'.",
+  },
+  {
+    id: "saucedemo-checkout",
+    scenario: "Complex: login + cart + checkout flow",
+    task: "Go to https://www.saucedemo.com and log in with username 'standard_user' and password 'secret_sauce' (public demo credentials). Add the two cheapest products to the cart, proceed to checkout with first name 'John', last name 'Doe', zip '12345', and tell me the item total (before tax) shown on the checkout overview page.",
+  },
+  {
+    id: "hn-aggregate",
+    scenario: "Complex: aggregate + compute over 10 items",
+    task: "On news.ycombinator.com, take the top 10 stories: compute the SUM of their points, and tell me which single story has the highest points along with its percentage share of that sum (1 decimal place).",
+  },
+  {
+    id: "wiki-population-gap",
+    scenario: "Complex: table rows + arithmetic",
+    task: "On the Wikipedia article 'List of countries and dependencies by population', identify the 3rd and 4th most populous countries and compute the difference between their populations (approximate, in millions).",
+  },
 ];
+
+// Fairness: BetterWright has no subagents, so Aside must not use its
+// child-session/subagent machinery either. There is no CLI flag for this, so it
+// is enforced at the prompt level.
+const NO_SUBAGENTS =
+  " Important: do everything yourself in this single session — do not spawn subagents, child sessions, or parallel agent sessions.";
 
 // Strip ANSI SGR sequences (ESC [ … m). The ESC byte is built from its char
 // code so there is no literal control character in the source.
@@ -128,6 +174,8 @@ async function runBetterwright(task) {
     timedOut: r.timedOut,
     ok: parsed?.ok ?? false,
     steps: parsed?.steps ?? null,
+    toolCalls: parsed?.toolCalls ?? null,
+    usage: parsed?.usage ?? null,
     answer: parsed?.answer ?? lastMeaningfulLine(r.stderr) ?? "",
     proof: parsed?.proof ?? null,
     raw: r.stdout.slice(0, 4000),
@@ -135,7 +183,7 @@ async function runBetterwright(task) {
 }
 
 async function runAside(task) {
-  const r = await run("aside", ["exec", "-m", `openai-codex/${MODEL}`, "--effort", EFFORT, task]);
+  const r = await run("aside", ["exec", "-m", `openai-codex/${MODEL}`, "--effort", EFFORT, task + NO_SUBAGENTS]);
   // Count `repl(` invocations as a rough step proxy for Aside.
   const steps = (stripAnsi(r.stdout).match(/^\s*repl\(/gm) || []).length || null;
   return {
