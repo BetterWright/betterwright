@@ -795,7 +795,14 @@ export class BetterWright {
         5,
       );
       const config = await this._prepare();
-      const payload = action === "list" ? {} : { pendingId };
+      const pendingOrigin = this._pendingCredentialOrigins.get(pendingId);
+      const payload =
+        action === "list"
+          ? {}
+          : {
+              pendingId,
+              ...(pendingOrigin ? { pendingOrigin } : {}),
+            };
       return this._dispatch(
         {
           type: "credential_pending",

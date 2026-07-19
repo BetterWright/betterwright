@@ -42,6 +42,10 @@ import {
   managedCloakViewport,
 } from "./cloak.mjs";
 import {
+  collectCredentialFrameDetections,
+  disposeCredentialFrameDetections,
+} from "./credential-target-scan.mjs";
+import {
   downloadBehaviorParams,
   normalizeDownloadPolicy,
 } from "./downloads.mjs";
@@ -1837,8 +1841,33 @@ async function vaultCallAtOrigin(session, origin, action, payload = {}, key = nu
   return response;
 }
 
-async function finalizePendingCredential(session, action, pendingId) {
-  const { origin } = await currentOrigin(session);
+async function finalizePendingCredential(
+  session,
+  action,
+  pendingId,
+  trustedOrigin = "",
+) {
+  const trackedOrigin = session.pendingCredentialOrigins.get(pendingId) || "";
+  const suppliedOrigin = trustedOrigin ? urlOrigin(trustedOrigin) : "";
+  if (trustedOrigin && !suppliedOrigin) {
+    const error = new Error(
+      "The trusted pending credential origin is not a valid http(s) origin.",
+    );
+    error.code = "PENDING_ORIGIN_MISMATCH";
+    throw error;
+  }
+  if (trackedOrigin && suppliedOrigin && trackedOrigin !== suppliedOrigin) {
+    const error = new Error(
+      "The pending credential origin does not match the generated credential.",
+    );
+    error.code = "PENDING_ORIGIN_MISMATCH";
+    throw error;
+  }
+  // The session record is authoritative. The trusted host copy restores that
+  // binding after a worker restart; only legacy/recovered untracked IDs fall
+  // back to the current origin.
+  const origin =
+    trackedOrigin || suppliedOrigin || (await currentOrigin(session)).origin;
   const response = await vaultCallAtOrigin(session, origin, action, {
     pendingId,
   });
@@ -2533,21 +2562,12 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
     return detection;
   }
 
-  const detections = [];
-  for (const frame of page.frames()) {
-    const origin = await credentialOriginForFrame(frame);
-    if (!origin) continue;
-    try {
-      const detection = await detectCredentialTargetsInFrame(
-        frame,
-        requestedAction,
-      );
-      detection.origin = origin;
-      detections.push(detection);
-    } catch (error) {
-      if (!frame.isDetached()) throw error;
-    }
-  }
+  const detections = await collectCredentialFrameDetections({
+    frames: page.frames(),
+    requestedAction,
+    originForFrame: credentialOriginForFrame,
+    detectInFrame: detectCredentialTargetsInFrame,
+  });
 
   const ambiguous = detections.filter(
     ({ metadata }) => metadata.status === "ambiguous",
@@ -2565,7 +2585,7 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
         : requestedAction === "generate"
           ? "no visible enabled new-password field was found in any frame"
           : "no visible enabled current-password or login password field was found in any frame");
-    await Promise.all(detections.map((detection) => detection.dispose()));
+    await disposeCredentialFrameDetections(detections);
     return emptyCredentialDetection({
       action: requestedAction === "generate" ? "generate" : "fill",
       status,
@@ -2583,10 +2603,8 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
   }
 
   const selected = viable[0];
-  await Promise.all(
-    detections
-      .filter((detection) => detection !== selected)
-      .map((detection) => detection.dispose()),
+  await disposeCredentialFrameDetections(
+    detections.filter((detection) => detection !== selected),
   );
   selected.metadata = {
     ...selected.metadata,
@@ -3109,6 +3127,7 @@ async function credentialPending(message) {
         session,
         action,
         pendingId,
+        String(message.payload?.pendingOrigin ?? "").trim(),
       );
       const { secret: _secret, ...result } = response || {};
       publicResult = result;

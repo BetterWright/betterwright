@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { BetterWright } from "../../src/client.mjs";
 import {
+  _createMcpHandlersForTest,
   contentForResult,
   downloadPolicyFromEnv,
   headlessFromEnv,
@@ -12,6 +14,63 @@ import {
   loginOptionsFromArgs,
   policyFromEnv,
 } from "../../src/mcp-server.mjs";
+
+test("MCP omits and rejects browser_login when the vault is disabled", async () => {
+  let fillCalls = 0;
+  const browser = new BetterWright({ vault: false });
+  browser.fillCredential = async () => {
+    fillCalls += 1;
+    return { ok: true };
+  };
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "deny",
+  });
+  try {
+    const listed = await handlers.listTools();
+    assert.deepEqual(
+      listed.tools.map((tool) => tool.name),
+      ["browser", "browser_download", "browser_doctor"],
+    );
+
+    const response = await handlers.callTool({
+      params: { name: "browser_login", arguments: { username: "alice" } },
+    });
+    assert.equal(response.isError, true);
+    assert.match(response.content[0].text, /Unknown tool: browser_login/);
+    assert.equal(fillCalls, 0);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("MCP advertises and dispatches browser_login when a vault is available", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({
+    browser: {
+      vault: {},
+      async fillCredential(options) {
+        calls.push(options);
+        return { ok: true, result: { filled: true } };
+      },
+    },
+    server: {},
+    downloadPolicy: "deny",
+  });
+
+  const listed = await handlers.listTools();
+  assert.ok(listed.tools.some((tool) => tool.name === "browser_login"));
+
+  const response = await handlers.callTool({
+    params: { name: "browser_login", arguments: { username: "alice", submit: true } },
+  });
+  assert.equal(response.isError, undefined);
+  assert.deepEqual(calls, [
+    { session: "default", generate: false, username: "alice", submit: true },
+  ]);
+  assert.equal(JSON.parse(response.content[0].text).result.filled, true);
+});
 
 test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
   assert.deepEqual(
