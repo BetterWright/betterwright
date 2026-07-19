@@ -850,51 +850,54 @@ test("timeout restart flushes recent persistent-profile changes", opts, async ()
     res.end("<title>Profile flush</title><h1>Profile flush</h1>");
   });
   const home = tempHome();
-  const seed = new BetterWright({ home, headless: true });
   try {
-    const stored = await seed.run(`
-      await page.goto(${JSON.stringify(server.origin)});
-      return page.evaluate(() => {
-        document.cookie = 'seeded=alive; Max-Age=3600; Path=/; SameSite=Lax';
-        return document.cookie;
+    const seed = new BetterWright({ home, headless: true });
+    try {
+      const stored = await seed.run(`
+        await page.goto(${JSON.stringify(server.origin)});
+        return page.evaluate(() => {
+          document.cookie = 'seeded=alive; Max-Age=3600; Path=/; SameSite=Lax';
+          return document.cookie;
+        });
+      `);
+      assert.equal(stored.ok, true, stored.error);
+      assert.match(stored.result, /seeded=alive/);
+    } finally {
+      await seed.close();
+    }
+
+    const bw = new BetterWright({ home, headless: true });
+    try {
+      const stored = await bw.run(`
+        await page.goto(${JSON.stringify(server.origin)});
+        return page.evaluate(() => {
+          document.cookie = 'recent=alive; Max-Age=3600; Path=/; SameSite=Lax';
+          return document.cookie;
+        });
+      `);
+      assert.equal(stored.ok, true, stored.error);
+      assert.equal(stored.profileMode, "persistent");
+      assert.match(stored.result, /seeded=alive/);
+      assert.match(stored.result, /recent=alive/);
+
+      const timedOut = await bw.run("await new Promise(() => {})", {
+        timeout: 5,
       });
-    `);
-    assert.equal(stored.ok, true, stored.error);
-    assert.match(stored.result, /seeded=alive/);
+      assert.equal(timedOut.ok, false);
+      assert.match(timedOut.error, /timed out/i);
+
+      const restarted = await bw.run(`
+        await page.goto(${JSON.stringify(server.origin)});
+        return page.evaluate(() => document.cookie);
+      `);
+      assert.equal(restarted.ok, true, restarted.error);
+      assert.equal(restarted.profileMode, "persistent");
+      assert.match(restarted.result, /seeded=alive/);
+      assert.match(restarted.result, /recent=alive/);
+    } finally {
+      await bw.close();
+    }
   } finally {
-    await seed.close();
-  }
-
-  const bw = new BetterWright({ home, headless: true });
-  try {
-    const stored = await bw.run(`
-      await page.goto(${JSON.stringify(server.origin)});
-      return page.evaluate(() => {
-        document.cookie = 'recent=alive; Max-Age=3600; Path=/; SameSite=Lax';
-        return document.cookie;
-      });
-    `);
-    assert.equal(stored.ok, true, stored.error);
-    assert.equal(stored.profileMode, "persistent");
-    assert.match(stored.result, /seeded=alive/);
-    assert.match(stored.result, /recent=alive/);
-
-    const timedOut = await bw.run("await new Promise(() => {})", {
-      timeout: 5,
-    });
-    assert.equal(timedOut.ok, false);
-    assert.match(timedOut.error, /timed out/i);
-
-    const restarted = await bw.run(`
-      await page.goto(${JSON.stringify(server.origin)});
-      return page.evaluate(() => document.cookie);
-    `);
-    assert.equal(restarted.ok, true, restarted.error);
-    assert.equal(restarted.profileMode, "persistent");
-    assert.match(restarted.result, /seeded=alive/);
-    assert.match(restarted.result, /recent=alive/);
-  } finally {
-    await bw.close();
     await server.close();
   }
 });

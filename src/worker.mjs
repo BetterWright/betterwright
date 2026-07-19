@@ -3412,7 +3412,11 @@ async function performShutdown() {
   }
   browserContext = null;
   releaseProfileLock();
-  await guardProxy.close();
+  try {
+    await guardProxy.close();
+  } catch {
+    /* parent/process exit */
+  }
   if (ephemeralProfileDir) {
     try {
       fs.rmSync(ephemeralProfileDir, { recursive: true, force: true });
