@@ -30,9 +30,14 @@
 
 import { createRequire } from "node:module";
 
+import {
+  BetterWright,
+  NetworkPolicy,
+} from "./client.mjs";
+import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
 import { doctorReport } from "./doctor.mjs";
-import { BetterWright, NetworkPolicy } from "./index.mjs";
 import { piImageArtifacts, piImageContent } from "./pi.mjs";
+import { VAULT_MATCH_MODES } from "./vault.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -89,12 +94,21 @@ export async function contentForResult(result) {
   const files = (result.artifacts || [])
     .filter((artifact) => artifact.path && !imagePaths.has(artifact.path))
     .map((artifact) => ({ kind: artifact.kind, path: artifact.path }));
+  const pendingCredential =
+    result.pendingCredential && typeof result.pendingCredential === "object"
+      ? Object.fromEntries(
+          ["pendingId", "origin", "matchMode", "username", "label", "expiresAt"]
+            .filter((key) => Object.hasOwn(result.pendingCredential, key))
+            .map((key) => [key, result.pendingCredential[key]]),
+        )
+      : (result.pendingCredential ?? null);
   const summary = {
     ok: result.ok,
     // Coerce to null (not undefined) so the JSON keeps these keys, matching the
     // documented summary shape on both success and failure.
     result: result.result ?? null,
     error: result.error ?? null,
+    pendingCredential,
     console: result.console || [],
     // Screenshots are returned as image content below, not as paths. Other
     // files (downloads, spilled output) are listed here as paths only.
@@ -147,47 +161,65 @@ all downloads.`;
 
 const LOGIN_DESCRIPTION = `Fill a saved or freshly generated credential without the secret ever entering the conversation.
 
-The password is fetched, typed, and (if submitSelector is given) submitted
+BetterWright detects the visible enabled login/signup controls from autocomplete,
+labels, names, types, and form relationships. The password is fetched, typed,
+and (only with submit=true or submitSelector) submitted
 entirely inside the browser worker — it is never returned to you and never
-appears in a snapshot (password fields read as "[redacted]"). Provide CSS
-selectors for the fields. Use this instead of typing a password in browser
-code, which is blocked for exactly this reason.
+appears in a snapshot (password fields read as "[redacted]"). Use explicit CSS
+or current aria-ref=eN targets only when detection reports ambiguity. Use this
+instead of typing a password in browser code, which is blocked for exactly this
+reason.
 
-- Log in with a saved record: pass passwordSelector (and usernameSelector), and
-  optionally id or username to pick the record.
+- Log in with a saved record: optionally pass id or username to pick the record.
 - Sign up with a new strong password: set generate=true; it is generated,
-  filled into passwordSelector and confirmPasswordSelector, saved to the vault,
-  and never revealed.
+  staged, filled into new-password and confirmation fields, and never revealed.
+  After a later browser run visibly verifies signup/rotation success, call
+  credentials.commitGenerated({pendingId}) in browser code. On failure call
+  credentials.discardGenerated({pendingId}); pending credentials are not saved
+  as active records. After a complete host restart, credentials.listPending()
+  recovers secret-free pending metadata for the current site.
 
-Requires a host-configured vault; without one there are no credentials to fill.`;
+The built-in encrypted vault is enabled by default; an embedding can replace or disable it.`;
 
-const LOGIN_INPUT_SCHEMA = {
+export const LOGIN_INPUT_SCHEMA = {
   type: "object",
   properties: {
     passwordSelector: {
       type: "string",
-      description: "CSS selector for the password field (required).",
+      description: "Optional CSS or current aria-ref=eN target for the password or new-password field.",
+    },
+    currentPasswordSelector: {
+      type: "string",
+      description: "Optional CSS or current aria-ref=eN target for the current-password field during rotation.",
     },
     usernameSelector: {
       type: "string",
-      description: "CSS selector for the username/email field.",
+      description: "Optional CSS or current aria-ref=eN target for the username/email field.",
     },
     confirmPasswordSelector: {
       type: "string",
-      description: "CSS selector for a confirm-password field (signup).",
+      description: "Optional CSS or current aria-ref=eN target for confirmation (signup).",
     },
     submitSelector: {
       type: "string",
-      description: "CSS selector clicked to submit in the same trusted call.",
+      description: "Optional CSS or current aria-ref=eN target clicked to submit.",
     },
-    id: { type: "string", description: "Select the saved record by id." },
+    submit: {
+      type: "boolean",
+      description: "Detect and submit the matching form after filling (default false).",
+      default: false,
+    },
+    id: {
+      type: "string",
+      description: "Select a saved record, or rotate it when generate=true.",
+    },
     username: {
       type: "string",
       description: "Select the saved record by username, or set the new one on signup.",
     },
     generate: {
       type: "boolean",
-      description: "Generate, fill, and save a new strong password (signup).",
+      description: "Generate, stage, and fill a new strong password (signup/rotation).",
       default: false,
     },
     length: { type: "integer", description: "Generated password length (default 24)." },
@@ -196,13 +228,17 @@ const LOGIN_INPUT_SCHEMA = {
       description: "Include symbols in a generated password (default true).",
     },
     label: { type: "string", description: "Human label for a newly saved record." },
+    matchMode: {
+      type: "string",
+      enum: [...VAULT_MATCH_MODES],
+      description: "URL scope for the generated credential (default base-domain).",
+    },
     session: {
       type: "string",
       description: "Independent set of pages/state; reuse a name across calls.",
       default: "default",
     },
   },
-  required: ["passwordSelector"],
 };
 
 /**
@@ -210,25 +246,7 @@ const LOGIN_INPUT_SCHEMA = {
  * keeping only the recognized keys so the trusted fill sees a clean spec.
  */
 export function loginOptionsFromArgs(args = {}) {
-  const options = {
-    session: String(args.session || "default"),
-    passwordSelector: String(args.passwordSelector || ""),
-    generate: args.generate === true,
-  };
-  for (const key of [
-    "usernameSelector",
-    "confirmPasswordSelector",
-    "submitSelector",
-    "id",
-    "username",
-    "label",
-  ]) {
-    if (args[key] != null) options[key] = String(args[key]);
-  }
-  if (args.length != null) options.length = Number(args.length);
-  if (typeof args.includeSymbols === "boolean")
-    options.includeSymbols = args.includeSymbols;
-  return options;
+  return normalizeCredentialToolOptions(args);
 }
 
 const RUN_INPUT_SCHEMA = {
@@ -293,20 +311,90 @@ async function approveDownload(server, note) {
   }
 }
 
-export async function runMcpServer(env = process.env, { vault } = {}) {
+function mcpTools(withLogin) {
+  const tools = [
+    { name: "browser", description: BROWSER_DESCRIPTION, inputSchema: RUN_INPUT_SCHEMA },
+    {
+      name: "browser_download",
+      description: BROWSER_DOWNLOAD_DESCRIPTION,
+      inputSchema: RUN_INPUT_SCHEMA,
+    },
+  ];
+  if (withLogin) {
+    tools.push({
+      name: "browser_login",
+      description: LOGIN_DESCRIPTION,
+      inputSchema: LOGIN_INPUT_SCHEMA,
+    });
+  }
+  tools.push({
+    name: "browser_doctor",
+    description: "Report whether the BetterWright browser runtime is installed and ready.",
+    inputSchema: { type: "object", properties: {} },
+  });
+  return tools;
+}
+
+function createMcpHandlers({ browser, server, downloadPolicy }) {
+  const withLogin = Boolean(browser.vault);
+  return {
+    listTools: async () => ({ tools: mcpTools(withLogin) }),
+    callTool: async (request) => {
+      const { name, arguments: args = {} } = request.params;
+      try {
+        if (name === "browser_doctor") {
+          return {
+            content: [{ type: "text", text: JSON.stringify(await doctorReport()) }],
+          };
+        }
+        if (name === "browser_login" && withLogin) {
+          const result = await browser.fillCredential(loginOptionsFromArgs(args));
+          return { content: await contentForResult(result) };
+        }
+        if (name !== "browser" && name !== "browser_download") {
+          throw new Error(`Unknown tool: ${name}`);
+        }
+        const options = {
+          session: String(args.session || "default"),
+          note: String(args.note || "") || undefined,
+        };
+        if (name === "browser_download") {
+          if (downloadPolicy === "deny") {
+            throw new Error(
+              "Downloads are disabled by BETTERWRIGHT_DOWNLOAD_POLICY=deny.",
+            );
+          }
+          if (downloadPolicy === "ask") await approveDownload(server, options.note);
+          options.approvedDownloads = true;
+        }
+        const result = await browser.run(String(args.code || ""), options);
+        return { content: await contentForResult(result) };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error?.message || String(error) }],
+          isError: true,
+        };
+      }
+    },
+  };
+}
+
+// A narrow pure seam for protocol capability tests without opening stdio.
+export const _createMcpHandlersForTest = createMcpHandlers;
+
+export async function runMcpServer(env = process.env, options = {}) {
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
     await loadSdk();
 
   const downloadPolicy = downloadPolicyFromEnv(env);
   // One persistent browser for the life of the server, so pages and logins
-  // survive across tool calls the way an agent expects. Pass a `vault` when
-  // embedding programmatically to enable `browser_login`; the plain CLI has no
-  // vault, so logins there go through a password-manager extension instead.
+  // survive across tool calls the way an agent expects. The built-in encrypted
+  // vault enables `browser_login`; an embedding may override or disable it.
   const browser = new BetterWright({
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
-    ...(vault ? { vault } : {}),
+    ...(Object.hasOwn(options, "vault") ? { vault: options.vault } : {}),
   });
 
   const server = new Server(
@@ -314,63 +402,9 @@ export async function runMcpServer(env = process.env, { vault } = {}) {
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      { name: "browser", description: BROWSER_DESCRIPTION, inputSchema: RUN_INPUT_SCHEMA },
-      {
-        name: "browser_download",
-        description: BROWSER_DOWNLOAD_DESCRIPTION,
-        inputSchema: RUN_INPUT_SCHEMA,
-      },
-      {
-        name: "browser_login",
-        description: LOGIN_DESCRIPTION,
-        inputSchema: LOGIN_INPUT_SCHEMA,
-      },
-      {
-        name: "browser_doctor",
-        description:
-          "Report whether the BetterWright browser runtime is installed and ready.",
-        inputSchema: { type: "object", properties: {} },
-      },
-    ],
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args = {} } = request.params;
-    try {
-      if (name === "browser_doctor") {
-        return {
-          content: [{ type: "text", text: JSON.stringify(await doctorReport()) }],
-        };
-      }
-      if (name === "browser_login") {
-        const result = await browser.fillCredential(loginOptionsFromArgs(args));
-        return { content: await contentForResult(result) };
-      }
-      if (name !== "browser" && name !== "browser_download") {
-        throw new Error(`Unknown tool: ${name}`);
-      }
-      const options = {
-        session: String(args.session || "default"),
-        note: String(args.note || "") || undefined,
-      };
-      if (name === "browser_download") {
-        if (downloadPolicy === "deny") {
-          throw new Error("Downloads are disabled by BETTERWRIGHT_DOWNLOAD_POLICY=deny.");
-        }
-        if (downloadPolicy === "ask") await approveDownload(server, options.note);
-        options.approvedDownloads = true;
-      }
-      const result = await browser.run(String(args.code || ""), options);
-      return { content: await contentForResult(result) };
-    } catch (error) {
-      return {
-        content: [{ type: "text", text: error?.message || String(error) }],
-        isError: true,
-      };
-    }
-  });
+  const handlers = createMcpHandlers({ browser, server, downloadPolicy });
+  server.setRequestHandler(ListToolsRequestSchema, handlers.listTools);
+  server.setRequestHandler(CallToolRequestSchema, handlers.callTool);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

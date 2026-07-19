@@ -1,10 +1,26 @@
-import type { DownloadPolicy, HeadlessMode } from "./common.js";
+import type {
+  DownloadPolicy,
+  FillCredentialOptions,
+  GenerateAndFillCredentialOptions,
+  HeadlessMode,
+} from "./common.js";
 import type { NetworkPolicy } from "./policy.js";
 
 export interface McpContentBlock {
   type: string;
   [key: string]: unknown;
 }
+
+export type BrowserLoginOptions =
+  | (FillCredentialOptions & { generate: false })
+  | (GenerateAndFillCredentialOptions & { generate: true });
+
+export const LOGIN_INPUT_SCHEMA: Readonly<object>;
+
+/** Keep and validate the recognized `browser_login` arguments. */
+export function loginOptionsFromArgs(
+  args?: Record<string, unknown>,
+): BrowserLoginOptions;
 
 /** Build a NetworkPolicy from BETTERWRIGHT_* environment variables. */
 export function policyFromEnv(
@@ -32,9 +48,8 @@ export function contentForResult(result: unknown): Promise<McpContentBlock[]>;
 export function runMcpServer(
   env?: Record<string, string | undefined>,
   options?: {
-    /** Credential vault enabling `browser_login`; omit and logins use an
-     * unlocked password-manager extension instead. */
-    vault?: {
+    /** Custom credential vault, or false/null to disable the built-in vault. */
+    vault?: false | null | {
       handleRequest(action: string, payload: unknown, origin: string): Promise<unknown>;
       redact?(value: unknown): unknown;
     };

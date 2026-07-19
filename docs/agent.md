@@ -208,14 +208,16 @@ const result = await runAgentTask({
 import { BetterWright } from "betterwright";
 import { runAgentTask } from "betterwright/agent";
 
-const browser = new BetterWright({ vault: myVault });   // vault enables the `login` tool
+const browser = new BetterWright(); // encrypted local vault + `login` tool by default
 await runAgentTask({ task: "…", browser, model: "claude" });
 await browser.close();
 ```
 
-When the browser has a vault, the loop also exposes a `login` tool — the same
-origin-scoped trusted fill as the MCP/Pi `browser_login` tool, so a password is
-filled and submitted inside the worker and never enters the transcript.
+The loop exposes a selector-free `login` tool backed by the same URL-matched
+worker fill as MCP/Pi's `browser_login`. Generated signup/rotation passwords
+remain pending until a later browser step verifies success and commits them, so
+failed forms do not leave stale saved items. Pass `vault: false` to disable the
+tool or a custom adapter to replace the local store.
 
 ## Bring your own model or agent
 

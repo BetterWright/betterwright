@@ -25,8 +25,14 @@ import path from "node:path";
 
 import { uncachedInputTokens } from "./agent-usage.mjs";
 import { codexAccessToken, codexHome, grokAccessToken, loadCodexAuth, loadGrokAuth } from "./auth.mjs";
-import { BetterWright, NetworkPolicy } from "./client.mjs";
+import {
+  BetterWright,
+  NetworkPolicy,
+} from "./client.mjs";
+import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
 import { agentSystemPrompt } from "./prompt.mjs";
+import { matchSkillsForText, readSkill } from "./skills.mjs";
+import { VAULT_MATCH_MODES } from "./vault.mjs";
 
 // The ChatGPT backend Responses endpoint the codex CLI drives with a ChatGPT
 // OAuth access token (overridable if the backend path moves).
@@ -68,11 +74,23 @@ function harnessPreamble({ withAsk } = {}) {
   return `${HARNESS_PREAMBLE_HEAD}\n\n${autonomy}\n\n${HARNESS_PREAMBLE_TAIL}`;
 }
 
-const BROWSER_TOOL_DESCRIPTION = `Run async Playwright JavaScript in the persistent browser and get back a JSON observation ({ok, result, error, console, pages, challenges, skills, warnings, screenshots, duration_ms}). Read with snapshot({interactive:true}); act on [ref=eN] via page.locator('aria-ref=eN'); verify with snapshot({diff:true}). Return { finalAnswer: '...' } from the code to complete the whole task in this same call when the answer is fully in hand. Never type or print a vault-held password — fill logins with credentials.fill(...) / credentials.generateAndFill(...) in the code (origin-scoped, secret never returned), a password-manager extension, or the login tool if present. A credential the user wrote into the task itself may be typed directly.`;
+function taskSkillGuidance(task) {
+  const sections = [];
+  for (const skill of matchSkillsForText(task)) {
+    try {
+      sections.push(`## Loaded skill: ${skill.name}\n\n${readSkill(skill.name).body.trim()}`);
+    } catch {
+      // A missing user override must not prevent the agent from starting.
+    }
+  }
+  return sections.join("\n\n");
+}
+
+const BROWSER_TOOL_DESCRIPTION = `Run async Playwright JavaScript in the persistent browser and get back a JSON observation ({ok, result, error, console, pages, challenges, skills, warnings, screenshots, duration_ms}). Read with snapshot({interactive:true}); act on [ref=eN] via page.locator('aria-ref=eN'); verify with snapshot({diff:true}). Return { finalAnswer: '...' } from the code to complete the whole task in this same call when the answer is fully in hand. Never type or print a vault-held password — fill logins with credentials.fill({id, submit:true}) / credentials.generateAndFill({username, submit:true}) in the code, or use the login tool. BetterWright detects the form and resolves the secret internally; explicit selectors remain available only when detection is ambiguous. A credential the user wrote into the task itself may be typed directly.`;
 
 const DONE_TOOL_DESCRIPTION = `Finish the task. Call this exactly once when the task is complete or genuinely blocked, with the final answer or status for the user. Capture a proof screenshot first when there is a visible result.`;
 
-const LOGIN_TOOL_DESCRIPTION = `Fill a saved or freshly generated credential without the secret ever entering the conversation. The password is fetched, typed, and (with submitSelector) submitted inside the browser worker — never returned, never shown in a snapshot. Provide CSS selectors for the fields. Set generate=true to create and save a new strong password when signing up.`;
+const LOGIN_TOOL_DESCRIPTION = `Fill a saved or freshly generated credential without the secret ever entering the conversation. BetterWright detects the visible login or signup form, resolves the matching account for the current site, and types inside the browser worker. Set submit=true to submit in the same call. Set generate=true to stage and fill a strong password; after visible success, commit its pendingId in a browser call. After a complete host restart, credentials.listPending() recovers secret-free pending metadata for the current site. Pass id too when rotating an existing record. Use explicit selectors only if form detection reports ambiguity.`;
 
 const ASK_TOOL_DESCRIPTION = `Ask the present user a question and wait for their typed answer. Use ONLY when you genuinely need input to proceed — a code or credential you cannot obtain, a consequential or irreversible choice with no reasonable default, or genuine ambiguity in the task. Offer short concrete options when the answer is a choice, and mask any secret (e.g. "account ending 999"). Do not use it to ask permission for ordinary reversible steps — just do those.`;
 
@@ -92,18 +110,24 @@ const ASK_TOOL_PARAMETERS = {
 const LOGIN_TOOL_PARAMETERS = {
   type: "object",
   properties: {
-    passwordSelector: { type: "string", description: "CSS selector for the password field (required)." },
-    usernameSelector: { type: "string", description: "CSS selector for the username/email field." },
-    confirmPasswordSelector: { type: "string", description: "CSS selector for a confirm-password field (signup)." },
-    submitSelector: { type: "string", description: "CSS selector clicked to submit in the same trusted call." },
+    passwordSelector: { type: "string", description: "Optional CSS or aria-ref target for the password or new-password field." },
+    currentPasswordSelector: { type: "string", description: "Optional CSS or aria-ref target for the current-password field during rotation." },
+    usernameSelector: { type: "string", description: "Optional CSS or aria-ref target for the username/email field." },
+    confirmPasswordSelector: { type: "string", description: "Optional CSS or aria-ref target for the confirmation field." },
+    submitSelector: { type: "string", description: "Optional CSS or aria-ref target clicked to submit." },
+    submit: { type: "boolean", description: "Detect and submit the matching form after filling." },
     id: { type: "string", description: "Select the saved record by id." },
     username: { type: "string", description: "Select the saved record by username, or set the new one on signup." },
-    generate: { type: "boolean", description: "Generate, fill, and save a new strong password (signup)." },
+    generate: { type: "boolean", description: "Generate, stage, and fill a strong password (signup/rotation)." },
     length: { type: "integer", description: "Generated password length (default 24)." },
     includeSymbols: { type: "boolean", description: "Include symbols in a generated password (default true)." },
     label: { type: "string", description: "Human label for a newly saved record." },
+    matchMode: {
+      type: "string",
+      enum: [...VAULT_MATCH_MODES],
+      description: "URL scope for the generated credential (default base-domain).",
+    },
   },
-  required: ["passwordSelector"],
 };
 
 const BROWSER_TOOL_PARAMETERS = {
@@ -182,6 +206,7 @@ function observationFromResult(result) {
     ok: result.ok,
     result: result.result ?? null,
     error: result.error ?? null,
+    pendingCredential: result.pendingCredential ?? null,
     console: result.console || [],
     pages: result.pages || [],
     challenges: result.challenges || [],
@@ -217,26 +242,6 @@ function finalAnswerFromResult(result) {
   return null;
 }
 
-function loginOptionsFromInput(input = {}, session) {
-  const options = {
-    session,
-    passwordSelector: String(input.passwordSelector || ""),
-    generate: input.generate === true,
-  };
-  for (const key of [
-    "usernameSelector",
-    "confirmPasswordSelector",
-    "submitSelector",
-    "id",
-    "username",
-    "label",
-  ])
-    if (input[key] != null) options[key] = String(input[key]);
-  if (input.length != null) options.length = Number(input.length);
-  if (typeof input.includeSymbols === "boolean") options.includeSymbols = input.includeSymbols;
-  return options;
-}
-
 /**
  * Run a natural-language task through BetterWright's own agent harness.
  *
@@ -253,9 +258,9 @@ function loginOptionsFromInput(input = {}, session) {
  * @param {string} [options.session="default"] browser session name
  * @param {boolean|"auto"} [options.headless] browser headless mode (new browsers)
  * @param {NetworkPolicy} [options.policy] network policy (new browsers)
- * @param {object} [options.vault] credential vault for the `login` tool (new
- *   browsers only — ignored when an external `browser` is passed, whose own
- *   vault then decides login availability)
+ * @param {object|false|null} [options.vault] override or disable the built-in
+ *   credential vault for a new browser (ignored when an external `browser` is
+ *   passed, whose own vault decides login availability)
  * @param {(event: object) => void} [options.onStep] progress callback per step
  * @param {(q: {question: string, options: string[]}) => (string|Promise<string>)} [options.askUser]
  *   when provided, the loop exposes an `ask` tool so the model can put a question
@@ -282,12 +287,19 @@ export async function runAgentTask(options = {}) {
     new BetterWright({
       policy: options.policy || new NetworkPolicy(),
       headless: options.headless,
-      ...(options.vault ? { vault: options.vault } : {}),
+      ...(Object.hasOwn(options, "vault") ? { vault: options.vault } : {}),
     });
   const withLogin = Boolean(browser.vault);
   const withAsk = Boolean(askUser);
 
-  const system = `${harnessPreamble({ withAsk })}\n\n${agentSystemPrompt(options.guardrails || {})}`;
+  const matchedSkills = taskSkillGuidance(task);
+  const system = [
+    harnessPreamble({ withAsk }),
+    agentSystemPrompt(options.guardrails || {}),
+    matchedSkills,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const tools = toolsForHarness({ withLogin, withAsk });
   // Seed from a prior transcript when continuing a session (the interactive
   // console passes the previous task's transcript), so a follow-up task can refer
@@ -354,7 +366,9 @@ export async function runAgentTask(options = {}) {
         if (call.name === "login") {
           onStep({ step: steps, tool: "login", note: "filling credential" });
           try {
-            const result = await browser.fillCredential(loginOptionsFromInput(call.input, session));
+            const result = await browser.fillCredential(
+              normalizeCredentialToolOptions(call.input, { session }),
+            );
             results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
           } catch (error) {
             results.push({ id: call.id, name: call.name, content: `login error: ${error?.message || error}` });

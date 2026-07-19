@@ -24,9 +24,10 @@ function futureJwt(extra = {}) {
 
 // A fake browser standing in for BetterWright — records run() calls and returns
 // canned result envelopes. `vault` toggles the login tool.
-function fakeBrowser({ vault = null, runs = [] } = {}) {
+function fakeBrowser({ vault = null, runs = [], fills = [] } = {}) {
   const calls = { run: [], fill: [], closed: false };
   let i = 0;
+  let fillIndex = 0;
   return {
     vault,
     calls,
@@ -36,7 +37,14 @@ function fakeBrowser({ vault = null, runs = [] } = {}) {
     },
     async fillCredential(options) {
       calls.fill.push(options);
-      return { ok: true, result: "filled", artifacts: [], durationMs: 5 };
+      return (
+        fills[fillIndex++] || {
+          ok: true,
+          result: "filled",
+          artifacts: [],
+          durationMs: 5,
+        }
+      );
     },
     async close() {
       calls.closed = true;
@@ -315,19 +323,105 @@ test("runAgentTask stops at maxSteps without a done", async () => {
 test("login tool is offered only with a vault and runs fillCredential", async () => {
   const withVault = fakeBrowser({ vault: {} });
   const model = scriptedModel([
-    { text: "", toolCalls: [{ id: "l1", name: "login", input: { passwordSelector: "#pw", username: "alice" } }] },
+    { text: "", toolCalls: [{ id: "l1", name: "login", input: { username: "alice", currentPasswordSelector: "#old-password", submit: false, generate: true, matchMode: "exact-origin", session: "untrusted", code: "danger()" } }] },
     { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "in" } }] },
   ]);
   await runAgentTask({ task: "log in", model, browser: withVault });
   assert.equal(withVault.calls.fill.length, 1);
-  assert.equal(withVault.calls.fill[0].passwordSelector, "#pw");
+  assert.equal(withVault.calls.fill[0].passwordSelector, undefined);
+  assert.equal(withVault.calls.fill[0].currentPasswordSelector, "#old-password");
+  assert.equal(withVault.calls.fill[0].submit, false);
+  assert.equal(withVault.calls.fill[0].session, "default");
+  assert.equal(withVault.calls.fill[0].code, undefined);
+  assert.equal(withVault.calls.fill[0].matchMode, "exact-origin");
   // The tool list handed to the model included login.
-  assert.ok(model.seen[0].tools.some((t) => t.name === "login"));
+  const loginTool = model.seen[0].tools.find((t) => t.name === "login");
+  assert.ok(loginTool);
+  assert.deepEqual(loginTool.parameters.properties.matchMode.enum, [
+    "base-domain",
+    "host",
+    "exact-origin",
+    "never",
+  ]);
+  assert.ok(!loginTool.parameters.required?.includes("passwordSelector"));
+  assert.equal(
+    loginTool.parameters.properties.currentPasswordSelector.type,
+    "string",
+  );
+  assert.match(model.seen[0].system, /Loaded skill: credential-manager/);
 
   const noVault = fakeBrowser({ vault: null });
   const model2 = scriptedModel([{ text: "no", toolCalls: [] }]);
   await runAgentTask({ task: "x", model: model2, browser: noVault });
   assert.ok(!model2.seen[0].tools.some((t) => t.name === "login"));
+
+  const invalidModel = scriptedModel([
+    {
+      text: "",
+      toolCalls: [
+        {
+          id: "l2",
+          name: "login",
+          input: { generate: true, matchMode: "same-site" },
+        },
+      ],
+    },
+    { text: "", toolCalls: [{ id: "d2", name: "done", input: { answer: "stopped" } }] },
+  ]);
+  const invalidResult = await runAgentTask({
+    task: "generate a login",
+    model: invalidModel,
+    browser: withVault,
+  });
+  assert.equal(withVault.calls.fill.length, 1);
+  const invalidToolTurn = invalidResult.transcript.find(
+    (message) => message.role === "tool",
+  );
+  assert.match(invalidToolTurn.results[0].content, /login error: matchMode.*exact-origin/);
+});
+
+test("login failure exposes secret-free pending recovery to the model", async () => {
+  const pendingCredential = {
+    pendingId: "pending-recovery-1",
+    origin: "https://signup.example",
+    matchMode: "exact-origin",
+    username: "alice@example.com",
+    label: null,
+    expiresAt: "2030-01-01T00:00:00.000Z",
+  };
+  const browser = fakeBrowser({
+    vault: {},
+    fills: [
+      {
+        ok: false,
+        error: "submit control disappeared",
+        pendingCredential,
+        artifacts: [],
+      },
+    ],
+  });
+  const model = scriptedModel([
+    {
+      text: "",
+      toolCalls: [
+        { id: "l1", name: "login", input: { generate: true } },
+      ],
+    },
+    {
+      text: "",
+      toolCalls: [{ id: "d1", name: "done", input: { answer: "recovered" } }],
+    },
+  ]);
+
+  await runAgentTask({ task: "create account", model, browser });
+
+  const toolTurn = model.seen[1].messages.find(
+    (message) => message.role === "tool",
+  );
+  const observation = JSON.parse(toolTurn.results[0].content);
+  assert.equal(observation.error, "submit control disappeared");
+  assert.deepEqual(observation.pendingCredential, pendingCredential);
+  assert.equal(Object.hasOwn(observation.pendingCredential, "secret"), false);
 });
 
 test("ask tool is offered only with an askUser handler and routes to it", async () => {

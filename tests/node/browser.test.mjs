@@ -9,7 +9,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { cloakRuntime } from "../../src/doctor.mjs";
-import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
+import { BetterWright, NetworkPolicy, runAgentTask } from "../../src/index.mjs";
 
 const ready = (await cloakRuntime()).installed;
 // On a laptop without the runtime, skipping is friendly. In CI it would mean
@@ -38,6 +38,22 @@ async function listen(handler) {
     async close() {
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+function scriptedAgentModel(turns) {
+  let index = 0;
+  const seen = [];
+  return {
+    seen,
+    async complete(request) {
+      seen.push(request);
+      const scripted = turns[index++];
+      const turn =
+        typeof scripted === "function" ? await scripted(request) : scripted;
+      assert.ok(turn, `unexpected agent turn ${index}`);
+      return { text: "", usage: null, ...turn };
     },
   };
 }
@@ -291,6 +307,188 @@ test("model-authored credentials.fill types the secret without returning it", op
     assert.ok(!JSON.stringify(readBack).includes(secret), "plain read-back is redacted");
   } finally {
     await bw.close();
+    await server.close();
+  }
+});
+
+test("built-in password manager signs up, persists, and logs in through the agent", opts, async () => {
+  const home = tempHome();
+  const account = { username: "agent@example.test", password: "" };
+  const submissions = [];
+  const server = await listen((request, response) => {
+    const host = request.headers.host || "";
+    const url = new URL(request.url || "/", `http://${host}`);
+    const html = (body) => {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(`<!doctype html><html><body>${body}</body></html>`);
+    };
+    if (request.method === "GET" && url.pathname === "/signup") {
+      html(`<form method="post" action="/signup">
+        <label>Email <input name="email" type="email" autocomplete="username" required></label>
+        <label>New password <input name="password" type="password" autocomplete="new-password" required></label>
+        <label>Confirm password <input name="confirm" type="password" autocomplete="new-password" required></label>
+        <button type="submit">Create account</button>
+      </form>`);
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/login") {
+      html(`<form method="post" action="/login">
+        <label>Email <input name="email" type="email" autocomplete="username" required></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+        <button type="submit">Sign in</button>
+      </form>`);
+      return;
+    }
+    if (request.method === "POST") {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        const form = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+        submissions.push({ host, path: url.pathname, form: Object.fromEntries(form) });
+        if (url.pathname === "/signup") {
+          account.username = form.get("email") || "";
+          account.password = form.get("password") || "";
+          const matches = account.password === form.get("confirm");
+          response.statusCode = matches ? 200 : 400;
+          html(matches ? '<main><h1>Account created</h1></main>' : "<main>Passwords differ</main>");
+          return;
+        }
+        const authenticated =
+          form.get("email") === account.username && form.get("password") === account.password;
+        response.statusCode = authenticated ? 200 : 401;
+        html(authenticated ? '<main><h1>Signed in</h1></main>' : "<main>Invalid login</main>");
+      });
+      return;
+    }
+    response.statusCode = 404;
+    html("<main>Not found</main>");
+  });
+
+  const signupUrl = `http://signup.acme.localhost:${server.port}/signup`;
+  const loginUrl = `http://login.acme.localhost:${server.port}/login`;
+  try {
+    const signupBrowser = new BetterWright({ home, headless: true });
+    try {
+      const signupModel = scriptedAgentModel([
+        {
+          toolCalls: [
+            {
+              id: "open-signup",
+              name: "browser",
+              input: {
+                note: "Opening the signup form",
+                code: `await page.goto(${JSON.stringify(signupUrl)}); return snapshot({interactive: true})`,
+              },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              id: "generate-password",
+              name: "login",
+              input: { generate: true, username: account.username, submit: true },
+            },
+          ],
+        },
+        (request) => {
+          const pendingId = JSON.stringify(request.messages).match(
+            /pending_[0-9a-f-]+/i,
+          )?.[0];
+          assert.ok(
+            pendingId,
+            "generated credential observation should include a pending id",
+          );
+          return {
+            toolCalls: [
+              {
+                id: "verify-signup",
+                name: "browser",
+                input: {
+                  note: "Verifying the new account",
+                  code:
+                    "const heading = await page.getByRole('heading').textContent(); " +
+                    `if (heading === 'Account created') await credentials.commitGenerated({pendingId: ${JSON.stringify(pendingId)}}); ` +
+                    "return {finalAnswer: heading === 'Account created' ? 'Account created' : ''}",
+                },
+              },
+            ],
+          };
+        },
+      ]);
+      const signup = await runAgentTask({
+        task: "Create an account using a generated password.",
+        model: signupModel,
+        browser: signupBrowser,
+      });
+      assert.equal(signup.ok, true, signup.answer);
+      assert.equal(signup.answer, "Account created");
+      assert.equal(submissions.length, 1);
+      assert.equal(submissions[0].path, "/signup");
+      assert.equal(submissions[0].form.email, account.username);
+      assert.equal(submissions[0].form.password, submissions[0].form.confirm);
+      assert.ok(account.password.length >= 16);
+      assert.ok(!JSON.stringify(signup.transcript).includes(account.password));
+      assert.ok(signupModel.seen[0].tools.some((tool) => tool.name === "login"));
+    } finally {
+      await signupBrowser.close();
+    }
+
+    const loginBrowser = new BetterWright({ home, headless: true });
+    try {
+      const loginModel = scriptedAgentModel([
+        {
+          toolCalls: [
+            {
+              id: "open-login",
+              name: "browser",
+              input: {
+                note: "Opening the login form",
+                code: `await page.goto(${JSON.stringify(loginUrl)}); return snapshot({interactive: true})`,
+              },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              id: "fill-login",
+              name: "login",
+              input: { username: account.username, submit: true },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              id: "verify-login",
+              name: "browser",
+              input: {
+                note: "Verifying the signed-in state",
+                code:
+                  "const heading = await page.getByRole('heading').textContent(); " +
+                  "return {finalAnswer: heading === 'Signed in' ? 'Signed in' : ''}",
+              },
+            },
+          ],
+        },
+      ]);
+      const login = await runAgentTask({
+        task: "Sign in with the saved account.",
+        model: loginModel,
+        browser: loginBrowser,
+      });
+      assert.equal(login.ok, true, login.answer);
+      assert.equal(login.answer, "Signed in");
+      assert.equal(submissions.length, 2);
+      assert.equal(submissions[1].path, "/login");
+      assert.equal(submissions[1].form.email, account.username);
+      assert.equal(submissions[1].form.password, account.password);
+      assert.ok(!JSON.stringify(login.transcript).includes(account.password));
+    } finally {
+      await loginBrowser.close();
+    }
+  } finally {
     await server.close();
   }
 });
