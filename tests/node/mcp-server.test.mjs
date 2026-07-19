@@ -8,6 +8,7 @@ import {
   contentForResult,
   downloadPolicyFromEnv,
   headlessFromEnv,
+  LOGIN_INPUT_SCHEMA,
   loginOptionsFromArgs,
   policyFromEnv,
 } from "../../src/mcp-server.mjs";
@@ -20,8 +21,10 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
       submitSelector: "#go",
       id: "rec-1",
       generate: true,
+      submit: true,
       length: "18",
       includeSymbols: false,
+      matchMode: "exact-origin",
       code: "danger()",
       note: "ignored",
     }),
@@ -34,14 +37,25 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
       id: "rec-1",
       length: 18,
       includeSymbols: false,
+      matchMode: "exact-origin",
+      submit: true,
     },
   );
   // Defaults: session "default", generate false, no stray keys.
-  assert.deepEqual(loginOptionsFromArgs({ passwordSelector: "#p" }), {
+  assert.deepEqual(loginOptionsFromArgs({}), {
     session: "default",
-    passwordSelector: "#p",
     generate: false,
   });
+  assert.deepEqual(LOGIN_INPUT_SCHEMA.properties.matchMode.enum, [
+    "base-domain",
+    "host",
+    "exact-origin",
+    "never",
+  ]);
+  assert.throws(
+    () => loginOptionsFromArgs({ generate: true, matchMode: "same-site" }),
+    /matchMode.*exact-origin/,
+  );
 });
 
 test("policyFromEnv is open by default and hardens via BLOCK_* vars", () => {
@@ -88,6 +102,14 @@ test("contentForResult separates screenshots from file paths", async () => {
       { kind: "download", path: "/tmp/report.pdf" },
     ],
     pages: [{ url: "https://example.com" }],
+    pendingCredential: {
+      pendingId: "pending-1",
+      origin: "https://example.com",
+      matchMode: "host",
+      username: "",
+      label: null,
+      expiresAt: "2030-01-01T00:00:00.000Z",
+    },
     challenges: [],
     warnings: [],
     durationMs: 12.3,
@@ -99,6 +121,7 @@ test("contentForResult separates screenshots from file paths", async () => {
     "ok",
     "result",
     "error",
+    "pendingCredential",
     "console",
     "files",
     "pages",
@@ -109,6 +132,8 @@ test("contentForResult separates screenshots from file paths", async () => {
   ]);
   assert.equal(summary.ok, true);
   assert.equal(summary.duration_ms, 12.3);
+  assert.equal(summary.pendingCredential.pendingId, "pending-1");
+  assert.equal(Object.hasOwn(summary.pendingCredential, "secret"), false);
   assert.deepEqual(summary.skills, []);
   assert.deepEqual(summary.files, [{ kind: "download", path: "/tmp/report.pdf" }]);
   assert.equal(content[1].type, "image");

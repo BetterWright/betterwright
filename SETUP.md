@@ -336,6 +336,7 @@ const systemPrompt = `${MY_EXISTING_SYSTEM_PROMPT}\n\n${agentSystemPrompt({
 
 Full list of guardrails: [docs/agent-prompt.md](docs/agent-prompt.md).
 
-Prompt guidance persuades a cooperative model; the network policy and sandbox
-restrictions are what actually enforce limits. Keep secret-bearing vault work in
-trusted host code.
+Prompt guidance persuades a cooperative model; the network policy, site-matched
+vault lookup, worker-side fill, and output redaction are the runtime controls.
+The built-in vault is enabled by default; pass `vault: false` or a custom vault
+adapter when the host needs a different credential boundary.

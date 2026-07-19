@@ -12,8 +12,9 @@
 [![license](https://img.shields.io/npm/l/betterwright)](LICENSE)
 
 One long-lived browser your agent returns to, turn after turn — with a network
-policy on every request, an origin-scoped credential vault the model can never
-read, proof screenshots, human-shaped input, and native CAPTCHA helpers.
+policy on every request, an encrypted credential vault whose secrets are filled
+without being returned, proof screenshots, human-shaped input, and native
+CAPTCHA helpers.
 
 </div>
 
@@ -41,7 +42,7 @@ That difference is where the work is:
 | **Session** | Browser per script, torn down at the end | One persistent managed browser with a real profile — logins survive across turns, invocations, and days |
 | **Trust** | The script gets the full API | Model code runs in a sandbox with file, process, and network-routing APIs removed |
 | **Network** | Any URL the code names | Every request checked against policy (DNS-rebinding-proof); cloud metadata endpoints always blocked |
-| **Secrets** | Passwords in your script or env | AES-256-GCM origin-scoped vault; secrets are typed outside the sandbox and never returned to the model |
+| **Secrets** | Passwords in your script or env | Built-in AES-256-GCM vault; metadata is searchable, forms are detected, and agent-facing APIs never return the password |
 | **Evidence** | You assert; nobody looks | `screenshot({kind: 'proof'})` — tagged artifacts the agent cites as proof of work |
 | **Snapshots** | Raw accessibility tree | Compressed agent-ready tree, 30–75% fewer tokens, `[ref=eN]` markers the agent acts on directly |
 | **CAPTCHAs** | Out of scope | Local `captcha.solve()` — checkbox, Turnstile, slider; vision handoff for image grids. No third-party services |
@@ -73,8 +74,8 @@ betterwright run -c "await page.goto('https://example.com'); return page.title()
 betterwright repl < steps.txt
 ```
 
-Logins, cookies, and the profile persist across every invocation; open tabs and
-in-memory `state` persist within a `repl` session.
+Logins, cookies, the profile, and encrypted vault items persist across every
+invocation; open tabs and in-memory `state` persist within a `repl` session.
 
 ---
 
@@ -203,7 +204,7 @@ Full API: [docs/javascript.md](docs/javascript.md).
 | Piece | What it gives you |
 | --- | --- |
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked. Metadata endpoints and secret-bearing URLs always blocked; private networks and loopback open by default so dev servers just work. Harden with `blockHosts`, `allowPrivateNetwork: false`, or a `custom` hook. |
-| [**Credential vault**](docs/credentials.md) | AES-256-GCM, origin-scoped, stored outside the browser profile. `credentials.fill()` / `generateAndFill()` type the secret outside the sandbox — it is never returned, and the redaction net scrubs it from every output channel. |
+| [**Credential vault**](docs/credentials.md) | Built in and AES-256-GCM encrypted outside the browser profile. PSL-backed site matching, selector-free login/signup detection, metadata-only account choice, pending generated passwords committed only after success, and external-manager overrides. |
 | [**Agent snapshots**](docs/browser-api.md#reading-the-page) | A compressed accessibility tree with actionable `[ref=eN]` markers, interactive-only and diff modes, password values redacted, and scoping hints instead of silent truncation. |
 | [**Proof artifacts**](docs/browser-api.md#screenshots-and-artifacts) | Screenshots tagged `proof`, `question`, or `debug`, returned as paths a host UI can render. |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local `captcha.solve()`: checkbox, Turnstile, managed-challenge, and slider stages; image grids hand off to the agent's own vision with tile bounds and crops. No third-party solving services. |
@@ -216,7 +217,8 @@ Full API: [docs/javascript.md](docs/javascript.md).
 
 The CLI (or your JS host) owns one long-lived Node worker. The worker holds a
 persistent browser context and exposes sandboxed globals to the model's code;
-it calls back to the host to authorize each request and handle credentials.
+it calls back to the host to authorize each request and resolve site-matched
+credentials without putting their values in a result.
 CDP and raw browser handles stay worker-internal. The security model — what
 the sandbox removes, why the metadata floor cannot be lifted, and where it
 does *not* claim to be a boundary — is written up in

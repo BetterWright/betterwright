@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { createPiExtension } from "../../src/pi-extension.mjs";
+import {
+  createPiExtension,
+  PI_LOGIN_PARAMETERS,
+} from "../../src/pi-extension.mjs";
 
 class FakePi {
   constructor() {
@@ -296,11 +299,11 @@ test("native Pi extension exposes trusted credential fill", async () => {
   const result = await tool.execute(
     "call-1",
     {
-      passwordSelector: "#pw",
-      usernameSelector: "#user",
-      submitSelector: "#go",
       generate: true,
+      id: "rec-1",
+      submit: true,
       length: 20,
+      matchMode: "exact-origin",
       // Unknown keys must be dropped before reaching fillCredential.
       note: "ignored",
     },
@@ -310,17 +313,33 @@ test("native Pi extension exposes trusted credential fill", async () => {
   assert.equal(browser.fills.length, 1);
   assert.deepEqual(browser.fills[0], {
     session: "pi",
-    passwordSelector: "#pw",
-    usernameSelector: "#user",
-    submitSelector: "#go",
     generate: true,
+    id: "rec-1",
     length: 20,
+    matchMode: "exact-origin",
+    submit: true,
   });
+  assert.deepEqual(PI_LOGIN_PARAMETERS.properties.matchMode.enum, [
+    "base-domain",
+    "host",
+    "exact-origin",
+    "never",
+  ]);
+  assert.ok(!PI_LOGIN_PARAMETERS.required?.includes("passwordSelector"));
   assert.equal(result.details.ok, true);
   const summary = JSON.parse(result.content[0].text);
   assert.deepEqual(summary.result.filled, ["username", "password"]);
   // The fill never runs model JavaScript.
   assert.equal(browser.calls.length, 0);
+
+  await assert.rejects(
+    tool.execute("call-2", {
+      generate: true,
+      matchMode: "same-site",
+    }),
+    /matchMode.*exact-origin/,
+  );
+  assert.equal(browser.fills.length, 1);
 });
 
 test("native Pi extension fails closed for downloads without approval UI", async () => {

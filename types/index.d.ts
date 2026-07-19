@@ -39,4 +39,5 @@ export {
   readSkill,
   skillHintsForPages,
 } from "./skills.js";
+export * from "./vault.js";
 export type * from "./public.js";

@@ -43,8 +43,10 @@ try {
     "SETUP.md",
     "bin/betterwright.mjs",
     "src/index.mjs",
+    "src/vault.mjs",
     "src/worker.mjs",
     "types/index.d.ts",
+    "types/vault.d.ts",
     "types/captcha-solver.d.ts",
     "types/challenges.d.ts",
     "types/policy.d.ts",
@@ -92,6 +94,7 @@ try {
         "const piExtension = await import('betterwright/pi-extension');",
         "const mcp = await import('betterwright/mcp-server');",
         "if (typeof root.BetterWright !== 'function') throw new Error('missing BetterWright');",
+        "if (typeof root.LocalCredentialVault !== 'function') throw new Error('missing LocalCredentialVault');",
         "if (typeof mcp.runMcpServer !== 'function') throw new Error('missing MCP server export');",
         "if (typeof policy.NetworkPolicy !== 'function') throw new Error('missing policy export');",
         "if (typeof prompt.agentSystemPrompt !== 'function') throw new Error('missing prompt export');",
@@ -105,7 +108,7 @@ try {
   fs.writeFileSync(
     path.join(installRoot, "consumer.ts"),
     [
-      "import { BetterWright, NetworkPolicy, type RunResult } from 'betterwright';",
+      "import { BetterWright, LocalCredentialVault, NetworkPolicy, type RunResult } from 'betterwright';",
       "import type { NetworkDecision } from 'betterwright/policy';",
       "import type { PiImageContentBlock } from 'betterwright/pi';",
       "import createPiExtension from 'betterwright/pi-extension';",
@@ -114,11 +117,13 @@ try {
       "import { runMcpServer } from 'betterwright/mcp-server';",
       "const policy = new NetworkPolicy();",
       "const browser = new BetterWright({ policy, browser: 'cloak' });",
+      "const vault = new LocalCredentialVault({ home: '/tmp/betterwright-package-types' });",
+      "const noVault = new BetterWright({ vault: false });",
       "const result: Promise<RunResult<string>> = browser.run<string>('return page.title()');",
       "const decision: NetworkDecision = policy.check('https://example.com');",
       "const blocks: PiImageContentBlock[] = [];",
       "const guardrails: Guardrails = { passwordManager: '1Password' };",
-      "void [result, decision, blocks, guardrails, createPiExtension, METADATA_RESOLVER_RULES, runMcpServer];",
+      "void [result, decision, blocks, guardrails, createPiExtension, METADATA_RESOLVER_RULES, runMcpServer, vault, noVault];",
     ].join("\n"),
   );
   const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");

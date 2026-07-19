@@ -76,6 +76,22 @@ const DEFAULT_SCREENSHOT_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_PIXEL_LIMIT = 40_000_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const MAX_ACTIVE_SECRETS = 200;
+const MAX_PENDING_CREDENTIAL_ORIGINS = 100;
+const CREDENTIAL_MATCH_MODE_SET = new Set([
+  "base-domain",
+  "host",
+  "exact-origin",
+  "never",
+]);
+
+function validateCredentialMatchMode(value) {
+  if (typeof value !== "string" || !CREDENTIAL_MATCH_MODE_SET.has(value)) {
+    throw new TypeError(
+      'matchMode must be "base-domain", "host", "exact-origin", or "never".',
+    );
+  }
+  return value;
+}
 
 /**
  * @deprecated Retained for source compatibility. BetterWright no longer passes
@@ -106,6 +122,9 @@ const STEALTH_WARNING =
 let useSetContentCompatibility = false;
 let shuttingDown = false;
 let activeExecutionSession = null;
+let activeExecutionRequestId = null;
+let activePendingCredentialRecovery = null;
+let activeCredentialGenerationStarted = false;
 let downloadCdpSession = null;
 let downloadGuardReady = false;
 let currentDownloadBehavior = "deny";
@@ -117,21 +136,50 @@ const pageIds = new WeakMap();
 const facadeToRaw = new WeakMap();
 const pendingRpc = new Map();
 const activeSecrets = new Set();
+let redactionCapacityExceeded = false;
 
 // Secrets are kept beyond the run that used them because later runs can still
-// echo a previously typed value (console, DOM dumps). The cap only bounds
-// memory and per-redaction cost in long-lived workers; eviction is oldest-first
-// (Set iterates in insertion order), with re-tracked secrets refreshed to
-// newest.
+// echo a previously typed value (console, DOM dumps). Never evict plaintext
+// while its page remains alive: saturation fails closed and restarts the
+// worker/browser, which removes those old DOM values before tracking resets.
 function trackSecret(value) {
   const secret = String(value ?? "");
-  if (secret.length < 4) return;
+  if (!secret) return;
+  if (!activeSecrets.has(secret) && activeSecrets.size >= MAX_ACTIVE_SECRETS) {
+    redactionCapacityExceeded = true;
+    throw redactionCapacityError();
+  }
   activeSecrets.delete(secret);
   activeSecrets.add(secret);
-  if (activeSecrets.size > MAX_ACTIVE_SECRETS) {
-    const oldest = activeSecrets.values().next().value;
-    activeSecrets.delete(oldest);
-  }
+}
+
+function redactionCapacityError() {
+  const error = new Error(
+    "Credential redaction capacity was reached; the browser worker must restart before handling another secret.",
+  );
+  error.code = "BW_SECRET_CAPACITY";
+  return error;
+}
+
+function assertRedactionCapacity() {
+  if (redactionCapacityExceeded) throw redactionCapacityError();
+}
+
+function sendRedactionCapacityFailure(message) {
+  sendResult({
+    type: "result",
+    id: message.id,
+    ok: false,
+    error: "Credential redaction capacity was reached; the browser worker was restarted.",
+    restartWorker: true,
+  });
+}
+
+function secretCapacityRequiresRestart(error) {
+  return (
+    redactionCapacityExceeded ||
+    ["BW_SECRET_CAPACITY", "VAULT_SECRET_CAPACITY"].includes(error?.code)
+  );
 }
 const pendingDownloadTasks = new Set();
 let rpcCounter = 0;
@@ -454,8 +502,11 @@ async function closeDownloadGuard() {
 
 function redactText(value) {
   let text = String(value ?? "");
-  for (const secret of activeSecrets) {
-    if (!secret || secret.length < 4) continue;
+  const secrets = [...activeSecrets].sort(
+    (left, right) => right.length - left.length,
+  );
+  for (const secret of secrets) {
+    if (!secret) continue;
     text = text.split(secret).join("[REDACTED_PASSWORD]");
   }
   return text;
@@ -468,8 +519,9 @@ function redactDeep(value, seen = new WeakSet()) {
   seen.add(value);
   if (Array.isArray(value)) return value.map((item) => redactDeep(item, seen));
   const output = {};
-  for (const [key, item] of Object.entries(value))
-    output[key] = redactDeep(item, seen);
+  for (const [key, item] of Object.entries(value)) {
+    output[redactText(key)] = redactDeep(item, seen);
+  }
   return output;
 }
 
@@ -485,6 +537,7 @@ function sessionFor(id) {
       events: [],
       artifacts: [],
       warnings: [],
+      pendingCredentialOrigins: new Map(),
       reservedArtifactBytes: 0,
       lastActivity: Date.now(),
       nextDialog: null,
@@ -1704,13 +1757,70 @@ async function currentOrigin(session) {
 
 async function vaultCall(session, action, payload = {}) {
   const { origin } = await currentOrigin(session);
+  return vaultCallAtOrigin(session, origin, action, payload);
+}
+
+async function vaultCallAtOrigin(session, origin, action, payload = {}, key = null) {
   const response = await rpc(
     "vault",
     { action, origin, payload },
-    `active:${session.id}`,
+    key || activeExecutionRequestId || `active:${session.id}`,
   );
   if (response?.secret) trackSecret(response.secret);
   return response;
+}
+
+async function finalizePendingCredential(session, action, pendingId) {
+  const { origin } = await currentOrigin(session);
+  const response = await vaultCallAtOrigin(session, origin, action, {
+    pendingId,
+  });
+  session.pendingCredentialOrigins.delete(pendingId);
+  if (activePendingCredentialRecovery?.pendingId === pendingId) {
+    activePendingCredentialRecovery = null;
+  }
+  return response;
+}
+
+function pendingCredentialRecovery(record, generateSpec, origin) {
+  const pendingId = String(record?.pendingId ?? "").trim();
+  if (!pendingId) return null;
+  const recordMatchMode = String(record?.matchMode ?? "").trim();
+  const requestedMatchMode = String(generateSpec?.matchMode ?? "").trim();
+  const matchMode = CREDENTIAL_MATCH_MODE_SET.has(recordMatchMode)
+    ? recordMatchMode
+    : CREDENTIAL_MATCH_MODE_SET.has(requestedMatchMode)
+      ? requestedMatchMode
+      : "base-domain";
+  const recordObject = record && typeof record === "object" ? record : {};
+  const generateObject =
+    generateSpec && typeof generateSpec === "object" ? generateSpec : {};
+  const username = Object.hasOwn(recordObject, "username")
+    ? recordObject.username
+    : Object.hasOwn(generateObject, "username")
+      ? generateObject.username
+      : null;
+  const label = Object.hasOwn(recordObject, "label")
+    ? recordObject.label
+    : Object.hasOwn(generateObject, "label")
+      ? generateObject.label
+      : null;
+  return {
+    pendingId,
+    // This is where the form was filled, not an existing record's saved scope.
+    origin: String(origin),
+    matchMode,
+    username: username == null ? null : String(username),
+    label: label == null ? null : String(label),
+    expiresAt:
+      record?.expiresAt == null ? null : String(record.expiresAt),
+  };
+}
+
+function recoveryFromError(error) {
+  const recovery = error?.pendingCredential || activePendingCredentialRecovery;
+  if (!recovery?.pendingId) return null;
+  return redactDeep(recovery);
 }
 
 function buildCredentials(session, realm) {
@@ -1728,6 +1838,10 @@ function buildCredentials(session, realm) {
         : {};
     const response = await vaultCall(session, "list", payload);
     return response.credentials || [];
+  });
+  credentials.listPending = realm.safeFunction(async () => {
+    const response = await vaultCall(session, "list-pending", {});
+    return redactDeep(response.pendingCredentials || []);
   });
   credentials.save = realm.safeFunction(async (options) => {
     // Login records need a password; other categories (identity, credit-card,
@@ -1771,8 +1885,19 @@ function buildCredentials(session, realm) {
       "submitSelector",
     ])
       if (options?.[key] != null) fields[key] = String(options[key]);
+    if (options?.submit === true) fields.submit = true;
     return fields;
   };
+  credentials.inspect = realm.safeFunction(async (options) => {
+    const page = await ensureSessionPage(session);
+    const action = options?.generate === true ? "generate" : "fill";
+    const detection = await detectCredentialTargets(page, action);
+    try {
+      return redactDeep(detection.metadata);
+    } finally {
+      await detection.dispose();
+    }
+  });
   credentials.fill = realm.safeFunction(async (options) => {
     const record = {};
     if (options?.id != null) record.id = String(options.id);
@@ -1786,12 +1911,22 @@ function buildCredentials(session, realm) {
     );
   });
   credentials.generateAndFill = realm.safeFunction(async (options) => {
+    if (options?.id != null && options?.matchMode !== undefined) {
+      throw new TypeError(
+        "matchMode cannot be changed when rotating an existing credential; " +
+          "omit matchMode to preserve the saved record scope.",
+      );
+    }
     const generate = {};
+    if (options?.id != null) generate.id = String(options.id);
     if (options?.username != null) generate.username = String(options.username);
-    if (options?.label != null) generate.label = String(options.label);
+    if (Object.hasOwn(options || {}, "label"))
+      generate.label = options.label == null ? null : String(options.label);
     if (options?.length != null) generate.length = Number(options.length);
     if (typeof options?.includeSymbols === "boolean")
       generate.includeSymbols = options.includeSymbols;
+    if (options?.matchMode !== undefined)
+      generate.matchMode = validateCredentialMatchMode(options.matchMode);
     return redactDeep(
       await performCredentialFill(session, {
         action: "generate",
@@ -1800,7 +1935,564 @@ function buildCredentials(session, realm) {
       }),
     );
   });
+  for (const [method, action] of [
+    ["commitGenerated", "commit"],
+    ["discardGenerated", "discard"],
+  ]) {
+    credentials[method] = realm.safeFunction(async (options) => {
+      const pendingId = String(options?.pendingId ?? "").trim();
+      if (!pendingId)
+        throw new Error(`${method} requires a non-empty pendingId.`);
+      const response = await finalizePendingCredential(session, action, pendingId);
+      const { secret: _secret, ...publicResult } = response || {};
+      return redactDeep(publicResult);
+    });
+  }
   return Object.freeze(credentials);
+}
+
+// Inspect visible, enabled credential controls without reading their values.
+// The classifier runs in the page so native form ownership and label
+// relationships stay intact; exact ElementHandles come back for trusted fill.
+async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = null) {
+  const bundle = await frame.evaluateHandle(
+    ({ action, anchoredPassword }) => {
+      const mode = action === "generate" ? "generate" : "fill";
+      const normalize = (value) =>
+        String(value || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+      const autocompleteTokens = (element) =>
+        normalize(element.getAttribute?.("autocomplete"))
+          .split(" ")
+          .filter(Boolean);
+      const hasAutocomplete = (element, token) =>
+        autocompleteTokens(element).includes(token);
+      const roots = [document];
+      for (let index = 0; index < roots.length; index += 1) {
+        for (const element of roots[index].querySelectorAll("*")) {
+          if (element.shadowRoot) roots.push(element.shadowRoot);
+        }
+      }
+      const queryAll = (selector) =>
+        roots.flatMap((root) => Array.from(root.querySelectorAll(selector)));
+      const labelsFor = (element) => {
+        const labels = Array.from(element.labels || [])
+          .map((label) => label.textContent || "")
+          .filter(Boolean);
+        const root = element.getRootNode();
+        const labelledBy = normalize(element.getAttribute?.("aria-labelledby"))
+          .split(" ")
+          .map((id) => root.getElementById?.(id)?.textContent || "")
+          .filter(Boolean);
+        return normalize([...labels, ...labelledBy].join(" "));
+      };
+      const semanticText = (element) =>
+        normalize(
+          [
+            element.getAttribute?.("name"),
+            element.getAttribute?.("id"),
+            element.getAttribute?.("placeholder"),
+            element.getAttribute?.("aria-label"),
+            element.getAttribute?.("title"),
+            labelsFor(element),
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      const visibleAndEnabled = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        if (
+          element.hidden ||
+          element.closest("[inert]") ||
+          element.matches(":disabled") ||
+          element.getAttribute("aria-disabled") === "true" ||
+          ("readOnly" in element && element.readOnly)
+        )
+          return false;
+        const style = getComputedStyle(element);
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.visibility === "collapse"
+        )
+          return false;
+        const rect = element.getBoundingClientRect();
+        return element.getClientRects().length > 0 && rect.width > 0 && rect.height > 0;
+      };
+      const order = new Map(
+        queryAll("input, button, [role='button']").map((element, index) => [
+          element,
+          index,
+        ]),
+      );
+      const elementOrder = (element) => order.get(element) ?? Number.MAX_SAFE_INTEGER;
+      const passwordInputs = queryAll("input[type='password']").filter(
+        visibleAndEnabled,
+      );
+      const textInputs = queryAll("input").filter(
+        (element) =>
+          visibleAndEnabled(element) &&
+          ["", "email", "text"].includes(normalize(element.getAttribute("type"))),
+      );
+
+      const CONFIRM_RE =
+        /\b(confirm|confirmation|repeat|retype|re-enter|verify|verification|again|matching)\b/;
+      const CURRENT_PASSWORD_RE = /\bcurrent\b.*\bpass(word|code)?\b/;
+      const NEW_PASSWORD_RE =
+        /\b(new|create|choose|set)\b.*\bpass(word|code)?\b|\bpass(word|code)?\b.*\b(new|create|choose|set)\b/;
+      const USERNAME_RE = /\b(user(name)?|email|e-mail|login|account|member)\b/;
+      const IRRELEVANT_USER_RE =
+        /\b(search|coupon|promo|one.?time|otp|code|phone|address|card|company|security|answer|display.?name|full.?name)\b/;
+      const SIGNUP_RE =
+        /\b(sign.?up|register|create account|join|new password|confirm password|reset password|change password)\b/;
+      const LOGIN_RE = /\b(log.?in|sign.?in|current password|continue)\b/;
+
+      const nearestScope = (element) => {
+        if (element.form) return element.form;
+        const semantic = element.closest(
+          "dialog, [role='dialog'], section, article, main",
+        );
+        if (semantic) return semantic;
+        let parent = element.parentElement;
+        while (parent && parent !== document.body) {
+          if (
+            parent.querySelector(
+              "button, input[type='submit'], input[type='image'], [role='button']",
+            )
+          )
+            return parent;
+          parent = parent.parentElement;
+        }
+        const root = element.getRootNode();
+        return root instanceof ShadowRoot ? root : document.body;
+      };
+      const grouped = new Map();
+      const candidates =
+        anchoredPassword instanceof Element ? [anchoredPassword] : passwordInputs;
+      for (const password of candidates) {
+        const scope = nearestScope(password);
+        if (!grouped.has(scope)) grouped.set(scope, []);
+        grouped.get(scope).push(password);
+      }
+
+      const belongsToScope = (element, scope) => {
+        if (scope instanceof HTMLFormElement) {
+          if ("form" in element) return element.form === scope;
+          return scope.contains(element);
+        }
+        return !element.form && scope.contains(element);
+      };
+      const fieldMetadata = (element) => {
+        if (!(element instanceof Element)) return null;
+        return {
+          tag: element.tagName.toLowerCase(),
+          type: normalize(element.getAttribute("type")) || null,
+          autocomplete: normalize(element.getAttribute("autocomplete")) || null,
+          name: element.getAttribute("name") || null,
+          label: labelsFor(element) || element.getAttribute("aria-label") || null,
+          formIndex: element.form
+            ? Array.from(document.forms).indexOf(element.form)
+            : null,
+        };
+      };
+      const usernameFor = (scope, password) => {
+        const scored = textInputs
+          .filter((element) => belongsToScope(element, scope))
+          .map((element) => {
+            const text = semanticText(element);
+            const tokens = autocompleteTokens(element);
+            const type = normalize(element.getAttribute("type"));
+            let score = 100;
+            let credentialSemantic = false;
+            if (tokens.includes("username")) {
+              score += 1_000;
+              credentialSemantic = true;
+            } else if (tokens.includes("email")) {
+              score += 800;
+              credentialSemantic = true;
+            } else if (tokens.includes("one-time-code")) score -= 2_000;
+            if (type === "email") {
+              score += 650;
+              credentialSemantic = true;
+            }
+            if (USERNAME_RE.test(text)) {
+              score += 500;
+              credentialSemantic = true;
+            }
+            if (IRRELEVANT_USER_RE.test(text)) score -= 1_200;
+            if (elementOrder(element) < elementOrder(password)) score += 80;
+            score -= Math.min(
+              Math.abs(elementOrder(element) - elementOrder(password)),
+              80,
+            );
+            return { credentialSemantic, element, score };
+          })
+          .filter(({ credentialSemantic, score }) => credentialSemantic && score > 0)
+          .sort(
+            (left, right) =>
+              right.score - left.score ||
+              elementOrder(left.element) - elementOrder(right.element),
+          );
+        return scored[0]?.element || null;
+      };
+      const submitFor = (scope, password) => {
+        const controls = queryAll(
+          "button, input[type='submit'], input[type='image'], [role='button']",
+        )
+          .filter(visibleAndEnabled)
+          .filter((element) => belongsToScope(element, scope))
+          .map((element) => {
+            const text = normalize(
+              [
+                element.textContent,
+                element.getAttribute("value"),
+                element.getAttribute("aria-label"),
+                element.getAttribute("name"),
+                element.getAttribute("title"),
+              ]
+                .filter(Boolean)
+                .join(" "),
+            );
+            let score = 0;
+            if (element.matches("input[type='submit'], input[type='image']"))
+              score += 1_000;
+            if (element instanceof HTMLButtonElement && element.type === "submit")
+              score += 900;
+            if (mode === "generate") {
+              if (
+                /\b(sign.?up|register|create|save|update|change|reset|continue|submit)\b/.test(
+                  text,
+                )
+              )
+                score += 500;
+            } else if (/\b(log.?in|sign.?in|continue|next|submit)\b/.test(text)) {
+              score += 500;
+            }
+            if (/\b(cancel|back|forgot|show|reveal)\b/.test(text)) score -= 1_500;
+            score -= Math.min(
+              Math.abs(elementOrder(element) - elementOrder(password)),
+              100,
+            );
+            return { element, score };
+          })
+          .filter(({ score }) => score > 0)
+          .sort(
+            (left, right) =>
+              right.score - left.score ||
+              elementOrder(left.element) - elementOrder(right.element),
+          );
+        if (!controls.length) return { element: null, ambiguous: false };
+        if (controls.length > 1 && controls[0].score === controls[1].score)
+          return { element: null, ambiguous: true };
+        return { element: controls[0].element, ambiguous: false };
+      };
+
+      const viable = [];
+      const issues = [];
+      for (const [scope, passwords] of grouped) {
+        const ordered = [...passwords].sort(
+          (left, right) => elementOrder(left) - elementOrder(right),
+        );
+        const scopeText = normalize(scope.textContent).slice(0, 4_000);
+        const signupLike = SIGNUP_RE.test(scopeText);
+        const loginLike = LOGIN_RE.test(scopeText);
+        const isConfirm = (element) => CONFIRM_RE.test(semanticText(element));
+        const isCurrent = (element) =>
+          hasAutocomplete(element, "current-password") ||
+          CURRENT_PASSWORD_RE.test(semanticText(element));
+        const isNew = (element) =>
+          hasAutocomplete(element, "new-password") ||
+          NEW_PASSWORD_RE.test(semanticText(element));
+        let password = null;
+        let confirmPassword = null;
+        let currentPassword = null;
+        const current = ordered.filter(isCurrent);
+        if (current.length > 1) {
+          issues.push("multiple current-password fields");
+          continue;
+        }
+
+        if (anchoredPassword instanceof Element) {
+          password = anchoredPassword;
+        } else if (mode === "generate") {
+          currentPassword = current[0] || null;
+          const autocompleteNew = ordered.filter((element) =>
+            hasAutocomplete(element, "new-password"),
+          );
+          const semanticallyNew = ordered.filter(
+            (element) => isNew(element) || isConfirm(element),
+          );
+          let pool = autocompleteNew;
+          if (!pool.length && semanticallyNew.length)
+            pool = ordered.filter((element) => !isCurrent(element));
+          if (!pool.length && (signupLike || ordered.length > 1))
+            pool = ordered.filter((element) => !isCurrent(element));
+          if (!pool.length) continue;
+
+          const explicitConfirm = pool.filter(isConfirm);
+          if (explicitConfirm.length > 1) {
+            issues.push("multiple confirmation password fields");
+            continue;
+          }
+          confirmPassword = explicitConfirm[0] || null;
+          const primary = pool.filter((element) => element !== confirmPassword);
+          if (!primary.length) {
+            password = pool[0];
+            confirmPassword = pool[1] || null;
+          } else {
+            password = primary[0];
+            if (primary.length > 1 && pool.length > 2) {
+              issues.push("multiple new-password fields");
+              continue;
+            }
+            if (!confirmPassword && pool.length === 2)
+              confirmPassword = pool.find((element) => element !== password) || null;
+          }
+        } else {
+          if (current.length === 1) {
+            password = current[0];
+          } else {
+            const existing = ordered.filter(
+              (element) => !isNew(element) && !isConfirm(element),
+            );
+            if (signupLike && !loginLike) continue;
+            if (existing.length > 1) {
+              issues.push("multiple password fields without current-password semantics");
+              continue;
+            }
+            password = existing[0] || null;
+          }
+        }
+        if (!password) continue;
+        const submit = submitFor(scope, password);
+        viable.push({
+          password,
+          confirmPassword,
+          currentPassword,
+          username: usernameFor(scope, password),
+          submit: submit.element,
+          submitAmbiguous: submit.ambiguous,
+        });
+      }
+
+      if (viable.length !== 1 || issues.length) {
+        const ambiguous = viable.length > 1 || issues.length > 0;
+        return {
+          metadata: {
+            action: mode,
+            status: ambiguous ? "ambiguous" : "not-found",
+            reason: ambiguous
+              ? issues[0] || "multiple visible credential forms match"
+              : mode === "generate"
+                ? "no visible enabled new-password field was found"
+                : "no visible enabled current-password or login password field was found",
+            candidateForms: viable.length,
+            fields: {
+              username: null,
+              currentPassword: null,
+              password: null,
+              confirmPassword: null,
+              submit: null,
+            },
+          },
+          username: null,
+          currentPassword: null,
+          password: null,
+          confirmPassword: null,
+          submit: null,
+        };
+      }
+
+      const selected = viable[0];
+      return {
+        metadata: {
+          action: mode,
+          status: "ready",
+          reason: selected.submitAmbiguous
+            ? "credential fields are ready, but multiple submit controls match"
+            : null,
+          candidateForms: 1,
+          fields: {
+            username: fieldMetadata(selected.username),
+            currentPassword: fieldMetadata(selected.currentPassword),
+            password: fieldMetadata(selected.password),
+            confirmPassword: fieldMetadata(selected.confirmPassword),
+            submit: fieldMetadata(selected.submit),
+          },
+        },
+        username: selected.username,
+        currentPassword: selected.currentPassword,
+        password: selected.password,
+        confirmPassword: selected.confirmPassword,
+        submit: selected.submit,
+      };
+    },
+    { action: requestedAction, anchoredPassword: anchor },
+  );
+  const properties = await bundle.getProperties();
+  const metadata = await properties.get("metadata").jsonValue();
+  const propertyHandles = [...properties.values()];
+  let disposed = false;
+  return {
+    metadata,
+    frame,
+    username: properties.get("username")?.asElement() || null,
+    currentPassword: properties.get("currentPassword")?.asElement() || null,
+    password: properties.get("password")?.asElement() || null,
+    confirmPassword: properties.get("confirmPassword")?.asElement() || null,
+    submit: properties.get("submit")?.asElement() || null,
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      await Promise.all(
+        propertyHandles.map((handle) => handle.dispose().catch(() => {})),
+      );
+      await bundle.dispose().catch(() => {});
+    },
+  };
+}
+
+async function credentialOriginForFrame(frame) {
+  let ancestor = frame;
+  while (ancestor.parentFrame()) {
+    let frameElement = null;
+    try {
+      frameElement = await ancestor.frameElement();
+      const sandbox = await frameElement.getAttribute("sandbox");
+      if (
+        sandbox != null &&
+        !String(sandbox)
+          .toLowerCase()
+          .split(/\s+/)
+          .includes("allow-same-origin")
+      )
+        return "";
+    } catch {
+      return "";
+    } finally {
+      await frameElement?.dispose().catch(() => {});
+    }
+    ancestor = ancestor.parentFrame();
+  }
+
+  let current = frame;
+  while (current) {
+    const origin = urlOrigin(current.url());
+    if (origin) return origin;
+    const url = String(current.url() || "");
+    if (!["about:blank", "about:srcdoc"].includes(url)) return "";
+    const parent = current.parentFrame();
+    if (!parent) return "";
+    current = parent;
+  }
+  return "";
+}
+
+function emptyCredentialDetection(metadata) {
+  return {
+    metadata,
+    frame: null,
+    origin: "",
+    username: null,
+    currentPassword: null,
+    password: null,
+    confirmPassword: null,
+    submit: null,
+    async dispose() {},
+  };
+}
+
+async function detectCredentialTargets(page, requestedAction, anchor = null) {
+  if (anchor) {
+    const frame = await anchor.ownerFrame();
+    if (!frame)
+      return emptyCredentialDetection({
+        action: requestedAction,
+        status: "not-found",
+        reason: "the explicit credential target is detached",
+        candidateForms: 0,
+        candidateFrames: 0,
+        fields: {},
+      });
+    const detection = await detectCredentialTargetsInFrame(
+      frame,
+      requestedAction,
+      anchor,
+    );
+    detection.origin = await credentialOriginForFrame(frame);
+    detection.metadata = {
+      ...detection.metadata,
+      candidateFrames: detection.metadata.status === "ready" ? 1 : 0,
+      frameOrigin: detection.origin || null,
+      frameUrl: frame.url(),
+    };
+    return detection;
+  }
+
+  const detections = [];
+  for (const frame of page.frames()) {
+    const origin = await credentialOriginForFrame(frame);
+    if (!origin) continue;
+    try {
+      const detection = await detectCredentialTargetsInFrame(
+        frame,
+        requestedAction,
+      );
+      detection.origin = origin;
+      detections.push(detection);
+    } catch (error) {
+      if (!frame.isDetached()) throw error;
+    }
+  }
+
+  const ambiguous = detections.filter(
+    ({ metadata }) => metadata.status === "ambiguous",
+  );
+  const viable = detections.filter(({ metadata }) => metadata.status === "ready");
+  if (ambiguous.length || viable.length !== 1) {
+    const status = ambiguous.length || viable.length > 1 ? "ambiguous" : "not-found";
+    const candidateForms = detections.reduce(
+      (total, { metadata }) => total + Number(metadata.candidateForms || 0),
+      0,
+    );
+    const reason = ambiguous[0]?.metadata.reason ||
+      (viable.length > 1
+        ? "multiple frames contain visible credential forms"
+        : requestedAction === "generate"
+          ? "no visible enabled new-password field was found in any frame"
+          : "no visible enabled current-password or login password field was found in any frame");
+    await Promise.all(detections.map((detection) => detection.dispose()));
+    return emptyCredentialDetection({
+      action: requestedAction === "generate" ? "generate" : "fill",
+      status,
+      reason,
+      candidateForms,
+      candidateFrames: ambiguous.length + viable.length,
+      fields: {
+        username: null,
+        currentPassword: null,
+        password: null,
+        confirmPassword: null,
+        submit: null,
+      },
+    });
+  }
+
+  const selected = viable[0];
+  await Promise.all(
+    detections
+      .filter((detection) => detection !== selected)
+      .map((detection) => detection.dispose()),
+  );
+  selected.metadata = {
+    ...selected.metadata,
+    candidateFrames: 1,
+    frameOrigin: selected.origin,
+    frameUrl: selected.frame.url(),
+  };
+  return selected;
 }
 
 // Type a value into one field using a trusted human-shaped focus click followed
@@ -1808,13 +2500,15 @@ function buildCredentials(session, realm) {
 // password-manager UIs require); fill then clears the field and sets the precise
 // value, dispatching an `input` event so React-controlled and match-validated
 // forms observe the change.
-async function fillCredentialField(page, session, selector, value) {
-  const target = String(selector || "").trim();
-  if (!target) throw new Error("A field selector is required to fill.");
-  const locator = page.locator(target).first();
-  await locator.waitFor({ state: "visible", timeout: 10_000 });
+async function fillCredentialField(page, frame, session, target, value) {
+  const explicit = typeof target === "string" ? target.trim() : "";
+  const locator = explicit ? frame.locator(explicit).first() : target;
+  if (!locator) throw new Error("A credential field target is required to fill.");
+  if (typeof locator.waitFor === "function")
+    await locator.waitFor({ state: "visible", timeout: 10_000 });
+  else await locator.waitForElementState?.("visible", { timeout: 10_000 });
   try {
-    await humanClickTarget(page, session, target, { timeout: 10_000 });
+    await humanClickTarget(page, session, locator, { timeout: 10_000 });
   } catch {
     await locator.focus({ timeout: 10_000 }).catch(() => {});
   }
@@ -1860,29 +2554,77 @@ async function buildEnvelope(
   };
 }
 
-// Core credential fill: fetch the secret for the CURRENT origin over the vault
+// Core credential fill: fetch the secret for the selected form frame's origin
 // RPC, type it with trusted human-shaped input, optionally submit, and return
 // only non-secret metadata. The secret value never leaves the worker. Shared by
 // the host client's fillCredential/generateAndFillCredential and the
 // model-callable credentials.fill/generateAndFill.
-async function performCredentialFill(session, spec) {
+async function performCredentialFill(
+  session,
+  spec,
+  requestId = activeExecutionRequestId,
+) {
   const fields = spec.fields && typeof spec.fields === "object" ? spec.fields : {};
-  const { page, origin } = await currentOrigin(session);
-  if (!fields.passwordSelector)
-    throw new Error("credential fill requires fields.passwordSelector.");
-
   const action = spec.action === "generate" ? "generate" : "fill";
+  const page = await ensureSessionPage(session);
+  const explicitPassword = String(fields.passwordSelector || "").trim();
+  let targetFrame = page.mainFrame();
+  let detection = null;
+  if (!explicitPassword) {
+    detection = await detectCredentialTargets(page, action);
+  } else if (fields.submit === true && !fields.submitSelector) {
+    const anchor = await targetFrame.locator(explicitPassword).first().elementHandle({
+      timeout: 10_000,
+    });
+    detection = await detectCredentialTargets(page, action, anchor);
+    await anchor?.dispose().catch(() => {});
+  }
+  if (detection && detection.metadata.status !== "ready") {
+    const { status, reason } = detection.metadata;
+    await detection.dispose();
+    throw new Error(`credential form ${status}: ${reason}. Use explicit targets.`);
+  }
+  if (!explicitPassword && !detection?.password) {
+    await detection?.dispose();
+    throw new Error("credential form detection found no password field.");
+  }
+  if (fields.submit === true && !fields.submitSelector && !detection?.submit) {
+    const reason = detection?.metadata?.reason || "no submit control was found";
+    await detection?.dispose();
+    throw new Error(`credential form submit detection failed: ${reason}.`);
+  }
+  if (detection?.frame) targetFrame = detection.frame;
+  const origin = detection?.origin || (await credentialOriginForFrame(targetFrame));
+  if (!origin) {
+    await detection?.dispose();
+    throw new Error("Credentials require the selected frame to have an http(s) origin.");
+  }
+
   let vaultPayload;
+  let generateSpec = null;
   if (action === "generate") {
-    const generateSpec =
+    generateSpec =
       spec.generate && typeof spec.generate === "object" ? spec.generate : {};
+    if (generateSpec.id != null && generateSpec.matchMode !== undefined) {
+      throw new TypeError(
+        "matchMode cannot be changed when rotating an existing credential; " +
+          "omit matchMode to preserve the saved record scope.",
+      );
+    }
     vaultPayload = {
-      username:
-        typeof generateSpec.username === "string" ? generateSpec.username : "",
-      label: generateSpec.label ?? null,
       length: Number(generateSpec.length) || 24,
       include_symbols: generateSpec.includeSymbols !== false,
+      pendingId: `pending_${crypto.randomUUID()}`,
     };
+    if (generateSpec.id != null) vaultPayload.id = generateSpec.id;
+    if (typeof generateSpec.username === "string")
+      vaultPayload.username = generateSpec.username;
+    if (Object.hasOwn(generateSpec, "label"))
+      vaultPayload.label = generateSpec.label;
+    if (generateSpec.matchMode !== undefined)
+      vaultPayload.matchMode = validateCredentialMatchMode(
+        generateSpec.matchMode,
+      );
   } else {
     const recordSpec =
       spec.record && typeof spec.record === "object" ? spec.record : {};
@@ -1891,60 +2633,161 @@ async function performCredentialFill(session, spec) {
     if (recordSpec.username != null) vaultPayload.username = recordSpec.username;
   }
 
-  const record = await rpc(
-    "vault",
-    { action, origin, payload: vaultPayload },
-    `credfill:${session.id}`,
-  );
-  const secret = record?.secret == null ? "" : String(record.secret);
-  if (!secret)
-    throw new Error("The vault did not return a credential to fill for this origin.");
-  trackSecret(secret);
+  let recovery = null;
+  try {
+    let currentSecret = "";
+    if (action === "generate" && detection?.currentPassword) {
+      const currentPayload = {};
+      if (generateSpec.id != null) currentPayload.id = generateSpec.id;
+      else if (typeof generateSpec.username === "string")
+        currentPayload.username = generateSpec.username;
+      const currentRecord = await vaultCallAtOrigin(
+        session,
+        origin,
+        "fill",
+        currentPayload,
+        `credrotate:${session.id}`,
+      );
+      currentSecret =
+        currentRecord?.secret == null ? "" : String(currentRecord.secret);
+      if (!currentSecret)
+        throw new Error(
+          "The vault did not return the current credential required for rotation.",
+        );
+      trackSecret(currentSecret);
+    }
 
-  const filled = [];
-  let lastLocator = null;
-  if (fields.usernameSelector) {
-    const username = typeof record.username === "string" ? record.username : "";
-    lastLocator = await fillCredentialField(
-      page,
+    if (action === "generate") {
+      if (activeCredentialGenerationStarted) {
+        throw new Error(
+          "Only one credential may be generated per browser execution; " +
+            "recover or finalize the first pending credential before generating another.",
+        );
+      }
+      // Reserve immediately before the RPC. Calls that fail validation or form
+      // detection can be corrected, while concurrent generate RPCs cannot race.
+      activeCredentialGenerationStarted = true;
+    }
+    const record = await vaultCallAtOrigin(
       session,
-      fields.usernameSelector,
-      username,
+      origin,
+      action,
+      vaultPayload,
+      action === "generate" && requestId
+        ? String(requestId)
+        : `credfill:${session.id}`,
     );
-    filled.push("username");
-  }
-  lastLocator = await fillCredentialField(
-    page,
-    session,
-    fields.passwordSelector,
-    secret,
-  );
-  filled.push("password");
-  if (fields.confirmPasswordSelector) {
+    if (action === "generate") {
+      recovery = pendingCredentialRecovery(record, generateSpec, origin);
+      if (recovery) activePendingCredentialRecovery = recovery;
+      if (!recovery) {
+        throw new Error(
+          "The vault did not return the pendingId required to recover the generated credential.",
+        );
+      }
+    }
+    const secret = record?.secret == null ? "" : String(record.secret);
+    if (!secret)
+      throw new Error("The vault did not return a credential to fill for this origin.");
+    trackSecret(secret);
+    const pendingId =
+      action === "generate" ? String(record?.pendingId ?? "").trim() : "";
+    if (pendingId) {
+      session.pendingCredentialOrigins.delete(pendingId);
+      session.pendingCredentialOrigins.set(pendingId, origin);
+      if (
+        session.pendingCredentialOrigins.size > MAX_PENDING_CREDENTIAL_ORIGINS
+      ) {
+        session.pendingCredentialOrigins.delete(
+          session.pendingCredentialOrigins.keys().next().value,
+        );
+      }
+    }
+
+    const filled = [];
+    let lastLocator = null;
+    const usernameTarget = fields.usernameSelector ||
+      (!explicitPassword ? detection?.username : null);
+    const currentPasswordTarget =
+      action === "generate" && !explicitPassword
+        ? detection?.currentPassword
+        : null;
+    const passwordTarget = explicitPassword || detection?.password;
+    const confirmTarget = fields.confirmPasswordSelector ||
+      (action === "generate" && !explicitPassword
+        ? detection?.confirmPassword
+        : null);
+    if (usernameTarget && typeof record.username === "string" && record.username) {
+      lastLocator = await fillCredentialField(
+        page,
+        targetFrame,
+        session,
+        usernameTarget,
+        record.username,
+      );
+      filled.push("username");
+    }
+    if (currentPasswordTarget) {
+      lastLocator = await fillCredentialField(
+        page,
+        targetFrame,
+        session,
+        currentPasswordTarget,
+        currentSecret,
+      );
+      filled.push("currentPassword");
+    }
     lastLocator = await fillCredentialField(
       page,
+      targetFrame,
       session,
-      fields.confirmPasswordSelector,
+      passwordTarget,
       secret,
     );
-    filled.push("confirmPassword");
-  }
-  // Fire blur so forms that validate the password/confirm match on blur (not
-  // just on input) run their check before any submit.
-  if (lastLocator) {
-    await lastLocator.evaluate((element) => element.blur?.()).catch(() => {});
-  }
+    filled.push("password");
+    if (confirmTarget) {
+      lastLocator = await fillCredentialField(
+        page,
+        targetFrame,
+        session,
+        confirmTarget,
+        secret,
+      );
+      filled.push("confirmPassword");
+    }
+    // Fire blur so forms that validate the password/confirm match on blur (not
+    // just on input) run their check before any submit.
+    if (lastLocator) {
+      await lastLocator.evaluate((element) => element.blur?.()).catch(() => {});
+    }
 
-  let submitted = false;
-  if (fields.submitSelector) {
-    await humanClickTarget(page, session, String(fields.submitSelector), {
-      timeout: 10_000,
-    });
-    submitted = true;
-  }
+    let submitted = false;
+    const submitTarget = fields.submitSelector ||
+      (fields.submit === true ? detection?.submit : null);
+    if (submitTarget) {
+      const explicitSubmit =
+        typeof submitTarget === "string"
+          ? targetFrame.locator(submitTarget).first()
+          : submitTarget;
+      await humanClickTarget(page, session, explicitSubmit, {
+        timeout: 10_000,
+      });
+      submitted = true;
+    }
 
-  const { secret: _secret, ...publicRecord } = record || {};
-  return { ...publicRecord, filled, submitted };
+    const { secret: _secret, ...publicRecord } = record || {};
+    return { ...publicRecord, filled, submitted };
+  } catch (error) {
+    if (recovery) {
+      const failure =
+        error instanceof Error ? error : new Error(String(error || "Credential fill failed."));
+      failure.pendingCredential = recovery;
+      throw failure;
+    }
+    throw error;
+  } finally {
+    await detection?.dispose();
+  }
 }
 
 // The host-client entry point for trusted credential fill (fillCredential /
@@ -1956,25 +2799,106 @@ async function credentialFill(message) {
   session.awaitingAnswerSince = null;
   const firstEvent = session.events.length;
   activeExecutionSession = session.id;
+  activeExecutionRequestId = String(message.id || "");
+  activePendingCredentialRecovery = null;
+  activeCredentialGenerationStarted = false;
   const spec = message.spec && typeof message.spec === "object" ? message.spec : {};
   try {
+    assertRedactionCapacity();
     await ensureBrowser(message.config);
     await ensureSessionPage(session);
+    const result = await performCredentialFill(session, spec);
+    assertRedactionCapacity();
     sendResult(
       await buildEnvelope(session, message, started, {
         firstEvent,
         drainSessionWarnings: true,
         ok: true,
-        result: redactDeep(await performCredentialFill(session, spec)),
+        result: redactDeep(result),
       }),
     );
   } catch (error) {
+    if (redactionCapacityExceeded) {
+      sendRedactionCapacityFailure(message);
+      return;
+    }
+    const pendingCredential = recoveryFromError(error);
+    const restartWorker = secretCapacityRequiresRestart(error);
     sendResult(
       await buildEnvelope(session, message, started, {
         firstEvent,
         pages: [],
         ok: false,
         error: redactText(error?.message || String(error)),
+        restartWorker,
+        ...(pendingCredential ? { pendingCredential } : {}),
+      }),
+    );
+  } finally {
+    activeExecutionSession = null;
+    activeExecutionRequestId = null;
+    activePendingCredentialRecovery = null;
+    activeCredentialGenerationStarted = false;
+  }
+}
+
+// Dedicated trusted host path for finalizing or discarding a staged generated
+// credential after the caller has verified the visible browser outcome.
+async function credentialPending(message) {
+  const started = performance.now();
+  const session = sessionFor(message.sessionId);
+  session.awaitingAnswerSince = null;
+  const firstEvent = session.events.length;
+  activeExecutionSession = session.id;
+  try {
+    assertRedactionCapacity();
+    const action = String(message.action || "");
+    if (!new Set(["list", "commit", "discard"]).has(action)) {
+      throw new Error("pending credential action must be list, commit, or discard.");
+    }
+    await ensureBrowser(message.config);
+    await ensureSessionPage(session);
+    let publicResult;
+    if (action === "list") {
+      const response = await vaultCall(session, "list-pending", {});
+      publicResult = response.pendingCredentials || [];
+    } else {
+      const pendingId = String(message.payload?.pendingId ?? "").trim();
+      if (!pendingId) {
+        throw new Error(
+          "pending credential action requires a non-empty pendingId.",
+        );
+      }
+      const response = await finalizePendingCredential(
+        session,
+        action,
+        pendingId,
+      );
+      const { secret: _secret, ...result } = response || {};
+      publicResult = result;
+    }
+    assertRedactionCapacity();
+    sendResult(
+      await buildEnvelope(session, message, started, {
+        firstEvent,
+        drainSessionWarnings: true,
+        ok: true,
+        result: redactDeep(publicResult),
+      }),
+    );
+  } catch (error) {
+    if (redactionCapacityExceeded) {
+      sendRedactionCapacityFailure(message);
+      return;
+    }
+    const restartWorker = secretCapacityRequiresRestart(error);
+    sendResult(
+      await buildEnvelope(session, message, started, {
+        firstEvent,
+        pages: [],
+        ok: false,
+        error: redactText(error?.message || String(error)),
+        restartWorker,
       }),
     );
   } finally {
@@ -2589,7 +3513,7 @@ async function summarize(value, seen = new WeakSet(), depth = 0) {
     return Object.fromEntries(
       await Promise.all(
         entries.map(async ([key, item]) => [
-          String(key),
+          redactText(key),
           await summarize(item, seen, depth + 1),
         ]),
       ),
@@ -2605,9 +3529,9 @@ async function summarize(value, seen = new WeakSet(), depth = 0) {
   const output = {};
   for (const key of Object.keys(raw).slice(0, 200)) {
     try {
-      output[key] = await summarize(raw[key], seen, depth + 1);
+      output[redactText(key)] = await summarize(raw[key], seen, depth + 1);
     } catch (error) {
-      output[key] = `[Unserializable: ${error?.message || error}]`;
+      output[redactText(key)] = `[Unserializable: ${error?.message || error}]`;
     }
   }
   return redactDeep(output);
@@ -3250,7 +4174,11 @@ async function execute(message) {
   let downloadPolicy = "ask";
   let downloadDeadline = 0;
   activeExecutionSession = session.id;
+  activeExecutionRequestId = String(message.id || "");
+  activePendingCredentialRecovery = null;
+  activeCredentialGenerationStarted = false;
   try {
+    assertRedactionCapacity();
     await ensureBrowser(message.config);
     downloadPolicy = normalizeDownloadPolicy(message.config.downloadPolicy);
     if (downloadPolicy === "deny" && message.approvedDownloads === true) {
@@ -3286,6 +4214,7 @@ async function execute(message) {
         }, timeoutMs);
       }),
     ]).finally(() => clearTimeout(timer));
+    assertRedactionCapacity();
     await waitForPendingDownloads(downloadDeadline - Date.now());
     approvedDownloadSession = null;
     await setDownloadPermission(downloadPolicy === "allow");
@@ -3339,6 +4268,8 @@ async function execute(message) {
       };
     }
 
+    assertRedactionCapacity();
+
     sendResult(
       await buildEnvelope(session, message, started, {
         firstEvent,
@@ -3351,6 +4282,12 @@ async function execute(message) {
       }),
     );
   } catch (error) {
+    if (redactionCapacityExceeded) {
+      restartWorker = true;
+      sendRedactionCapacityFailure(message);
+      return;
+    }
+    const pendingCredential = recoveryFromError(error);
     let failure = error;
     if (downloadRunConfigured) {
       approvedDownloadSession = null;
@@ -3364,7 +4301,9 @@ async function execute(message) {
         failure = resetError;
       }
     }
-    restartWorker = ["BW_TIMEOUT", "BW_DOWNLOAD_GUARD"].includes(failure?.code);
+    restartWorker =
+      ["BW_TIMEOUT", "BW_DOWNLOAD_GUARD"].includes(failure?.code) ||
+      secretCapacityRequiresRestart(failure);
     let challenges = await detectSessionChallenges(session).catch(() => []);
     if (restartWorker && challenges.length) {
       challenges = markChallengesForWorkerRestart(challenges);
@@ -3379,11 +4318,15 @@ async function execute(message) {
         ok: false,
         error: redactText(failure?.message || String(failure)),
         restartWorker,
+        ...(pendingCredential ? { pendingCredential } : {}),
       }),
     );
   } finally {
     if (approvedDownloadSession === session.id) approvedDownloadSession = null;
     activeExecutionSession = null;
+    activeExecutionRequestId = null;
+    activePendingCredentialRecovery = null;
+    activeCredentialGenerationStarted = false;
     if (restartWorker)
       setImmediate(() => {
         void shutdown().finally(() => process.exit(1));
@@ -3435,8 +4378,17 @@ input.on("line", (line) => {
     if (!pending) return;
     pendingRpc.delete(message.requestId);
     if (message.ok) pending.resolve(message.result);
-    else
-      pending.reject(new Error(message.error || "Browser runtime RPC failed"));
+    else {
+      const error = new Error(message.error || "Browser runtime RPC failed");
+      if (typeof message.code === "string") error.code = message.code;
+      if (error.code === "VAULT_SECRET_CAPACITY") {
+        redactionCapacityExceeded = true;
+      }
+      if (message.pendingCredential?.pendingId) {
+        error.pendingCredential = message.pendingCredential;
+      }
+      pending.reject(error);
+    }
     return;
   }
   if (message.type === "execute") {
@@ -3449,6 +4401,12 @@ input.on("line", (line) => {
     executeQueue = executeQueue.then(
       () => credentialFill(message),
       () => credentialFill(message),
+    );
+  }
+  if (message.type === "credential_pending") {
+    executeQueue = executeQueue.then(
+      () => credentialPending(message),
+      () => credentialPending(message),
     );
   }
 });

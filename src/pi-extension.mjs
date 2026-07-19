@@ -1,13 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { BetterWright } from "./client.mjs";
+import { BetterWright, validateCredentialMatchMode } from "./client.mjs";
 import {
   piImageArtifacts,
   piImageContent,
   piPrimaryImageArtifact,
 } from "./pi.mjs";
 import { agentSystemPrompt } from "./prompt.mjs";
+import { VAULT_MATCH_MODES } from "./vault.mjs";
 
 const BROWSER_TOOL_NAMES = new Set([
   "browser",
@@ -43,28 +44,35 @@ export const PI_LOGIN_PARAMETERS = {
     passwordSelector: {
       type: "string",
       minLength: 1,
-      description: "CSS selector for the password field (required).",
+      description: "Optional CSS or current aria-ref=eN target for the password field.",
     },
     usernameSelector: {
       type: "string",
-      description: "CSS selector for the username/email field.",
+      description: "Optional CSS or current aria-ref=eN target for the username/email field.",
     },
     confirmPasswordSelector: {
       type: "string",
-      description: "CSS selector for a confirm-password field (signup).",
+      description: "Optional CSS or current aria-ref=eN target for confirmation (signup).",
     },
     submitSelector: {
       type: "string",
-      description: "CSS selector clicked to submit in the same trusted call.",
+      description: "Optional CSS or current aria-ref=eN target clicked to submit.",
     },
-    id: { type: "string", description: "Select the saved record by id." },
+    submit: {
+      type: "boolean",
+      description: "Detect and submit the matching form after filling (default false).",
+    },
+    id: {
+      type: "string",
+      description: "Select a saved record, or rotate it when generate=true.",
+    },
     username: {
       type: "string",
       description: "Select the saved record by username, or set it on signup.",
     },
     generate: {
       type: "boolean",
-      description: "Generate, fill, and save a new strong password (signup).",
+      description: "Generate, stage, and fill a new strong password (signup/rotation).",
     },
     length: { type: "integer", description: "Generated password length (default 24)." },
     includeSymbols: {
@@ -72,8 +80,12 @@ export const PI_LOGIN_PARAMETERS = {
       description: "Include symbols in a generated password (default true).",
     },
     label: { type: "string", description: "Human label for a newly saved record." },
+    matchMode: {
+      type: "string",
+      enum: [...VAULT_MATCH_MODES],
+      description: "URL scope for the generated credential (default base-domain).",
+    },
   },
-  required: ["passwordSelector"],
 };
 
 export const PI_EVIDENCE_PARAMETERS = {
@@ -162,10 +174,10 @@ function normalizedStartUrl(value) {
 // Keep only recognized fillCredential keys from the tool params.
 function loginOptions(params = {}) {
   const options = {
-    passwordSelector: String(params.passwordSelector || ""),
     generate: params.generate === true,
   };
   for (const key of [
+    "passwordSelector",
     "usernameSelector",
     "confirmPasswordSelector",
     "submitSelector",
@@ -178,6 +190,9 @@ function loginOptions(params = {}) {
   if (params.length != null) options.length = Number(params.length);
   if (typeof params.includeSymbols === "boolean")
     options.includeSymbols = params.includeSymbols;
+  if (params.matchMode !== undefined)
+    options.matchMode = validateCredentialMatchMode(params.matchMode);
+  if (params.submit === true) options.submit = true;
   return options;
 }
 
@@ -614,10 +629,13 @@ export function createPiExtension(options = {}) {
       label: "BetterWright Login",
       description:
         "Fill a saved or freshly generated credential without the secret ever entering the " +
-        "conversation. The password is fetched, typed, and (with submitSelector) submitted " +
-        "inside the browser worker; it never appears in a snapshot or result. Use instead of " +
-        "typing a password in browser code, which is blocked. Set generate=true to sign up " +
-        "with a new strong password saved to the vault.",
+        "conversation. BetterWright detects visible fields; explicit CSS or current aria-ref " +
+        "targets are only needed after an ambiguity error. The password is fetched and typed " +
+        "inside the worker, and submitted only with submit=true or submitSelector. Set " +
+        "generate=true to stage a new password. After a later browser step visibly verifies " +
+        "success, call credentials.commitGenerated({pendingId}); call discardGenerated on " +
+        "failure. Generated credentials remain pending until committed. After a complete " +
+        "host restart, credentials.listPending() recovers secret-free pending metadata.",
       parameters: PI_LOGIN_PARAMETERS,
       async execute(_id, params, signal) {
         if (signal?.aborted) throw new Error("Browser login cancelled.");

@@ -68,8 +68,8 @@ export interface RunAgentTaskOptions {
   session?: string;
   headless?: boolean | "auto";
   policy?: NetworkPolicy;
-  /** Ignored when an external `browser` is passed — that browser's own vault decides login availability. */
-  vault?: CredentialVault;
+  /** Override or disable the built-in vault. Ignored when an external browser is passed. */
+  vault?: CredentialVault | false | null;
   onStep?: (event: AgentStepEvent) => void;
   /**
    * When provided, the loop exposes an `ask` tool so the model can put a

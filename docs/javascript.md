@@ -164,27 +164,48 @@ new NetworkPolicy({
 `policy.check(url, details) => { allowed, reason? }`. The rules are documented
 in [network-policy.md](network-policy.md).
 
-## Providing a vault
+## Credential vault
 
-The JS client has no built-in credential store. To enable non-secret
-`credentials` management helpers inside snippets, pass an object implementing
-the vault RPC contract:
+`new BetterWright()` enables the encrypted local vault under
+`$BETTERWRIGHT_HOME/vault` by default. Agent code can search metadata and use
+selector-free form detection without receiving a secret:
+
+```js
+await bw.run(`
+  const accounts = await credentials.list({text: "work"});
+  return credentials.fill({id: accounts[0].id, submit: true});
+`);
+```
+
+For signup or rotation, `generateAndFill` returns an opaque pending id. Verify
+the site's success state before calling `commitGenerated`; call
+`discardGenerated` after a failure. `listPending()` recovers secret-free
+provisional metadata after an interrupted host process. See
+[credentials.md](credentials.md).
+
+Pass a custom object to replace the local store with another secret source:
 
 ```js
 new BetterWright({
   vault: {
-    async handleRequest(action, payload, origin) { /* list|save|update|remove */ },
-    redact(value) { return value; },   // optional: scrub secrets from output
+    async handleRequest(action, payload, origin) {
+      /* list|list-pending|save|update|remove|fill|generate|commit|discard */
+    },
   },
 });
 ```
 
-To fill a login or signup form, the vault must handle the `fill`
-(and, for `generateAndFillCredential`, `generate`) action returning a `secret`;
-call `bw.fillCredential({...})` / `bw.generateAndFillCredential({...})` from host
-code, which types the password and any `confirmPasswordSelector` outside the
-sandbox and returns only metadata. Secret-bearing fill methods fail inside
-`run()`. Omit `vault` to run without credential management helpers.
+A custom adapter may also provide `redact(value)` as a second host-side
+scrubbing pass. It must actually replace every secret the adapter has returned;
+omit the hook rather than implementing a no-op.
+
+`bw.fillCredential({id, submit: true})` and
+`bw.generateAndFillCredential({...})` use the same worker-side detection. A host
+commits or discards generated values after verification with
+`commitGeneratedCredential()` / `discardGeneratedCredential()`, and recovers
+interrupted attempts with `listPendingCredentials()`. Use explicit
+selectors only when detection reports ambiguity. Set `vault: false` (or `null`)
+to disable credential helpers entirely.
 
 ## Sessions
 

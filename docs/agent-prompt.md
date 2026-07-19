@@ -36,9 +36,9 @@ With no guardrails, the guidance tells the model to:
   snapshot before any retry, inspect the real hit target after an "obscured"
   click, and switch approach after the same path fails twice.
 - **Keep credentials out of the chat.** When authentication is required, use a
-  password-manager extension's inline autofill if one is unlocked, or request the
-  trusted host-side fill (`bw.fillCredential` / `generateAndFillCredential`);
-  never type or reconstruct a stored password.
+  configured external manager or BetterWright's metadata-only account search
+  and selector-free fill. Verify signup/rotation success before committing a
+  pending generated password; never inspect or reconstruct a stored password.
 - **Use host web search for broad discovery** rather than automating Google or
   Bing's public search UI, then open returned results or first-party pages in
   BetterWright.
@@ -58,9 +58,9 @@ With no guardrails, the guidance tells the model to:
   before claiming a visible task is done.
 
 This is behavior guidance. It does not, by itself, stop anything — the
-enforceable controls are the [network policy](network-policy.md) and the sandbox's
-credential restrictions. Set behavior with the prompt; set hard limits with
-those.
+enforceable controls are the [network policy](network-policy.md), URL-matched
+vault lookup, worker-side fill, and output redaction. Set behavior with the
+prompt; set hard limits with those.
 
 ## Re-adding limits with `Guardrails`
 
@@ -96,8 +96,8 @@ confused one. When a limit must actually hold, encode it where it is enforced:
   [network policy](network-policy.md), not just a sentence in the prompt.
 - **"Only this one site"** → an `allowHosts` allowlist with a `custom` deny for
   everything else.
-- **"Never expose the password"** → keep secret-bearing operations in trusted
-  host code; vault filling is disabled inside model snippets.
+- **"Never return the password"** → use vault fill/generation instead of typing
+  it in code; the worker resolves it internally and redacts handled values.
 
 Use the two together: the prompt makes the agent effective and appropriately
 bold, and the policy/sandbox make the boundaries real.

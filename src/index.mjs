@@ -43,3 +43,10 @@ export {
   readSkill,
   skillHintsForPages,
 } from "./skills.mjs";
+export {
+  createLocalCredentialVault,
+  LocalCredentialVault,
+  LocalCredentialVaultError,
+  VAULT_CATEGORIES,
+  VAULT_MATCH_MODES,
+} from "./vault.mjs";
