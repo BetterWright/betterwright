@@ -261,8 +261,8 @@ test("model-authored credentials.fill types the secret without returning it", op
     vault,
   });
   try {
-    // The Aside-style shape: fill directly from run(), origin-scoped, and get
-    // metadata back — never the secret.
+    // Fill directly from run(), origin-scoped, and get metadata back — never
+    // the secret.
     const result = await bw.run(`
       await page.goto(${JSON.stringify(server.origin)});
       const outcome = await credentials.fill({
@@ -1002,6 +1002,47 @@ test("interactive snapshots expose refs that aria-ref locators can act on", opts
     `);
     assert.equal(clicked.ok, true, clicked.error);
     assert.equal(clicked.result, "Done");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("snapshot compresses wrappers and urls but keeps refs actionable", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <div><div><a href="/docs">Docs</a></div></div>
+        <p>First.</p><p>Second.</p>
+      \`);
+      const plain = await snapshot();
+      const withUrls = await snapshot({urls: true});
+      return {plain, withUrls};
+    `);
+    assert.equal(result.ok, true, result.error);
+    // Wrapper divs are unwrapped, /url dropped, paragraphs merged into text.
+    assert.match(result.result.plain, /link "Docs" \[ref=e\d+\]/);
+    assert.ok(!result.result.plain.includes("/url"), result.result.plain);
+    assert.match(result.result.plain, /text: First\. Second\./);
+    assert.match(result.result.withUrls, /\/url: \/docs/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("oversized snapshots return scoping hints instead of a cut-off tree", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      const rows = Array.from({length: 200}, (_, i) =>
+        \`<li><a href="/item/\${i}">Item number \${i} with some label text</a></li>\`).join("");
+      await page.setContent(\`<ul>\${rows}</ul>\`);
+      return snapshot({maxChars: 1000});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.match(result.result, /Snapshot is \d+ chars, over the 1000 limit/);
+    assert.match(result.result, /interactive: true/);
+    assert.ok(!result.result.includes("[ref="), result.result);
   } finally {
     await bw.close();
   }

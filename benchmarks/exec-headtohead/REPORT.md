@@ -12,7 +12,7 @@ subagents, so Aside's child-session machinery is prompt-disabled for fairness;
 Both harnesses drive the **same model at the same effort**, so this isolates the
 **agent scaffold** — the loop shape, how work is batched, and how a task ends —
 not the model and not the browser runtime (already at parity in
-[`../asidewright-headtohead`](../asidewright-headtohead/REPORT.md)).
+[`../browser-agent-headtohead`](../browser-agent-headtohead/REPORT.md)).
 
 ## The battery
 
