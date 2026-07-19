@@ -7,14 +7,19 @@ import {
   CAPTCHA_STAGES,
   classifyChallengeStage,
   detectBotChallenge,
+  type GenerateAndFillCredentialOptions,
   type Guardrails,
+  LocalCredentialVault,
+  type LocalCredentialVaultOptions,
   METADATA_ADDRESSES,
   METADATA_HOSTNAMES,
   NetworkPolicy,
+  type PendingCredentialListResult,
   piImageArtifacts,
   piImageContent,
   piPrimaryImageArtifact,
   type RunResult,
+  type VaultMatchMode,
 } from "betterwright";
 import {
   type AgentModel,
@@ -45,10 +50,26 @@ const options: BetterWrightOptions = {
   downloadPolicy: "ask",
 };
 const browser = new BetterWright(options);
+const vaultOptions: LocalCredentialVaultOptions = { home: "/tmp/betterwright-types" };
+const localVault = new LocalCredentialVault(vaultOptions);
+const browserWithoutVault = new BetterWright({ vault: false });
 const run: Promise<RunResult<{ title: string }>> = browser.run<{ title: string }>(
   "return { title: await page.title() }",
   { session: "docs", note: "Reading the page" },
 );
+const generatedMatchMode: VaultMatchMode = "exact-origin";
+const generatedOptions: GenerateAndFillCredentialOptions = {
+  matchMode: generatedMatchMode,
+  currentPasswordSelector: "#old-password",
+};
+browser.generateAndFillCredential(generatedOptions);
+const pendingCredentials: Promise<PendingCredentialListResult> =
+  browser.listPendingCredentials({ session: "docs" });
+localVault.handleRequest("list-pending", {}, "https://signup.example.com");
+// @ts-expect-error Generated credential URL scope is a closed four-value union.
+browser.generateAndFillCredential({ matchMode: "same-site" });
+// @ts-expect-error Rotation preserves the stored credential's existing URL scope.
+browser.generateAndFillCredential({ id: "login-1", matchMode: "exact-origin" });
 const promptOptions: Guardrails & PromptGuardrails = {
   confirmBeforePurchase: true,
   passwordManager: "1Password",
@@ -100,6 +121,9 @@ new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" });
 
 void [
   run,
+  generatedMatchMode,
+  generatedOptions,
+  pendingCredentials,
   prompt,
   images,
   artifacts,
@@ -119,4 +143,6 @@ void [
   agentResult,
   login,
   codexAuth,
+  localVault,
+  browserWithoutVault,
 ];

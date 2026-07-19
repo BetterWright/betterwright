@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { createPiExtension } from "../../src/pi-extension.mjs";
+import {
+  createPiExtension,
+  PI_LOGIN_PARAMETERS,
+} from "../../src/pi-extension.mjs";
 
 class FakePi {
   constructor() {
@@ -36,13 +39,19 @@ class FakePi {
 }
 
 class FakeBrowser {
-  constructor({ screenshot, downloadPolicy = "ask", startFails = false } = {}) {
+  constructor({
+    screenshot,
+    downloadPolicy = "ask",
+    startFails = false,
+    vault = {},
+  } = {}) {
     this.calls = [];
     this.fills = [];
     this.closeCount = 0;
     this.downloadPolicy = downloadPolicy;
     this.screenshot = screenshot;
     this.startFails = startFails;
+    this.vault = vault;
   }
 
   async fillCredential(options) {
@@ -121,6 +130,10 @@ test("native Pi extension registers persistent tools and records its supplied st
       "browser_evidence",
       "browser_download",
     ]);
+    for (const tool of pi.tools.values()) {
+      assert.equal(typeof tool.renderCall, "function");
+      assert.equal(typeof tool.renderResult, "function");
+    }
     assert.match(pi.tools.get("browser").description, /usePage\(indexOrPageId\)/);
     assert.match(pi.tools.get("browser").description, /must not receive a Page object/);
     assert.ok(pi.handlers.has("before_agent_start"));
@@ -296,11 +309,13 @@ test("native Pi extension exposes trusted credential fill", async () => {
   const result = await tool.execute(
     "call-1",
     {
-      passwordSelector: "#pw",
-      usernameSelector: "#user",
-      submitSelector: "#go",
       generate: true,
+      id: "rec-1",
+      currentPasswordSelector: "#old-password",
+      submit: false,
       length: 20,
+      matchMode: "exact-origin",
+      session: "untrusted",
       // Unknown keys must be dropped before reaching fillCredential.
       note: "ignored",
     },
@@ -310,17 +325,50 @@ test("native Pi extension exposes trusted credential fill", async () => {
   assert.equal(browser.fills.length, 1);
   assert.deepEqual(browser.fills[0], {
     session: "pi",
-    passwordSelector: "#pw",
-    usernameSelector: "#user",
-    submitSelector: "#go",
     generate: true,
+    id: "rec-1",
+    currentPasswordSelector: "#old-password",
     length: 20,
+    matchMode: "exact-origin",
+    submit: false,
   });
+  assert.deepEqual(PI_LOGIN_PARAMETERS.properties.matchMode.enum, [
+    "base-domain",
+    "host",
+    "exact-origin",
+    "never",
+  ]);
+  assert.equal(
+    PI_LOGIN_PARAMETERS.properties.currentPasswordSelector.type,
+    "string",
+  );
+  assert.ok(!PI_LOGIN_PARAMETERS.required?.includes("passwordSelector"));
   assert.equal(result.details.ok, true);
   const summary = JSON.parse(result.content[0].text);
   assert.deepEqual(summary.result.filled, ["username", "password"]);
   // The fill never runs model JavaScript.
   assert.equal(browser.calls.length, 0);
+
+  await assert.rejects(
+    tool.execute("call-2", {
+      generate: true,
+      matchMode: "same-site",
+    }),
+    /matchMode.*exact-origin/,
+  );
+  assert.equal(browser.fills.length, 1);
+});
+
+test("native Pi extension omits browser_login when the vault is disabled", () => {
+  const browser = new FakeBrowser({ vault: null });
+  const suppliedBrowserPi = new FakePi();
+  createPiExtension({ browser: browser })(suppliedBrowserPi);
+  assert.equal(suppliedBrowserPi.tools.has("browser_login"), false);
+  assert.equal(browser.fills.length, 0);
+
+  const browserOptionsPi = new FakePi();
+  createPiExtension({ browserOptions: { vault: false } })(browserOptionsPi);
+  assert.equal(browserOptionsPi.tools.has("browser_login"), false);
 });
 
 test("native Pi extension fails closed for downloads without approval UI", async () => {

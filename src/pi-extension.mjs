@@ -2,12 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { BetterWright } from "./client.mjs";
+import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
 import {
   piImageArtifacts,
   piImageContent,
   piPrimaryImageArtifact,
 } from "./pi.mjs";
 import { agentSystemPrompt } from "./prompt.mjs";
+import { VAULT_MATCH_MODES } from "./vault.mjs";
 
 const BROWSER_TOOL_NAMES = new Set([
   "browser",
@@ -43,28 +45,39 @@ export const PI_LOGIN_PARAMETERS = {
     passwordSelector: {
       type: "string",
       minLength: 1,
-      description: "CSS selector for the password field (required).",
+      description: "Optional CSS or current aria-ref=eN target for the password field.",
+    },
+    currentPasswordSelector: {
+      type: "string",
+      description: "Optional CSS or current aria-ref=eN target for the current password field.",
     },
     usernameSelector: {
       type: "string",
-      description: "CSS selector for the username/email field.",
+      description: "Optional CSS or current aria-ref=eN target for the username/email field.",
     },
     confirmPasswordSelector: {
       type: "string",
-      description: "CSS selector for a confirm-password field (signup).",
+      description: "Optional CSS or current aria-ref=eN target for confirmation (signup).",
     },
     submitSelector: {
       type: "string",
-      description: "CSS selector clicked to submit in the same trusted call.",
+      description: "Optional CSS or current aria-ref=eN target clicked to submit.",
     },
-    id: { type: "string", description: "Select the saved record by id." },
+    submit: {
+      type: "boolean",
+      description: "Detect and submit the matching form after filling (default false).",
+    },
+    id: {
+      type: "string",
+      description: "Select a saved record, or rotate it when generate=true.",
+    },
     username: {
       type: "string",
       description: "Select the saved record by username, or set it on signup.",
     },
     generate: {
       type: "boolean",
-      description: "Generate, fill, and save a new strong password (signup).",
+      description: "Generate, stage, and fill a new strong password (signup/rotation).",
     },
     length: { type: "integer", description: "Generated password length (default 24)." },
     includeSymbols: {
@@ -72,8 +85,12 @@ export const PI_LOGIN_PARAMETERS = {
       description: "Include symbols in a generated password (default true).",
     },
     label: { type: "string", description: "Human label for a newly saved record." },
+    matchMode: {
+      type: "string",
+      enum: [...VAULT_MATCH_MODES],
+      description: "URL scope for the generated credential (default base-domain).",
+    },
   },
-  required: ["passwordSelector"],
 };
 
 export const PI_EVIDENCE_PARAMETERS = {
@@ -157,28 +174,6 @@ function normalizedStartUrl(value) {
     throw new TypeError("Pi startUrl must use http or https.");
   }
   return parsed.href;
-}
-
-// Keep only recognized fillCredential keys from the tool params.
-function loginOptions(params = {}) {
-  const options = {
-    passwordSelector: String(params.passwordSelector || ""),
-    generate: params.generate === true,
-  };
-  for (const key of [
-    "usernameSelector",
-    "confirmPasswordSelector",
-    "submitSelector",
-    "id",
-    "username",
-    "label",
-  ]) {
-    if (params[key] != null) options[key] = String(params[key]);
-  }
-  if (params.length != null) options.length = Number(params.length);
-  if (typeof params.includeSymbols === "boolean")
-    options.includeSymbols = params.includeSymbols;
-  return options;
 }
 
 function normalizedMaxSteps(value) {
@@ -395,13 +390,13 @@ function makeRenderCall(label) {
   return (args, theme, context) => {
     if (!TuiText) throw new Error("pi-tui unavailable");
     let text = theme.fg("toolTitle", theme.bold(label));
-    if (args?.note) text += " " + theme.fg("muted", args.note);
+    if (args?.note) text += ` ${theme.fg("muted", args.note)}`;
     if (args?.code) {
       text += context?.expanded
-        ? "\n" + theme.fg("dim", String(args.code))
-        : "\n" + theme.fg("dim", firstLine(args.code));
+        ? `\n${theme.fg("dim", String(args.code))}`
+        : `\n${theme.fg("dim", firstLine(args.code))}`;
     } else if (args && !args.note) {
-      text += " " + theme.fg("dim", firstLine(JSON.stringify(args)));
+      text += ` ${theme.fg("dim", firstLine(JSON.stringify(args)))}`;
     }
     return slotText(context, text);
   };
@@ -489,6 +484,10 @@ export function createPiExtension(options = {}) {
     let checklistInitialized = false;
     let completionNudges = 0;
     const evidenceChecklist = new Map();
+    const withLogin = browser
+      ? Boolean(browser.vault)
+      : !Object.hasOwn(options.browserOptions || {}, "vault") ||
+        Boolean(options.browserOptions.vault);
 
     function checklistState() {
       const requirements = [...evidenceChecklist.values()];
@@ -746,34 +745,45 @@ export function createPiExtension(options = {}) {
       renderResult: summaryRenderResult,
     });
 
-    pi.registerTool({
-      name: "browser_login",
-      label: "BetterWright Login",
-      description:
-        "Fill a saved or freshly generated credential without the secret ever entering the " +
-        "conversation. The password is fetched, typed, and (with submitSelector) submitted " +
-        "inside the browser worker; it never appears in a snapshot or result. Use instead of " +
-        "typing a password in browser code, which is blocked. Set generate=true to sign up " +
-        "with a new strong password saved to the vault.",
-      parameters: PI_LOGIN_PARAMETERS,
-      async execute(_id, params, signal) {
-        if (signal?.aborted) throw new Error("Browser login cancelled.");
-        const instance = await getBrowser();
-        if (typeof instance.fillCredential !== "function") {
-          throw new Error("This BetterWright build has no credential fill available.");
-        }
-        const result = await instance.fillCredential({ session, ...loginOptions(params) });
-        return {
-          content: [
-            { type: "text", text: JSON.stringify(result, null, 2) },
-            ...(await piImageContent(result)),
-          ],
-          details: { ok: result?.ok === true, error: result?.error, pages: result?.pages || [] },
-        };
-      },
-      renderCall: makeRenderCall("browser_login"),
-      renderResult: summaryRenderResult,
-    });
+    if (withLogin) {
+      pi.registerTool({
+        name: "browser_login",
+        label: "BetterWright Login",
+        description:
+          "Fill a saved or freshly generated credential without the secret ever entering the " +
+          "conversation. BetterWright detects visible fields; explicit CSS or current aria-ref " +
+          "targets are only needed after an ambiguity error. The password is fetched and typed " +
+          "inside the worker, and submitted only with submit=true or submitSelector. Set " +
+          "generate=true to stage a new password. After a later browser step visibly verifies " +
+          "success, call credentials.commitGenerated({pendingId}); call discardGenerated on " +
+          "failure. Generated credentials remain pending until committed. After a complete " +
+          "host restart, credentials.listPending() recovers secret-free pending metadata.",
+        parameters: PI_LOGIN_PARAMETERS,
+        async execute(_id, params, signal) {
+          if (signal?.aborted) throw new Error("Browser login cancelled.");
+          const instance = await getBrowser();
+          if (typeof instance.fillCredential !== "function") {
+            throw new Error("This BetterWright build has no credential fill available.");
+          }
+          const result = await instance.fillCredential(
+            normalizeCredentialToolOptions(params, { session }),
+          );
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(result, null, 2) },
+              ...(await piImageContent(result)),
+            ],
+            details: {
+              ok: result?.ok === true,
+              error: result?.error,
+              pages: result?.pages || [],
+            },
+          };
+        },
+        renderCall: makeRenderCall("browser_login"),
+        renderResult: summaryRenderResult,
+      });
+    }
 
     pi.registerTool({
       name: "browser_evidence",

@@ -233,31 +233,60 @@ The `credentials` helpers manage records in the
 filled, never returned.
 
 ```js
-await credentials.save({ username: "alice", password: "…" });
+await credentials.inspect();                       // detected field roles, no values
 await credentials.list();                          // metadata only, no passwords
-await credentials.list({ text: "work", category: "login" }); // filtered
-await credentials.fill({ usernameSelector: "#u", passwordSelector: "#p", submitSelector: "#go" });
-await credentials.generateAndFill({ username: "alice", passwordSelector: "#p" }); // signup
+const accounts = await credentials.list({ text: "work", category: "login" });
+if (accounts.length !== 1) return { accounts, needsAccountSelection: true };
+await credentials.fill({ id: accounts[0].id, submit: true }); // detect and fill
+const pending = await credentials.generateAndFill({ username: "alice", submit: true });
+await credentials.listPending();                   // recoverable metadata only
+await credentials.commitGenerated({ pendingId: pending.pendingId }); // only after verified success
 await credentials.update({ id, label: "work" });
 await credentials.remove({ id });
 ```
 
-All operations are scoped to the current page's origin, which must be `http(s)`.
-`list()` accepts a `{text, category}` filter; `category` defaults to `login`,
-with `credit-card`, `identity`, `api-credential`, `secure-note`, and `ssh-key`
-available for non-login records.
+Do not put a password in model-authored `bw.run()` source. `credentials.save()`
+is reserved for a trusted host-authored snippet receiving a user-supplied
+secret through an application-controlled channel; agent code should use the
+metadata-only lookup and trusted fill/generate operations above. Generated
+passwords never enter either host or model source.
 
-`fill` selects the record by `{id}` or `{username}` (or the origin's only
-record), then the worker types the username/password — and any
-confirm-password field — with trusted human-shaped input and optionally clicks
-`submitSelector`, returning only metadata (`{filled, submitted, username, …}`).
-`generateAndFill` creates a strong password (`length`, `includeSymbols`),
-fills it the same way, and saves it to the vault without ever returning it.
+All operations are gated to the current HTTP(S) site. Login items use PSL-backed
+base-domain matching by default, with per-item `host`, `exact-origin`, and
+`never` modes; HTTPS records never downgrade to HTTP. `list()` accepts a
+`{text, category}` filter; `category` defaults to `login`, with `credit-card`,
+`identity`, `api-credential`, `secure-note`, and `ssh-key` available for other
+records.
+
+`fill` selects by `{id}` or `{username}` (or the only clear match), detects the
+username/current-password/submit controls across child frames and open shadow
+roots, and types with trusted human-shaped input. Detection fails closed on
+multiple plausible forms; explicit selectors or current aria refs remain
+available. `generateAndFill` detects new-password and confirmation fields,
+fills the saved current password during rotation, and returns a 60-second
+normal-window opaque pending id. The encrypted provisional entry remains
+recoverable by that exact id across worker restarts, and across a recreated host
+when it returns to the matching site origin. `listPending()` exposes only
+recovery metadata and never makes provisional items available to normal
+`list()` or `fill()`. A post-generation page or worker failure includes a secret-free
+`pendingCredential` recovery object. Commit it only after the site visibly
+accepts the signup or rotation; discard it on failure. Rotation commits back to
+the same record id and preserves its URL scope; new records accept `matchMode`
+to narrow their URL scope.
+
+For an ambiguous rotation form, pass `currentPasswordSelector`,
+`passwordSelector`, and `confirmPasswordSelector` together; the worker pins all
+three exact handles and their origin before reading either password.
+
 The same operations are available to the host as `bw.fillCredential(...)` /
-`bw.generateAndFillCredential(...)` and the MCP/Pi `browser_login` tool. The
-filled value is scrubbed from every output channel by the redaction net; like
-a password-manager extension's autofill, the value does exist in the live DOM
-after filling. See [credentials.md](credentials.md) for the full contract.
+`bw.generateAndFillCredential(...)`, followed by
+`commitGeneratedCredential(...)` / `discardGeneratedCredential(...)`;
+`bw.listPendingCredentials()` recovers interrupted attempts. The same trusted
+fill path is used by the
+MCP/Pi `browser_login` tool. Agent-facing APIs never return the value, and the
+redaction net scrubs handled values from outputs. Like extension autofill, the
+value does exist in the live DOM after filling. See
+[credentials.md](credentials.md) for the full contract.
 
 ## Console
 

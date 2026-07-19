@@ -5,6 +5,7 @@
 // Playwright snippets.
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -16,10 +17,39 @@ import { fileURLToPath } from "node:url";
 import { normalizeDownloadPolicy } from "./downloads.mjs";
 import { NetworkPolicy } from "./policy.mjs";
 import { listSkills, skillHintsForPages } from "./skills.mjs";
+import { createLocalCredentialVault, VAULT_MATCH_MODES } from "./vault.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./worker.mjs", import.meta.url));
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const WORKER_START_TIMEOUT_MS = 15_000;
+const WORKER_RPC_DRAIN_TIMEOUT_MS = 250;
+const MAX_PENDING_CREDENTIAL_ORIGINS = 100;
+const VAULT_MATCH_MODE_SET = new Set(VAULT_MATCH_MODES);
+const PENDING_CREDENTIAL_FINALIZE_ACTIONS = new Set(["commit", "discard"]);
+const DEFINITIVE_GENERATE_FAILURE_CODES = new Set([
+  "BAD_ACTION",
+  "BAD_INPUT",
+  "BAD_ORIGIN",
+  "NOT_FOUND",
+  "PENDING_CONFLICT",
+  "UNSAFE_PATH",
+  "VAULT_AUTH_FAILED",
+  "VAULT_CORRUPT",
+  "VAULT_KEY_INVALID",
+  "VAULT_KEY_MISSING",
+  "VAULT_LOCK_TIMEOUT",
+  "VAULT_SECRET_CAPACITY",
+  "VAULT_TOO_LARGE",
+]);
+
+export function validateCredentialMatchMode(value) {
+  if (typeof value !== "string" || !VAULT_MATCH_MODE_SET.has(value)) {
+    throw new TypeError(
+      'matchMode must be "base-domain", "host", "exact-origin", or "never".',
+    );
+  }
+  return value;
+}
 
 export class BrowserError extends Error {}
 
@@ -87,28 +117,79 @@ function defaultHome() {
 
 /** Translate host-facing fillCredential options into the worker `spec`. */
 function buildFillSpec(options) {
-  const fields = {
-    passwordSelector: options.passwordSelector,
-    usernameSelector: options.usernameSelector,
-    confirmPasswordSelector: options.confirmPasswordSelector,
-    submitSelector: options.submitSelector,
-  };
+  const fields = {};
+  for (const key of [
+    "passwordSelector",
+    "currentPasswordSelector",
+    "usernameSelector",
+    "confirmPasswordSelector",
+    "submitSelector",
+  ]) {
+    const value = String(options[key] ?? "").trim();
+    if (value) fields[key] = value;
+  }
+  if (options.submit === true) fields.submit = true;
   if (options.generate) {
+    if (options.id != null && options.matchMode !== undefined) {
+      throw new TypeError(
+        "matchMode cannot be changed when rotating an existing credential; " +
+          "omit matchMode to preserve the saved record scope.",
+      );
+    }
+    const generate = {};
+    if (options.id != null) generate.id = options.id;
+    if (options.username != null) generate.username = options.username;
+    if (Object.hasOwn(options, "label")) generate.label = options.label;
+    if (options.length != null) generate.length = options.length;
+    if (typeof options.includeSymbols === "boolean")
+      generate.includeSymbols = options.includeSymbols;
+    if (options.matchMode !== undefined)
+      generate.matchMode = validateCredentialMatchMode(options.matchMode);
     return {
       action: "generate",
       fields,
-      generate: {
-        username: options.username ?? "",
-        label: options.label ?? null,
-        length: options.length,
-        includeSymbols: options.includeSymbols,
-      },
+      generate,
     };
   }
   return {
     action: "fill",
     fields,
     record: { id: options.id, username: options.username },
+  };
+}
+
+function pendingCredentialRecovery(result, requestPayload, origin) {
+  const pendingId = String(result?.pendingId ?? "").trim();
+  if (!pendingId) return null;
+  const resultMatchMode = String(result?.matchMode ?? "").trim();
+  const requestedMatchMode = String(requestPayload?.matchMode ?? "").trim();
+  const matchMode = VAULT_MATCH_MODE_SET.has(resultMatchMode)
+    ? resultMatchMode
+    : VAULT_MATCH_MODE_SET.has(requestedMatchMode)
+      ? requestedMatchMode
+      : "base-domain";
+  const resultObject = result && typeof result === "object" ? result : {};
+  const payloadObject =
+    requestPayload && typeof requestPayload === "object" ? requestPayload : {};
+  const username = Object.hasOwn(resultObject, "username")
+    ? resultObject.username
+    : Object.hasOwn(payloadObject, "username")
+      ? payloadObject.username
+      : null;
+  const label = Object.hasOwn(resultObject, "label")
+    ? resultObject.label
+    : Object.hasOwn(payloadObject, "label")
+      ? payloadObject.label
+      : null;
+  return {
+    pendingId,
+    // This is where the form was filled, not an existing record's saved scope.
+    origin: String(origin),
+    matchMode,
+    username: username == null ? null : String(username),
+    label: label == null ? null : String(label),
+    expiresAt:
+      result?.expiresAt == null ? null : String(result.expiresAt),
   };
 }
 
@@ -158,7 +239,9 @@ export class BetterWright {
    * @param {object} [options]
    * @param {string} [options.home] state directory (default ~/.betterwright)
    * @param {NetworkPolicy} [options.policy] network policy
-   * @param {object} [options.vault] optional vault with `handleRequest(action, payload, origin)`
+   * @param {object|false|null} [options.vault] custom vault with
+   *   `handleRequest(action, payload, origin)`, or false/null to disable the
+   *   built-in encrypted vault
    * @param {"cloak"} [options.browser="cloak"] managed CloakBrowser backend
    * @param {boolean|"auto"} [options.headless="auto"] "auto" shows a window when
    *   a display is available and runs headless otherwise; true/false force it
@@ -182,7 +265,17 @@ export class BetterWright {
   constructor(options = {}) {
     this.home = options.home || defaultHome();
     this.policy = options.policy || new NetworkPolicy();
-    this.vault = options.vault || null;
+    if (Object.hasOwn(options, "vault")) {
+      const vault = options.vault;
+      if (vault === false || vault == null) this.vault = null;
+      else if (typeof vault?.handleRequest === "function") this.vault = vault;
+      else
+        throw new TypeError(
+          "vault must implement handleRequest(action, payload, origin), or be false/null.",
+        );
+    } else {
+      this.vault = createLocalCredentialVault({ home: this.home });
+    }
     assertManagedCloakOnly(options);
     this.browserFlavor = "cloak";
     this.headless = resolveHeadless(options.headless);
@@ -194,6 +287,12 @@ export class BetterWright {
 
     this._process = null;
     this._pending = new Map();
+    this._pendingCredentialOrigins = new Map();
+    this._pendingCredentialRecoveries = new Map();
+    this._workerClosePromises = new WeakMap();
+    this._workerClosePreservesPending = new WeakSet();
+    this._workerCloseBarrier = Promise.resolve();
+    this._vaultRedactionOwner = null;
     this._ready = null;
     this._lastConfig = null;
     this._queue = Promise.resolve();
@@ -228,7 +327,22 @@ export class BetterWright {
   }
 
   async _start() {
-    if (this._process && this._process.exitCode === null) return;
+    if (
+      this._process &&
+      this._process.exitCode === null &&
+      this._process.signalCode === null
+    )
+      return;
+    if (this._closed) throw new BrowserError("This browser has been closed.");
+    // An exited worker can still have buffered stdio. Wait for its `close`
+    // cleanup before a replacement is allowed to own the vault redaction set.
+    await this._workerCloseBarrier;
+    if (
+      this._process &&
+      this._process.exitCode === null &&
+      this._process.signalCode === null
+    )
+      return;
     if (this._closed) throw new BrowserError("This browser has been closed.");
     const env = { ...process.env, NODE_NO_WARNINGS: "1" };
     const core = resolvePlaywrightCore();
@@ -256,9 +370,17 @@ export class BetterWright {
       env,
     });
     this._process = child;
+    this._vaultRedactionOwner = child;
     this._stderrTail = [];
 
     const stdout = readline.createInterface({ input: child.stdout });
+    const rpcTasks = new Set();
+    let resolveWorkerClose;
+    const workerClosePromise = new Promise(
+      (resolve) => (resolveWorkerClose = resolve),
+    );
+    this._workerClosePromises.set(child, workerClosePromise);
+    this._workerCloseBarrier = workerClosePromise;
     let resolveReady;
     this._ready = new Promise((resolve) => (resolveReady = resolve));
     stdout.on("line", (line) => {
@@ -269,10 +391,22 @@ export class BetterWright {
         return;
       }
       if (message.type === "ready") resolveReady();
-      else if (message.type === "rpc_request") this._serviceRpc(message);
+      else if (message.type === "rpc_request") {
+        const task = this._serviceRpc(message, child);
+        rpcTasks.add(task);
+        // Custom RPC providers cannot currently be aborted. Their settlement
+        // must therefore be observed, but must never hold worker shutdown open.
+        void task.then(
+          () => rpcTasks.delete(task),
+          () => rpcTasks.delete(task),
+        );
+      }
       else if (message.type === "result") {
-        const waiter = this._pending.get(String(message.id));
-        if (waiter) waiter(message);
+        const pending = this._pending.get(String(message.id));
+        if (pending?.child === child)
+          pending.done(
+            this._attachPendingCredentialRecovery(message.id, message),
+          );
       }
     });
     readline.createInterface({ input: child.stderr }).on("line", (line) => {
@@ -282,33 +416,104 @@ export class BetterWright {
       }
     });
     child.on("exit", () => {
-      const error = {
-        type: "result",
-        ok: false,
-        error: "The BetterWright worker exited unexpectedly.",
-      };
-      for (const waiter of this._pending.values()) waiter(error);
       if (this._process === child) this._process = null;
     });
+    child.on("close", () => {
+      void (async () => {
+        let drainTimer;
+        try {
+          if (rpcTasks.size) {
+            await Promise.race([
+              Promise.allSettled([...rpcTasks]),
+              new Promise((resolve) => {
+                drainTimer = setTimeout(resolve, WORKER_RPC_DRAIN_TIMEOUT_MS);
+              }),
+            ]);
+          }
+          if (!this._workerClosePreservesPending.has(child)) {
+            this._resolvePendingForWorkerExit(child);
+          }
+        } finally {
+          clearTimeout(drainTimer);
+          await this._resetVaultRedactionForWorker(child);
+          resolveWorkerClose();
+        }
+      })().catch(() => {});
+    });
 
-    const timer = new Promise((_, reject) =>
-      setTimeout(
+    let startTimer;
+    const timer = new Promise((_, reject) => {
+      startTimer = setTimeout(
         () => reject(new BrowserError(`Worker did not start.\n${this._stderrTail.slice(-8).join("\n")}`)),
         WORKER_START_TIMEOUT_MS,
-      ),
-    );
-    await Promise.race([this._ready, timer]);
+      );
+    });
+    try {
+      await Promise.race([this._ready, timer]);
+    } finally {
+      clearTimeout(startTimer);
+    }
   }
 
-  _send(message) {
-    if (!this._process || this._process.exitCode !== null || !this._process.stdin.writable)
+  _send(message, child = this._process) {
+    if (
+      !child ||
+      child.exitCode !== null ||
+      child.signalCode !== null ||
+      !child.stdin.writable
+    )
       throw new BrowserError("The BetterWright worker is not running.");
-    this._process.stdin.write(`${JSON.stringify(message)}\n`);
+    child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  async _serviceRpc(message) {
+  _attachPendingCredentialRecovery(id, message) {
+    const key = String(id || "");
+    const recovery = this._pendingCredentialRecoveries.get(key);
+    if (!recovery) return message;
+    this._pendingCredentialRecoveries.delete(key);
+    if (message?.ok !== false) return message;
+    return { ...message, pendingCredential: recovery };
+  }
+
+  _resolvePendingForWorkerExit(child) {
+    for (const [id, pending] of this._pending) {
+      if (pending.child !== child) continue;
+      pending.done(
+        this._attachPendingCredentialRecovery(id, {
+          type: "result",
+          id,
+          ok: false,
+          error: "The BetterWright worker exited unexpectedly.",
+        }),
+      );
+    }
+  }
+
+  async _resetVaultRedactionForWorker(child) {
+    if (!child || this._vaultRedactionOwner !== child) return;
+    // Retire ownership before calling user code so repeated lifecycle events
+    // cannot reset the same generation twice. The worker-close barrier remains
+    // pending until this hook settles, so a replacement cannot claim ownership
+    // while an older generation's asynchronous reset is still running.
+    this._vaultRedactionOwner = null;
+    try {
+      await this.vault?.resetRedactionSecrets?.();
+    } catch {
+      /* lifecycle cleanup must never mask worker shutdown */
+    }
+  }
+
+  _tracksPendingExecution(executionId, child) {
+    if (!executionId) return false;
+    if (!child) return true;
+    return this._pending.get(executionId)?.child === child;
+  }
+
+  async _serviceRpc(message, child = this._process) {
     const requestId = String(message.requestId || "");
     let response;
+    let generatedPendingId = "";
+    let generationExecutionId = "";
     try {
       const payload = message.payload || {};
       let result;
@@ -321,20 +526,177 @@ export class BetterWright {
             "No credential vault is configured for this browser. Configure one, " +
               "or use an unlocked password-manager extension's autofill instead.",
           );
-        result = await this.vault.handleRequest(
-          String(payload.action || ""),
-          payload.payload || {},
-          String(payload.origin || ""),
-        );
+        const action = String(payload.action || "");
+        const requestPayload = { ...(payload.payload || {}) };
+        if (
+          action === "generate" &&
+          this._pendingCredentialOrigins.size >= MAX_PENDING_CREDENTIAL_ORIGINS
+        ) {
+          throw new Error(
+            `Too many generated credentials are pending finalization (limit ${MAX_PENDING_CREDENTIAL_ORIGINS}); commit or discard one before generating another.`,
+          );
+        }
+        if (action === "generate") {
+          generatedPendingId = String(requestPayload.pendingId ?? "").trim();
+          if (!generatedPendingId) {
+            generatedPendingId = `pending_${randomUUID()}`;
+            requestPayload.pendingId = generatedPendingId;
+          }
+          generationExecutionId = String(message.id || "");
+          this._pendingCredentialOrigins.set(generatedPendingId, String(payload.origin || ""));
+          const proposedRecovery = pendingCredentialRecovery(
+            requestPayload,
+            requestPayload,
+            String(payload.origin || ""),
+          );
+          if (proposedRecovery && generationExecutionId) {
+            this._pendingCredentialRecoveries.set(
+              generationExecutionId,
+              proposedRecovery,
+            );
+          }
+        }
+        const pendingId = String(requestPayload.pendingId ?? "").trim();
+        const trackedOrigin = pendingId
+          ? this._pendingCredentialOrigins.get(pendingId)
+          : null;
+        const currentOrigin = String(payload.origin || "");
+        try {
+          result = await this.vault.handleRequest(
+            action,
+            requestPayload,
+            currentOrigin,
+          );
+        } catch (error) {
+          if (
+            PENDING_CREDENTIAL_FINALIZE_ACTIONS.has(action) &&
+            pendingId &&
+            error?.code === "PENDING_NOT_FOUND" &&
+            trackedOrigin &&
+            trackedOrigin !== currentOrigin
+          ) {
+            try {
+              result = await this.vault.handleRequest(
+                action,
+                requestPayload,
+                trackedOrigin,
+              );
+            } catch (fallbackError) {
+              if (fallbackError?.code === "PENDING_NOT_FOUND") {
+                this._pendingCredentialOrigins.delete(pendingId);
+              }
+              throw fallbackError;
+            }
+          } else {
+            if (
+              PENDING_CREDENTIAL_FINALIZE_ACTIONS.has(action) &&
+              pendingId &&
+              error?.code === "PENDING_NOT_FOUND"
+            ) {
+              this._pendingCredentialOrigins.delete(pendingId);
+            }
+            throw error;
+          }
+        }
+        if (action === "generate") {
+          const returnedPendingId = String(result?.pendingId ?? "").trim();
+          if (!returnedPendingId) {
+            const error = new Error(
+              "Credential vault generate must return the pendingId it persisted.",
+            );
+            error.code = "PENDING_ID_REQUIRED";
+            throw error;
+          }
+          if (returnedPendingId !== generatedPendingId) {
+            this._pendingCredentialOrigins.delete(generatedPendingId);
+            generatedPendingId = returnedPendingId;
+          }
+          this._pendingCredentialOrigins.set(generatedPendingId, currentOrigin);
+          const recovery = pendingCredentialRecovery(
+            result,
+            requestPayload,
+            currentOrigin,
+          );
+          if (
+            recovery &&
+            this._tracksPendingExecution(generationExecutionId, child)
+          ) {
+            this._pendingCredentialRecoveries.set(
+              generationExecutionId,
+              recovery,
+            );
+          }
+        } else if (
+          PENDING_CREDENTIAL_FINALIZE_ACTIONS.has(action) &&
+          pendingId
+        ) {
+          // The await above succeeded, so the pending vault entry is finalized.
+          this._pendingCredentialOrigins.delete(pendingId);
+          const executionId = String(message.id || "");
+          if (
+            executionId &&
+            this._pendingCredentialRecoveries.get(executionId)?.pendingId ===
+              pendingId
+          ) {
+            this._pendingCredentialRecoveries.delete(executionId);
+          }
+        }
       } else {
         throw new Error(`Unknown worker RPC method: ${message.method}`);
       }
       response = { type: "rpc_response", requestId, ok: true, result };
     } catch (error) {
-      response = { type: "rpc_response", requestId, ok: false, error: String(error?.message || error) };
+      const reportedRecovery = error?.pendingCredential?.pendingId
+        ? error.pendingCredential
+        : null;
+      if (
+        reportedRecovery &&
+        this._tracksPendingExecution(generationExecutionId, child)
+      ) {
+        const reportedPendingId = String(reportedRecovery.pendingId);
+        if (generatedPendingId && generatedPendingId !== reportedPendingId) {
+          this._pendingCredentialOrigins.delete(generatedPendingId);
+        }
+        generatedPendingId = reportedPendingId;
+        this._pendingCredentialOrigins.set(
+          generatedPendingId,
+          String(reportedRecovery.origin || ""),
+        );
+        this._pendingCredentialRecoveries.set(
+          generationExecutionId,
+          reportedRecovery,
+        );
+      }
+      if (
+        generatedPendingId &&
+        !reportedRecovery &&
+        DEFINITIVE_GENERATE_FAILURE_CODES.has(String(error?.code || ""))
+      ) {
+        this._pendingCredentialOrigins.delete(generatedPendingId);
+        if (
+          generationExecutionId &&
+          this._pendingCredentialRecoveries.get(generationExecutionId)
+            ?.pendingId === generatedPendingId
+        ) {
+          this._pendingCredentialRecoveries.delete(generationExecutionId);
+        }
+      }
+      const pendingCredential =
+        reportedRecovery ||
+        (generationExecutionId
+          ? this._pendingCredentialRecoveries.get(generationExecutionId)
+          : null);
+      response = {
+        type: "rpc_response",
+        requestId,
+        ok: false,
+        error: String(error?.message || error),
+        ...(typeof error?.code === "string" ? { code: error.code } : {}),
+        ...(pendingCredential ? { pendingCredential } : {}),
+      };
     }
     try {
-      this._send(response);
+      this._send(response, child);
     } catch {
       /* worker shutting down */
     }
@@ -368,12 +730,20 @@ export class BetterWright {
    * outside the model sandbox. Only non-secret metadata comes back.
    *
    * @param {object} options
-   * @param {string} options.passwordSelector required password field selector
-   * @param {string} [options.usernameSelector] username/email field selector
-   * @param {string} [options.confirmPasswordSelector] confirm-password selector
+   * Visible enabled fields are detected from autocomplete semantics, labels,
+   * names, types, and form relationships. Explicit CSS or `aria-ref=eN`
+   * targets remain available when a page is ambiguous.
+   *
+   * @param {string} [options.passwordSelector] explicit password field target
+   * @param {string} [options.currentPasswordSelector] explicit current-password
+   *   target for rotation with generateAndFillCredential
+   * @param {string} [options.usernameSelector] explicit username/email target
+   * @param {string} [options.confirmPasswordSelector] explicit confirmation target
    *   (signup); filled with the same secret and blurred to trigger match checks
-   * @param {string} [options.submitSelector] click this to submit in the same
-   *   trusted call, so no model turn sees the secret sitting in a field
+   * @param {string} [options.submitSelector] explicit target clicked to submit
+   * @param {boolean} [options.submit=false] detect and click the form's submit
+   *   control in the same trusted call, so no model turn sees the secret sitting
+   *   in a field
    * @param {string} [options.id] select the stored record by id
    * @param {string} [options.username] select the stored record by username
    * @param {string} [options.session="default"] session name
@@ -389,18 +759,81 @@ export class BetterWright {
   }
 
   /**
-   * Generate a strong password, store it in the vault scoped to the current
-   * origin, and fill it (plus any confirm-password field) — the safe primitive
-   * for signing up. Mirrors {@link fillCredential} options plus `length`,
-   * `includeSymbols`, and `label`.
+   * Generate and fill a strong password (plus any confirmation field), keeping
+   * it pending until {@link commitGeneratedCredential} is called after visible
+   * success. Mirrors {@link fillCredential} options plus `length`,
+   * `includeSymbols`, `label`, and `matchMode`.
    */
   generateAndFillCredential(options = {}) {
     return this.fillCredential({ ...options, generate: true });
   }
 
+  /** Promote a visibly verified pending generated credential to an active record. */
+  commitGeneratedCredential(options = {}) {
+    return this._pendingCredential("commit", options);
+  }
+
+  /** Remove a pending generated credential after signup/rotation failed. */
+  discardGeneratedCredential(options = {}) {
+    return this._pendingCredential("discard", options);
+  }
+
+  /** List secret-free generated credentials recoverable from the current site. */
+  listPendingCredentials(options = {}) {
+    return this._pendingCredential("list", options);
+  }
+
+  _pendingCredential(action, options) {
+    const task = this._queue.then(async () => {
+      if (!options || typeof options !== "object" || Array.isArray(options))
+        return { ok: false, error: "pending credential options must be an object." };
+      const pendingId = String(options.pendingId ?? "").trim();
+      if (action !== "list" && !pendingId)
+        return {
+          ok: false,
+          error: "pending credential options require a non-empty pendingId.",
+        };
+      const timeoutSeconds = Math.max(
+        Number(options.timeout) || this.defaultTimeout,
+        5,
+      );
+      const config = await this._prepare();
+      const pendingOrigin = this._pendingCredentialOrigins.get(pendingId);
+      const payload =
+        action === "list"
+          ? {}
+          : {
+              pendingId,
+              ...(pendingOrigin ? { pendingOrigin } : {}),
+            };
+      return this._dispatch(
+        {
+          type: "credential_pending",
+          action,
+          payload,
+          sessionId: String(options.session || "default"),
+          timeoutMs: timeoutSeconds * 1000,
+          config,
+        },
+        timeoutSeconds,
+      );
+    });
+    this._queue = task.then(
+      () => {},
+      () => {},
+    );
+    return task;
+  }
+
   async _fillNow(options) {
-    if (!options || typeof options.passwordSelector !== "string" || !options.passwordSelector.trim())
-      return { ok: false, error: "fillCredential requires a passwordSelector." };
+    if (!options || typeof options !== "object" || Array.isArray(options))
+      return { ok: false, error: "fillCredential options must be an object." };
+    let spec;
+    try {
+      spec = buildFillSpec(options);
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
     const timeoutSeconds = Math.max(Number(options.timeout) || this.defaultTimeout, 5);
     const config = await this._prepare();
     return this._dispatch(
@@ -408,7 +841,7 @@ export class BetterWright {
         type: "credential_fill",
         sessionId: String(options.session || "default"),
         timeoutMs: timeoutSeconds * 1000,
-        spec: buildFillSpec(options),
+        spec,
         config,
       },
       timeoutSeconds,
@@ -454,6 +887,7 @@ export class BetterWright {
    * out. Shared by run() and fillCredential(). */
   async _dispatch(message, timeoutSeconds) {
     const id = `${process.pid}-${Math.round(performance.now() * 1000)}-${this._pending.size}`;
+    const child = this._process;
     const response = await new Promise((resolve) => {
       let settled = false;
       let timer;
@@ -464,14 +898,19 @@ export class BetterWright {
         this._pending.delete(id);
         resolve(result);
       };
-      this._pending.set(id, done);
+      this._pending.set(id, { child, done });
       timer = setTimeout(async () => {
-        await this.close();
+        await this.close({ child, preservePending: true });
         this._closed = false;
-        done({ ok: false, error: `Execution timed out after ${timeoutSeconds}s; the worker was restarted.` });
+        done(
+          this._attachPendingCredentialRecovery(id, {
+            ok: false,
+            error: `Execution timed out after ${timeoutSeconds}s; the worker was restarted.`,
+          }),
+        );
       }, (timeoutSeconds + 5) * 1000);
       try {
-        this._send({ ...message, id });
+        this._send({ ...message, id }, child);
       } catch (error) {
         done({ ok: false, error: String(error?.message || error) });
       }
@@ -505,21 +944,37 @@ export class BetterWright {
     return envelope;
   }
 
-  async close() {
+  async close({ child: requestedChild = null, preservePending = false } = {}) {
     this._closed = true;
-    const child = this._process;
-    this._process = null;
-    this._lastConfig = null;
-    if (!child || child.exitCode !== null) return;
-    try {
-      child.stdin.end();
-    } catch {
-      /* already closed */
+    const child = requestedChild || this._process;
+    const closesActiveWorker = !requestedChild || this._process === child;
+    if (closesActiveWorker) {
+      this._process = null;
+      this._lastConfig = null;
     }
-    const exited = once(child, "exit");
-    const killer = setTimeout(() => child.kill("SIGKILL"), 5_000);
-    await exited;
-    clearTimeout(killer);
+    if (!child) {
+      await this._workerCloseBarrier;
+      return;
+    }
+    if (preservePending) this._workerClosePreservesPending.add(child);
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.stdin.end();
+      } catch {
+        /* already closed */
+      }
+    }
+    const closed = this._workerClosePromises.get(child) || once(child, "close");
+    const killer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+    }, 5_000);
+    try {
+      await closed;
+    } finally {
+      clearTimeout(killer);
+      await this._resetVaultRedactionForWorker(child);
+    }
   }
 }
 

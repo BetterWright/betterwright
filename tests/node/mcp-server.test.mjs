@@ -4,44 +4,130 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { BetterWright } from "../../src/client.mjs";
 import {
+  _createMcpHandlersForTest,
   contentForResult,
   downloadPolicyFromEnv,
   headlessFromEnv,
+  LOGIN_INPUT_SCHEMA,
   loginOptionsFromArgs,
   policyFromEnv,
 } from "../../src/mcp-server.mjs";
+
+test("MCP omits and rejects browser_login when the vault is disabled", async () => {
+  let fillCalls = 0;
+  const browser = new BetterWright({ vault: false });
+  browser.fillCredential = async () => {
+    fillCalls += 1;
+    return { ok: true };
+  };
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "deny",
+  });
+  try {
+    const listed = await handlers.listTools();
+    assert.deepEqual(
+      listed.tools.map((tool) => tool.name),
+      ["browser", "browser_download", "browser_doctor"],
+    );
+
+    const response = await handlers.callTool({
+      params: { name: "browser_login", arguments: { username: "alice" } },
+    });
+    assert.equal(response.isError, true);
+    assert.match(response.content[0].text, /Unknown tool: browser_login/);
+    assert.equal(fillCalls, 0);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("MCP advertises and dispatches browser_login when a vault is available", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({
+    browser: {
+      vault: {},
+      async fillCredential(options) {
+        calls.push(options);
+        return { ok: true, result: { filled: true } };
+      },
+    },
+    server: {},
+    downloadPolicy: "deny",
+  });
+
+  const listed = await handlers.listTools();
+  assert.ok(listed.tools.some((tool) => tool.name === "browser_login"));
+
+  const response = await handlers.callTool({
+    params: { name: "browser_login", arguments: { username: "alice", submit: true } },
+  });
+  assert.equal(response.isError, undefined);
+  assert.deepEqual(calls, [
+    { session: "default", generate: false, username: "alice", submit: true },
+  ]);
+  assert.equal(JSON.parse(response.content[0].text).result.filled, true);
+});
 
 test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
   assert.deepEqual(
     loginOptionsFromArgs({
       passwordSelector: "#pw",
+      currentPasswordSelector: "#old-pw",
       usernameSelector: "#user",
+      confirmPasswordSelector: "#confirm-pw",
       submitSelector: "#go",
       id: "rec-1",
       generate: true,
+      submit: true,
       length: "18",
       includeSymbols: false,
+      matchMode: "exact-origin",
       code: "danger()",
       note: "ignored",
     }),
     {
       session: "default",
       passwordSelector: "#pw",
+      currentPasswordSelector: "#old-pw",
       generate: true,
       usernameSelector: "#user",
+      confirmPasswordSelector: "#confirm-pw",
       submitSelector: "#go",
       id: "rec-1",
       length: 18,
       includeSymbols: false,
+      matchMode: "exact-origin",
+      submit: true,
     },
   );
   // Defaults: session "default", generate false, no stray keys.
-  assert.deepEqual(loginOptionsFromArgs({ passwordSelector: "#p" }), {
+  assert.deepEqual(loginOptionsFromArgs({}), {
     session: "default",
-    passwordSelector: "#p",
     generate: false,
   });
+  assert.deepEqual(loginOptionsFromArgs({ session: "work", submit: false }), {
+    session: "work",
+    generate: false,
+    submit: false,
+  });
+  assert.deepEqual(LOGIN_INPUT_SCHEMA.properties.matchMode.enum, [
+    "base-domain",
+    "host",
+    "exact-origin",
+    "never",
+  ]);
+  assert.equal(
+    LOGIN_INPUT_SCHEMA.properties.currentPasswordSelector.type,
+    "string",
+  );
+  assert.throws(
+    () => loginOptionsFromArgs({ generate: true, matchMode: "same-site" }),
+    /matchMode.*exact-origin/,
+  );
 });
 
 test("policyFromEnv is open by default and hardens via BLOCK_* vars", () => {
@@ -88,6 +174,15 @@ test("contentForResult separates screenshots from file paths", async () => {
       { kind: "download", path: "/tmp/report.pdf" },
     ],
     pages: [{ url: "https://example.com" }],
+    pendingCredential: {
+      pendingId: "pending-1",
+      origin: "https://example.com",
+      matchMode: "host",
+      username: "",
+      label: null,
+      secret: "generated-secret-that-must-not-leak",
+      expiresAt: "2030-01-01T00:00:00.000Z",
+    },
     challenges: [],
     warnings: [],
     durationMs: 12.3,
@@ -99,6 +194,7 @@ test("contentForResult separates screenshots from file paths", async () => {
     "ok",
     "result",
     "error",
+    "pendingCredential",
     "console",
     "files",
     "pages",
@@ -109,6 +205,8 @@ test("contentForResult separates screenshots from file paths", async () => {
   ]);
   assert.equal(summary.ok, true);
   assert.equal(summary.duration_ms, 12.3);
+  assert.equal(summary.pendingCredential.pendingId, "pending-1");
+  assert.equal(Object.hasOwn(summary.pendingCredential, "secret"), false);
   assert.deepEqual(summary.skills, []);
   assert.deepEqual(summary.files, [{ kind: "download", path: "/tmp/report.pdf" }]);
   assert.equal(content[1].type, "image");
