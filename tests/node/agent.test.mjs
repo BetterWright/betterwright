@@ -84,6 +84,78 @@ test("runAgentTask drives browser then finishes on done", async () => {
   assert.match(toolTurn.results[0].content, /"result":"HN"/);
 });
 
+test("runAgentTask finishes in one turn when the code returns { finalAnswer }", async () => {
+  const browser = fakeBrowser({
+    runs: [
+      {
+        ok: true,
+        result: { finalAnswer: "The Eiffel Tower is taller, by 237 m.", eiffel: 330, liberty: 93 },
+        artifacts: [{ kind: "proof", path: "/tmp/compare.png" }],
+        durationMs: 900,
+      },
+    ],
+  });
+  const model = scriptedModel([
+    {
+      text: "",
+      toolCalls: [{ id: "c1", name: "browser", input: { code: "…extract, compute, return {finalAnswer}…" } }],
+    },
+  ]);
+
+  const result = await runAgentTask({ task: "which is taller?", model, browser });
+
+  // One model turn total — no separate `done` round-trip.
+  assert.equal(model.seen.length, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "done");
+  assert.equal(result.answer, "The Eiffel Tower is taller, by 237 m.");
+  assert.equal(result.steps, 1);
+  assert.equal(result.proof, "/tmp/compare.png");
+  // The single-call finish is taught to the model.
+  assert.match(model.seen[0].system, /finalAnswer/);
+});
+
+test("runAgentTask ignores finalAnswer on an errored browser call", async () => {
+  const browser = fakeBrowser({
+    runs: [
+      { ok: false, error: "boom", result: { finalAnswer: "should not count" }, artifacts: [] },
+      { ok: true, result: "recovered", artifacts: [] },
+    ],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "fail" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "browser", input: { code: "retry" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "real answer" } }] },
+  ]);
+
+  const result = await runAgentTask({ task: "x", model, browser });
+
+  assert.equal(result.answer, "real answer");
+  assert.equal(model.seen.length, 3, "the errored finalAnswer did not end the task");
+});
+
+test("runAgentTask ignores browser calls batched after a finalAnswer call", async () => {
+  const browser = fakeBrowser({
+    runs: [{ ok: true, result: { finalAnswer: "42" }, artifacts: [] }],
+  });
+  const model = scriptedModel([
+    {
+      text: "",
+      toolCalls: [
+        { id: "c1", name: "browser", input: { code: "finish" } },
+        { id: "c2", name: "browser", input: { code: "extra" } },
+      ],
+    },
+  ]);
+
+  const result = await runAgentTask({ task: "x", model, browser });
+
+  assert.equal(result.answer, "42");
+  assert.equal(browser.calls.run.length, 1, "the batched call after the finish never executed");
+  const toolTurn = result.transcript.find((m) => m.role === "tool");
+  assert.match(toolTurn.results[1].content, /already finished/);
+});
+
 test("runAgentTask reports uncached input, cache usage, and full final context", async () => {
   const browser = fakeBrowser({
     runs: [

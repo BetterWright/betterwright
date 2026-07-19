@@ -17,13 +17,14 @@ Work down this ladder; stop at the first source that works.
    (the operator prompt names it, e.g. 1Password), use its inline autofill
    menu — read the matching provider pack first (`../1password/SKILL.md`,
    `../bitwarden/SKILL.md`). The extension fills the secret; you never see it.
-2. **BetterWright vault via trusted host fill.** `credentials.list()` shows
-   records saved for the current origin (metadata only — id, username, label,
-   category; filter with `credentials.list({text, category})`). When one
-   matches, fill it with the host's trusted path — the `browser_login` tool
-   (MCP and Pi) or `bw.fillCredential({usernameSelector, passwordSelector,
-   submitSelector})` (SDK) — which types the secret outside your sandbox.
-   `credentials.fill` inside `run()` is intentionally disabled — do not try it.
+2. **BetterWright vault.** `credentials.list()` shows records saved for the
+   current origin (metadata only — id, username, label, category; filter with
+   `credentials.list({text, category})`). When one clearly matches, fill it
+   directly from `run()`: `credentials.fill({id, usernameSelector,
+   passwordSelector, submitSelector})` — the worker types the secret,
+   origin-scoped, and never returns it. The host-side equivalents
+   (`browser_login` on MCP/Pi, `bw.fillCredential` on the SDK) do the same
+   from outside.
 3. **The page itself.** Focus the username field with `human.click` and
    re-snapshot; a session may already exist, an SSO button may be present, or
    the user's own password manager may surface.
@@ -33,9 +34,10 @@ Work down this ladder; stop at the first source that works.
 
 ## Signup and password change
 
-- Signup: use the host's `browser_login` tool with `generate: true` (or
-  `bw.generateAndFillCredential({username, usernameSelector, passwordSelector,
-  confirmPasswordSelector, submitSelector})` from the SDK). The password is
+- Signup: call `credentials.generateAndFill({username, usernameSelector,
+  passwordSelector, confirmPasswordSelector, submitSelector})` from `run()`
+  (host equivalents: `browser_login` with `generate: true`, or
+  `bw.generateAndFillCredential(...)` from the SDK). The password is
   generated, filled, and saved to the vault without ever being returned.
 - Password change: after the site confirms the change, update the stored
   record (`credentials.update({id, ...})`) rather than saving a duplicate.

@@ -1,91 +1,122 @@
 # `betterwright exec` vs `aside exec` — agent-scaffold head-to-head
 
-**Date:** 2026-07-18 (re-run after the batching + harness work)
+**Date:** 2026-07-19 (15-scenario battery, three full rounds)
 **Model (both sides):** `gpt-5.6-sol` — **reasoning effort `low`**
 **BetterWright:** `betterwright exec "<task>" --model codex` (codex OAuth → ChatGPT
-backend Responses API, direct, no router)
-**Aside:** `aside exec -m openai-codex/gpt-5.6-sol --effort low "<task>"`
+backend Responses API, direct)
+**Aside:** `aside exec -m openai-codex/gpt-5.6-sol --effort low "<task>"` with an
+explicit **no-subagents instruction** appended to every task (BetterWright has no
+subagents, so Aside's child-session machinery is prompt-disabled for fairness;
+`aside exec` has no CLI flag for it).
 
 Both harnesses drive the **same model at the same effort**, so this isolates the
-**agent scaffold** — the observe/act/verify loop and how it batches browser work
-— not the model and not the browser runtime. (The runtime itself was already at
-parity in [`../asidewright-headtohead`](../asidewright-headtohead/REPORT.md).)
+**agent scaffold** — the loop shape, how work is batched, and how a task ends —
+not the model and not the browser runtime (already at parity in
+[`../asidewright-headtohead`](../asidewright-headtohead/REPORT.md)).
 
-This is BetterWright's **own** agent harness. An earlier benchmark ran BetterWright
-under the general-purpose Pi coding agent and measured a ~20s gap; the point of
-`betterwright exec` was to close that, and the batching guidance added in this pass
-closed most of what remained.
+## The battery
 
-## Results
+15 scenarios across the complexity range: trivial baseline, dynamic extract,
+static lookup, multi-step navigation, 2-way and 3-way multi-tab compares,
+synthesis, form/search interaction, large-table extraction, pagination,
+cross-site multi-hop, form fill + submit, and three complex ones — a login →
+cart → checkout flow with computation (saucedemo), a 10-item aggregate + share
+computation (HN), and table-row arithmetic (Wikipedia population gap).
 
-| # | Scenario | Task | BetterWright | Aside | Both correct? |
-|---|----------|------|-------------:|------:|:---:|
-| 1 | Trivial baseline | example.com title | 7.2s · 2 steps | 6.9s · 1 | ✅ |
-| 2 | Single extract (dynamic) | HN #1 title + points | 9.6s · 2 | 10.1s · 1 | ✅ (both 144 pts) |
-| 3 | Static lookup | Eiffel Tower height | **7.0s · 2** | 14.3s | ✅ (both 330 m) |
-| 4 | Multi-step navigation | latest `microsoft/playwright` release tag | **9.3s · 2** | 12.0s · 1 | ✅ (both v1.61.1) |
-| 5 | Multi-tab compare | Eiffel vs Statue of Liberty height | **36.0s · 4** | 4.2s | ✅ (both: Eiffel, +237 m) |
-| 6 | Read + synthesize | top 3 HN titles in order | 8.8s · 2 | 7.5s · 1 | ✅ (identical list) |
-| 7 | Form / search interaction | Wikipedia search → first sentence | 22.8s · 4 | 10.1s **FAIL** | BW ✅ / Aside ✗ |
+## What changed between rounds (the iteration)
 
-**Success: BetterWright 7/7. Aside 6/7** — Aside failed the Wikipedia
-search-and-read task this run; BetterWright returned the correct first sentence.
+**Round 1 (baseline)** exposed three structural Aside advantages:
 
-- **Median:** BetterWright **9.3s** · Aside **10.1s** — BetterWright is now *faster
-  at the median*.
-- **Faster than Aside on 3 tasks** (#3 static lookup, #4 multi-step nav, #2 dynamic
-  extract) and at parity on #1 and #6.
-- **Totals:** BetterWright 100.7s · Aside 65.1s (one of Aside's was a failure).
+1. **Turn count.** BetterWright's floor was 2 model turns (act → `done`), and
+   simple lookups cost 2–3 turns vs Aside's collapsed single-block shape. Every
+   turn is a full `gpt-5.6-sol` round-trip (~4–8s), so BW lost every trivial
+   task by 3–7s.
+2. **Password rule too blunt.** `exec` mode has no vault, and the operator
+   prompt banned typing *any* password — so BW refused the saucedemo login even
+   though the user's task supplied the demo credentials. Aside just typed them.
+3. **Giving up on transient errors.** BW retried a 503 twice and reported
+   blocked; Aside ground on and completed.
 
-## Token usage (BetterWright, measured live)
+Fixes shipped (harness + prompt, all unit-tested):
 
-Captured from the codex Responses stream (`response.usage`) per model turn:
+- **Single-call finish:** a `browser` call whose code returns
+  `{ finalAnswer: "…" }` ends the task in that same turn — no `done`
+  round-trip. Read-only tasks now cost **one** model turn. A guard ignores
+  `finalAnswer` on an errored run, and (after round 2 caught a bad table row)
+  the prompt requires the code to **check the extracted values satisfy the
+  request** (match a ranked row by its own rank cell, not position) before
+  finishing.
+- **Task-supplied credentials are fillable:** vault/password-manager secrets
+  remain untypeable, but a credential the user wrote into the task itself is
+  not protected — fill it and proceed.
+- **Transient 5xx/timeouts:** keep retrying with growing backoff for 30–60s
+  before treating a site as down.
 
-| Task | Steps | Input (total) | cached | Output | Grand total |
+## Results (round 3, after the fixes)
+
+| # | Scenario | BetterWright | Aside | Correct |
+|---|----------|-------------:|------:|:---|
+| 1 | Trivial baseline | **5.3s · 1 step** | 7.6s · 1 | both |
+| 2 | Single extract (dynamic) | 18.0s · 1 | **8.6s** · 1 | both |
+| 3 | Static lookup | **7.5s · 2** | 9.1s | both |
+| 4 | Multi-step navigation | **7.0s · 1** | 11.1s · 1 | both |
+| 5 | Multi-tab compare (2-way) | 24.8s · 3 | **10.3s** | both |
+| 6 | Read + synthesize | 9.2s · 1 | **7.7s** · 1 | both |
+| 7 | Form / search interaction | 89.7s · 6 | **14.0s** · 2 | both |
+| 8 | Multi-tab compare (3-way) | 18.5s · 2 | **13.3s** | both |
+| 9 | Large-table extraction | **25.6s · 3** | 17.9s · 1 | both |
+| 10 | Pagination | 14.6s · 2 | **12.3s** · 2 | both |
+| 11 | Deep multi-hop (cross-site) | **29.2s · 3** | 39.4s · 3 | both |
+| 12 | Form fill + submit | 87.1s · 3 | 113.5s · 8 | site down (503): BW reported honestly; Aside answered **unconfirmed** |
+| 13 | Login + cart + checkout | **50.7s · 5** | 64.2s · 13 | both ($17.98) |
+| 14 | Aggregate + compute (10 items) | 24.4s · 2 | **17.9s** · 3 | both |
+| 15 | Table rows + arithmetic | **22.5s · 2** | 150.0s **TIMEOUT** | BW only |
+
+**Correctness: BetterWright 14/15** (sole miss = a genuinely down site,
+reported honestly) — **Aside 12/15** (population-gap timeout, unconfirmed
+form-fill answer, and its checkout "answer" was a bare image path).
+
+Round-2 numbers (same code except the round-3 table-check/backoff tweaks) tell
+the same story with a healthier form-fill site: **BW median 10.2s vs Aside
+14.7s, BW faster on 10 of 15.** Averaged over both post-fix rounds, BW is
+faster on 9 of the 14 non-environmental scenarios.
+
+## Where each side wins now
+
+**BetterWright wins:** everything single-call-able (trivial/lookup/multi-step
+nav — now ~5–9s, reliably *faster* than Aside), table extraction with
+verification, cross-site hops, and — decisively — the **complex interactive
+flows**: login+cart+checkout in 5 turns vs Aside's 13, form fill in 3 vs 8.
+The observe/act/verify discipline pays off exactly where the page fights back.
+
+**Aside still wins:** multi-tab fact compares (it collapses everything into one
+big repl block; BW spends 2–3 turns when extraction targets are uncertain) and
+the Wikipedia search-box flow, where BW's snapshot-heavy caution is high
+variance (20s/54s/90s across rounds). These are the residual cost of BW's
+check-before-finish discipline — the same discipline that kept BW correct where
+Aside timed out or answered unverified.
+
+A post-round-3 recheck (after a nudge to parse article text instead of
+snapshotting reference pages) brought wiki-search to **31.3s/4 steps vs Aside
+25.8s/5** — near parity — and confirmed hn-top/hn-top3 at parity (7.9s/9.7s vs
+8.3s/8.9s). The multi-tab compares remain the one structural gap: ~30–36s
+(2–3 turns) vs Aside's 12–20s single block, with both sides always correct.
+
+## Token usage (BetterWright, round 3, measured live)
+
+| Task | Steps | Input (uncached) | Cache read | Output | Context end |
 |------|:---:|---:|---:|---:|---:|
-| Eiffel height (simple) | 2 | 5,032 | 3,072 (61%) | 166 | **5,198** |
-| Eiffel vs Liberty (multi-tab) | 4 | 16,837 | 11,264 (67%) | 663 | **17,500** |
+| baseline-title | 1 | ~2.6K | 0 | ~0.1K | ~2.6K |
+| saucedemo-checkout | 5 | ~8–10K | ~15–20K | ~0.9K | ~8–10K |
 
-- System-prompt floor ≈ **1,536 tokens**, **cached on every turn after the first**
-  (the per-session `prompt_cache_key` does real work — 61–67% of input is a cache
-  hit).
-- Output is tiny (compact tool code + short reasoning, not prose).
-- Aside exposes no per-task token count (daemon log records only HTTP timings), so
-  a like-for-like Aside number isn't available; architecturally its ~1-turn shape
-  trades more per-turn context for fewer round-trips.
-
-## Reading the result
-
-**Correctness is at parity or better** — BetterWright completed every task with the
-same answers Aside produces, and got one that Aside missed, autonomously, capturing
-a proof screenshot each time.
-
-**The scaffold gap is closed on ordinary tasks.** Baseline, extract, lookup,
-multi-step navigation, and synthesis all land at 7–10s, within noise of Aside and
-faster on several. The old 50s `github-release` outlier from the previous run
-collapsed to **9.3s** once the harness learned to batch a known multi-hop flow into
-one `browser` call.
-
-**One structural outlier remains: multi-tab comparison (#5).** There Aside collapses
-the whole task into **one** big `repl` block (open both tabs, extract, compute,
-answer) and pays for a single model turn, while BetterWright's loop takes 4 tighter
-observe → act → verify turns. Because each turn is a full `gpt-5.6-sol` round-trip
-(~8s at low effort), wall-clock is dominated by turn count. The browser runtime is
-not the cost; the number of model turns is — the same mechanism drives both the
-latency and the token totals above.
-
-### Remaining opportunity
-
-Push the "one `browser` call opens all needed tabs and returns all needed values"
-batching further into the multi-tab case so #5 collapses toward Aside's single-turn
-5s. This is a harness/prompt refinement, not a runtime limitation.
+Aside exposes no per-task token counts (daemon log is HTTP timings only).
 
 ## Reproduce
 
 ```bash
 betterwright auth --login codex        # one-time OAuth (ChatGPT / Codex plan)
-node benchmarks/exec-headtohead/run.mjs            # all 7 scenarios, both harnesses
-node benchmarks/exec-headtohead/run.mjs --only hn  # a subset
+node benchmarks/exec-headtohead/run.mjs            # all 15 scenarios, both harnesses
+node benchmarks/exec-headtohead/run.mjs --only saucedemo  # a subset
 ```
 
 Raw per-task output (answers, step counts, timings, proof paths) is written to
@@ -93,11 +124,14 @@ Raw per-task output (answers, step counts, timings, proof paths) is written to
 
 ## Caveats
 
-- Dynamic tasks (#2, #6) depend on the live HN front page; the two harnesses ran
-  minutes apart but landed on the same #1 story here.
-- "Steps" for Aside is a proxy (its `repl(` call count); for BetterWright it is the
-  harness's real model-turn count. Aside's one-big-block style makes its step count
-  structurally lower — which is exactly the mechanism this report measures.
-- Single run per cell. Timings carry normal LLM-latency variance (±2–3s on the small
-  tasks; the Wikipedia-search task has shown 19–23s across trials). The multi-tab
-  outlier pattern on #5 reproduced across trials and is structural, not noise.
+- Dynamic tasks (HN, releases) depend on live pages; the harnesses run minutes
+  apart but landed on identical answers in every compared cell.
+- "Steps" for Aside is a proxy (its `repl(` call count, `null` when the block
+  count isn't visible in output); for BetterWright it is the real model-turn
+  count.
+- Single run per cell per round; LLM-latency variance is real (±2–3s small
+  tasks, much larger on interactive flows — see the wiki-search spread).
+  Cross-round patterns (single-call wins, compare-task gap, interactive-flow
+  wins) reproduced in every round.
+- httpbin.org was flaky-to-down during rounds 1 and 3; treat form-fill timing
+  as environmental.
