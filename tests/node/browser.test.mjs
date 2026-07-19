@@ -242,16 +242,16 @@ test("setInputFiles only reads files from the artifact root", opts, async () => 
   }
 });
 
-test("vault fills are unavailable to model-authored snippets", opts, async () => {
+test("model-authored credentials.fill types the secret without returning it", opts, async () => {
   const secret = "vault-secret-value";
   const server = await listen((_request, response) => {
     response.setHeader("content-type", "text/html");
-    response.end('<input type="password">');
+    response.end('<input id="u"><input id="p" type="password">');
   });
   const vault = {
     async handleRequest(action, _payload, origin) {
       assert.equal(action, "fill");
-      return { secret, origin, username: "alice" };
+      return { secret, origin, username: "alice", id: "rec-1" };
     },
   };
   const bw = new BetterWright({
@@ -261,13 +261,34 @@ test("vault fills are unavailable to model-authored snippets", opts, async () =>
     vault,
   });
   try {
+    // The Aside-style shape: fill directly from run(), origin-scoped, and get
+    // metadata back — never the secret.
     const result = await bw.run(`
       await page.goto(${JSON.stringify(server.origin)});
-      await credentials.fill({username: 'alice'});
-      return page.locator('input[type=password]').evaluate(element => btoa(element.value));
+      const outcome = await credentials.fill({
+        username: 'alice',
+        usernameSelector: '#u',
+        passwordSelector: '#p',
+      });
+      const typed = await page.locator('#p').evaluate(element => element.value.length);
+      return { outcome, typed };
     `);
-    assert.equal(result.ok, false);
-    assert.match(result.error || "", /disabled.*untrusted|untrusted.*disabled/i);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result.outcome.filled, ["username", "password"]);
+    assert.equal(result.result.outcome.submitted, false);
+    assert.equal(result.result.outcome.username, "alice");
+    assert.equal(result.result.outcome.secret, undefined);
+    // The field really was typed with the full secret.
+    assert.equal(result.result.typed, secret.length);
+    // The secret never appears anywhere in the envelope in plain text — the
+    // redaction net scrubs even a snippet that reads the DOM value back.
+    assert.ok(!JSON.stringify(result).includes(secret));
+
+    const readBack = await bw.run(
+      "return page.locator('#p').evaluate(element => element.value);",
+    );
+    assert.equal(readBack.ok, true);
+    assert.ok(!JSON.stringify(readBack).includes(secret), "plain read-back is redacted");
   } finally {
     await bw.close();
     await server.close();

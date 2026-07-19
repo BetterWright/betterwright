@@ -250,3 +250,10 @@ JavaScript; BetterWright runs it and feeds back a compact JSON observation
 `screenshots`). The loop ends when the model calls `done` (or answers in prose),
 or at `--max-steps`. Screenshots are captured as artifacts and their paths
 surfaced; the last `proof` screenshot is returned on the result.
+
+A `browser` call can also end the task in the *same* turn: when the model's
+code returns `{ finalAnswer: "…" }` (from an `ok` run), the harness records
+that as the answer and finishes without spending another model round-trip. The
+preamble teaches the model to use this single-call shape for read-only tasks —
+navigate, extract, compute, capture proof, and return `finalAnswer` in one
+call — which makes a simple lookup cost one model turn instead of two.

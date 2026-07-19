@@ -46,7 +46,8 @@ Call the \`browser\` tool with async Playwright JavaScript to act — each call 
 
 Work in as few \`browser\` calls as the task safely allows: every call is a full model round-trip, so the number of calls — not the browser — sets your speed. One \`browser\` call can run a whole sequence, so plan the next stretch of work and do it in a single call.
 
-- Plan, then batch. When you already know what to read and where from — a value on a page, the same field across several pages, a comparison between tabs — do it in ONE call: navigate (or open several tabs with \`Promise.all([openPage(a), openPage(b)])\`), extract each value, compute, and return the finished result. Do not spend one call per page.
+- Plan, then batch. When you already know what to read and where from — a value on a page, the same field across several pages, a comparison between tabs — do it in ONE call: navigate (or open several tabs with \`Promise.all([openPage(a), openPage(b)])\`), extract each value, compute, and return the finished result. Do not spend one call per page, and do not snapshot article-style reference pages first — grab a generous text region (an infobox, a lead section, \`main\`) from each page in the same call and parse the values out in JS; fall back to a snapshot only if parsing comes up empty.
+- Finish in the same call when you can. For a read-only task — look up, extract, compare, compute — do the whole job in ONE \`browser\` call: navigate, extract, compute, capture \`screenshot({kind: 'proof'})\`, and \`return { finalAnswer: '<the complete answer for the user>' }\`. Returning \`finalAnswer\` ends the task immediately — no \`done\` call, no extra round-trip. Compose it from the values your code just extracted (template literals), never from values you merely expect — and have the code CHECK the values satisfy the request before finishing (a ranked row's own rank cell says the requested rank; header and spanned rows shift positional indexes, so select by the row's own cells, not by index). On a failed check or dubious data, return the raw data instead and finish next turn. For actions that change state (submissions, purchases, messages), verify the outcome before finishing.
 - Prefer direct extraction when the target is unambiguous: \`page.locator(...).innerText()\`, \`getByRole\`, \`allInnerTexts()\`, or \`page.url()\` after a redirect. Known shortcuts (a project's \`/releases/latest\` URL) beat click-through exploration. Compute in JS and return the finished answer, not raw page dumps.
 - When the right element is not obvious — an article's first real sentence (leading nodes are often empty or hatnotes), the "main" result among many — read a scoped \`snapshot({interactive:true})\` or \`snapshot({selector})\` first to see the real structure, then target precisely. If an extraction returns empty, too short, or clearly wrong, do NOT retry the same blind locator — take one snapshot to see the structure, then extract. One snapshot beats three guesses.
 - Use the read → act → verify loop when the page is interactive or its structure is unknown — forms, logins, search boxes, dynamic UIs, or when an action's outcome is uncertain: \`snapshot({interactive: true})\` to see what to click, act on \`[ref=eN]\` via \`page.locator('aria-ref=eN')\`, then \`snapshot({diff: true})\` to confirm. Snapshots cover the whole page including iframes and off-screen elements — never scroll just to read, never guess a ref or URL, and never truncate a snapshot string in code (\`slice\`/\`substring\`) — scope it with \`{ref}\`/\`{selector}\` or raise \`{maxChars}\` instead.`;
@@ -58,7 +59,7 @@ const HARNESS_AUTONOMY_HEADLESS = `You are operating autonomously: the user is n
 
 const HARNESS_AUTONOMY_INTERACTIVE = `You are operating in an interactive session: the user is present and can answer through the \`ask\` tool. Still act autonomously — do not ask "shall I proceed?" for reversible steps that follow from the task; just do them. Call \`ask\` only when you genuinely need the user: an input you cannot obtain yourself (an MFA/2FA code, which of several accounts to use), a consequential or irreversible choice with no reasonable default (a purchase, a message to send, a destructive action), or a task ambiguous enough that guessing risks doing the wrong thing. Offer short concrete options and mask any secret (e.g. "account ending 999"). Then keep working until the task is genuinely done.`;
 
-const HARNESS_PREAMBLE_TAIL = `When finished, call the \`done\` tool with a clear answer for the user. On any task with a visible result, capture \`screenshot({kind: 'proof'})\` of the end state first — do it in the same \`browser\` call as your final action when you can, to save a turn. Call \`done\` exactly once, at the end.`;
+const HARNESS_PREAMBLE_TAIL = `When finished, end the task: either return \`{ finalAnswer }\` from the final \`browser\` call (preferred — saves a round-trip) or call the \`done\` tool with a clear answer for the user. On any task with a visible result, capture \`screenshot({kind: 'proof'})\` of the end state first — in the same \`browser\` call as your final action when you can. Finish exactly once.`;
 
 // Assemble the harness preamble, choosing the autonomy paragraph by whether an
 // `ask` tool is available (interactive) or not (headless `exec`).
@@ -67,7 +68,7 @@ function harnessPreamble({ withAsk } = {}) {
   return `${HARNESS_PREAMBLE_HEAD}\n\n${autonomy}\n\n${HARNESS_PREAMBLE_TAIL}`;
 }
 
-const BROWSER_TOOL_DESCRIPTION = `Run async Playwright JavaScript in the persistent browser and get back a JSON observation ({ok, result, error, console, pages, challenges, skills, warnings, screenshots, duration_ms}). Read with snapshot({interactive:true}); act on [ref=eN] via page.locator('aria-ref=eN'); verify with snapshot({diff:true}). Never type or print a password — use the login tool if present, or a password-manager extension.`;
+const BROWSER_TOOL_DESCRIPTION = `Run async Playwright JavaScript in the persistent browser and get back a JSON observation ({ok, result, error, console, pages, challenges, skills, warnings, screenshots, duration_ms}). Read with snapshot({interactive:true}); act on [ref=eN] via page.locator('aria-ref=eN'); verify with snapshot({diff:true}). Return { finalAnswer: '...' } from the code to complete the whole task in this same call when the answer is fully in hand. Never type or print a vault-held password — fill logins with credentials.fill(...) / credentials.generateAndFill(...) in the code (origin-scoped, secret never returned), a password-manager extension, or the login tool if present. A credential the user wrote into the task itself may be typed directly.`;
 
 const DONE_TOOL_DESCRIPTION = `Finish the task. Call this exactly once when the task is complete or genuinely blocked, with the final answer or status for the user. Capture a proof screenshot first when there is a visible result.`;
 
@@ -196,6 +197,24 @@ function observationFromResult(result) {
     if (text.length > OBSERVATION_LIMIT) text = `${text.slice(0, OBSERVATION_LIMIT)}…`;
   }
   return text;
+}
+
+// A browser call can end the task in the same turn: when the model's code
+// returns `{ finalAnswer: "..." }`, the harness treats it as `done` without
+// spending another model round-trip. Only an ok result counts — an errored
+// call never finishes the task.
+function finalAnswerFromResult(result) {
+  if (!result?.ok) return null;
+  const value = result.result;
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof value.finalAnswer === "string" &&
+    value.finalAnswer.trim()
+  )
+    return value.finalAnswer.trim();
+  return null;
 }
 
 function loginOptionsFromInput(input = {}, session) {
@@ -370,6 +389,14 @@ export async function runAgentTask(options = {}) {
           const result = await browser.run(String(call.input?.code || ""), { session, note: note || undefined });
           for (const shot of result.artifacts || [])
             if (shot.kind === "proof" && shot.path) proof = shot.path;
+          // Returning { finalAnswer } from the code completes the task in this
+          // same turn — the single-call shape that saves a full model round-trip.
+          const final = finalAnswerFromResult(result);
+          if (final != null) {
+            answer = final;
+            reason = "done";
+            finished = true;
+          }
           results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
           continue;
         }

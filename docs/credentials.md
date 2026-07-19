@@ -32,19 +32,21 @@ await credentials.remove({ id: "cred_…" });
 `{text, category}` filter, applied by the vault backend. `category` defaults to
 `login`; other categories (`credit-card`, `identity`, `api-credential`,
 `secure-note`, `ssh-key`) store their own non-secret metadata and do not require
-a `password`. `fill` and `generateAndFill` fail explicitly in `run()` because
-filling a normal DOM input would let the same snippet read, encode, or transmit
-the secret. To actually fill, use the trusted path below — never a `run()`
-snippet.
+a `password`. `credentials.fill(...)` and `credentials.generateAndFill(...)`
+are callable from `run()` too — same options as the host methods below, same
+worker-side typing, and the secret is still never returned. Like a
+password-manager extension's autofill, the filled value does exist in the live
+DOM afterward; the redaction net scrubs it from every output channel, and the
+vault RPC stays origin-scoped, so the reach is exactly an unlocked extension's.
 
-## Filling from trusted host code
+## Filling
 
-`bw.fillCredential(...)` performs the fill in the
-worker, outside the model sandbox. The worker fetches the secret over the vault
+`bw.fillCredential(...)` (host) and `credentials.fill(...)` (inside `run()`)
+perform the fill in the worker. The worker fetches the secret over the vault
 RPC, types the username, password, and (optionally) a confirm-password field,
 and can submit the form — then returns only non-secret metadata. The password
-never enters a model snippet, never comes back to your process, and is redacted
-from run output as a final net.
+never comes back to your process, and is redacted from run output as a final
+net.
 
 ```js
 // Fill an existing stored login and submit in the same trusted call.
@@ -78,10 +80,11 @@ three embeddings can log in and sign up — not only the in-process JS client. T
 tool takes the same selectors (`passwordSelector` required, plus
 `usernameSelector`/`confirmPasswordSelector`/`submitSelector`), `id`/`username`
 to pick a record, and `generate`/`length`/`includeSymbols`/`label` for signup.
-The fill still runs as a dedicated worker message, never as model JavaScript, and
-the vault RPC is **origin-scoped**: `browser_login` can only fill the credential
-for the page's current origin — the same reach an unlocked password-manager
-extension gives, never a way to harvest another site's secret.
+Every path — host method, `browser_login`, or in-`run()` `credentials.fill` —
+goes through the same worker fill with the **origin-scoped** vault RPC: it can
+only fill the credential for the page's current origin — the same reach an
+unlocked password-manager extension gives, never a way to harvest another
+site's secret.
 
 `browser_login` needs a configured vault. Pass one to `runMcpServer(env, {
 vault })` or Pi `browserOptions.vault`. Without a vault — for example plain `npx
