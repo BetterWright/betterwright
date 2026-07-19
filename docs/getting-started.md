@@ -106,7 +106,8 @@ await bw.run("await page.goto('https://example.com')");
 - [Headed and headless browsing](attach-mode.md) — run the same managed Cloak
   profile with or without a visible window.
 - [Network policy](network-policy.md) — controlling what the browser can reach.
-- [Credentials](credentials.md) — encrypted storage and trusted host-side use.
+- [Credentials](credentials.md) — built-in encrypted storage, site matching,
+  detected forms, and pending generated-password commits.
 - [Native CAPTCHA helpers](captcha.md) — resumable handling for authorized flows.
 - [Architecture](architecture.md) — how it works and what it does/doesn't secure.
 - [Examples](../examples) — runnable JavaScript scripts.

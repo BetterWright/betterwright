@@ -30,9 +30,14 @@
 
 import { createRequire } from "node:module";
 
+import {
+  BetterWright,
+  NetworkPolicy,
+  validateCredentialMatchMode,
+} from "./client.mjs";
 import { doctorReport } from "./doctor.mjs";
-import { BetterWright, NetworkPolicy } from "./index.mjs";
 import { piImageArtifacts, piImageContent } from "./pi.mjs";
+import { VAULT_MATCH_MODES } from "./vault.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -95,6 +100,7 @@ export async function contentForResult(result) {
     // documented summary shape on both success and failure.
     result: result.result ?? null,
     error: result.error ?? null,
+    pendingCredential: result.pendingCredential ?? null,
     console: result.console || [],
     // Screenshots are returned as image content below, not as paths. Other
     // files (downloads, spilled output) are listed here as paths only.
@@ -147,47 +153,61 @@ all downloads.`;
 
 const LOGIN_DESCRIPTION = `Fill a saved or freshly generated credential without the secret ever entering the conversation.
 
-The password is fetched, typed, and (if submitSelector is given) submitted
+BetterWright detects the visible enabled login/signup controls from autocomplete,
+labels, names, types, and form relationships. The password is fetched, typed,
+and (only with submit=true or submitSelector) submitted
 entirely inside the browser worker — it is never returned to you and never
-appears in a snapshot (password fields read as "[redacted]"). Provide CSS
-selectors for the fields. Use this instead of typing a password in browser
-code, which is blocked for exactly this reason.
+appears in a snapshot (password fields read as "[redacted]"). Use explicit CSS
+or current aria-ref=eN targets only when detection reports ambiguity. Use this
+instead of typing a password in browser code, which is blocked for exactly this
+reason.
 
-- Log in with a saved record: pass passwordSelector (and usernameSelector), and
-  optionally id or username to pick the record.
+- Log in with a saved record: optionally pass id or username to pick the record.
 - Sign up with a new strong password: set generate=true; it is generated,
-  filled into passwordSelector and confirmPasswordSelector, saved to the vault,
-  and never revealed.
+  staged, filled into new-password and confirmation fields, and never revealed.
+  After a later browser run visibly verifies signup/rotation success, call
+  credentials.commitGenerated({pendingId}) in browser code. On failure call
+  credentials.discardGenerated({pendingId}); pending credentials are not saved
+  as active records. After a complete host restart, credentials.listPending()
+  recovers secret-free pending metadata for the current site.
 
-Requires a host-configured vault; without one there are no credentials to fill.`;
+The built-in encrypted vault is enabled by default; an embedding can replace or disable it.`;
 
-const LOGIN_INPUT_SCHEMA = {
+export const LOGIN_INPUT_SCHEMA = {
   type: "object",
   properties: {
     passwordSelector: {
       type: "string",
-      description: "CSS selector for the password field (required).",
+      description: "Optional CSS or current aria-ref=eN target for the password field.",
     },
     usernameSelector: {
       type: "string",
-      description: "CSS selector for the username/email field.",
+      description: "Optional CSS or current aria-ref=eN target for the username/email field.",
     },
     confirmPasswordSelector: {
       type: "string",
-      description: "CSS selector for a confirm-password field (signup).",
+      description: "Optional CSS or current aria-ref=eN target for confirmation (signup).",
     },
     submitSelector: {
       type: "string",
-      description: "CSS selector clicked to submit in the same trusted call.",
+      description: "Optional CSS or current aria-ref=eN target clicked to submit.",
     },
-    id: { type: "string", description: "Select the saved record by id." },
+    submit: {
+      type: "boolean",
+      description: "Detect and submit the matching form after filling (default false).",
+      default: false,
+    },
+    id: {
+      type: "string",
+      description: "Select a saved record, or rotate it when generate=true.",
+    },
     username: {
       type: "string",
       description: "Select the saved record by username, or set the new one on signup.",
     },
     generate: {
       type: "boolean",
-      description: "Generate, fill, and save a new strong password (signup).",
+      description: "Generate, stage, and fill a new strong password (signup/rotation).",
       default: false,
     },
     length: { type: "integer", description: "Generated password length (default 24)." },
@@ -196,13 +216,17 @@ const LOGIN_INPUT_SCHEMA = {
       description: "Include symbols in a generated password (default true).",
     },
     label: { type: "string", description: "Human label for a newly saved record." },
+    matchMode: {
+      type: "string",
+      enum: [...VAULT_MATCH_MODES],
+      description: "URL scope for the generated credential (default base-domain).",
+    },
     session: {
       type: "string",
       description: "Independent set of pages/state; reuse a name across calls.",
       default: "default",
     },
   },
-  required: ["passwordSelector"],
 };
 
 /**
@@ -212,10 +236,10 @@ const LOGIN_INPUT_SCHEMA = {
 export function loginOptionsFromArgs(args = {}) {
   const options = {
     session: String(args.session || "default"),
-    passwordSelector: String(args.passwordSelector || ""),
     generate: args.generate === true,
   };
   for (const key of [
+    "passwordSelector",
     "usernameSelector",
     "confirmPasswordSelector",
     "submitSelector",
@@ -228,6 +252,9 @@ export function loginOptionsFromArgs(args = {}) {
   if (args.length != null) options.length = Number(args.length);
   if (typeof args.includeSymbols === "boolean")
     options.includeSymbols = args.includeSymbols;
+  if (args.matchMode !== undefined)
+    options.matchMode = validateCredentialMatchMode(args.matchMode);
+  if (args.submit === true) options.submit = true;
   return options;
 }
 
@@ -293,20 +320,19 @@ async function approveDownload(server, note) {
   }
 }
 
-export async function runMcpServer(env = process.env, { vault } = {}) {
+export async function runMcpServer(env = process.env, options = {}) {
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
     await loadSdk();
 
   const downloadPolicy = downloadPolicyFromEnv(env);
   // One persistent browser for the life of the server, so pages and logins
-  // survive across tool calls the way an agent expects. Pass a `vault` when
-  // embedding programmatically to enable `browser_login`; the plain CLI has no
-  // vault, so logins there go through a password-manager extension instead.
+  // survive across tool calls the way an agent expects. The built-in encrypted
+  // vault enables `browser_login`; an embedding may override or disable it.
   const browser = new BetterWright({
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
-    ...(vault ? { vault } : {}),
+    ...(Object.hasOwn(options, "vault") ? { vault: options.vault } : {}),
   });
 
   const server = new Server(

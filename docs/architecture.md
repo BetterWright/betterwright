@@ -8,7 +8,7 @@
 │                             │                                   │                          │
 │ • owns the worker           │  ◀────  guard / vault RPC  ─────  │ • managed Cloak browser  │
 │ • NetworkPolicy            │  ───────  rpc_response  ────────▶ │ • sandbox (node:vm)      │
-│ • vault (host-provided)    │                                   │ • per-session pages      │
+│ • vault (local or custom)  │                                   │ • per-session pages      │
 │ • result envelope          │  ◀─────────  result  ───────────── │ • transport SOCKS proxy  │
 └─────────────────────────────┘                                   └──────────────────────────┘
 ```
@@ -91,11 +91,18 @@ full.
 
 ### Secrets
 
-The [credential vault](credentials.md) is a host-provided, origin-scoped
-backend kept outside Chromium's profile. Secret-bearing fill operations are not
-available to model-authored snippets because arbitrary DOM access would make the
-filled value readable. As a last line, values the vault has handled are redacted
-from `run()` output.
+The [credential vault](credentials.md) is built in by default and kept outside
+Chromium's profile; hosts may replace or disable it. Login lookup is URL-gated,
+the model sees only item metadata, and the worker resolves and fills the secret
+without returning it. Generated passwords stay as encrypted provisional entries
+behind opaque ids until the agent verifies success and commits them; exact-id
+recovery and origin-scoped pending metadata survive a process restart. Values the vault has handled are redacted
+from model-visible output as a final net.
+
+The filled value necessarily exists in the page DOM, just as it does after a
+browser extension autofills. The vault therefore limits disclosure and
+cross-site selection; it is not a security boundary against JavaScript already
+running in the matched page or an attacker with same-user filesystem access.
 
 ### Untrusted page content
 
@@ -114,6 +121,11 @@ Everything lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`):
 ├── browser/
 │   ├── profile/        persistent browser profile (cookies, logins)
 │   └── runtime/        ephemeral profiles when the main one is locked
+├── vault/
+│   ├── vault.key       owner-only local encryption key
+│   ├── vault.enc       authenticated AES-256-GCM record table
+│   ├── audit.jsonl     metadata-only credential actions
+│   └── vault.lock/     cross-process write lock
 └── artifacts/          screenshots, downloads, spilled output (quota-managed)
     └── downloads/
 ```
@@ -124,7 +136,7 @@ downloads it directly from CloakHQ's release source and verifies the wrapper's
 pinned Ed25519 signature before extraction.
 
 Delete the directory to reset everything; delete `browser/profile/` to sign
-out everywhere.
+out everywhere, or `vault/` to remove saved credential items.
 
 ## Pinned browser integration
 

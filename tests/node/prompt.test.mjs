@@ -52,10 +52,11 @@ test("default prompt is permissive", () => {
   // Vault secrets are filled via credentials.fill and never surfaced, but a
   // credential the user wrote into the task itself may be typed directly.
   assert.ok(compact.includes("Vault secrets are filled, never seen"));
-  assert.ok(compact.includes("credentials.fill({id, usernameSelector, passwordSelector, submitSelector})"));
+  assert.ok(compact.includes("credentials.fill({id, submit:true})"));
   assert.ok(compact.includes("credentials.generateAndFill"));
-  assert.ok(compact.includes("A credential the user wrote into the task itself is not protected"));
-  assert.ok(compact.includes("never extend this to any other source"));
+  assert.ok(compact.includes("credentials.commitGenerated"));
+  assert.ok(compact.includes("visible form"));
+  assert.ok(compact.includes("save it only when the user asked to remember it"));
   assert.ok(!prompt.includes("Guardrails for this session"));
 });
 

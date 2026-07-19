@@ -1,7 +1,34 @@
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
-import { BetterWright } from "../../src/index.mjs";
+import { BetterWright, LocalCredentialVault } from "../../src/index.mjs";
+
+test("the encrypted local credential vault is enabled by default and can be replaced or disabled", async () => {
+  const home = path.join(os.tmpdir(), "betterwright-client-default-vault");
+  const local = new BetterWright({ home });
+  const customVault = { async handleRequest() {} };
+  const custom = new BetterWright({ vault: customVault });
+  const disabled = new BetterWright({ vault: false });
+  const disabledWithNull = new BetterWright({ vault: null });
+  try {
+    assert.ok(local.vault instanceof LocalCredentialVault);
+    assert.equal(local.vault.dir, path.join(home, "vault"));
+    assert.equal(custom.vault, customVault);
+    assert.equal(disabled.vault, null);
+    assert.equal(disabledWithNull.vault, null);
+    assert.throws(
+      () => new BetterWright({ vault: true }),
+      /vault must implement handleRequest/,
+    );
+  } finally {
+    await local.close();
+    await custom.close();
+    await disabled.close();
+    await disabledWithNull.close();
+  }
+});
 
 test("download approval is required by default and configurable", async () => {
   const guarded = new BetterWright();

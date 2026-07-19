@@ -26,7 +26,8 @@ export type {
 export interface BetterWrightOptions {
   home?: string;
   policy?: NetworkPolicy;
-  vault?: CredentialVault;
+  /** Custom credential backend, or false/null to disable the built-in vault. */
+  vault?: CredentialVault | false | null;
   browser?: BrowserFlavor;
   headless?: HeadlessMode;
   defaultTimeout?: number;
