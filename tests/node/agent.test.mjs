@@ -308,16 +308,73 @@ test("runAgentTask treats a prose reply (no tool call) as the answer", async () 
   assert.equal(result.ok, true);
 });
 
-test("runAgentTask stops at maxSteps without a done", async () => {
-  const browser = fakeBrowser({ runs: Array(5).fill({ ok: true, result: "x", artifacts: [] }) });
-  const model = scriptedModel(
-    Array(5).fill({ text: "", toolCalls: [{ id: "c", name: "browser", input: { code: "1" } }] }),
-  );
-  const result = await runAgentTask({ task: "loop", model, browser, maxSteps: 3 });
+test("runAgentTask has no step cap and runs until the model finishes", async () => {
+  const browser = fakeBrowser({ runs: Array(30).fill({ ok: true, result: "x", artifacts: [] }) });
+  const model = scriptedModel([
+    ...Array(30).fill({ text: "", toolCalls: [{ id: "c", name: "browser", input: { code: "1" } }] }),
+    { text: "", toolCalls: [{ id: "d", name: "done", input: { answer: "finally done" } }] },
+  ]);
+  const result = await runAgentTask({ task: "long loop", model, browser });
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "done");
+  assert.equal(result.answer, "finally done");
+  assert.equal(result.steps, 31);
+  assert.equal(browser.calls.run.length, 30);
+});
+
+test("runAgentTask stops at its wall-clock budget without restoring a step cap", async () => {
+  const browser = fakeBrowser();
+  let completed = false;
+  let modelSignal;
+  const model = {
+    async complete({ signal }) {
+      modelSignal = signal;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      completed = true;
+      return { text: "too late", toolCalls: [] };
+    },
+  };
+
+  const result = await runAgentTask({
+    task: "do not run forever",
+    model,
+    browser,
+    maxDurationMs: 10,
+  });
+
   assert.equal(result.ok, false);
-  assert.equal(result.reason, "max-steps");
-  assert.equal(result.steps, 3);
-  assert.equal(browser.calls.run.length, 3);
+  assert.equal(result.reason, "timeout");
+  assert.equal(result.answer, "");
+  assert.equal(result.steps, 1);
+  assert.equal(completed, false, "the caller returned before the stalled model");
+  assert.equal(modelSignal.aborted, true, "the stalled model received cancellation");
+  assert.ok(result.durationMs >= 8);
+});
+
+test("runAgentTask rejects an invalid wall-clock budget", async () => {
+  await assert.rejects(
+    runAgentTask({
+      task: "x",
+      model: scriptedModel([]),
+      browser: fakeBrowser(),
+      maxDurationMs: 0,
+    }),
+    /maxDurationMs must be between/,
+  );
+});
+
+test("runAgentTask bounds its transcript without imposing a step count", async () => {
+  const model = scriptedModel([{ text: "should not run", toolCalls: [] }]);
+  const result = await runAgentTask({
+    task: "a task longer than the configured transcript budget",
+    model,
+    browser: fakeBrowser(),
+    maxTranscriptChars: 10,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "context_limit");
+  assert.equal(model.seen.length, 0);
 });
 
 test("login tool is offered only with a vault and runs fillCredential", async () => {
@@ -497,7 +554,7 @@ test("resolveModel accepts a bare model id and infers the backend from its prefi
 test("openaiModel translates the transcript and parses tool calls", async () => {
   let captured;
   const fetchImpl = async (url, init) => {
-    captured = { url, body: JSON.parse(init.body) };
+    captured = { url, body: JSON.parse(init.body), signal: init.signal };
     return {
       ok: true,
       async json() {
@@ -524,6 +581,7 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
     };
   };
   const model = openaiModel({ baseURL: "https://api.example/v1/", model: "m1", apiKey: "k", fetchImpl });
+  const controller = new AbortController();
   const out = await model.complete({
     system: "SYS",
     messages: [
@@ -532,6 +590,7 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
       { role: "tool", results: [{ id: "a1", name: "browser", content: "obs" }] },
     ],
     tools: [{ name: "browser", description: "d", parameters: { type: "object" } }],
+    signal: controller.signal,
   });
 
   assert.equal(captured.url, "https://api.example/v1/chat/completions");
@@ -541,6 +600,7 @@ test("openaiModel translates the transcript and parses tool calls", async () => 
   assert.equal(captured.body.messages[2].tool_calls[0].function.name, "browser");
   assert.equal(captured.body.messages[3].role, "tool");
   assert.equal(captured.body.tools[0].type, "function");
+  assert.equal(captured.signal, controller.signal);
   assert.equal(out.text, "working");
   assert.equal(out.toolCalls[0].name, "browser");
   assert.deepEqual(out.toolCalls[0].input, { code: "return 1" });
@@ -558,10 +618,12 @@ test("openaiModel surfaces HTTP errors", async () => {
 
 test("claudeModel maps to the Anthropic shape and parses content", async () => {
   let captured;
+  let requestOptions;
   const client = {
     messages: {
-      async create(req) {
+      async create(req, options) {
         captured = req;
+        requestOptions = options;
         return {
           content: [
             { type: "text", text: "sure" },
@@ -574,6 +636,7 @@ test("claudeModel maps to the Anthropic shape and parses content", async () => {
     },
   };
   const model = claudeModel({ client, model: "claude-test" });
+  const controller = new AbortController();
   const out = await model.complete({
     system: "SYS",
     messages: [
@@ -581,11 +644,13 @@ test("claudeModel maps to the Anthropic shape and parses content", async () => {
       { role: "tool", results: [{ id: "x", name: "browser", content: "obs" }] },
     ],
     tools: [{ name: "done", description: "finish", parameters: { type: "object" } }],
+    signal: controller.signal,
   });
 
   assert.equal(captured.model, "claude-test");
   assert.equal(captured.system, "SYS");
   assert.equal(captured.tools[0].input_schema.type, "object");
+  assert.equal(requestOptions.signal, controller.signal);
   // A `tool` message maps to a tool_result block (position may shift when adjacent
   // user turns coalesce).
   const toolResult = captured.messages.flatMap((m) => m.content).find((c) => c.type === "tool_result");

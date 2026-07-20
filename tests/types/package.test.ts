@@ -104,7 +104,8 @@ const claudeAdapter: AgentModel = claudeModel({ model: "claude-fable-5", effort:
 const agentResult: Promise<AgentResult> = runAgentTask({
   task: "read the page title",
   model: customModel,
-  maxSteps: 12,
+  maxDurationMs: 120_000,
+  maxTranscriptChars: 500_000,
   onStep: ({ step, tool, note }) => void [step, tool, note],
 });
 const login: Promise<LoginResult> = loginProvider({ provider: "codex", open: false });
