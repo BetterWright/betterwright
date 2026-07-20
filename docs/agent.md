@@ -61,7 +61,10 @@ provider-reported count. It never derives writes from fresh input. `context` is
 the full prompt size at the **end** of the task — the last turn's provider input
 total, i.e. how much context the model was holding when it finished. `durationMs`
 is the task wall-clock (it excludes tearing down a browser the loop created for
-itself).
+itself). The loop has no fixed step cap, but it does have a 30-minute wall-clock
+budget and a 1,000,000-character transcript bound so a stalled or repetitive
+provider cannot run forever or grow context without limit. Expiry aborts model
+requests, and BetterWright's worker timeout terminates in-flight browser work.
 
 Flags:
 
@@ -70,7 +73,6 @@ Flags:
 | `--model <name>` | `claude` | An adapter name (`claude`, `codex`, `grok`) **or** a bare model id whose backend is inferred from its prefix — `gpt-*`/`o*` → codex, `grok-*` → grok, `claude-*` → claude (e.g. `--model gpt-5.6-sol`) |
 | `--model-id <id>` | per-adapter | Override the model id (e.g. `claude-fable-5`, `grok-4`); wins over an id passed to `--model` |
 | `--effort <level>` (alias `--reasoning`) | `low` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` where the model supports it |
-| `--max-steps <n>` | `24` | Hard cap on model turns |
 | `--session <name>` | `default` | Browser session name |
 | `--headed` | off | Show the managed browser |
 
@@ -179,6 +181,8 @@ import { runAgentTask } from "betterwright/agent";
 const result = await runAgentTask({
   task: "log in to example.com and download this month's invoice",
   model: "claude",                 // or "codex" | "grok" | your own model object
+  maxDurationMs: 30 * 60 * 1000,   // configurable; there is no fixed step cap
+  maxTranscriptChars: 1_000_000,   // bound accumulated model/tool context
   guardrails: { confirmBeforePurchase: true },
   onStep: ({ step, tool, note }) => console.error(`[${step}] ${tool}: ${note}`),
 });
@@ -250,9 +254,9 @@ Each turn: the model sees the task, the operator guidance from
 It calls `browser` with async Playwright
 JavaScript; BetterWright runs it and feeds back a compact JSON observation
 (`ok`, `result`, `console`, `pages`, `challenges`, `skills`, `warnings`,
-`screenshots`). The loop ends when the model calls `done` (or answers in prose),
-or at `--max-steps`. Screenshots are captured as artifacts and their paths
-surfaced; the last `proof` screenshot is returned on the result.
+`screenshots`). The loop ends when the model calls `done` (or answers in
+prose) — there is no step cap. Screenshots are captured as artifacts and their
+paths surfaced; the last `proof` screenshot is returned on the result.
 
 A `browser` call can also end the task in the *same* turn: when the model's
 code returns `{ finalAnswer: "…" }` (from an `ok` run), the harness records

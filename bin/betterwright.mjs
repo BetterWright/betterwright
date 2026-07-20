@@ -248,7 +248,7 @@ async function cmdInteractive(flags) {
 
   const modelLabel = () => `${model}${modelOptions.model ? ` (${modelOptions.model})` : ""}`;
   const reasoningLabel = () => modelOptions.effort || "low";
-  console.log(bold("BetterWright") + " — interactive agent console");
+  console.log(`${bold("BetterWright")} — interactive agent console`);
   console.log(
     dim(`model ${modelLabel()} · reasoning ${reasoningLabel()} · session ${session} · ${headless ? "headless" : "headed"}`),
   );
@@ -347,7 +347,7 @@ async function cmdInteractive(flags) {
       if (result.proof) console.log(dim(`proof: ${result.proof}`));
       console.log(
         dim(
-          `${result.ok ? "done" : "unfinished"} · ${result.steps} step${result.steps === 1 ? "" : "s"} · ` +
+          `${result.ok ? "done" : `unfinished (${result.reason || "unknown"})`} · ${result.steps} step${result.steps === 1 ? "" : "s"} · ` +
             `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"} · ${formatDuration(result.durationMs)} · ` +
             `${formatAgentUsage(result.usage)}\n`,
         ),
@@ -372,7 +372,7 @@ async function cmdExec(flags) {
   const task = argv.slice(3).find((token) => !token.startsWith("-"));
   if (!task) {
     console.error(
-      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort|--reasoning <level>] [--max-steps <n>] [--session <name>] [--headed]',
+      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort|--reasoning <level>] [--session <name>] [--headed]',
     );
     return 1;
   }
@@ -389,7 +389,6 @@ async function cmdExec(flags) {
       task,
       model: flagValue(argv, "--model", "claude"),
       modelOptions,
-      maxSteps: Number(flagValue(argv, "--max-steps")) || undefined,
       session: flagValue(argv, "--session", "default"),
       policy: policyFromFlags(flags),
       headless: !flags.has("--headed"),
