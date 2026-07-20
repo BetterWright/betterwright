@@ -10,7 +10,6 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import vm from "node:vm";
@@ -57,6 +56,12 @@ import {
   scrollWheel,
   typeText,
 } from "./human.mjs";
+import {
+  acquireProfileLock,
+  PROFILE_LOCK_HEARTBEAT_MS,
+  releaseProfileLockDir,
+  touchProfileLock,
+} from "./profile-lock.mjs";
 import {
   compressSnapshot,
   diffSnapshots,
@@ -114,6 +119,7 @@ let browserContext = null;
 let launchPromise = null;
 let launchConfig = null;
 let profileLock = null;
+let profileLockHeartbeat = null;
 let profileMode = "persistent";
 let profileWarning = "";
 // Set by the client via `--import` when stealthRuntimeFix is on: the driver is
@@ -297,83 +303,24 @@ function uniqueName(name) {
   return `${stem}-${Date.now()}-${crypto.randomBytes(3).toString("hex")}${ext}`;
 }
 
-function processAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
+function startProfileLockHeartbeat() {
+  if (!profileLock?.ownerFile || profileLockHeartbeat) return;
+  profileLockHeartbeat = setInterval(() => {
+    // Once the lease is no longer ours (deleted, or reclaimed after a long
+    // stall) stop refreshing so we never extend another process's lock.
+    if (!touchProfileLock(profileLock)) stopProfileLockHeartbeat();
+  }, PROFILE_LOCK_HEARTBEAT_MS);
+  profileLockHeartbeat.unref();
 }
 
-function acquireProfile(profileDir, runtimeDir) {
-  mkdirPrivate(path.dirname(profileDir));
-  const lockDir = `${profileDir}.betterwright-lock`;
-  const ownerFile = path.join(lockDir, "owner.json");
-  const owner = {
-    pid: process.pid,
-    hostname: os.hostname(),
-    startedAt: nowIso(),
-  };
-
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    try {
-      fs.mkdirSync(lockDir, { mode: 0o700 });
-      writePrivate(ownerFile, JSON.stringify(owner));
-      mkdirPrivate(profileDir);
-      return { profileDir, lockDir, owner, ephemeral: false, warning: "" };
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      let prior = null;
-      try {
-        prior = JSON.parse(fs.readFileSync(ownerFile, "utf8"));
-      } catch {
-        /* stale/partial */
-      }
-      const sameHost = prior?.hostname === os.hostname();
-      const live = sameHost && processAlive(Number(prior?.pid));
-      if (!live && (sameHost || !prior?.hostname)) {
-        const staleDir = `${lockDir}.stale-${process.pid}-${crypto.randomBytes(4).toString("hex")}`;
-        try {
-          // Atomic rename means competing recoverers cannot both recursively
-          // delete the same directory. Chromium's own profile lock remains the
-          // final authority if ownership changes during crash recovery.
-          fs.renameSync(lockDir, staleDir);
-          fs.rmSync(staleDir, { recursive: true, force: true });
-        } catch (renameError) {
-          if (!["ENOENT", "EEXIST"].includes(renameError?.code))
-            throw renameError;
-        }
-        continue;
-      }
-
-      mkdirPrivate(runtimeDir);
-      const ephemeral = fs.mkdtempSync(
-        path.join(runtimeDir, "ephemeral-profile-"),
-      );
-      try {
-        fs.chmodSync(ephemeral, 0o700);
-      } catch {
-        /* best effort */
-      }
-      const ownerText = prior
-        ? `pid ${prior.pid || "?"} on ${prior.hostname || "another host"}`
-        : "another BetterWright process";
-      return {
-        profileDir: ephemeral,
-        lockDir: null,
-        owner: prior,
-        ephemeral: true,
-        warning: `Another BetterWright process owns the persistent browser profile (${ownerText}); using an isolated temporary profile without saved logins.`,
-      };
-    }
-  }
-
-  throw new Error(`Could not acquire browser profile lock at ${lockDir}`);
+function stopProfileLockHeartbeat() {
+  if (!profileLockHeartbeat) return;
+  clearInterval(profileLockHeartbeat);
+  profileLockHeartbeat = null;
 }
 
 function releaseProfileLock() {
+  stopProfileLockHeartbeat();
   if (!profileLock) return;
   if (profileLock.ephemeral) {
     try {
@@ -381,23 +328,8 @@ function releaseProfileLock() {
     } catch {
       /* process exit */
     }
-    profileLock = null;
-    return;
-  }
-  if (!profileLock.lockDir) return;
-  try {
-    const owner = JSON.parse(
-      fs.readFileSync(path.join(profileLock.lockDir, "owner.json"), "utf8"),
-    );
-    if (Number(owner?.pid) !== process.pid || owner?.hostname !== os.hostname())
-      return;
-  } catch {
-    /* if unreadable, only this worker should own the lock */
-  }
-  try {
-    fs.rmSync(profileLock.lockDir, { recursive: true, force: true });
-  } catch {
-    /* process exit */
+  } else {
+    releaseProfileLockDir(profileLock);
   }
   profileLock = null;
 }
@@ -1325,10 +1257,11 @@ async function ensureBrowser(config) {
     mkdirPrivate(launchConfig.artifactsDir);
 
     mkdirPrivate(launchConfig.runtimeDir);
-    profileLock = acquireProfile(
+    profileLock = acquireProfileLock(
       launchConfig.profileDir,
       launchConfig.runtimeDir,
     );
+    startProfileLockHeartbeat();
     profileMode = profileLock.ephemeral ? "ephemeral" : "persistent";
     profileWarning = profileLock.warning;
     const transportProxyPort = await guardProxy.ensure();
