@@ -629,7 +629,11 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
           const worker = bw?._process;
           if (worker) {
             const exited = once(worker, "exit");
-            worker.kill("SIGTERM");
+            // SIGKILL, not SIGTERM: this simulates the worker dying mid-RPC,
+            // and a graceful SIGTERM shutdown closes Chromium first — slow
+            // enough on a loaded runner to race the client's execute timeout
+            // and fail the test with the timeout error instead of exit.
+            worker.kill("SIGKILL");
             await exited;
           }
         }
