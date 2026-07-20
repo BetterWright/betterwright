@@ -28,6 +28,12 @@ export interface BetterWrightOptions {
   policy?: NetworkPolicy;
   /** Custom credential backend, or false/null to disable the built-in vault. */
   vault?: CredentialVault | false | null;
+  /**
+   * Capture accepted logins in the browser: logins the model types are saved
+   * silently; logins the user types manually prompt in headed sessions.
+   * Defaults to true when a vault is active; forced off with `vault: false`.
+   */
+  credentialCapture?: boolean;
   browser?: BrowserFlavor;
   headless?: HeadlessMode;
   defaultTimeout?: number;

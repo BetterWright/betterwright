@@ -68,6 +68,7 @@ import {
   filterInteractive,
   parseAnnotationBoxes,
 } from "./snapshot.mjs";
+import { installVaultCapture } from "./vault-capture.mjs";
 
 const WORKER_VERSION = 1;
 const MAX_EVENTS = 40;
@@ -139,6 +140,7 @@ let downloadCdpSession = null;
 let downloadGuardReady = false;
 let currentDownloadBehavior = "deny";
 let approvedDownloadSession = null;
+let vaultCapture = null;
 
 const sessions = new Map();
 const pageToSession = new WeakMap();
@@ -147,6 +149,13 @@ const facadeToRaw = new WeakMap();
 const pendingRpc = new Map();
 const activeSecrets = new Set();
 let redactionCapacityExceeded = false;
+
+// Last time model-driven code touched a page or origin, used by the vault
+// capture engine to tell model-typed logins (always saved silently) apart
+// from manual user logins (which prompt in headed sessions).
+const modelActivityPages = new WeakMap();
+const modelActivityOrigins = new Map();
+const MODEL_ACTIVITY_ORIGIN_LIMIT = 500;
 
 // Secrets are kept beyond the run that used them because later runs can still
 // echo a previously typed value (console, DOM dumps). Never evict plaintext
@@ -508,6 +517,48 @@ function sessionFor(id) {
   }
   session.lastActivity = Date.now();
   return session;
+}
+
+// Record that model-driven code just ran on this session's pages. Called from
+// the finally path of every execution entry point so a capture landing a few
+// seconds after a model action still classifies as model-driven.
+function stampModelActivity(session) {
+  const now = Date.now();
+  for (const page of session.pages.values()) {
+    if (page.isClosed()) continue;
+    modelActivityPages.set(page, now);
+    const origin = urlOrigin(page.url());
+    if (!origin) continue;
+    modelActivityOrigins.delete(origin);
+    modelActivityOrigins.set(origin, now);
+    if (modelActivityOrigins.size > MODEL_ACTIVITY_ORIGIN_LIMIT) {
+      let excess = modelActivityOrigins.size - MODEL_ACTIVITY_ORIGIN_LIMIT;
+      for (const key of modelActivityOrigins.keys()) {
+        if (excess-- <= 0) break;
+        modelActivityOrigins.delete(key);
+      }
+    }
+  }
+}
+
+function lastModelActivityFor(page, origin) {
+  if (activeExecutionSession === pageToSession.get(page)) return Date.now();
+  return Math.max(
+    modelActivityPages.get(page) || 0,
+    modelActivityOrigins.get(origin) || 0,
+  );
+}
+
+function disposeVaultCapture() {
+  const capture = vaultCapture;
+  vaultCapture = null;
+  if (capture) {
+    try {
+      capture.dispose();
+    } catch {
+      /* teardown must never block launch or shutdown */
+    }
+  }
 }
 
 function pushEvent(session, event) {
@@ -1312,10 +1363,35 @@ async function ensureBrowser(config) {
     launchedContext.on("close", () => {
       if (browserContext === launchedContext) browserContext = null;
       downloadGuardReady = false;
+      disposeVaultCapture();
       releaseProfileLock();
     });
     await installContextGuard(launchedContext);
     await installDownloadGuard(launchedContext);
+    if (launchConfig.credentialCapture !== false) {
+      // CDP-level capture: the sensor runs in dedicated isolated worlds and
+      // reports logins in-process; model-typed logins save silently, manual
+      // user logins prompt in headed sessions. Best-effort: capture must
+      // never block the browser from launching.
+      try {
+        const prefsRoot = profileLock.ephemeral
+          ? path.dirname(launchConfig.runtimeDir)
+          : path.dirname(profileLock.profileDir);
+        vaultCapture = installVaultCapture(launchedContext, {
+          vaultCallAtOrigin: (session, origin, action, payload) =>
+            vaultCallAtOrigin(session, origin, action, payload),
+          sessionForPage: (page) =>
+            sessionFor(pageToSession.get(page) || "default"),
+          trackSecret,
+          isHeaded: () => !headless,
+          lastModelActivity: (page, origin) =>
+            lastModelActivityFor(page, origin),
+          prefsPath: path.join(prefsRoot, "save-prompt.json"),
+        });
+      } catch {
+        vaultCapture = null;
+      }
+    }
     launchedContext.on("page", (page) => {
       const owner = activeExecutionSession || "default";
       if (!pageToSession.has(page)) adoptPage(page, owner);
@@ -1326,6 +1402,7 @@ async function ensureBrowser(config) {
     return await launchPromise;
   } catch (error) {
     await closeDownloadGuard();
+    disposeVaultCapture();
     releaseProfileLock();
     browserContext = null;
     throw error;
@@ -3032,6 +3109,7 @@ async function credentialFill(message) {
       }),
     );
   } finally {
+    stampModelActivity(session);
     activeExecutionSession = null;
     activeExecutionRequestId = null;
     activePendingCredentialRecovery = null;
@@ -4619,6 +4697,7 @@ async function execute(message) {
     );
   } finally {
     execution.acceptingCredentialTasks = false;
+    stampModelActivity(session);
     if (approvedDownloadSession === session.id) approvedDownloadSession = null;
     activeExecutionSession = null;
     activeExecutionRequestId = null;
@@ -4645,6 +4724,7 @@ async function performShutdown() {
     ? profileLock.profileDir
     : null;
   await closeDownloadGuard();
+  disposeVaultCapture();
   try {
     await browserContext?.close();
   } catch {

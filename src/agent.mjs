@@ -39,9 +39,12 @@ import { VAULT_MATCH_MODES } from "./vault.mjs";
 const CHATGPT_RESPONSES_BASE =
   process.env.CODEX_RESPONSES_BASE || "https://chatgpt.com/backend-api/codex";
 
-const DEFAULT_MAX_STEPS = 24;
 const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_DURATION_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
+const MAX_TIMER_MS = 2_147_483_647;
 const OBSERVATION_LIMIT = 12_000;
+const AGENT_TIMEOUT = Symbol("agent-timeout");
 
 // How the harness introduces its tools. `agentSystemPrompt()` speaks in terms of
 // `run()`; this preamble maps that onto the `browser` tool so the same operator
@@ -242,6 +245,28 @@ function finalAnswerFromResult(result) {
   return null;
 }
 
+async function withinDeadline(operation, deadline) {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw AGENT_TIMEOUT;
+
+  const controller = new AbortController();
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => operation(controller.signal)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort(AGENT_TIMEOUT);
+          reject(AGENT_TIMEOUT);
+        }, remainingMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Run a natural-language task through BetterWright's own agent harness.
  *
@@ -254,10 +279,13 @@ function finalAnswerFromResult(result) {
  * @param {BetterWright} [options.browser] drive an existing browser; otherwise
  *   one is created from the options below and closed when the task ends
  * @param {import("./prompt.mjs").Guardrails} [options.guardrails] deployer limits
- * @param {number} [options.maxSteps=24] hard cap on model turns
  * @param {string} [options.session="default"] browser session name
  * @param {boolean|"auto"} [options.headless] browser headless mode (new browsers)
  * @param {NetworkPolicy} [options.policy] network policy (new browsers)
+ * @param {number} [options.maxDurationMs=1800000] wall-clock budget for the
+ *   agent loop; it has no fixed step cap
+ * @param {number} [options.maxTranscriptChars=1000000] maximum serialized
+ *   transcript size before the loop stops
  * @param {object|false|null} [options.vault] override or disable the built-in
  *   credential vault for a new browser (ignored when an external `browser` is
  *   passed, whose own vault decides login availability)
@@ -276,10 +304,19 @@ export async function runAgentTask(options = {}) {
   if (!task) throw new Error("runAgentTask requires a non-empty `task`.");
 
   const model = resolveModel(options.model || "claude", options.modelOptions || {});
-  const maxSteps = Math.max(1, Number(options.maxSteps) || DEFAULT_MAX_STEPS);
   const session = String(options.session || "default");
   const onStep = typeof options.onStep === "function" ? options.onStep : () => {};
   const askUser = typeof options.askUser === "function" ? options.askUser : null;
+  const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
+  if (!Number.isFinite(maxDurationMs) || maxDurationMs <= 0 || maxDurationMs > MAX_TIMER_MS) {
+    throw new TypeError(
+      `runAgentTask maxDurationMs must be between 1 and ${MAX_TIMER_MS}.`,
+    );
+  }
+  const maxTranscriptChars = options.maxTranscriptChars ?? DEFAULT_MAX_TRANSCRIPT_CHARS;
+  if (!Number.isFinite(maxTranscriptChars) || maxTranscriptChars <= 0) {
+    throw new TypeError("runAgentTask maxTranscriptChars must be a positive finite number.");
+  }
 
   const ownsBrowser = !options.browser;
   const browser =
@@ -310,7 +347,7 @@ export async function runAgentTask(options = {}) {
   let answer = "";
   let proof = null;
   let finished = false;
-  let reason = "max-steps";
+  let reason = "stopped";
   let steps = 0;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -323,9 +360,19 @@ export async function runAgentTask(options = {}) {
   let durationMs = 0;
 
   const startedAt = Date.now();
+  const deadline = startedAt + maxDurationMs;
   try {
-    for (steps = 1; steps <= maxSteps; steps += 1) {
-      const response = await model.complete({ system, messages, tools });
+    // No step cap: the loop runs until the model finishes or the wall-clock
+    // budget expires.
+    for (steps = 1; ; steps += 1) {
+      if (JSON.stringify(messages).length > maxTranscriptChars) {
+        reason = "context_limit";
+        break;
+      }
+      const response = await withinDeadline(
+        (signal) => model.complete({ system, messages, tools, signal }),
+        deadline,
+      );
       const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
       if (response.usage) {
         // Provider input totals include cached reads. Keep the full last-turn
@@ -366,11 +413,15 @@ export async function runAgentTask(options = {}) {
         if (call.name === "login") {
           onStep({ step: steps, tool: "login", note: "filling credential" });
           try {
-            const result = await browser.fillCredential(
-              normalizeCredentialToolOptions(call.input, { session }),
-            );
+            const remainingSeconds = Math.max(0.001, (deadline - Date.now()) / 1000);
+            if (remainingSeconds <= 0.001) throw AGENT_TIMEOUT;
+            const result = await browser.fillCredential({
+              ...normalizeCredentialToolOptions(call.input, { session }),
+              timeout: remainingSeconds,
+            });
             results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
           } catch (error) {
+            if (error === AGENT_TIMEOUT) throw error;
             results.push({ id: call.id, name: call.name, content: `login error: ${error?.message || error}` });
           }
           continue;
@@ -386,13 +437,17 @@ export async function runAgentTask(options = {}) {
             continue;
           }
           try {
-            const reply = String((await askUser({ question, options: choices })) ?? "").trim();
+            const reply = String((await withinDeadline(
+              (signal) => askUser({ question, options: choices, signal }),
+              deadline,
+            )) ?? "").trim();
             results.push({
               id: call.id,
               name: call.name,
               content: reply ? `User answered: ${reply}` : "User gave no answer; use your best judgment or report it blocked.",
             });
           } catch (error) {
+            if (error === AGENT_TIMEOUT) throw error;
             results.push({ id: call.id, name: call.name, content: `ask error: ${error?.message || error}` });
           }
           continue;
@@ -400,7 +455,15 @@ export async function runAgentTask(options = {}) {
         if (call.name === "browser") {
           const note = String(call.input?.note || "");
           onStep({ step: steps, tool: "browser", note });
-          const result = await browser.run(String(call.input?.code || ""), { session, note: note || undefined });
+          const remainingSeconds = Math.max(0.001, (deadline - Date.now()) / 1000);
+          if (remainingSeconds <= 0.001) throw AGENT_TIMEOUT;
+          // BetterWright's own timeout path terminates and restarts the worker,
+          // so browser mutations cannot continue after this await returns.
+          const result = await browser.run(String(call.input?.code || ""), {
+            session,
+            note: note || undefined,
+            timeout: remainingSeconds,
+          });
           for (const shot of result.artifacts || [])
             if (shot.kind === "proof" && shot.path) proof = shot.path;
           // Returning { finalAnswer } from the code completes the task in this
@@ -419,6 +482,9 @@ export async function runAgentTask(options = {}) {
       messages.push({ role: "tool", results });
       if (finished) break;
     }
+  } catch (error) {
+    if (error === AGENT_TIMEOUT) reason = "timeout";
+    else throw error;
   } finally {
     // Measure task wall-clock before tearing down an owned browser, so the
     // reported time is the work, not the teardown.
@@ -429,8 +495,7 @@ export async function runAgentTask(options = {}) {
   return {
     ok: finished && reason !== "stopped",
     answer,
-    // On exhaustion the for-loop increments past the cap; report the real count.
-    steps: Math.min(steps, maxSteps),
+    steps,
     reason,
     // How many tool calls the model issued (browser/login/done) — can exceed
     // `steps` when a turn batches several — and the token usage the adapters
@@ -571,16 +636,19 @@ export function claudeModel(options = {}) {
   return {
     name: "claude",
     modelId,
-    async complete({ system, messages, tools }) {
+    async complete({ system, messages, tools, signal }) {
       const anthropic = await client();
-      const message = await anthropic.messages.create({
-        model: modelId,
-        max_tokens: maxTokens,
-        system,
-        output_config: { effort },
-        tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })),
-        messages: anthropicMessages(messages),
-      });
+      const message = await anthropic.messages.create(
+        {
+          model: modelId,
+          max_tokens: maxTokens,
+          system,
+          output_config: { effort },
+          tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })),
+          messages: anthropicMessages(messages),
+        },
+        { signal },
+      );
       return parseAnthropicResponse(message);
     },
   };
@@ -655,7 +723,7 @@ export function openaiModel(options = {}) {
   return {
     name: options.name || "openai",
     modelId,
-    async complete({ system, messages, tools }) {
+    async complete({ system, messages, tools, signal }) {
       // A dynamic auth provider (OAuth) refreshes the token per request; a
       // static apiKey is the simple case.
       const auth = typeof options.getAuth === "function" ? await options.getAuth() : {};
@@ -681,6 +749,7 @@ export function openaiModel(options = {}) {
           ...(auth.headers || {}),
         },
         body: JSON.stringify(body),
+        signal,
       });
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
@@ -799,7 +868,7 @@ function responsesModel(options = {}) {
   return {
     name: options.name || "responses",
     modelId,
-    async complete({ system, messages, tools }) {
+    async complete({ system, messages, tools, signal }) {
       // A dynamic auth provider (OAuth) refreshes the token per request; a
       // static apiKey is the simple case.
       const auth = typeof options.getAuth === "function" ? await options.getAuth() : {};
@@ -831,6 +900,7 @@ function responsesModel(options = {}) {
           ...(auth.headers || {}),
         },
         body: JSON.stringify(body),
+        signal,
       });
       const raw = await response.text().catch(() => "");
       if (!response.ok) {

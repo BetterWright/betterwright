@@ -37,6 +37,8 @@ export interface AgentModel {
     system: string;
     messages: AgentMessage[];
     tools: AgentTool[];
+    /** Aborted when the run's wall-clock budget expires. */
+    signal: AbortSignal;
   }): Promise<{ text: string; toolCalls: AgentToolCall[]; stopReason?: string; usage?: AgentUsage | null }>;
 }
 
@@ -64,10 +66,13 @@ export interface RunAgentTaskOptions {
   modelOptions?: Record<string, unknown>;
   browser?: BetterWright;
   guardrails?: Guardrails;
-  maxSteps?: number;
   session?: string;
   headless?: boolean | "auto";
   policy?: NetworkPolicy;
+  /** Wall-clock budget for the loop in milliseconds (default 30 minutes). */
+  maxDurationMs?: number;
+  /** Maximum serialized transcript size before stopping (default 1,000,000 characters). */
+  maxTranscriptChars?: number;
   /** Override or disable the built-in vault. Ignored when an external browser is passed. */
   vault?: CredentialVault | false | null;
   onStep?: (event: AgentStepEvent) => void;
@@ -77,7 +82,11 @@ export interface RunAgentTaskOptions {
    * answer. Omit it (the `exec` default) to run fully autonomously with no
    * `ask` tool.
    */
-  askUser?: (question: { question: string; options: string[] }) => string | Promise<string>;
+  askUser?: (question: {
+    question: string;
+    options: string[];
+    signal: AbortSignal;
+  }) => string | Promise<string>;
   /**
    * A prior transcript (from a previous call's `transcript`) to continue from, so
    * a follow-up task can refer back to earlier work. Omit for a fresh run.
@@ -89,7 +98,7 @@ export interface AgentResult {
   ok: boolean;
   answer: string;
   steps: number;
-  reason: "max-steps" | "answered" | "stopped" | "done";
+  reason: "answered" | "stopped" | "done" | "timeout" | "context_limit";
   /** How many tool calls the model issued; can exceed `steps` when a turn batches several. */
   toolCalls: number;
   /**
