@@ -24,6 +24,7 @@ export class BetterWright {
   home: string;
   policy: NetworkPolicy;
   vault: CredentialVault | null;
+  credentialCapture: boolean;
   browserFlavor: "cloak";
   headless: boolean;
   searchMinIntervalMs: number;

@@ -156,6 +156,44 @@ Login is the default category. Other supported categories include
 `credit-card`, `identity`, `api-credential`, `secure-note`, and `ssh-key`; they
 store category-specific `fields`. Model-visible responses stay metadata-only.
 
+## Browser capture
+
+Accepted logins are captured automatically at the browser level, so the vault
+stays populated without any agent code calling `save`:
+
+- **The model types a login or signup.** Any accepted credential submission on
+  a page the model just drove is saved silently (an upsert with `base-domain`
+  matching and the host as label). This covers signups done by typing instead
+  of `generateAndFill`; when `generateAndFill` + `commitGenerated` already
+  saved, the capture is a no-op rewrite.
+- **The user logs in by hand in a headed window.** After the site accepts the
+  login, an in-page banner asks "Save password?" with **Save**, **Not now**,
+  and **Never for this site**. Choosing an existing username's account offers
+  "Update saved password?" instead. "Never" is remembered per origin in
+  `$BETTERWRIGHT_HOME/browser/save-prompt.json` (owner-only). In headless
+  sessions there is nobody to ask, so user-driven captures are dropped.
+
+Capture is implemented by a worker-injected sensor running in a dedicated CDP
+isolated world per frame (`src/vault-sensor.js` + `src/vault-capture.mjs`),
+not an extension and not page-visible JavaScript. Only trusted initiating click
+or Enter-key events (`event.isTrusted`) trigger a capture; a submit event alone
+is deliberately insufficient because Chromium can mark a page-script-initiated
+submit as trusted. A capture is only kept when the login appears
+accepted: the frame navigates somewhere new, or the app unmounts the password
+field within a few seconds of submitting. A rejected attempt (the form
+re-renders with an error, or the password is cleared for a retry) is never
+saved — the same rule the two-phase generated-credential commit enforces.
+
+Captured passwords enter the worker redaction set the moment they arrive, and
+the banner never displays the password; it stays in worker memory until the
+save or dismissal. Saves reuse the ordinary vault `save` path, so matching,
+upsert, limits, and audit entries are identical to `credentials.save`.
+
+Capture is on by default whenever a vault is active. Disable it with
+`credentialCapture: false` (it is forced off when `vault` is `false`/`null`).
+Login forms inside cross-site iframes (OOPIFs) are not captured; SSO flows
+that redirect or open a popup are covered.
+
 ## Site matching
 
 Each login stores the URL where it was accepted and a match mode:

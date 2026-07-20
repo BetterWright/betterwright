@@ -65,35 +65,27 @@ path}`); the prompt tells the agent to read the pack before improvising.
 `betterwright skills list|show`. User packs in `$BETTERWRIGHT_HOME/skills`
 override packaged ones. See `docs/skills.md`.
 
-### 3. Credentials v2 — planned
-The current vault stores logins only and exposes trusted fill **only through the
-JS SDK** (`bw.fillCredential`); neither the MCP server nor the Pi package can
-fill. Plan, backwards-compatible with the pluggable `vault.handleRequest`
-contract:
-- **Categories.** Let `save`/`list`/`update` carry a `category`
-  (`login|credit-card|identity|api-credential|secure-note|ssh-key`) and
-  category-appropriate non-secret metadata. Login stays the default.
-- **Search.** `credentials.list({text, category})` filters within the origin;
-  metadata only, never secrets — matching today's redaction.
-- **Autofill by item.** A trusted `bw.autofillCredential({id, fields})` /
-  `autofillItem` that fills a saved login or card into the page (including
-  hosted card iframes) via the existing outside-the-sandbox fill path, returning
-  only `{filled}`.
-- **Expose fill through every consumer.** Add a trusted, approval-appropriate
-  credential-fill tool to the MCP server and the Pi package so all three
-  embeddings — not just the SDK — can log in. The fill still runs as a dedicated
-  worker message, never as model JS, so the secret boundary holds.
-- **Opaque generated refs.** `generateAndFillCredential` already generates,
-  fills, and saves without returning the secret; document it as the signup path
-  and add update-after-change to avoid duplicate records.
+### 3. Credentials v2 — DONE
+The vault stores categories (`login` by default, plus `credit-card`,
+`identity`, `api-credential`, `secure-note`, `ssh-key`), supports metadata-only
+`credentials.list({text, category})` search, and fills through every consumer:
+`bw.fillCredential` in the JS SDK, `browser_login` in MCP and Pi, and the
+built-in agent's `login` tool — all as a dedicated worker message, never model
+JS, so the secret boundary holds. Generated credentials use the two-phase
+`generateAndFill` → verify → `commitGenerated`/`discardGenerated` flow, and
+rotation updates the existing record in place. Accepted logins are captured
+automatically (see §4). Still open from the original plan: autofill-by-item
+for non-login categories (e.g. cards into hosted iframes).
 
-### 4. Password-manager extension in the managed profile — planned
-The provider skills assume a 1Password/Bitwarden extension is present and
-unlocked. That means loading an extension into BetterWright's **own** persistent
-profile (via CloakBrowser's extension support / `--load-extension` equivalent),
-not touching the user's Chrome. Design: an opt-in `extensions` option listing
-unpacked extension paths; document the one-time unlock in the headed profile;
-keep the network policy and sandbox intact.
+### 4. Password-manager support in the managed profile — partially DONE
+BetterWright's own vault now captures logins with no extension at all: a
+worker-injected CDP sensor (isolated worlds, `event.isTrusted`-gated) saves
+model-typed logins silently and prompts on manual user logins in headed
+sessions ("Save / Not now / Never for this site"). See
+`docs/credentials.md` → Browser capture. Still planned for third-party
+managers: loading an unpacked 1Password/Bitwarden extension into the managed
+persistent profile (an opt-in `extensions` option), which the provider skills
+assume is present and unlocked.
 
 ### 5. Passkeys — planned
 No real profile, so use the CDP **WebAuthn virtual authenticator**

@@ -311,6 +311,100 @@ test("model-authored credentials.fill types the secret without returning it", op
   }
 });
 
+test("browser capture saves an accepted model login through real Cloak", opts, async () => {
+  const secret = "captured-model-secret";
+  const calls = [];
+  const loginPage = `<!doctype html><html><body>
+    <form method="post" action="/login">
+      <label>Email <input id="email" name="email" type="email" autocomplete="username"></label>
+      <label>Password <input id="password" name="password" type="password" autocomplete="current-password"></label>
+      <button type="submit">Sign in</button>
+    </form>
+  </body></html>`;
+  const server = await listen((request, response) => {
+    const url = new URL(request.url || "/", "http://127.0.0.1");
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    if (request.method === "GET" && url.pathname === "/login") {
+      response.end(loginPage);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/login") {
+      request.resume();
+      response.statusCode = 302;
+      response.setHeader("location", "/home");
+      response.end();
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/home") {
+      response.end("<main><h1>Signed in</h1></main>");
+      return;
+    }
+    response.statusCode = 404;
+    response.end("<main>Not found</main>");
+  });
+  const vault = {
+    async handleRequest(action, payload, origin) {
+      calls.push({ action, payload, origin });
+      return { id: "captured-1", origin, username: payload.username };
+    },
+  };
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+    vault,
+  });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(`${server.origin}/login`)});
+      await page.fill('#email', 'captured@example.test');
+      await page.fill('#password', ${JSON.stringify(secret)});
+      await page.getByRole('button', {name: 'Sign in'}).click();
+      await page.waitForURL('**/home');
+      return page.getByRole('heading').textContent();
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, "Signed in");
+
+    const deadline = Date.now() + 4_000;
+    while (!calls.some((call) => call.action === "save") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const save = calls.find((call) => call.action === "save");
+    assert.ok(save, "accepted login should reach the vault save path");
+    assert.equal(save.origin, server.origin);
+    assert.deepEqual(save.payload, {
+      username: "captured@example.test",
+      password: secret,
+      label: "127.0.0.1",
+      matchMode: "base-domain",
+    });
+    assert.ok(!JSON.stringify(result).includes(secret));
+
+    const synthetic = await bw.run(`
+      await page.goto(${JSON.stringify(`${server.origin}/login`)});
+      await page.fill('#email', 'forged@example.test');
+      await page.fill('#password', 'page-script-secret');
+      await Promise.all([
+        page.waitForURL('**/home'),
+        page.evaluate(() => document.querySelector('button').click()),
+      ]);
+      return page.getByRole('heading').textContent();
+    `);
+    assert.equal(synthetic.ok, true, synthetic.error);
+    assert.equal(synthetic.result, "Signed in");
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    assert.equal(
+      calls.filter((call) => call.action === "save").length,
+      1,
+      "page-script submission must not create a captured credential",
+    );
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
 test("built-in password manager signs up, persists, and logs in through the agent", opts, async () => {
   const home = tempHome();
   const account = { username: "agent@example.test", password: "" };

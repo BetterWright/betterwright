@@ -242,6 +242,10 @@ export class BetterWright {
    * @param {object|false|null} [options.vault] custom vault with
    *   `handleRequest(action, payload, origin)`, or false/null to disable the
    *   built-in encrypted vault
+   * @param {boolean} [options.credentialCapture=true] capture accepted logins
+   *   in the browser: logins the model types save silently; logins the user
+   *   types manually prompt in headed sessions ("Save / Not now / Never for
+   *   this site"). Requires a vault; forced off when `vault` is false/null.
    * @param {"cloak"} [options.browser="cloak"] managed CloakBrowser backend
    * @param {boolean|"auto"} [options.headless="auto"] "auto" shows a window when
    *   a display is available and runs headless otherwise; true/false force it
@@ -276,6 +280,9 @@ export class BetterWright {
     } else {
       this.vault = createLocalCredentialVault({ home: this.home });
     }
+    this.credentialCapture = this.vault
+      ? options.credentialCapture !== false
+      : false;
     assertManagedCloakOnly(options);
     this.browserFlavor = "cloak";
     this.headless = resolveHeadless(options.headless);
@@ -316,6 +323,7 @@ export class BetterWright {
       browserFlavor: this.browserFlavor,
       stealthRuntimeFix: this.stealthRuntimeFix,
       headless: this.headless,
+      credentialCapture: this.credentialCapture,
       searchMinIntervalMs: this.searchMinIntervalMs,
       publicSearchPolicy: this.publicSearchPolicy,
       downloadPolicy: this.downloadPolicy,
