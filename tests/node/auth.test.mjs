@@ -286,6 +286,8 @@ test("loginProvider runs the grok PKCE flow and persists to the grok store", asy
     const parsed = new URL(url);
     assert.ok(parsed.searchParams.get("nonce"), "grok authorize URL carries a nonce");
     const redirectUri = new URL(parsed.searchParams.get("redirect_uri"));
+    assert.equal(redirectUri.hostname, "127.0.0.1", "grok uses xAI's registered loopback host");
+    assert.equal(redirectUri.pathname, "/callback");
     redirectUri.searchParams.set("code", "grok-code-1");
     redirectUri.searchParams.set("state", parsed.searchParams.get("state"));
     http.get(redirectUri.href).on("error", () => {});
