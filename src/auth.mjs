@@ -88,6 +88,7 @@ const GROK = {
   clientId: "b1a00492-073a-47ea-816f-4c329264a828",
   scope: "openid profile email offline_access grok-cli:access api:access",
   ports: [56121, 0],
+  redirectHost: "127.0.0.1",
   redirectPath: "/callback",
   extraAuthParams: { plan: "generic", referrer: "hermes-agent" },
   useNonce: true,
@@ -202,7 +203,7 @@ function startCallbackServer(provider, { state, log }) {
         // Use the actually-bound port (matters when port 0 = ephemeral).
         const boundPort = server.address().port;
         resolveBind({
-          redirectUri: `http://localhost:${boundPort}${provider.redirectPath}`,
+          redirectUri: `http://${provider.redirectHost || "localhost"}:${boundPort}${provider.redirectPath}`,
           codePromise,
           server,
         });
