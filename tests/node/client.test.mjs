@@ -74,6 +74,45 @@ test("CloakBrowser is the managed default", async () => {
   }
 });
 
+test("Cloaking V2 options reach the worker and headedInvisible forces headed mode", async () => {
+  const defaults = new BetterWright();
+  const configured = new BetterWright({
+    cloakV2: false,
+    upstreamProxy: "socks5://proxy.example:1080",
+    geoip: true,
+    locale: "de-DE",
+    timezone: "Europe/Berlin",
+    headless: true,
+    headedInvisible: true,
+  });
+  try {
+    assert.equal(defaults.cloakV2, true);
+    assert.equal(defaults._workerConfig().cloakV2, true);
+    assert.equal(configured.headless, false);
+    assert.deepEqual(
+      {
+        cloakV2: configured._workerConfig().cloakV2,
+        upstreamProxy: configured._workerConfig().upstreamProxy,
+        geoip: configured._workerConfig().geoip,
+        locale: configured._workerConfig().locale,
+        timezone: configured._workerConfig().timezone,
+        headedInvisible: configured._workerConfig().headedInvisible,
+      },
+      {
+        cloakV2: false,
+        upstreamProxy: "socks5://proxy.example:1080",
+        geoip: true,
+        locale: "de-DE",
+        timezone: "Europe/Berlin",
+        headedInvisible: true,
+      },
+    );
+  } finally {
+    await defaults.close();
+    await configured.close();
+  }
+});
+
 test("headed and headless modes use the same managed Cloak profile", async () => {
   const headed = new BetterWright({ headless: false });
   const headless = new BetterWright({ headless: true });

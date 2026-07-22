@@ -85,7 +85,9 @@ function assertManagedCloakOnly(options) {
   }
   if (String(options.executablePath || "").trim()) {
     throw new TypeError(
-      "executablePath is not supported. Use CLOAKBROWSER_BINARY_PATH to select an official CloakBrowser binary.",
+      "executablePath is not supported. Use BETTERWRIGHT_CHROMIUM_PATH / " +
+        "BETTERWRIGHT_CHROMIUM_ROOT for the native fork, or " +
+        "CLOAKBROWSER_BINARY_PATH for an official CloakBrowser binary.",
     );
   }
   const cdp = String(
@@ -265,6 +267,27 @@ export class BetterWright {
    *   longer read page-defined main-world globals (e.g. `window.__NEXT_DATA__`);
    *   DOM access and clicks are unaffected. Requires the optional
    *   `patchright-core` dependency to be installed.
+   * @param {boolean} [options.cloakV2=true] Cloaking V2: coherent desktop
+   *   identity for the managed browser using native CloakBrowser flags and
+   *   binary-specific viewport handling. No page-world API shims are installed.
+   * @param {string} [options.upstreamProxy] http:// or socks5:// egress proxy
+   *   chained through the local policy guard (the IP layer): targets observe
+   *   the upstream IP while policy and DNS-rebinding checks stay local.
+   *   Optional inline credentials: `socks5://user:pass@host:1080`.
+   * @param {boolean} [options.geoip=false] resolve locale/timezone from the
+   *   upstream egress IP so JS-layer identity matches network-layer geography.
+   *   Requires `upstreamProxy`; explicit `locale`/`timezone` always win.
+   * @param {string} [options.locale] browser locale (e.g. "en-US") applied to
+   *   the fingerprint flags, Accept-Language, and JS locale surfaces.
+   * @param {string} [options.timezone] IANA timezone (e.g. "Europe/Berlin")
+   *   applied at the Chromium layer.
+   * @param {boolean} [options.headedInvisible=false] run a real headed window
+   *   parked off-screen, retaining headed compositing without occupying the
+   *   visible desktop.
+   * @param {"macos"|"windows"|"linux"} [options.platform] identity platform
+   *   presented to sites. The native Chromium fork defaults to "macos" (a
+   *   realistic consumer-Mac fingerprint captured from real Chrome on Apple
+   *   Silicon); the managed CloakBrowser path defaults to the host platform.
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
@@ -290,6 +313,22 @@ export class BetterWright {
     this.publicSearchPolicy = resolvePublicSearchPolicy(options.publicSearchPolicy);
     this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
     this.stealthRuntimeFix = resolveStealthRuntimeFix(options.stealthRuntimeFix);
+    this.cloakV2 = options.cloakV2 !== false;
+    this.upstreamProxy = options.upstreamProxy || null;
+    this.geoip = options.geoip === true;
+    this.locale = options.locale || null;
+    this.timezone = options.timezone || null;
+    this.headedInvisible = options.headedInvisible === true;
+    if (this.headedInvisible) this.headless = false;
+    if (
+      options.platform != null &&
+      !["macos", "windows", "linux"].includes(options.platform)
+    ) {
+      throw new TypeError(
+        'platform must be "macos", "windows", or "linux".',
+      );
+    }
+    this.platform = options.platform || null;
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
 
     this._process = null;
@@ -322,6 +361,13 @@ export class BetterWright {
       downloadsDir: downloads,
       browserFlavor: this.browserFlavor,
       stealthRuntimeFix: this.stealthRuntimeFix,
+      cloakV2: this.cloakV2,
+      upstreamProxy: this.upstreamProxy,
+      geoip: this.geoip,
+      locale: this.locale,
+      timezone: this.timezone,
+      headedInvisible: this.headedInvisible,
+      platform: this.platform,
       headless: this.headless,
       credentialCapture: this.credentialCapture,
       searchMinIntervalMs: this.searchMinIntervalMs,
@@ -361,6 +407,16 @@ export class BetterWright {
     // any driver import runs. `--import` must precede the worker script.
     const execArgv = [];
     if (this.stealthRuntimeFix) {
+      const nativeForkConfigured = Boolean(
+        String(process.env.BETTERWRIGHT_CHROMIUM_PATH || "").trim() ||
+          String(process.env.BETTERWRIGHT_CHROMIUM_ROOT || "").trim(),
+      );
+      if (nativeForkConfigured) {
+        throw new BrowserError(
+          "stealthRuntimeFix cannot be combined with BetterWright Chromium; " +
+            "the native fork requires the pinned stock playwright-core driver.",
+        );
+      }
       if (!stealthDriverAvailable()) {
         throw new BrowserError(
           "stealthRuntimeFix is enabled but the optional 'patchright-core' " +

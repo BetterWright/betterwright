@@ -46,6 +46,49 @@ doctor` reports both versions. For a reproducible deployment, set a full
 `CLOAKBROWSER_VERSION`; to keep an already installed build from checking for a
 newer stable build, set `CLOAKBROWSER_AUTO_UPDATE=false`.
 
+### Native Chromium fork (optional)
+
+Deployments that need a fingerprint surface CloakBrowser doesn't cover can run
+BetterWright's own Chromium build instead — per-profile-stable canvas/audio
+farbling, platform masking (a Linux server presents as a consumer Mac), and
+bundled macOS-metric fonts. The npm package is only the JS/runtime; the
+patched Chromium binary is a **separate artifact** you deploy. Details:
+[chromium-fork.md](chromium-fork.md).
+
+Resolution order:
+
+1. `BETTERWRIGHT_CHROMIUM_PATH` (explicit binary) or
+   `BETTERWRIGHT_CHROMIUM_ROOT` (artifact root). A configured-but-missing
+   binary is an error — it fails closed, never silently downgrades.
+2. Zero-config discovery at `~/.betterwright/chromium/<platform>/`: if the
+   artifact for this platform exists there, it is used automatically.
+3. Otherwise the managed CloakBrowser backend. Platforms with no shipped
+   artifact (Windows) always land here.
+
+Force the managed path even with an artifact installed:
+
+```bash
+export BETTERWRIGHT_CHROMIUM_ROOT=off
+```
+
+**Timezone / locale must match egress.** The fork does not hard-code any
+country. Pin `timezone` and `locale` to the geography of the IP sites see
+(constructor options, `--timezone` / `--locale`, or `geoip: true` with
+`upstreamProxy`). A Singapore residential exit with host `UTC` still trips
+geo-sensitive gates (e.g. Google `/sorry`); the same binary with
+`Asia/Singapore` + `en-US` does not.
+
+**Do not share one profile across backends.** Cloak (~146) and the fork
+(150) both write `$BETTERWRIGHT_HOME/browser/profile`. Once the fork has
+opened that directory, falling back to Cloak fails closed
+(`assertProfileNotNewer`). Use a separate `BETTERWRIGHT_HOME` for fork
+hosts, or delete `browser/profile` when switching backends (saved site
+logins in that profile are lost).
+
+A typical split: **Linux and macOS hosts get the fork artifact, Windows hosts
+run `betterwright setup` and stay on CloakBrowser** — one config, no branching
+in your deployment code.
+
 ## Your first run
 
 A snippet is a string of async Playwright JavaScript. The last expression is

@@ -71,6 +71,14 @@ export function managedCloakArgs(fingerprintSeed) {
   ];
 }
 
+/** Native fork arguments: WebRTC proxy boundary plus optional fingerprint seed. */
+export function managedChromiumForkArgs(fingerprintSeed) {
+  return [
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ...(fingerprintSeed ? [`--fingerprint=${fingerprintSeed}`] : []),
+  ];
+}
+
 function cloakEntrypoint() {
   const override = (process.env.BETTERWRIGHT_CLOAKBROWSER_PATH || "").trim();
   if (!override) return "cloakbrowser";
