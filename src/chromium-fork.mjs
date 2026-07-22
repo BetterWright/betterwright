@@ -47,7 +47,7 @@ export function chromiumForkContextOptions({
   };
 }
 
-const PLATFORM_LAYOUT = Object.freeze({
+export const PLATFORM_LAYOUT = Object.freeze({
   "darwin-arm64": path.join(
     "mac-arm64",
     "Chromium.app",
@@ -57,6 +57,26 @@ const PLATFORM_LAYOUT = Object.freeze({
   ),
   "linux-x64": path.join("linux-x64", "chrome"),
   "win32-x64": path.join("win-x64", "chrome.exe"),
+});
+
+/** GitHub release that hosts the per-platform fork zip artifacts. */
+export const CHROMIUM_FORK_RELEASE_TAG = `chromium-${BETTERWRIGHT_CHROMIUM_VERSION}`;
+
+/**
+ * Public download manifest for `betterwright update` / default `setup`.
+ * SHA-256 pins are of the zip archives on the release, not the nested binary.
+ */
+export const CHROMIUM_FORK_ASSETS = Object.freeze({
+  "darwin-arm64": Object.freeze({
+    name: "betterwright-chromium-mac-arm64.zip",
+    sha256:
+      "074cefbde9a8cf10f2ee15cddb1ac67613ebda3b1549e8948ad9eeafbe522ad6",
+  }),
+  "linux-x64": Object.freeze({
+    name: "betterwright-chromium-linux-x64.zip",
+    sha256:
+      "45ffef258415057d70b71639424dc681284babf533939d32375f99585a136d31",
+  }),
 });
 
 function configuredValue(value) {
