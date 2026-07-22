@@ -31,6 +31,13 @@ export class BetterWright {
   publicSearchPolicy: "block" | "allow";
   downloadPolicy: "ask" | "allow" | "deny";
   stealthRuntimeFix: boolean;
+  cloakV2: boolean;
+  upstreamProxy: string | null;
+  geoip: boolean;
+  locale: string | null;
+  timezone: string | null;
+  headedInvisible: boolean;
+  platform: "macos" | "windows" | "linux" | null;
   defaultTimeout: number;
 
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;

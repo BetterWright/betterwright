@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>BetterWright Stealth Probe</title>
+<style>
+  body { font-family: -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif; margin: 2rem; color: #1a1a1a; }
+  h1 { font-size: 1.3rem; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { border: 1px solid #ccc; padding: 4px 10px; text-align: left; font-size: 0.85rem; }
+  th { background: #f0f0f0; }
+  td.pass { background: #dcf5dc; }
+  td.fail { background: #fae0e0; }
+  td.warn { background: #fdf3d7; }
+  #score { font-size: 1.6rem; font-weight: 700; margin-top: 1rem; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 0.78rem; }
+</style>
+</head>
+<body>
+<h1>BetterWright Cloaking V2 — stealth probe</h1>
+<div id="score">computing…</div>
+<table id="results">
+  <thead><tr><th>Check</th><th>Result</th><th>Value</th></tr></thead>
+  <tbody></tbody>
+</table>
+<script>
+"use strict";
+const checks = [];
+function record(name, status, value) {
+  checks.push({ name, status, value: String(value).slice(0, 300) });
+}
+function pass(name, value) { record(name, "PASS", value); }
+function fail(name, value) { record(name, "FAIL", value); }
+function warn(name, value) { record(name, "WARN", value); }
+
+async function run() {
+  // --- automation signals ---------------------------------------------------
+  navigator.webdriver === undefined || navigator.webdriver === false
+    ? pass("navigator.webdriver", navigator.webdriver)
+    : fail("navigator.webdriver", navigator.webdriver);
+
+  /HeadlessChrome/.test(navigator.userAgent)
+    ? fail("userAgent headless marker", navigator.userAgent)
+    : pass("userAgent headless marker", "absent");
+
+  const cdcKeys = Object.getOwnPropertyNames(window).filter((k) => /cdc_|\$cdc/i.test(k));
+  cdcKeys.length === 0
+    ? pass("driver injection markers", "none")
+    : fail("driver injection markers", cdcKeys.join(","));
+
+  // --- chrome object --------------------------------------------------------
+  if (window.chrome && typeof window.chrome === "object") {
+    pass("window.chrome", "present");
+    // A fresh stock Chrome 150 page does not expose chrome.runtime. Adding a
+    // page-world shim here is an over-spoof, not a stealth improvement.
+    typeof window.chrome.runtime === "undefined"
+      ? pass("chrome.runtime web-page exposure", "absent (stock parity)")
+      : warn("chrome.runtime web-page exposure", "present");
+    typeof window.chrome.app === "object"
+      ? pass("chrome.app", "present")
+      : fail("chrome.app", "missing");
+  } else {
+    fail("window.chrome", typeof window.chrome);
+  }
+
+  // --- iframe coherence -----------------------------------------------------
+  try {
+    const iframe = document.createElement("iframe");
+    iframe.style.display = "none";
+    document.body.appendChild(iframe);
+    iframe.contentWindow.chrome
+      ? pass("iframe contentWindow.chrome", "present")
+      : fail("iframe contentWindow.chrome", "missing");
+    iframe.remove();
+  } catch (error) {
+    warn("iframe contentWindow.chrome", error.message);
+  }
+
+  // --- plugins / mimeTypes --------------------------------------------------
+  navigator.plugins && navigator.plugins.length >= 3
+    ? pass("navigator.plugins", `${navigator.plugins.length} entries`)
+    : fail("navigator.plugins", navigator.plugins ? `${navigator.plugins.length} entries` : "missing");
+  navigator.mimeTypes && navigator.mimeTypes.length >= 1
+    ? pass("navigator.mimeTypes", `${navigator.mimeTypes.length} entries`)
+    : fail("navigator.mimeTypes", "empty");
+
+  // --- languages ------------------------------------------------------------
+  Array.isArray(navigator.languages) && navigator.languages.length >= 1
+    ? pass("navigator.languages", navigator.languages.join(","))
+    : fail("navigator.languages", "missing");
+
+  // --- geometry coherence ---------------------------------------------------
+  const geo = {
+    screenW: screen.width, screenH: screen.height,
+    availW: screen.availWidth, availH: screen.availHeight,
+    innerW: window.innerWidth, innerH: window.innerHeight,
+    outerW: window.outerWidth, outerH: window.outerHeight,
+    dpr: window.devicePixelRatio,
+  };
+  // Headless tell: screen == inner == outer with zero window chrome.
+  if (geo.screenH > geo.innerH && geo.outerH >= geo.innerH && geo.outerW > 0 && geo.outerH > 0) {
+    pass("geometry coherence", JSON.stringify(geo));
+  } else if (geo.outerH === geo.innerH && geo.screenH === geo.innerH) {
+    fail("geometry coherence (headless signature)", JSON.stringify(geo));
+  } else {
+    warn("geometry coherence", JSON.stringify(geo));
+  }
+  geo.screenW >= geo.availW && geo.screenH >= geo.availH
+    ? pass("screen/avail coherence", `${geo.availW}x${geo.availH} of ${geo.screenW}x${geo.screenH}`)
+    : fail("screen/avail coherence", JSON.stringify(geo));
+  Number.isInteger(geo.dpr) || geo.dpr > 0
+    ? pass("devicePixelRatio", geo.dpr)
+    : fail("devicePixelRatio", geo.dpr);
+  screen.colorDepth === 24
+    ? pass("screen.colorDepth", screen.colorDepth)
+    : warn("screen.colorDepth", screen.colorDepth);
+
+  // --- permissions coherence -------------------------------------------------
+  try {
+    if (typeof Notification === "undefined") {
+      fail("Notification API", "missing");
+    } else {
+      const perm = Notification.permission;
+      const query = await navigator.permissions.query({ name: "notifications" });
+      const coherent =
+        (perm === "default" && query.state === "prompt") ||
+        (perm === "granted" && query.state === "granted") ||
+        (perm === "denied" && query.state === "denied");
+      coherent
+        ? pass("Notification/permissions coherence", `${perm}/${query.state}`)
+        : fail("Notification/permissions coherence", `${perm}/${query.state}`);
+    }
+  } catch (error) {
+    warn("Notification/permissions coherence", error.message);
+  }
+
+  // --- hardware -------------------------------------------------------------
+  navigator.hardwareConcurrency >= 2
+    ? pass("hardwareConcurrency", navigator.hardwareConcurrency)
+    : fail("hardwareConcurrency", navigator.hardwareConcurrency);
+  !("deviceMemory" in navigator) || navigator.deviceMemory >= 2
+    ? pass("deviceMemory", "deviceMemory" in navigator ? navigator.deviceMemory : "n/a")
+    : fail("deviceMemory", navigator.deviceMemory);
+  navigator.maxTouchPoints === 0
+    ? pass("maxTouchPoints (desktop)", 0)
+    : warn("maxTouchPoints (desktop)", navigator.maxTouchPoints);
+
+  // --- WebGL -----------------------------------------------------------------
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (gl) {
+      const ext = gl.getExtension("WEBGL_debug_renderer_info");
+      const vendor = ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+      const renderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      /swiftshader|software|llvmpipe|angle \(google/i.test(renderer)
+        ? fail("WebGL renderer", renderer)
+        : pass("WebGL renderer", renderer);
+      pass("WebGL vendor", vendor);
+    } else {
+      fail("WebGL", "context unavailable");
+    }
+  } catch (error) {
+    warn("WebGL", error.message);
+  }
+
+  // --- media devices ----------------------------------------------------------
+  try {
+    if (navigator.mediaDevices?.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      devices.length > 0
+        ? pass("mediaDevices", `${devices.length} devices`)
+        : warn("mediaDevices", "0 devices");
+    }
+  } catch (error) {
+    warn("mediaDevices", error.message);
+  }
+
+  // --- speech synthesis voices (headless often has none) ---------------------
+  try {
+    const voices = speechSynthesis.getVoices();
+    voices.length > 0
+      ? pass("speechSynthesis voices", voices.length)
+      : warn("speechSynthesis voices", 0);
+  } catch (error) {
+    warn("speechSynthesis voices", error.message);
+  }
+
+  // --- misc APIs ---------------------------------------------------------------
+  "connection" in navigator && navigator.connection
+    ? pass("navigator.connection", navigator.connection.effectiveType || "present")
+    : warn("navigator.connection", "missing");
+  navigator.pdfViewerEnabled === true
+    ? pass("pdfViewerEnabled", true)
+    : warn("pdfViewerEnabled", navigator.pdfViewerEnabled);
+
+  // --- client hints ------------------------------------------------------------
+  try {
+    if (navigator.userAgentData) {
+      const data = await navigator.userAgentData.getHighEntropyValues(["platform", "platformVersion", "model", "uaFullVersion"]);
+      const headlessBrand = /headless/i.test(JSON.stringify(data.brands || [])) || /headless/i.test(navigator.userAgent);
+      headlessBrand
+        ? fail("client hints", JSON.stringify(data))
+        : pass("client hints", `${data.platform} ${data.uaFullVersion || ""}`);
+      data.mobile === false ? pass("client hints mobile=false", "ok") : fail("client hints mobile=false", data.mobile);
+    } else {
+      warn("client hints", "userAgentData missing");
+    }
+  } catch (error) {
+    warn("client hints", error.message);
+  }
+
+  // --- toString hygiene on patched surfaces -------------------------------------
+  function isNative(fn) {
+    try {
+      return /\{\s*\[native code\]\s*\}/.test(Function.prototype.toString.call(fn));
+    } catch {
+      return false;
+    }
+  }
+  const toStringTargets = {
+    "permissions.query": navigator.permissions?.query,
+    "plugins getter": navigator.__lookupGetter__ ? null : Object.getOwnPropertyDescriptor(Navigator.prototype, "plugins")?.get,
+    "webdriver getter": Object.getOwnPropertyDescriptor(Navigator.prototype, "webdriver")?.get,
+  };
+  for (const [label, fn] of Object.entries(toStringTargets)) {
+    if (typeof fn !== "function") continue;
+    isNative(fn) ? pass(`toString hygiene: ${label}`, "native") : fail(`toString hygiene: ${label}`, "non-native");
+  }
+  isNative(Function.prototype.toString)
+    ? pass("toString hygiene: Function.prototype.toString", "native")
+    : fail("toString hygiene: Function.prototype.toString", "tampered");
+
+  // --- timezone / intl ----------------------------------------------------------
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    tz ? pass("Intl timezone", tz) : fail("Intl timezone", "missing");
+  } catch (error) {
+    warn("Intl timezone", error.message);
+  }
+
+  // --- error stack cleanliness ----------------------------------------------------
+  try {
+    const stack = new Error().stack || "";
+    /cdp|devtools|playwright|__playwright/i.test(stack)
+      ? fail("error stack artifacts", stack.split("\n")[1] || stack.slice(0, 120))
+      : pass("error stack artifacts", "clean");
+  } catch {
+    /* ignore */
+  }
+  window.__playwright || window.__pw_manual || window.__PW_inspect
+    ? fail("playwright globals", "present")
+    : pass("playwright globals", "absent");
+
+  // --- score ----------------------------------------------------------------------
+  const scored = checks.filter((c) => c.status !== "WARN");
+  const passed = scored.filter((c) => c.status === "PASS").length;
+  const score = Math.round((passed / scored.length) * 100);
+  window.__PROBE_RESULTS__ = { score, checks, userAgent: navigator.userAgent };
+
+  // render
+  document.getElementById("score").textContent = `Stealth score: ${score}/100 (${passed}/${scored.length} checks passed)`;
+  const tbody = document.querySelector("#results tbody");
+  for (const check of checks) {
+    const row = document.createElement("tr");
+    const cls = check.status === "PASS" ? "pass" : check.status === "FAIL" ? "fail" : "warn";
+    row.innerHTML = `<td>${check.name}</td><td class="${cls}">${check.status}</td><td class="mono"></td>`;
+    row.children[2].textContent = check.value;
+    tbody.appendChild(row);
+  }
+  document.title = `probe:${score}`;
+}
+run();
+</script>
+</body>
+</html>

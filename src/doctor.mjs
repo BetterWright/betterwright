@@ -9,6 +9,12 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+  BETTERWRIGHT_CHROMIUM_VERSION,
+  resolveChromiumForkBinary,
+} from "./chromium-fork.mjs";
+import { forkFontsDir } from "./fork-identity.mjs";
+
 const require = createRequire(import.meta.url);
 
 export const PINNED_PLAYWRIGHT_VERSION = "1.61.1";
@@ -88,6 +94,24 @@ export async function doctorReport() {
   const workerOk = fs.existsSync(worker);
   const cloakOk = cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed;
   const stealth = stealthDriverVersion();
+  let chromiumFork = null;
+  let chromiumForkError = null;
+  try {
+    chromiumFork = resolveChromiumForkBinary();
+  } catch (error) {
+    chromiumForkError = error instanceof Error ? error.message : String(error);
+  }
+  const browser = chromiumFork ? "chromium-fork" : "cloak";
+  const chromiumForkFonts = chromiumFork ? forkFontsDir(chromiumFork) : null;
+  const chromiumForkFontsWarning =
+    chromiumFork && !chromiumForkFonts
+      ? "fork binary has no fonts/ttf beside it; host fontconfig will leak (Linux tell). Deploy the macOS-metric font bundle next to chrome."
+      : null;
+  const ready =
+    workerOk &&
+    version === PINNED_PLAYWRIGHT_VERSION &&
+    (chromiumFork ? true : cloakOk) &&
+    !chromiumForkError;
   return {
     node: process.execPath,
     worker,
@@ -102,9 +126,14 @@ export async function doctorReport() {
     cloakbrowser_binary_tier: cloak.tier,
     cloakbrowser_binary: cloak.binary,
     cloakbrowser_ok: cloakOk,
+    chromium_fork: chromiumFork,
+    chromium_fork_version: chromiumFork ? BETTERWRIGHT_CHROMIUM_VERSION : null,
+    chromium_fork_error: chromiumForkError,
+    chromium_fork_fonts: chromiumForkFonts,
+    chromium_fork_fonts_warning: chromiumForkFontsWarning,
     stealth_driver: stealth,
     stealth_available: Boolean(stealth),
-    browser: "cloak",
-    ready: workerOk && version === PINNED_PLAYWRIGHT_VERSION && cloakOk,
+    browser,
+    ready,
   };
 }

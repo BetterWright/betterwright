@@ -1,6 +1,6 @@
 {
   "name": "betterwright",
-  "version": "0.9.7",
+  "version": "0.9.9",
   "description": "A persistent, policy-guarded Playwright browser for AI agents with network controls, trusted credential filling, proof screenshots, and CAPTCHA helpers.",
   "type": "module",
   "main": "src/index.mjs",
@@ -66,6 +66,7 @@
     "bin",
     "types",
     "skills",
+    "docs/*.md",
     "examples/javascript",
     "SETUP.md",
     "SECURITY.md",
@@ -135,6 +136,7 @@
   "homepage": "https://github.com/CuriosityOS/betterwright#readme",
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
