@@ -67,13 +67,14 @@ step from what it sees, in a browser that must still be there next turn:
 
 ## Quick start
 
-Requires **Node.js 22+**. Setup downloads the managed browser (~200 MB, once)
-from its official release source — never as an npm lifecycle side effect, so
-installs stay predictable and work with `--ignore-scripts`.
+Requires **Node.js 22+**. Setup downloads the browser (~200 MB, once) — the
+Chromium fork on macOS arm64 / Linux x64, CloakBrowser elsewhere — never as an
+npm lifecycle side effect, so installs stay predictable with `--ignore-scripts`.
 
 ```bash
 npm install -g betterwright
-betterwright setup     # fetch + verify the managed browser (once)
+betterwright setup     # fork (mac/linux) + Cloak fallback
+betterwright update    # refresh / switch to the Chromium fork
 betterwright doctor    # confirm everything resolves
 ```
 
