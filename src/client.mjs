@@ -407,10 +407,11 @@ export class BetterWright {
     // any driver import runs. `--import` must precede the worker script.
     const execArgv = [];
     if (this.stealthRuntimeFix) {
-      const nativeForkConfigured = Boolean(
-        String(process.env.BETTERWRIGHT_CHROMIUM_PATH || "").trim() ||
-          String(process.env.BETTERWRIGHT_CHROMIUM_ROOT || "").trim(),
-      );
+      const pathHint = String(process.env.BETTERWRIGHT_CHROMIUM_PATH || "").trim();
+      const rootHint = String(process.env.BETTERWRIGHT_CHROMIUM_ROOT || "").trim();
+      const nativeForkConfigured =
+        (pathHint && pathHint.toLowerCase() !== "off") ||
+        (rootHint && rootHint.toLowerCase() !== "off");
       if (nativeForkConfigured) {
         throw new BrowserError(
           "stealthRuntimeFix cannot be combined with BetterWright Chromium; " +
