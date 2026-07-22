@@ -8,7 +8,8 @@
 // Run it directly (stdio transport):
 //
 //     npm install betterwright @modelcontextprotocol/sdk
-//     npx betterwright setup          # one-time managed browser download
+//     npx betterwright setup          # fork (mac/linux) + Cloak fallback
+//     npx betterwright update         # refresh / switch to Chromium fork
 //     npx betterwright mcp
 //
 // Then register it with your MCP client. For Claude Code:

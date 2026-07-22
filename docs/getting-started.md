@@ -2,27 +2,31 @@
 
 ## Install and set up
 
-BetterWright drives a managed CloakBrowser build through Playwright, so it needs
+BetterWright drives a managed browser through Playwright, so it needs
 **Node.js 22+** on your `PATH`. The browser itself is downloaded once by
-`setup`.
+`setup` / `update`.
 
 ```bash
 npm install betterwright
-npx betterwright setup     # downloads the signed managed browser (~200 MB, once)
+npx betterwright setup     # Chromium fork on mac/linux; Cloak everywhere
+npx betterwright update    # download/refresh the fork (switches off Cloak default)
 npx betterwright doctor    # prints what resolved; should end with "BetterWright is ready."
 ```
 
 If `doctor` reports Node missing, install it from <https://nodejs.org> and rerun
-`setup`. If `doctor` reports CloakBrowser missing, rerun
-`npx betterwright setup`.
+`setup`. If `doctor` reports the browser missing, rerun
+`npx betterwright setup` (or `update` for the fork only).
 
-Upgrade with `npm update betterwright` or `npm install betterwright@latest`.
-Package updates are intentional rather than automatic, so application lockfiles
-continue to control when a new BetterWright version is adopted.
+Upgrade the npm package with `npm update betterwright` or
+`npm install betterwright@latest`, then run `betterwright update` so the
+pinned Chromium fork matches that package. Package updates are intentional
+rather than automatic, so application lockfiles continue to control when a
+new BetterWright version is adopted.
 
 ### Managed CloakBrowser backend
 
-Managed launches use CloakBrowser by default. `betterwright setup` asks the
+On platforms without a public fork artifact (Windows today), or when you pass
+`--cloak-only`, launches use CloakBrowser. `betterwright setup` asks the
 pinned official wrapper to fetch the correct binary directly from CloakHQ's
 release source and verify the published checksums with its pinned Ed25519
 signature before extraction. BetterWright ships the wrapper integration, not
@@ -46,14 +50,21 @@ doctor` reports both versions. For a reproducible deployment, set a full
 `CLOAKBROWSER_VERSION`; to keep an already installed build from checking for a
 newer stable build, set `CLOAKBROWSER_AUTO_UPDATE=false`.
 
-### Native Chromium fork (optional)
+### Native Chromium fork (default on macOS arm64 / Linux x64)
 
-Deployments that need a fingerprint surface CloakBrowser doesn't cover can run
-BetterWright's own Chromium build instead — per-profile-stable canvas/audio
-farbling, platform masking (a Linux server presents as a consumer Mac), and
-bundled macOS-metric fonts. The npm package is only the JS/runtime; the
-patched Chromium binary is a **separate artifact** you deploy. Details:
-[chromium-fork.md](chromium-fork.md).
+`betterwright setup` and `betterwright update` download BetterWright's own
+Chromium build into `~/.betterwright/chromium/` (SHA-256 verified from the
+pinned GitHub Release). Discovery then prefers the fork over CloakBrowser —
+per-profile-stable canvas/audio farbling, platform masking (a Linux server
+presents as a consumer Mac), and bundled macOS-metric fonts. The npm package
+is only the JS/runtime; the ~200 MB zip is fetched on demand, never as an
+install lifecycle side effect. Details: [chromium-fork.md](chromium-fork.md).
+
+```bash
+npx betterwright update          # install/refresh fork only
+npx betterwright update --force  # re-download even if present
+npx betterwright setup --cloak-only  # CloakBrowser only (skip fork)
+```
 
 Resolution order:
 
@@ -61,7 +72,8 @@ Resolution order:
    `BETTERWRIGHT_CHROMIUM_ROOT` (artifact root). A configured-but-missing
    binary is an error — it fails closed, never silently downgrades.
 2. Zero-config discovery at `~/.betterwright/chromium/<platform>/`: if the
-   artifact for this platform exists there, it is used automatically.
+   artifact for this platform exists there, it is used automatically
+   (this is what `update` / default `setup` populate).
 3. Otherwise the managed CloakBrowser backend. Platforms with no shipped
    artifact (Windows) always land here.
 

@@ -2,9 +2,24 @@
 
 BetterWright can run the pinned BetterWright Chromium 150 fork while keeping
 its public `run()`, `human.*`, `captcha.*`, snapshot, policy, proxy, and vault
-APIs unchanged. The fork is selected by environment variable or discovered
-automatically; the managed CloakBrowser path is the fallback when no artifact
-is present.
+APIs unchanged. On macOS arm64 and Linux x64, `betterwright setup` /
+`betterwright update` download the fork into the zero-config discovery root;
+CloakBrowser remains the fallback when no artifact is present (and the only
+path on Windows today).
+
+## Install / update
+
+```bash
+betterwright update          # download fork → ~/.betterwright/chromium/
+betterwright update --force  # re-fetch + re-verify even if already present
+betterwright setup           # fork (when shipped) + CloakBrowser fallback
+betterwright setup --cloak-only
+```
+
+Artifacts come from the GitHub Release tag `chromium-<version>` (see
+`CHROMIUM_FORK_RELEASE_TAG` / `CHROMIUM_FORK_ASSETS` in
+`src/chromium-fork.mjs`). Each zip is SHA-256 pinned in that manifest before
+extract. Apple-licensed fonts are **not** in the public zip.
 
 ## Runtime Selection
 
@@ -51,11 +66,11 @@ the platform, e.g. Windows) → managed CloakBrowser, exactly as before.
   linux-x64/chrome          (+ fonts/ttf/ for the macOS-metric font set)
 ```
 
-This makes mixed fleets trivial: drop the artifact on Linux and macOS hosts,
-run `betterwright setup` on Windows hosts, and every machine picks the right
-backend with the same configuration. Set `BETTERWRIGHT_CHROMIUM_ROOT=off` (or
-`BETTERWRIGHT_CHROMIUM_PATH=off`) to force the managed path on a host that has
-the artifact installed.
+This makes mixed fleets trivial: run `betterwright update` (or `setup`) on
+Linux and macOS hosts, `betterwright setup --cloak-only` on Windows, and every
+machine picks the right backend with the same configuration. Set
+`BETTERWRIGHT_CHROMIUM_ROOT=off` (or `BETTERWRIGHT_CHROMIUM_PATH=off`) to force
+the managed path on a host that has the artifact installed.
 
 **Profiles are not interchangeable.** Fork and Cloak share
 `$BETTERWRIGHT_HOME/browser/profile` by default. Prefer a dedicated home for
