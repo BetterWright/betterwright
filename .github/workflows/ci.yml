@@ -38,11 +38,12 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Install managed CloakBrowser
-        run: node bin/betterwright.mjs setup
+        run: node bin/betterwright.mjs setup --cloak-only
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
       # broken Cloak install can never report green by skipping every browser test.
       - run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
+          BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Test managed CloakBrowser headed mode
-        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 node --test tests/node/cloak.test.mjs
+        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.mjs

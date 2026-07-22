@@ -25,8 +25,8 @@ import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import { formatAgentUsage } from "../src/agent-usage.mjs";
-import { makeLineReader } from "../src/cli-io.mjs";
 import { installChromiumFork } from "../src/chromium-fork-install.mjs";
+import { makeLineReader } from "../src/cli-io.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
 
