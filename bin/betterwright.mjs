@@ -48,6 +48,23 @@ function collectValues(argv, flag) {
   return values;
 }
 
+// Cloaking V2 flags shared by run/repl/agent. On by default; --no-cloak-v2
+// disables the coherent-identity layer. --upstream-proxy chains an egress
+// proxy through the policy guard (the IP layer); --geoip aligns locale and
+// timezone with the egress IP unless --locale/--timezone pin them explicitly.
+function cloakingFromFlags(flags) {
+  return {
+    cloakV2: !flags.has("--no-cloak-v2"),
+    upstreamProxy: flagValue(process.argv, "--upstream-proxy") || undefined,
+    geoip: flags.has("--geoip"),
+    locale: flagValue(process.argv, "--locale") || undefined,
+    timezone: flagValue(process.argv, "--timezone") || undefined,
+    headedInvisible: flags.has("--headed-invisible"),
+    platform: flagValue(process.argv, "--platform") || undefined,
+    stealthRuntimeFix: flags.has("--stealth") || undefined,
+  };
+}
+
 async function cmdDoctor() {
   const report = await doctorReport();
   for (const [key, value] of Object.entries(report)) console.log(`${key.padEnd(20)} ${value}`);
@@ -92,7 +109,7 @@ async function readSnippet(arg) {
 
 async function cmdRun(arg, flags) {
   const code = await readSnippet(arg);
-  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), stealthRuntimeFix: flags.has("--stealth") || undefined });
+  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), ...cloakingFromFlags(flags) });
   try {
     const result = await bw.run(code);
     console.log(JSON.stringify(result, null, 2));
@@ -155,7 +172,7 @@ function cmdSkill(flags) {
 }
 
 async function cmdRepl(flags) {
-  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), stealthRuntimeFix: flags.has("--stealth") || undefined });
+  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), ...cloakingFromFlags(flags) });
   console.log("BetterWright REPL — blank line runs a snippet, Ctrl-D quits.\n");
   const rl = readline.createInterface({ input: process.stdin });
   let buffer = [];
@@ -235,7 +252,7 @@ async function cmdInteractive(flags) {
     new BetterWright({
       policy: policyFromFlags(flags),
       headless,
-      stealthRuntimeFix: flags.has("--stealth") || undefined,
+      ...cloakingFromFlags(flags),
     });
   let browser = newBrowser();
   // The running transcript, so a follow-up task remembers earlier ones. `/new`

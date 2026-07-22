@@ -197,8 +197,10 @@ servers) and confirm a `browser` tool appears. Then do **§5**.
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
-Managed launches use CloakBrowser exclusively in headed and headless modes to
-reduce common automation false positives. This is not a guarantee of
+Managed launches use CloakBrowser in headed and headless modes to reduce
+common automation false positives; hosts with the native Chromium fork
+artifact installed (`~/.betterwright/chromium/`) run that instead — see
+[docs/chromium-fork.md](docs/chromium-fork.md). This is not a guarantee of
 undetectability.
 
 Broad discovery should use the host's web-search tool, then open selected

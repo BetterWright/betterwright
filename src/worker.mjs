@@ -34,12 +34,19 @@ import {
   PUBLIC_SEARCH_BLOCK_ADVICE,
 } from "./challenges.mjs";
 import {
+  BETTERWRIGHT_CHROMIUM_VERSION,
+  chromiumForkContextOptions,
+  resolveChromiumForkBinary,
+} from "./chromium-fork.mjs";
+import {
   assertProfileNotNewer,
   cloakBinaryInfo,
   launchCloakPersistentContext,
+  managedChromiumForkArgs,
   managedCloakArgs,
   managedCloakViewport,
 } from "./cloak.mjs";
+import { buildV2LaunchPlan, resolveGeoIdentity } from "./cloak-v2.mjs";
 import {
   collectCredentialFrameDetections,
   disposeCredentialFrameDetections,
@@ -48,7 +55,16 @@ import {
   downloadBehaviorParams,
   normalizeDownloadPolicy,
 } from "./downloads.mjs";
-import { createGuardProxy } from "./guard-proxy.mjs";
+import {
+  forkMacIdentity,
+  installForkIdentityEmulation,
+  prepareForkFontsConfig,
+} from "./fork-identity.mjs";
+import {
+  createGuardProxy,
+  httpGetViaProxy,
+  parseUpstreamProxy,
+} from "./guard-proxy.mjs";
 import {
   movePointer,
   pointInside,
@@ -1252,26 +1268,11 @@ async function installContextGuard(context) {
       await route.abort("blockedbyclient").catch(() => {});
     }
   });
-  await context.routeWebSocket("**/*", async (webSocket) => {
-    const executeId = transportExecuteId();
-    try {
-      const decision = await guardUrl(
-        webSocket.url(),
-        { method: "GET", resourceType: "websocket" },
-        executeId,
-      );
-      if (decision?.allowed) webSocket.connectToServer();
-      else
-        await webSocket.close({
-          code: 1008,
-          reason: "Blocked by browser policy",
-        });
-    } catch {
-      await webSocket
-        .close({ code: 1011, reason: "Browser policy unavailable" })
-        .catch(() => {});
-    }
-  });
+  // Do not install Playwright's WebSocket interception. It changes the
+  // browser's WebSocket path observably enough for commercial bot defenses to
+  // challenge an otherwise identical session. WebSocket connections still
+  // cannot bypass policy: Chromium sends every TCP target through the SOCKS
+  // guard, which authorizes the host and each resolved address before dialing.
 }
 
 async function ensureBrowser(config) {
@@ -1288,7 +1289,9 @@ async function ensureBrowser(config) {
   }
   if (String(config.executablePath || "").trim()) {
     throw new Error(
-      "Custom executables are disabled; use CLOAKBROWSER_BINARY_PATH for an official CloakBrowser binary.",
+      "Custom executables are disabled; use BETTERWRIGHT_CHROMIUM_PATH / " +
+        "BETTERWRIGHT_CHROMIUM_ROOT for the native fork, or " +
+        "CLOAKBROWSER_BINARY_PATH for an official CloakBrowser binary.",
     );
   }
   const publicSearchPolicy = String(config.publicSearchPolicy || "block")
@@ -1318,9 +1321,93 @@ async function ensureBrowser(config) {
     const transportProxyPort = await guardProxy.ensure();
 
     const headless = launchConfig.headless !== false;
-    const args = managedCloakArgs(
-      fingerprintSeedForProfile(profileLock.profileDir),
-    );
+    const forkBinary = resolveChromiumForkBinary();
+    const args = forkBinary
+      ? managedChromiumForkArgs(
+          fingerprintSeedForProfile(profileLock.profileDir),
+        )
+      : managedCloakArgs(fingerprintSeedForProfile(profileLock.profileDir));
+
+    // Upstream egress proxy (the IP layer). Every connection still passes
+    // policy + DNS-rebinding validation here; the upstream only changes which
+    // IP the target observes. Applies independently of cloakV2 — a configured
+    // proxy is never silently ignored.
+    let upstream = null;
+    if (launchConfig.upstreamProxy) {
+      upstream = parseUpstreamProxy(launchConfig.upstreamProxy);
+      if (!upstream) {
+        throw new Error(
+          "upstreamProxy must be an http:// or socks5:// URL (optional user:pass@).",
+        );
+      }
+    }
+    guardProxy.setUpstream(upstream);
+
+    // Cloaking V2: one coherent identity across the Chromium and network
+    // layers. geoip resolves the locale/timezone to match the egress
+    // geography so the JS layer and the network layer tell the same story.
+    let v2Plan = null;
+    if (launchConfig.cloakV2 !== false) {
+      const identity = await resolveGeoIdentity({
+        geoip: launchConfig.geoip === true && Boolean(upstream),
+        locale: launchConfig.locale,
+        timezone: launchConfig.timezone,
+        fetchJson: upstream
+          ? async (url) => {
+              const response = await httpGetViaProxy(upstream, url);
+              try {
+                return JSON.parse(response.body);
+              } catch {
+                return null;
+              }
+            }
+          : undefined,
+      });
+      v2Plan = buildV2LaunchPlan({
+        locale: identity.locale || "en-US",
+        timezone: identity.timezone || undefined,
+        platform: launchConfig.platform || undefined,
+        headedInvisible: launchConfig.headedInvisible === true,
+        nativeFork: Boolean(forkBinary),
+      });
+      args.push(...v2Plan.args);
+    }
+
+    // Native fork platform masking: present a real consumer-Mac identity
+    // (captured from genuine Chrome on an M4 Pro MacBook; see
+    // src/fork-identity.mjs) instead of the host Linux identity. Window
+    // geometry + DPR flags make screen.* coherent in headless; the UA/UA-CH/
+    // navigator.platform layer is applied per page over CDP after launch.
+    let forkIdentity = null;
+    if (
+      forkBinary &&
+      v2Plan &&
+      v2Plan.identity.platform === "macos" &&
+      launchConfig.platform !== "linux" &&
+      launchConfig.platform !== "windows"
+    ) {
+      forkIdentity = forkMacIdentity(BETTERWRIGHT_CHROMIUM_VERSION);
+      if (launchConfig.headedInvisible !== true) {
+        args.push(
+          `--window-size=${forkIdentity.screen.width},${forkIdentity.screen.height}`,
+        );
+      }
+      args.push(
+        `--force-device-scale-factor=${forkIdentity.screen.devicePixelRatio}`,
+      );
+    }
+
+    // Bundled macOS-metric fonts (scripts/assemble-mac-fonts.sh) ride the
+    // artifact next to the binary; generated conf keeps paths absolute to
+    // the deployment location. Absent bundle: host fontconfig, a known tell.
+    let forkEnv = null;
+    if (forkIdentity) {
+      const fonts = prepareForkFontsConfig({
+        forkBinary,
+        runtimeDir: launchConfig.runtimeDir,
+      });
+      if (fonts) forkEnv = { ...process.env, FONTCONFIG_FILE: fonts.confPath };
+    }
     const proxy = {
       server: `socks5://127.0.0.1:${transportProxyPort}`,
       // Chromium otherwise bypasses the proxy for localhost/link-local
@@ -1329,36 +1416,67 @@ async function ensureBrowser(config) {
       bypass: "<-loopback>",
     };
 
-    // Cloak's wrapper supplies its source-level fingerprint flags, coherent
-    // viewport defaults, and automation-safe Chromium arguments. BetterWright
-    // pins one random seed to the persistent profile so the same identity does
-    // not appear to change hardware on every restart. Its blanket humanizer is
-    // intentionally disabled; BetterWright's frame-safe human helpers remain
-    // the only model-facing interaction layer.
-    const binaryInfo = await cloakBinaryInfo();
-    if (!profileLock.ephemeral) {
-      assertProfileNotNewer(profileLock.profileDir, binaryInfo?.version);
+    if (forkBinary) {
+      if (!profileLock.ephemeral) {
+        assertProfileNotNewer(
+          profileLock.profileDir,
+          BETTERWRIGHT_CHROMIUM_VERSION,
+        );
+      }
+      useSetContentCompatibility = false;
+      const { chromium } = await import("playwright-core");
+      browserContext = await chromium.launchPersistentContext(
+        profileLock.profileDir,
+        {
+          executablePath: forkBinary,
+          headless,
+          ...chromiumForkContextOptions(),
+          proxy,
+          args,
+          // Context-level UA baseline: correct User-Agent from the very first
+          // navigation, before per-page CDP emulation attaches.
+          ...(forkIdentity ? { userAgent: forkIdentity.userAgent } : {}),
+          ...(forkEnv ? { env: forkEnv } : {}),
+          acceptDownloads: true,
+          serviceWorkers: "allow",
+          downloadsPath: launchConfig.downloadsDir,
+        },
+      );
+      if (forkIdentity) {
+        await installForkIdentityEmulation(browserContext, forkIdentity);
+      }
+    } else {
+      // Cloak's wrapper supplies its source-level fingerprint flags, coherent
+      // viewport defaults, and automation-safe Chromium arguments. BetterWright
+      // pins one random seed to the persistent profile so the same identity does
+      // not appear to change hardware on every restart. Its blanket humanizer is
+      // intentionally disabled; BetterWright's frame-safe human helpers remain
+      // the only model-facing interaction layer.
+      const binaryInfo = await cloakBinaryInfo();
+      if (!profileLock.ephemeral) {
+        assertProfileNotNewer(profileLock.profileDir, binaryInfo?.version);
+      }
+      // Patched Cloak builds can report stale lifecycle events to Playwright's
+      // protocol-level setContent implementation. The document-write fallback
+      // below preserves Page/Frame setContent semantics across Cloak versions.
+      useSetContentCompatibility = true;
+      const viewport = managedCloakViewport(binaryInfo, headless);
+      browserContext = await launchCloakPersistentContext({
+        userDataDir: profileLock.profileDir,
+        headless,
+        humanize: false,
+        ...(viewport ? { viewport } : {}),
+        proxy,
+        args,
+        contextOptions: {
+          acceptDownloads: true,
+          serviceWorkers: "block",
+        },
+        launchOptions: {
+          downloadsPath: launchConfig.downloadsDir,
+        },
+      });
     }
-    // Patched Cloak builds can report stale lifecycle events to Playwright's
-    // protocol-level setContent implementation. The document-write fallback
-    // below preserves Page/Frame setContent semantics across Cloak versions.
-    useSetContentCompatibility = true;
-    const viewport = managedCloakViewport(binaryInfo, headless);
-    browserContext = await launchCloakPersistentContext({
-      userDataDir: profileLock.profileDir,
-      headless,
-      humanize: false,
-      ...(viewport ? { viewport } : {}),
-      proxy,
-      args,
-      contextOptions: {
-        acceptDownloads: true,
-        serviceWorkers: "block",
-      },
-      launchOptions: {
-        downloadsPath: launchConfig.downloadsDir,
-      },
-    });
     const launchedContext = browserContext;
     launchedContext.on("close", () => {
       if (browserContext === launchedContext) browserContext = null;

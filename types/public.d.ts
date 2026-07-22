@@ -47,4 +47,18 @@ export interface BetterWrightOptions {
    * default. Also settable with `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`.
    */
   stealthRuntimeFix?: boolean;
+  cloakV2?: boolean;
+  upstreamProxy?: string;
+  geoip?: boolean;
+  locale?: string;
+  timezone?: string;
+  headedInvisible?: boolean;
+  /**
+   * Identity platform presented to sites. The native Chromium fork defaults
+   * to "macos" — a realistic consumer-Mac fingerprint (UA, UA-CH,
+   * navigator.platform, screen geometry) captured from genuine Chrome 150 on
+   * an Apple-Silicon MacBook Pro. The managed CloakBrowser path defaults to
+   * the host platform.
+   */
+  platform?: "macos" | "windows" | "linux";
 }
