@@ -51,12 +51,27 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Install managed CloakBrowser
         if: steps.existing.outputs.published != 'true'
-        run: node bin/betterwright.mjs setup
+        run: node bin/betterwright.mjs setup --cloak-only
+      - name: Verify Chromium fork update
+        if: steps.existing.outputs.published != 'true'
+        shell: bash
+        run: |
+          HOME=$(mktemp -d)
+          export HOME
+          node bin/betterwright.mjs update
+          node -e "
+            import { resolveChromiumForkBinary } from './src/chromium-fork.mjs';
+            const binary = resolveChromiumForkBinary({ home: process.env.HOME });
+            if (!binary) throw new Error('update did not install a discoverable fork');
+            console.log('fork ok:', binary);
+          "
       - name: Run browser integration suite
         if: steps.existing.outputs.published != 'true'
         run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
+          # Keep integration/Cloak e2e on Cloak even if a fork exists on the runner.
+          BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Test managed CloakBrowser headed mode
         if: steps.existing.outputs.published != 'true'
         run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 node --test tests/node/cloak.test.mjs
