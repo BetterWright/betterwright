@@ -7,8 +7,8 @@
 // with SHA-256 before extract. Apple-licensed fonts are intentionally not
 // in the public zip (see scripts/assemble-mac-fonts.sh).
 
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import https from "node:https";
 import os from "node:os";
@@ -19,8 +19,8 @@ import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   CHROMIUM_FORK_ASSETS,
   CHROMIUM_FORK_RELEASE_TAG,
-  PLATFORM_LAYOUT,
   defaultChromiumForkRoot,
+  PLATFORM_LAYOUT,
   resolveChromiumForkBinary,
 } from "./chromium-fork.mjs";
 
