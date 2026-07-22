@@ -3,7 +3,8 @@
 //
 //   betterwright                  interactive agent console (type tasks, watch
 //                                 progress, answer the agent's questions)
-//   betterwright setup            install the managed Cloak browser
+//   betterwright setup            install Chromium fork (mac/linux) + Cloak fallback
+//   betterwright update           download/refresh the Chromium fork (switches from Cloak)
 //   betterwright doctor           report runtime readiness
 //   betterwright run <file|-|-c>  execute a Playwright snippet
 //   betterwright repl             run blank-line-separated snippets from stdin
@@ -24,6 +25,7 @@ import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import { formatAgentUsage } from "../src/agent-usage.mjs";
+import { installChromiumFork } from "../src/chromium-fork-install.mjs";
 import { makeLineReader } from "../src/cli-io.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
@@ -72,13 +74,7 @@ async function cmdDoctor() {
   return report.ready ? 0 : 1;
 }
 
-async function cmdSetup(flags) {
-  if (flags.has("--chromium")) {
-    console.error(
-      "The stock Chromium fallback was removed. BetterWright setup installs only managed CloakBrowser.",
-    );
-    return 1;
-  }
+async function installCloakBrowser() {
   const core = resolveCoreDir();
   if (!core) {
     console.error(
@@ -96,7 +92,67 @@ async function cmdSetup(flags) {
   console.log("Installing the managed CloakBrowser binary ...");
   const binary = await cloak.ensureBinary();
   console.log(`Installed ${binary}`);
+  return 0;
+}
+
+/** Download the Chromium fork so discovery prefers it over Cloak. */
+async function cmdUpdate(flags) {
+  if (flags.has("--cloak-only")) {
+    console.error(
+      "`betterwright update` installs the Chromium fork. Use `betterwright setup --cloak-only` for CloakBrowser alone.",
+    );
+    return 1;
+  }
+  const result = await installChromiumFork({ force: flags.has("--force") });
+  if (result.skipped) {
+    console.log(result.skipped);
+    console.log("On this platform, keep using `betterwright setup` for CloakBrowser.");
+    return 0;
+  }
+  console.log(
+    "\nUpdate complete. BetterWright will use the Chromium fork by default.",
+  );
+  console.log("Run `betterwright doctor` to confirm (browser: chromium-fork).");
+  console.log(
+    "Tip: use a dedicated BETTERWRIGHT_HOME if you still need Cloak on this machine —",
+  );
+  console.log(
+    "fork and Cloak share the default profile and are not interchangeable.",
+  );
+  return 0;
+}
+
+async function cmdSetup(flags) {
+  if (flags.has("--chromium")) {
+    console.error(
+      "The stock Chromium fallback was removed. Use `betterwright update` for the Chromium fork, or `betterwright setup` for managed CloakBrowser.",
+    );
+    return 1;
+  }
+
+  const cloakOnly = flags.has("--cloak-only");
+  if (!cloakOnly) {
+    const result = await installChromiumFork({ force: flags.has("--force") });
+    if (result.skipped) {
+      console.log(result.skipped);
+    } else if (!result.alreadyInstalled) {
+      console.log(
+        "Chromium fork installed. Discovery will prefer it over CloakBrowser.",
+      );
+    }
+  } else {
+    console.log("Skipping Chromium fork (--cloak-only).");
+  }
+
+  const cloakCode = await installCloakBrowser();
+  if (cloakCode !== 0) return cloakCode;
+
   console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
+  if (!cloakOnly) {
+    console.log(
+      "On macOS arm64 / Linux x64, doctor should report browser: chromium-fork after update/setup.",
+    );
+  }
   return 0;
 }
 
@@ -525,7 +581,7 @@ async function main() {
     }
     if (flags.has("--help") || tokens.includes("-h")) {
       console.error(
-        "Usage: betterwright [interactive] | <setup|doctor|run|repl|exec|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 0;
@@ -538,6 +594,8 @@ async function main() {
   switch (command) {
     case "setup":
       return cmdSetup(flags);
+    case "update":
+      return cmdUpdate(flags);
     case "doctor":
       return cmdDoctor();
     case "run":
@@ -559,7 +617,7 @@ async function main() {
     }
     default:
       console.error(
-        "Usage: betterwright [interactive] | <setup|doctor|run|repl|exec|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 1;

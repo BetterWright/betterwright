@@ -31,13 +31,15 @@ to its instructions — `betterwright skill` prints both halves ready to paste.
 3. **Download the managed browser** (one-time, ~200 MB):
 
    ```bash
-   betterwright setup
+   betterwright setup     # Chromium fork on mac/linux + Cloak fallback
+   # or: betterwright update   # fork only (switches default away from Cloak)
    ```
 
-   The official CloakBrowser wrapper downloads its signed binary directly from
-   CloakHQ and verifies it before extraction; BetterWright does not redistribute
-   that separately licensed binary. npm installation itself has no hidden
-   browser-download lifecycle script.
+   On macOS arm64 / Linux x64, setup/update fetch the pinned Chromium fork
+   (SHA-256 verified) into `~/.betterwright/chromium/`. Elsewhere (and with
+   `--cloak-only`), the CloakBrowser wrapper downloads its signed binary from
+   CloakHQ. npm installation itself has no hidden browser-download lifecycle
+   script.
 4. **Verify** with `betterwright doctor` — it must print
    `BetterWright is ready.` If it does not, stop and report exactly what
    `doctor` printed.
