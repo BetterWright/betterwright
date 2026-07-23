@@ -1,4 +1,4 @@
-import { validateCredentialMatchMode } from "./client.mjs";
+import { validateCredentialMatchMode } from "./credential-constants.mjs";
 
 const STRING_OPTIONS = [
   "passwordSelector",

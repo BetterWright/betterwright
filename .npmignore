@@ -1,6 +1,0 @@
-# Keep experimental / non-product paths out of the published tarball.
-src/cdpfree/
-artifacts/
-.tmp/
-tmp/
-*.tmp.mjs

@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "BetterWright CDP-free bridge",
+  "version": "1.0",
+  "description": "Drives pages over extension APIs so no DevTools protocol session ever touches the renderer.",
+  "minimum_chrome_version": "116",
+  "permissions": ["scripting", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" }
+}
