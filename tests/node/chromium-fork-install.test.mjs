@@ -93,7 +93,7 @@ test("installChromiumFork downloads, verifies SHA-256, and extracts", async () =
     });
     assert.equal(
       downloadedUrl,
-      `https://github.com/CuriosityOS/betterwright/releases/download/${CHROMIUM_FORK_RELEASE_TAG}/test-linux.zip`,
+      `https://github.com/BetterWright/betterwright/releases/download/${CHROMIUM_FORK_RELEASE_TAG}/test-linux.zip`,
     );
     assert.equal(result.alreadyInstalled, false);
     assert.equal(

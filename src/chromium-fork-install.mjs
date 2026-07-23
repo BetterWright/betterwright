@@ -24,7 +24,7 @@ import {
   resolveChromiumForkBinary,
 } from "./chromium-fork.mjs";
 
-const DEFAULT_REPO = "CuriosityOS/betterwright";
+const DEFAULT_REPO = "BetterWright/betterwright";
 
 function platformKey(platform = process.platform, arch = process.arch) {
   return `${platform}-${arch}`;
