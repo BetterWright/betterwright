@@ -6,7 +6,10 @@ import { agentSystemPrompt } from "../../src/prompt.mjs";
 test("default prompt is permissive", () => {
   const prompt = agentSystemPrompt();
   const compact = prompt.replace(/\s+/g, " ");
-  assert.ok(prompt.length < 6_500, `default prompt grew to ${prompt.length} characters`);
+  // Budget history: 6,500 → 7,000 on 2026-07-23 for the "Live view and
+  // handoff" section (agents were claiming a live view was running without
+  // ever starting one). Grow this only for guidance that pays for itself.
+  assert.ok(prompt.length < 7_000, `default prompt grew to ${prompt.length} characters`);
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
   // Reading escalation, ref discipline, batching, and recovery guidance.

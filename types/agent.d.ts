@@ -58,6 +58,10 @@ export interface AgentStepEvent {
   step: number;
   tool: string;
   note?: string;
+  /** Live-view URL, present on `tool: "liveView"` and `tool: "handoff"` events. */
+  url?: string;
+  /** The handoff prompt shown to the human, present on `tool: "handoff"`. */
+  prompt?: string;
 }
 
 export interface RunAgentTaskOptions {
@@ -92,6 +96,15 @@ export interface RunAgentTaskOptions {
    * a follow-up task can refer back to earlier work. Omit for a fresh run.
    */
   history?: AgentMessage[];
+  /**
+   * Live browser view for the human. Anything except `false` offers the model
+   * `handoff` + live-view-backed `ask` + freeform chat (guidance delivered
+   * between turns) when a URL surface exists (`askUser` or `onStep`). Pass
+   * `true` — or startLiveView options — to also start the viewer at run start
+   * so the whole task can be watched live; the URL arrives as
+   * `onStep({tool: "liveView", url})`.
+   */
+  liveView?: boolean | Record<string, unknown>;
 }
 
 export interface AgentResult {

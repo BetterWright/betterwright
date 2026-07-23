@@ -61,4 +61,130 @@ export interface BetterWrightOptions {
    * the host platform.
    */
   platform?: "macos" | "windows" | "linux";
+  /**
+   * Defaults for `startLiveView()`. Binds `0.0.0.0` with a LAN `publicHost` by
+   * default so printed URLs open from another machine on the network. Pass
+   * `{host:"127.0.0.1"}` for loopback-only.
+   */
+  liveView?: LiveViewOptions;
+}
+
+/** Options for the live-view server (constructor defaults and per-start overrides). */
+export interface LiveViewOptions {
+  /**
+   * One-word hosting preset (overrides host/publicHost):
+   * - "lan": bind all interfaces, print the LAN IP (default behavior)
+   * - "local": loopback only — pair with your own tunnel (ssh, cloudflared, …)
+   * - "tailscale": bind this machine's Tailscale address only
+   */
+  expose?: "lan" | "local" | "tailscale";
+  /**
+   * Require this password (min 4 chars) before the viewer loads, on top of the
+   * URL capability token. Verified constant-time; grants a 12 h HttpOnly
+   * session cookie. Failed attempts are rate-limited per source address.
+   * Prefer persisting a hash in <home>/config.json via
+   * `betterwright view --set-password` instead of passing plaintext here.
+   */
+  password?: string;
+  /**
+   * Stored password digest ("sha256:<64 hex>") — what
+   * `betterwright view --set-password` writes to <home>/config.json.
+   * Ignored when `password` is also set.
+   */
+  passwordHash?: string;
+  /** Bind host (default "0.0.0.0"). */
+  host?: string;
+  /** Bind port (default 0 = ephemeral). */
+  port?: number;
+  /** Allow viewers to control the browser outside handoffs (default true). */
+  interactive?: boolean;
+  /** JPEG screencast quality 10–90 (default 60). */
+  quality?: number;
+  /** Screencast max frame dimension in px (default 1440). */
+  maxWidth?: number;
+  /** Host to print in the URL when binding a wildcard address (default: LAN IP). */
+  publicHost?: string;
+  /** Which session's current tab streams first (default "default"). */
+  session?: string;
+}
+
+/** Result of `startLiveView()` / `liveViewStatus()`. */
+export interface LiveViewStatus {
+  ok: boolean;
+  running?: boolean;
+  /** Capability URL (embeds the token — treat it like a password). */
+  url?: string;
+  host?: string;
+  port?: number;
+  token?: string;
+  /** Hosting preset in effect ("lan", "local", or "tailscale"). */
+  expose?: string;
+  /** True when a password gate is active. */
+  passwordProtected?: boolean;
+  interactive?: boolean;
+  viewers?: number;
+  agent?: "idle" | "driving" | "handoff";
+  handoff?: { active: boolean; prompt?: string };
+  ask?: { active: boolean; question?: string; options?: string[] };
+  /** Count of freeform human chat messages waiting for the agent to drain. */
+  pendingChat?: number;
+  /** True when start() found the server already running (URL unchanged). */
+  alreadyRunning?: boolean;
+  error?: string;
+}
+
+/** Result of `waitForHandoff()`. */
+export interface HandoffResult {
+  ok: boolean;
+  /** How the handoff ended: the viewer's Done/Cancel button, or the timeout. */
+  action?: "done" | "cancel" | "timeout";
+  /** The human's optional note back to the caller. */
+  note?: string;
+  error?: string;
+}
+
+/** Options for `waitForHandoff()`. */
+export interface WaitForHandoffOptions {
+  session?: string;
+  /** Shown to the human in the viewer's handoff banner. */
+  prompt?: string;
+  /** Hard bound in seconds (default 1800). */
+  timeout?: number;
+}
+
+/** A line in the live-view chat (agent steps or human guidance). */
+export interface LiveViewChatMessage {
+  id?: number;
+  role?: "agent" | "you" | "system";
+  text: string;
+  kind?: string;
+  at?: number;
+}
+
+/** Result of `liveViewDrainChat()`. */
+export interface LiveViewDrainChatResult {
+  ok: boolean;
+  messages?: Array<{ text: string; at?: number }>;
+  error?: string;
+}
+
+/** Result of `waitForAsk()`. */
+export interface AskResult {
+  ok: boolean;
+  /** How the ask ended: a chat answer, cancel (view stopped), or timeout. */
+  action?: "answer" | "cancel" | "timeout";
+  /** The human's typed (or chip-selected) answer. */
+  answer?: string;
+  error?: string;
+}
+
+/** Options for `waitForAsk()`. */
+export interface WaitForAskOptions {
+  session?: string;
+  /** Question shown in the live-view chat. */
+  question?: string;
+  /** Optional short choices rendered as chips. */
+  options?: string[];
+  /** Hard bound in seconds (default 1800). */
+  timeout?: number;
 }

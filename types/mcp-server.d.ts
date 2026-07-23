@@ -37,6 +37,13 @@ export function headlessFromEnv(
   env?: Record<string, string | undefined>,
 ): HeadlessMode;
 
+/** Read BETTERWRIGHT_LIVE_VIEW / _HOST / _PORT for the browser_handoff tool. */
+export function liveViewFromEnv(env?: Record<string, string | undefined>): {
+  enabled: boolean;
+  host: string;
+  port: number;
+};
+
 /** Convert a run result to MCP content: a JSON text summary then image blocks. */
 export function contentForResult(result: unknown): Promise<McpContentBlock[]>;
 

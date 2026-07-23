@@ -2,13 +2,17 @@
 
 BetterWright works in two shapes:
 
-- **Bring your own agent** (the REPL shape): some other harness — Claude Code,
+- **Integrated** (bring your own agent): some other harness — Claude Code,
   Codex, Pi, an MCP client, or your own code — drives BetterWright through
   `run()`, the MCP `browser` tool, or the Pi package. This is the default and is
   covered everywhere else in these docs.
-- **Let BetterWright drive itself** (the exec shape): BetterWright supplies a
+- **Standalone** (let BetterWright drive itself): BetterWright supplies a
   browser-tuned agent loop, you plug a *model* into it, and you hand it a
-  natural-language task. That is this page.
+  natural-language task. That is this page. This shape also nests inside the
+  first: a coding agent can shell out `betterwright exec "<task>"` as a browser
+  **sub-agent** — one command in, one JSON answer out, with the entire browsing
+  transcript (snapshots, retries, verification) kept out of the caller's
+  context.
 
 The second shape exists because the browser runtime was never the slow part. In
 the [head-to-head](../benchmarks/browser-agent-headtohead/REPORT.md) BetterWright's

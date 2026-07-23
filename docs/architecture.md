@@ -89,6 +89,13 @@ These are independent of the sandbox and of each other. See
 [network-policy.md](network-policy.md) for the metadata-endpoint rationale in
 full.
 
+The worker's loopback SOCKS proxy is its only always-on listener. One opt-in
+second listener exists: the [live-view server](live-view.md) (off by default,
+`127.0.0.1` + capability token, started only by an explicit host message),
+which streams CDP screencast frames to a human viewer and relays their input.
+It runs in the worker because that is where the CDP sessions live; it is not
+reachable from the model sandbox.
+
 ### Secrets
 
 The [credential vault](credentials.md) is built in by default and kept outside

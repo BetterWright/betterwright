@@ -15,6 +15,8 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import { normalizeDownloadPolicy } from "./downloads.mjs";
+import { defaultLiveViewListen } from "./live-view.mjs";
+import { loadLiveViewConfig } from "./live-view-config.mjs";
 import { NetworkPolicy } from "./policy.mjs";
 import { listSkills, skillHintsForPages } from "./skills.mjs";
 import { createLocalCredentialVault, VAULT_MATCH_MODES } from "./vault.mjs";
@@ -288,6 +290,10 @@ export class BetterWright {
    *   presented to sites. The native Chromium fork defaults to "macos" (a
    *   realistic consumer-Mac fingerprint captured from real Chrome on Apple
    *   Silicon); the managed CloakBrowser path defaults to the host platform.
+   * @param {object} [options.liveView] defaults for {@link startLiveView}:
+   *   `{host, port, interactive, quality, maxWidth, publicHost}`. Defaults to
+   *   bind `0.0.0.0` with a LAN `publicHost` so printed URLs open from another
+   *   machine on the network. Pass `{host:"127.0.0.1"}` for loopback-only.
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
@@ -330,6 +336,24 @@ export class BetterWright {
     }
     this.platform = options.platform || null;
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
+    // Live-view defaults ride in each live_view_start message rather than in
+    // _workerConfig(), so changing them never restarts the worker. Default is
+    // LAN-reachable (0.0.0.0 + guessed private IP in the URL). Persistent
+    // settings from <home>/config.json (expose preset, password hash, …) sit
+    // between the built-ins and explicit constructor options.
+    const lanDefaults = defaultLiveViewListen();
+    this.liveView = {
+      host: lanDefaults.host,
+      port: 0,
+      publicHost: lanDefaults.publicHost,
+      interactive: true,
+      quality: 60,
+      maxWidth: 1440,
+      ...loadLiveViewConfig(this.home),
+      ...(options.liveView && typeof options.liveView === "object"
+        ? options.liveView
+        : {}),
+    };
 
     this._process = null;
     this._pending = new Map();
@@ -344,6 +368,12 @@ export class BetterWright {
     this._queue = Promise.resolve();
     this._stderrTail = [];
     this._closed = false;
+    // Live-view survival across worker restarts: once startLiveView succeeds,
+    // remember the exact options plus the bound port and token so a
+    // replacement worker can revive the server on the SAME URL. Cleared by
+    // stopLiveView and by a non-restart close.
+    this._liveViewRestore = null;
+    this._workerGeneration = 0;
   }
 
   _workerConfig() {
@@ -435,6 +465,7 @@ export class BetterWright {
       env,
     });
     this._process = child;
+    this._workerGeneration += 1;
     this._vaultRedactionOwner = child;
     this._stderrTail = [];
 
@@ -502,6 +533,13 @@ export class BetterWright {
           clearTimeout(drainTimer);
           await this._resetVaultRedactionForWorker(child);
           resolveWorkerClose();
+          // Unexpected death (crash, OOM-kill) while a live view is up:
+          // revive worker + view now, not at the host's next browser call —
+          // viewers are already in their reconnect loop. Deliberate closes
+          // set _closed (or cleared the restore state) before this fires.
+          if (!this._closed && (this._process === child || this._process === null)) {
+            this._scheduleLiveViewRevival();
+          }
         }
       })().catch(() => {});
     });
@@ -931,6 +969,164 @@ export class BetterWright {
     );
   }
 
+  /**
+   * Start (or return the already-running) live-view server in the worker: a
+   * token-gated local web page that streams the live browser and, when
+   * interactive, relays the viewer's mouse and keyboard into it.
+   *
+   * Resolves with `{ok, url, host, port, token, interactive, viewers}`. The
+   * `url` embeds a per-start capability token; anyone holding it can watch
+   * (and drive, when interactive) the session — treat it like a password.
+   *
+   * @param {object} [options] overrides for the constructor's `liveView`
+   *   defaults: { expose, password, host, port, interactive, quality,
+   *   maxWidth, publicHost, session } — `expose` is a one-word hosting preset
+   *   ("lan" | "local" | "tailscale") that overrides host/publicHost,
+   *   `password` adds a login gate on top of the URL token, and `session`
+   *   picks which session's current tab streams first.
+   */
+  startLiveView(options = {}) {
+    return this._enqueue(async () => {
+      const config = await this._prepare();
+      const merged = { ...this.liveView, ...options };
+      const result = await this._dispatch(
+        { type: "live_view_start", config, options: merged },
+        30,
+      );
+      if (result?.ok && result.url) {
+        // Pin the bound port and token so a worker restart revives the view
+        // on the same URL (see _prepare); viewers reconnect seamlessly.
+        this._liveViewRestore = {
+          options: { ...merged, port: result.port, token: result.token },
+          generation: this._workerGeneration,
+        };
+      }
+      return result;
+    });
+  }
+
+  /** Stop the live-view server (no-op when it is not running). */
+  stopLiveView() {
+    return this._enqueue(async () => {
+      this._liveViewRestore = null;
+      if (!this._process || this._process.exitCode !== null)
+        return { ok: true, running: false };
+      return this._dispatch({ type: "live_view_stop" }, 30);
+    });
+  }
+
+  /** Report the live-view server state: `{ok, running, url?, viewers?, handoff?}`. */
+  liveViewStatus() {
+    return this._enqueue(async () => {
+      if (!this._process || this._process.exitCode !== null)
+        return { ok: true, running: false };
+      return this._dispatch({ type: "live_view_status" }, 30);
+    });
+  }
+
+  /**
+   * Block until a human finishes a handoff in the live viewer.
+   *
+   * Requires a running live view (see {@link startLiveView}). The viewer
+   * switches into handoff mode — prompt banner, input force-enabled, Done and
+   * Cancel buttons — and this resolves with `{ok, action: "done"|"cancel"|
+   * "timeout", note}` when the human clicks one (the note is their optional
+   * message back to the caller).
+   *
+   * Deliberately NOT serialized behind the run() queue, so a queued execute
+   * can never deadlock a pending handoff. `timeout` (seconds, default 1800)
+   * is a hard bound: per BetterWright's timeout semantics, letting it expire
+   * client-side restarts the worker, so the worker resolves `action:
+   * "timeout"` slightly earlier to keep the browser alive.
+   *
+   * @param {object} [options] { session, prompt, timeout }
+   */
+  async waitForHandoff(options = {}) {
+    if (this._closed) throw new BrowserError("This browser has been closed.");
+    if (!this._process || this._process.exitCode !== null) {
+      return {
+        ok: false,
+        error: "Live view is not running; call startLiveView() first.",
+      };
+    }
+    const timeoutSeconds = Math.max(Number(options.timeout) || 1_800, 5);
+    return this._dispatch(
+      {
+        type: "handoff_wait",
+        sessionId: String(options.session || "default"),
+        prompt: String(options.prompt || ""),
+        // Resolve inside the worker a beat before the client's restart timer.
+        timeoutMs: timeoutSeconds * 1000,
+      },
+      timeoutSeconds,
+    );
+  }
+
+  /**
+   * Post a line into the live-view chat (agent steps, system notices). No-op
+   * friendly when the viewer is not running.
+   *
+   * @param {object} [options] { role?: "agent"|"system"|"you", text, kind? }
+   */
+  async liveViewPostChat(options = {}) {
+    if (this._closed) throw new BrowserError("This browser has been closed.");
+    if (!this._process || this._process.exitCode !== null) {
+      return { ok: false, error: "Live view is not running." };
+    }
+    return this._dispatch(
+      {
+        type: "live_view_chat_post",
+        role: String(options.role || "agent"),
+        text: String(options.text || ""),
+        kind: options.kind != null ? String(options.kind) : undefined,
+      },
+      10,
+    );
+  }
+
+  /**
+   * Drain freeform human messages typed in the live-view chat since the last
+   * drain. Returns `{ok, messages: [{text, at}]}`. Used by the agent harness
+   * between turns so guidance arrives at a safe turn boundary.
+   */
+  async liveViewDrainChat() {
+    if (this._closed) throw new BrowserError("This browser has been closed.");
+    if (!this._process || this._process.exitCode !== null) {
+      return { ok: true, messages: [] };
+    }
+    return this._dispatch({ type: "live_view_chat_drain" }, 10);
+  }
+
+  /**
+   * Block until a human answers an agent question in the live-view chat.
+   *
+   * Same timeout / non-queue semantics as {@link waitForHandoff}. Resolves with
+   * `{ok, action: "answer"|"timeout"|"cancel", answer}`.
+   *
+   * @param {object} [options] { session, question, options, timeout }
+   */
+  async waitForAsk(options = {}) {
+    if (this._closed) throw new BrowserError("This browser has been closed.");
+    if (!this._process || this._process.exitCode !== null) {
+      return {
+        ok: false,
+        error: "Live view is not running; call startLiveView() first.",
+      };
+    }
+    const timeoutSeconds = Math.max(Number(options.timeout) || 1_800, 5);
+    const choices = Array.isArray(options.options) ? options.options.map(String) : [];
+    return this._dispatch(
+      {
+        type: "ask_wait",
+        sessionId: String(options.session || "default"),
+        question: String(options.question || ""),
+        options: choices,
+        timeoutMs: timeoutSeconds * 1000,
+      },
+      timeoutSeconds,
+    );
+  }
+
   /** Restart the worker on a config change and return the current config. */
   async _prepare() {
     const config = this._workerConfig();
@@ -944,6 +1140,21 @@ export class BetterWright {
     }
     await this._start();
     this._lastConfig = config;
+    const restore = this._liveViewRestore;
+    if (restore && restore.generation !== this._workerGeneration) {
+      // The worker restarted under a running live view (timeout, crash,
+      // BW_TIMEOUT). Revive the server in the replacement worker with the
+      // pinned port + token so the original URL — and every viewer's
+      // reconnect loop — keeps working. One attempt per worker generation;
+      // if the revival fails (e.g. the port got taken), drop the state so
+      // failures don't loop.
+      restore.generation = this._workerGeneration;
+      const revived = await this._dispatch(
+        { type: "live_view_start", config, options: restore.options },
+        30,
+      );
+      if (!revived?.ok) this._liveViewRestore = null;
+    }
     return config;
   }
 
@@ -965,8 +1176,9 @@ export class BetterWright {
       };
       this._pending.set(id, { child, done });
       timer = setTimeout(async () => {
-        await this.close({ child, preservePending: true });
+        await this.close({ child, preservePending: true, restart: true });
         this._closed = false;
+        this._scheduleLiveViewRevival();
         done(
           this._attachPendingCredentialRecovery(id, {
             ok: false,
@@ -1003,13 +1215,23 @@ export class BetterWright {
       }
     }
     if (restart) {
-      await this.close();
+      await this.close({ restart: true });
       this._closed = false;
+      this._scheduleLiveViewRevival();
     }
     return envelope;
   }
 
-  async close({ child: requestedChild = null, preservePending = false } = {}) {
+  /** After a worker restart with an active live view, bring the replacement
+   * worker (and the view, on its original URL) up immediately in the
+   * background — like a daemon, viewers reconnect within seconds instead of
+   * waiting for the host's next browser call. Best-effort by design. */
+  _scheduleLiveViewRevival() {
+    if (!this._liveViewRestore) return;
+    void this._enqueue(() => this._prepare()).catch(() => {});
+  }
+
+  async close({ child: requestedChild = null, preservePending = false, restart = false } = {}) {
     this._closed = true;
     const child = requestedChild || this._process;
     const closesActiveWorker = !requestedChild || this._process === child;
@@ -1017,6 +1239,11 @@ export class BetterWright {
       this._process = null;
       this._lastConfig = null;
     }
+    // A final close ends the live view for good: tell viewers (worker
+    // teardown alone stays silent so restart reconnects work) and drop the
+    // revival state. Restart closes keep both so the view comes back.
+    const endsLiveView = !restart && this._liveViewRestore;
+    if (endsLiveView) this._liveViewRestore = null;
     if (!child) {
       await this._workerCloseBarrier;
       return;
@@ -1024,6 +1251,10 @@ export class BetterWright {
     if (preservePending) this._workerClosePreservesPending.add(child);
     if (child.exitCode === null && child.signalCode === null) {
       try {
+        if (endsLiveView) {
+          // Best-effort "bye" to viewers; the worker reads it before EOF.
+          this._send({ type: "live_view_stop", id: "close-live-view" }, child);
+        }
         child.stdin.end();
       } catch {
         /* already closed */
