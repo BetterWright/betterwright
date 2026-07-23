@@ -69,6 +69,7 @@
     "docs/*.md",
     "examples/javascript",
     "SETUP.md",
+    "SKILL.md",
     "SECURITY.md",
     "README.md",
     "LICENSE"
