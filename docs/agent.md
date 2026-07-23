@@ -14,18 +14,27 @@ BetterWright works in two shapes:
   transcript (snapshots, retries, verification) kept out of the caller's
   context.
 
-The second shape exists because the browser runtime was never the slow part. In
-the [head-to-head](../benchmarks/browser-agent-headtohead/REPORT.md) BetterWright's
-per-operation latency matched the fastest available browser agent's; the
-end-to-end gap was the *agent scaffold* — a browser-specialized loop takes
-fewer, tighter steps than a general coding agent. `betterwright exec` gives
-BetterWright that scaffold.
+The second shape exists because the browser runtime is rarely the slow part.
+The end-to-end gap is usually the *agent scaffold* — a browser-specialized
+loop takes fewer, tighter steps than a general coding agent.
+`betterwright exec` gives BetterWright that scaffold.
 
 ## CLI
 
 ```bash
-betterwright exec "find the top Hacker News story and give me its title and points" --model claude
+betterwright exec "find the top Hacker News story and give me its title and points" --model gpt-5.6-sol
 ```
+
+Shells expand dollar signs inside double quotes, so use single quotes for tasks
+that contain prices or other literal `$` text:
+
+```bash
+betterwright exec 'find options under $4000' --model gpt-5.6-sol
+printf '%s\n' 'find options under $4000' | betterwright exec --stdin --model gpt-5.6-sol
+```
+
+The `--stdin` form is also useful for generated or multiline tasks because the
+task does not go through another round of shell parsing.
 
 Progress notes stream to stderr as the loop runs — the last one summarizes the
 run's cost (`done in 6 steps, 7 tool calls, 11.4s, 6,880 in / 1,330 out · 40,000
@@ -74,8 +83,11 @@ Flags:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--model <name>` | `claude` | An adapter name (`claude`, `codex`, `grok`) **or** a bare model id whose backend is inferred from its prefix — `gpt-*`/`o*` → codex, `grok-*` → grok, `claude-*` → claude (e.g. `--model gpt-5.6-sol`) |
-| `--model-id <id>` | per-adapter | Override the model id (e.g. `claude-fable-5`, `grok-4`); wins over an id passed to `--model` |
+| `--model <id>` | `claude-opus-4-8` (or `BETTERWRIGHT_MODEL`) | Real model id. Bare ids auto-select a source when unique; use `source/id` only to pin a collision. See [Choosing a model](#choosing-a-model) |
+| `--base-url <url>` | none | Pin `--model` to a custom OpenAI-compatible `/v1` base URL (`--endpoint` is an alias) |
+| `--api-key-env <name>` | source default | Read the API key from a named environment variable; raw keys are never accepted as CLI values |
+| `--protocol <name>` | `chat` | `chat` for Chat Completions (widest compatibility), or `responses` when the server implements it |
+| `--allow-insecure-model-endpoint` | off | Allow a key over non-loopback plain HTTP; HTTPS and loopback HTTP work without it |
 | `--effort <level>` (alias `--reasoning`) | `low` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` where the model supports it |
 | `--session <name>` | `default` | Browser session name |
 | `--headed` | off | Show the managed browser |
@@ -90,9 +102,9 @@ subcommand for the interactive counterpart — a console where you type tasks an
 watch the agent work:
 
 ```
-$ betterwright --model codex
+$ betterwright --model gpt-5.6-sol
 BetterWright — interactive agent console
-model codex · reasoning low · session default · headless
+model gpt-5.6-sol · reasoning model default · session default · headless
 Type a task and press Enter. /help for commands, /exit or Ctrl-D to quit.
 
 ▸ what is the page title of example.com
@@ -110,8 +122,20 @@ screenshot path, and the same cost summary `exec` prints. **The session carries
 across tasks**: both the browser (you stay signed in, tabs stay open) *and* the
 conversation — a follow-up task remembers what earlier ones did and can refer back
 to them without repeating the work (it's fed the running transcript). `/new` clears
-both the memory and the browser to start fresh. The same `--model`, `--model-id`,
+both the memory and the browser to start fresh. The same `--model`, endpoint,
 `--effort`/`--reasoning`, `--session`, `--headed`, and network flags apply.
+
+With `--live-view`, the console starts and prints one viewer before the first
+prompt. That viewer remains open across follow-up tasks. Commands that replace
+the browser (`/new`, `/headed`, and `/headless`) also replace the viewer and
+print its new URL without restarting the console.
+
+While a task is running, type a plain-text message and press Enter to steer it.
+The message is queued safely and applied at the next model turn boundary, just
+like chat sent from the live viewer. Slash commands typed during a task wait
+until that task finishes, so `/new` cannot tear down a browser mid-step. The
+active prompt changes to `steer ▸`; progress output redraws that prompt without
+discarding partially typed guidance and wraps with aligned continuation lines.
 
 Because the transcript accumulates, a long session grows the context each task
 sends (largely served from cache — watch `cache read` in the summary); `/new` when
@@ -122,10 +146,12 @@ Meta-commands (a line starting with `/`):
 | Command | Effect |
 | --- | --- |
 | `/help` | list the commands |
-| `/model <name>` | switch model for the next task |
+| `/endpoint <url>` | switch to a custom OpenAI-compatible base URL |
+| `/models [source]` | list available ids, optionally limited to `openrouter`, `ollama`, or `vllm` |
+| `/model <id>` | switch model id; use `source/id` only to resolve a collision |
 | `/reasoning <level>` | change reasoning effort (`/effort` also works) |
 | `/headed` | show the browser window (`/headless` to hide it again) |
-| `/new` | start a fresh browser session (close open tabs) |
+| `/new` | clear conversation memory and close open tabs (fresh session) |
 | `/clear` | clear the screen |
 | `/exit` | quit (or Ctrl-D) |
 
@@ -142,38 +168,177 @@ tool and never stalls on a question.
 
 ## Choosing a model
 
-The three built-in adapters resolve their own credentials:
+`--model` always takes a **real model id** (or a source-qualified id). There
+are no adapter nicknames: `claude`, `codex`, and `grok` by themselves are
+rejected. Pick the id you want to run; BetterWright figures out *where* it
+comes from.
 
-- **`claude`** — the official Anthropic SDK, an *optional* peer dependency.
-  Install it once (`npm install @anthropic-ai/sdk`) and set `ANTHROPIC_API_KEY`.
-  Defaults to `claude-opus-4-8`; override with `--model-id claude-fable-5` (or
-  `BETTERWRIGHT_CLAUDE_MODEL`).
-- **`codex`** — signs in with ChatGPT (Codex plans) and calls the ChatGPT
-  backend directly. Run `betterwright auth --login codex` once; BetterWright then
-  holds its own OAuth tokens and refreshes them. Defaults to `gpt-5.6-sol`;
-  override with `--model-id` or `BETTERWRIGHT_CODEX_MODEL`. An `OPENAI_API_KEY`
-  (OpenAI-compatible) or a `CODEX_BASE_URL` router are also accepted.
-- **`grok`** — signs in with xAI (SuperGrok / X Premium+). Run
-  `betterwright auth --login grok` once; BetterWright calls xAI's
-  OpenAI-compatible endpoint with the OAuth token (refreshed automatically).
-  Defaults to `grok-4.3`; override with `--model-id` or `BETTERWRIGHT_GROK_MODEL`.
-  A `GROK_API_KEY` / `XAI_API_KEY`, or a `GROK_BASE_URL` / `XAI_BASE_URL` base-URL
-  override, is also accepted. (xAI gates OAuth API access by subscription tier; if
-  you get a 403, use an API key instead.)
+### How selection works
+
+1. **Source-qualified** (`ollama/qwen3:8b`, `openrouter/anthropic/claude-sonnet-4`,
+   `codex/gpt-5.6-sol`) — used immediately; no discovery.
+2. **Custom base URL** (`--base-url` / `--endpoint`) — pins the source to that
+   URL; the bare id is the model name on that server.
+3. **Bare id** — BetterWright probes reachable catalogs and native family
+   routes. If **exactly one** source exposes the id, that source is selected.
+   If several do, the error lists the shortest unambiguous choices
+   (for example `codex/gpt-5.6-sol` and `ollama/gpt-5.6-sol`). If none do, it
+   tells you to run `betterwright models` or pin a source.
+
+What bare-id discovery probes:
+
+| Source | When it is probed |
+| --- | --- |
+| **Ollama** | Always (default `http://127.0.0.1:11434/v1`; short timeout if down) |
+| **vLLM** | Always (default `http://127.0.0.1:8000/v1`) |
+| **OpenRouter** | Only when `OPENROUTER_API_KEY` is set |
+| **Native Claude / Codex / Grok** | When the id's family prefix matches (`claude*`, `gpt*` / `o*`, `grok*`, …) |
+
+Listing is separate from selection:
+
+```bash
+betterwright models                 # native defaults + reachable endpoints
+betterwright models ollama          # only Ollama
+betterwright models openrouter      # only OpenRouter
+betterwright models --json          # machine-readable
+```
+
+Suggested lines use a bare id when it is unique, and `source/id` only when
+the same name appears in more than one place.
+
+### Quick starts by source
+
+```bash
+# Codex (ChatGPT subscription) — sign in once, then use a real GPT/Codex id
+betterwright auth --login codex
+betterwright exec "inspect example.com" --model gpt-5.6-sol
+
+# Claude (Anthropic API) — optional peer dep + API key
+npm install @anthropic-ai/sdk
+ANTHROPIC_API_KEY=… betterwright exec "inspect example.com" \
+  --model claude-opus-4-8
+
+# Grok (xAI OAuth or API key)
+betterwright auth --login grok
+betterwright exec "inspect example.com" --model grok-4.3
+# or: XAI_API_KEY=… betterwright exec "…" --model grok-4.3
+
+# Ollama (local, no key) — model must support tool/function calling
+ollama pull qwen3:8b
+betterwright models ollama
+betterwright exec "inspect example.com" --model qwen3:8b
+# pin if another source also exposes that id:
+betterwright exec "inspect example.com" --model ollama/qwen3:8b
+
+# vLLM (local OpenAI-compatible server with tool calling enabled)
+betterwright exec "inspect example.com" --model vllm/<served-model-id>
+
+# OpenRouter — canonical author/model id; pin only on collisions
+OPENROUTER_API_KEY=… betterwright exec "inspect example.com" \
+  --model anthropic/claude-sonnet-4
+OPENROUTER_API_KEY=… betterwright exec "inspect example.com" \
+  --model openrouter/anthropic/claude-sonnet-4
+
+# Any other OpenAI-compatible /v1 base URL
+BETTERWRIGHT_MODEL_API_KEY=… betterwright exec "inspect example.com" \
+  --base-url https://models.example/v1 --model <model-id>
+```
+
+### Preset endpoints and environment
+
+| Source | Default base URL | Key env var | Notes |
+| --- | --- | --- | --- |
+| OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` (required for runs) | Listing can work without a key; execution needs one |
+| Ollama | `http://127.0.0.1:11434/v1` | `OLLAMA_API_KEY` (optional) | No key for local defaults |
+| vLLM | `http://127.0.0.1:8000/v1` | `VLLM_API_KEY` (optional) | Start the server with tool-calling flags (below) |
+| Custom | from `--base-url` or `BETTERWRIGHT_MODEL_BASE_URL` | `BETTERWRIGHT_MODEL_API_KEY` (optional) | `--base-url` alone pins the source |
+
+Override a preset URL with `OPENROUTER_BASE_URL`, `OLLAMA_BASE_URL`, or
+`VLLM_BASE_URL`. Use `--api-key-env MY_KEY` when the key lives under another
+name (CLI flags never accept raw key values). BetterWright refuses to send a
+key to a non-loopback `http://` URL unless `--allow-insecure-model-endpoint`
+is set; HTTPS and loopback HTTP are fine without it.
+
+Environment-driven defaults for scripts and hosts:
+
+| Variable | Role |
+| --- | --- |
+| `BETTERWRIGHT_MODEL` | Default `--model` when the flag is omitted |
+| `BETTERWRIGHT_MODEL_BASE_URL` | Default custom endpoint base URL |
+| `BETTERWRIGHT_MODEL_API_KEY` | Key for that custom endpoint |
+| `BETTERWRIGHT_MODEL_PROTOCOL` | `chat` (default) or `responses` |
+| `BETTERWRIGHT_CLAUDE_MODEL` / `BETTERWRIGHT_CODEX_MODEL` / `BETTERWRIGHT_GROK_MODEL` | Defaults shown by `betterwright models` for each native source |
+
+### Protocol and tool calling
+
+Chat Completions (`--protocol chat`, the default) is the widest common
+surface. Use `--protocol responses` only when the server implements the
+Responses API.
+
+**Tool / function calling is required.** The loop drives the browser through
+tools (`browser`, `done`, optional `login` / `ask` / `handoff`). A text-only
+model will not work, even if chat completions succeed.
+
+- **Ollama** — use a model that advertises tool support (and a recent Ollama
+  build). Prefer ids you have verified with `ollama run` tool demos, or pin
+  explicitly with `--model ollama/<id>`.
+- **vLLM** — start the server with `--enable-auto-tool-choice` and the
+  `--tool-call-parser` required by the served model.
+- **OpenRouter / custom** — pick models known to support tools; partial
+  OpenAI compatibility without tools is not enough.
+
+### Native Claude, Codex, and Grok
+
+Native sources are chosen from the **model id family**, or by an explicit
+`source/` prefix:
+
+| Family pattern | Source | Auth |
+| --- | --- | --- |
+| starts with `claude` | Claude | `ANTHROPIC_API_KEY` + optional peer dep `@anthropic-ai/sdk` |
+| starts with `gpt`, `o`+digit, `chatgpt`, or `codex` | Codex | `betterwright auth --login codex`, or `OPENAI_API_KEY` / `CODEX_BASE_URL` |
+| starts with `grok` | Grok | `betterwright auth --login grok`, or `GROK_API_KEY` / `XAI_API_KEY` |
+
+Defaults: Claude `claude-opus-4-8`, Codex `gpt-5.6-sol` (or the model stored
+in `~/.codex/config.toml`), Grok `grok-4.3`. Qualify when needed
+(`codex/gpt-5.6-sol`). Base-URL overrides: `CODEX_BASE_URL`,
+`GROK_BASE_URL` / `XAI_BASE_URL`. xAI may gate OAuth API access by
+subscription tier; a 403 usually means switch to an API key.
 
 ### Signing in (`betterwright auth`)
 
 ```bash
 betterwright auth --login codex     # opens "Sign in to Codex with ChatGPT"
-betterwright auth --login grok       # opens the xAI sign-in
-betterwright auth --status           # who am I signed in as?
+betterwright auth --login grok      # opens the xAI sign-in
+betterwright auth --status          # who am I signed in as?
 ```
 
-`auth --login` runs the provider's OAuth 2.0 PKCE flow itself: it starts a
-loopback callback server, opens the consent page in your default browser, and
-stores the returned tokens (codex tokens land in `~/.codex/auth.json`, shared
-with the codex CLI; grok tokens in `~/.grok/auth.json`). No API key is pasted and
-no router is needed — BetterWright refreshes the access token per request.
+`auth --login` runs the provider's OAuth 2.0 PKCE flow: it starts a loopback
+callback server, opens the consent page in your default browser, and stores
+tokens (Codex in `~/.codex/auth.json`, shared with the codex CLI; Grok in
+`~/.grok/auth.json`). No API key is pasted and no router is required —
+BetterWright refreshes the access token per request.
+
+### Migration notes
+
+Older docs and scripts used adapter nicknames and a separate id flag. Current
+CLI behavior:
+
+| Old | New |
+| --- | --- |
+| `--model claude` / `codex` / `grok` | Real id: `--model claude-opus-4-8`, `gpt-5.6-sol`, `grok-4.3` |
+| `--model-id <id>` | Merged into `--model <id>` (the old flag errors with a hint) |
+| `--provider ollama` (or similar) | Put the source in the id only when needed: `--model ollama/<id>` |
+
+### Troubleshooting model selection
+
+| Symptom | What to try |
+| --- | --- |
+| `Unknown model "codex"` (or `claude` / `grok`) | Pass a real id, not the old adapter name |
+| `No available model source exposes "…"` | Run `betterwright models`; start Ollama/vLLM; set `OPENROUTER_API_KEY`; or pin `source/id` / `--base-url` |
+| `available from multiple sources: …` | Pick one of the listed selectors, e.g. `ollama/qwen3:8b` |
+| Ollama listed empty / connection errors | Confirm `ollama serve` is up; override with `OLLAMA_BASE_URL` if not on the default port |
+| Model answers in prose but never calls tools | Switch to a tool-calling model; for vLLM enable auto tool choice + parser |
+| Key over plain HTTP refused | Use HTTPS, loopback, or pass `--allow-insecure-model-endpoint` deliberately |
 
 ## Programmatic use
 
@@ -184,7 +349,7 @@ import { runAgentTask } from "betterwright/agent";
 
 const result = await runAgentTask({
   task: "log in to example.com and download this month's invoice",
-  model: "claude",                 // or "codex" | "grok" | your own model object
+  model: "claude-opus-4-8",       // actual model id, or your own model object
   maxDurationMs: 30 * 60 * 1000,   // configurable; there is no fixed step cap
   maxTranscriptChars: 1_000_000,   // bound accumulated model/tool context
   guardrails: { confirmBeforePurchase: true },
@@ -202,7 +367,7 @@ exposes an `ask` tool to the model; without one it runs fully autonomously.
 ```js
 const result = await runAgentTask({
   task: "book me a table for dinner tonight",
-  model: "codex",
+  model: "gpt-5.6-sol",
   askUser: async ({ question, options }) => {
     // Route to your UI/host; return the user's answer as a string.
     return await promptTheUser(question, options);
@@ -217,7 +382,7 @@ import { BetterWright } from "betterwright";
 import { runAgentTask } from "betterwright/agent";
 
 const browser = new BetterWright(); // encrypted local vault + `login` tool by default
-await runAgentTask({ task: "…", browser, model: "claude" });
+await runAgentTask({ task: "…", browser, model: "claude-opus-4-8" });
 await browser.close();
 ```
 
@@ -247,8 +412,24 @@ await runAgentTask({ task: "…", model: myModel });
 
 The harness handles the browser tools, the observe/act/verify discipline, proof
 capture, and the operator guidance; your adapter only has to translate the
-neutral transcript to and from your provider's wire format. `openaiModel({ baseURL,
-model, apiKey })` is a ready-made adapter for any OpenAI-compatible endpoint.
+neutral transcript to and from your provider's wire format.
+
+For a preset-compatible endpoint, prefer `endpointModel`:
+
+```js
+import { endpointModel, runAgentTask } from "betterwright/agent";
+
+const model = endpointModel({
+  source: "ollama",          // openrouter | ollama | vllm | custom
+  model: "qwen3:8b",
+  // baseURL: "http://127.0.0.1:11434/v1",  // optional override
+});
+await runAgentTask({ task: "…", model });
+```
+
+Or pass a string the same way the CLI does (`"ollama/qwen3:8b"`,
+`"gpt-5.6-sol"`, …). The lower-level `openaiModel({ baseURL, model, apiKey })`
+remains available when you need full control of the request shape.
 
 ## What the loop does
 

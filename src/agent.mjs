@@ -14,10 +14,10 @@
 // A model is any object with:
 //     async complete({ system, messages, tools }) -> { text, toolCalls, stopReason }
 // over the neutral message shape this file defines. Three adapters ship:
-// `claude` (Anthropic SDK), `codex` (the ChatGPT-backend Responses API over codex
-// OAuth creds, or OpenAI-compatible with an API key), and `grok`
-// (OpenAI-compatible over grok OAuth creds). Pass a model name to pick one, or
-// pass your own object to drive the loop with anything.
+// Claude (Anthropic SDK), GPT/Codex (the ChatGPT-backend Responses API over
+// Codex OAuth creds, or OpenAI-compatible with an API key), and Grok
+// (OpenAI-compatible over Grok OAuth creds). Pass an actual model id, or pass
+// your own object to drive the loop with anything.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -45,6 +45,33 @@ const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
 const MAX_TIMER_MS = 2_147_483_647;
 const OBSERVATION_LIMIT = 12_000;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
+
+export const MODEL_ENDPOINT_PRESETS = Object.freeze({
+  openrouter: Object.freeze({
+    baseURL: "https://openrouter.ai/api/v1",
+    baseURLEnv: "OPENROUTER_BASE_URL",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    requiresApiKey: true,
+  }),
+  ollama: Object.freeze({
+    baseURL: "http://127.0.0.1:11434/v1",
+    baseURLEnv: "OLLAMA_BASE_URL",
+    apiKeyEnv: "OLLAMA_API_KEY",
+    requiresApiKey: false,
+  }),
+  vllm: Object.freeze({
+    baseURL: "http://127.0.0.1:8000/v1",
+    baseURLEnv: "VLLM_BASE_URL",
+    apiKeyEnv: "VLLM_API_KEY",
+    requiresApiKey: false,
+  }),
+  custom: Object.freeze({
+    baseURL: null,
+    baseURLEnv: "BETTERWRIGHT_MODEL_BASE_URL",
+    apiKeyEnv: "BETTERWRIGHT_MODEL_API_KEY",
+    requiresApiKey: false,
+  }),
+});
 
 // How the harness introduces its tools. `agentSystemPrompt()` speaks in terms of
 // `run()`; this preamble maps that onto the `browser` tool so the same operator
@@ -317,6 +344,10 @@ async function withinDeadline(operation, deadline) {
  *   when provided, the loop exposes an `ask` tool so the model can put a question
  *   to the user mid-task; the returned string is fed back as the answer. Omit it
  *   (the `exec` default) to run fully autonomously with no `ask` tool.
+ * @param {() => (string|string[]|Promise<string|string[]>)} [options.drainSteering]
+ *   non-blocking host callback drained at model turn boundaries. Messages
+ *   returned while a turn is running steer the next turn; this is the terminal
+ *   equivalent of live-view chat.
  * @param {object[]} [options.history] a prior transcript (from a previous call's
  *   `transcript`) to continue from, so a follow-up task can refer back to earlier
  *   work. Omit for a fresh, single-shot run.
@@ -326,18 +357,26 @@ async function withinDeadline(operation, deadline) {
  *   takeover, resume on Done) as long as a URL surface exists (`askUser` or
  *   `onStep`). Pass `true` (or an options object forwarded to `startLiveView`)
  *   to ALSO start the viewer at run start, so the user can watch the whole
- *   task live while the agent works; the URL is emitted as
- *   `onStep({tool: "liveView", url})`.
+ *   task live while the agent works. When that call creates the viewer, its URL
+ *   is emitted as `onStep({tool: "liveView", url})`; an already-running
+ *   host-owned viewer is reused without re-announcing it.
  * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
  */
 export async function runAgentTask(options = {}) {
   const task = String(options.task || "").trim();
   if (!task) throw new Error("runAgentTask requires a non-empty `task`.");
 
-  const model = resolveModel(options.model || "claude", options.modelOptions || {});
+  const model = await resolveModelSelection(
+    options.model || "claude-opus-4-8",
+    options.modelOptions || {},
+  );
   const session = String(options.session || "default");
   const onStep = typeof options.onStep === "function" ? options.onStep : () => {};
   const askUser = typeof options.askUser === "function" ? options.askUser : null;
+  const drainSteering =
+    typeof options.drainSteering === "function"
+      ? options.drainSteering
+      : null;
   const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
   if (!Number.isFinite(maxDurationMs) || maxDurationMs <= 0 || maxDurationMs > MAX_TIMER_MS) {
     throw new TypeError(
@@ -417,26 +456,58 @@ export async function runAgentTask(options = {}) {
     }
   }
 
-  async function drainLiveChatIntoMessages() {
-    if (!withHandoff || typeof browser.liveViewDrainChat !== "function") return;
-    if (!liveViewReady) return;
+  function normalizeGuidanceLines(value) {
+    return (Array.isArray(value) ? value : [value])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+  }
+
+  async function collectLiveViewGuidance() {
+    if (!withHandoff || typeof browser.liveViewDrainChat !== "function") return [];
+    if (!liveViewReady) return [];
     try {
       const drained = await browser.liveViewDrainChat();
       const items = Array.isArray(drained?.messages) ? drained.messages : [];
-      const lines = items
-        .map((item) => String(item?.text || "").trim())
-        .filter(Boolean);
-      if (!lines.length) return;
-      messages.push({
-        role: "user",
-        text:
-          "The human sent guidance from the live view while you were working. " +
-          "Incorporate it and continue the task:\n\n" +
-          lines.map((line) => `- ${line}`).join("\n"),
-      });
+      return normalizeGuidanceLines(items.map((item) => item?.text));
     } catch {
       /* drain is best-effort */
+      return [];
     }
+  }
+
+  async function collectTerminalGuidance() {
+    if (!drainSteering) return [];
+    try {
+      return normalizeGuidanceLines(await drainSteering());
+    } catch {
+      /* steering must never break the agent loop */
+      return [];
+    }
+  }
+
+  async function collectHumanGuidance() {
+    const batches = [];
+    const liveView = await collectLiveViewGuidance();
+    if (liveView.length) batches.push({ source: "live view", lines: liveView });
+    const terminal = await collectTerminalGuidance();
+    if (terminal.length)
+      batches.push({ source: "interactive terminal", lines: terminal });
+    return batches;
+  }
+
+  function appendHumanGuidance(batches) {
+    if (!batches.length) return false;
+    const lines = batches.flatMap(({ source, lines: items }) =>
+      items.map((line) => `- [${source}] ${line}`),
+    );
+    messages.push({
+      role: "user",
+      text:
+        "The human sent steering while you were working. " +
+        "Incorporate it and continue the task:\n\n" +
+        lines.join("\n"),
+    });
+    return true;
   }
 
   function reportStep(event) {
@@ -489,7 +560,7 @@ export async function runAgentTask(options = {}) {
     // effort: a failed viewer must never stop the task itself.
     if (withHandoff && liveViewOption) {
       const view = await ensureAgentLiveView();
-      if (view?.url) {
+      if (view?.url && !view.alreadyRunning) {
         reportStep({ step: 0, tool: "liveView", note: `watch live: ${view.url}`, url: view.url });
         await postLiveChat({
           role: "system",
@@ -505,8 +576,8 @@ export async function runAgentTask(options = {}) {
         reason = "context_limit";
         break;
       }
-      // Human freeform chat lands at turn boundaries (never mid-browser step).
-      await drainLiveChatIntoMessages();
+      // Human guidance lands at turn boundaries (never mid-browser step).
+      appendHumanGuidance(await collectHumanGuidance());
       const response = await withinDeadline(
         (signal) => model.complete({ system, messages, tools, signal }),
         deadline,
@@ -526,8 +597,9 @@ export async function runAgentTask(options = {}) {
       messages.push({ role: "assistant", text: response.text || "", toolCalls });
 
       // No tool call: the model answered in prose. Treat that text as the
-      // result and stop rather than looping until the step cap.
+      // result unless steering arrived while the model was answering.
       if (!toolCalls.length) {
+        if (appendHumanGuidance(await collectHumanGuidance())) continue;
         answer = String(response.text || "").trim();
         reason = answer ? "answered" : "stopped";
         finished = true;
@@ -685,6 +757,19 @@ export async function runAgentTask(options = {}) {
         results.push({ id: call.id, name: call.name, content: `Unknown tool: ${call.name}` });
       }
       messages.push({ role: "tool", results });
+      // A terminal or live-view message can arrive during model inference or a
+      // long browser call. Apply it before accepting a completion from that
+      // turn, so steering never becomes a stray follow-up task.
+      if (appendHumanGuidance(await collectHumanGuidance())) {
+        for (const result of results) {
+          if (result.name === "done")
+            result.content =
+              "Completion deferred because new human steering arrived.";
+        }
+        finished = false;
+        reason = "stopped";
+        answer = "";
+      }
       if (finished) break;
     }
     if (finished && answer) {
@@ -735,40 +820,440 @@ export async function runAgentTask(options = {}) {
   };
 }
 
-// Infer the backend adapter from a bare model id so `--model gpt-5.6-luna`
-// works like `--model codex --model-id gpt-5.6-luna`.
+// Infer the native source from an actual model id. Source names alone are not
+// model shortcuts; `codex/`, `claude/`, and `grok/` only pin a collision.
 function adapterForModelId(id) {
+  if (id === "claude" || id === "codex" || id === "grok") return null;
   if (/^claude/.test(id)) return "claude";
   if (/^grok/.test(id)) return "grok";
   if (/^(gpt|o[0-9]|chatgpt|codex)/.test(id)) return "codex";
   return null;
 }
 
+const NATIVE_MODEL_SOURCES = Object.freeze({
+  claude: claudeModel,
+  codex: codexModel,
+  grok: grokModel,
+});
+const QUALIFIED_MODEL_SOURCES = new Set([
+  ...Object.keys(NATIVE_MODEL_SOURCES),
+  ...Object.keys(MODEL_ENDPOINT_PRESETS),
+]);
+
+function endpointSourceName(value) {
+  const name = String(value || "custom")
+    .trim()
+    .toLowerCase()
+    .replace(/[-_ ]/g, "");
+  if (name === "openrouter") return "openrouter";
+  if (name === "ollama") return "ollama";
+  if (name === "vllm") return "vllm";
+  if (name === "custom") return "custom";
+  throw new Error(
+    `Unknown model source "${value}". Use openrouter, ollama, vllm, or custom.`,
+  );
+}
+
+function qualifiedModelSelector(value) {
+  const selector = String(value || "").trim();
+  const slash = selector.indexOf("/");
+  if (slash <= 0 || slash === selector.length - 1) return null;
+  const source = selector.slice(0, slash).toLowerCase();
+  if (!QUALIFIED_MODEL_SOURCES.has(source)) return null;
+  return { source, model: selector.slice(slash + 1) };
+}
+
+function modelIdAliasValues(value) {
+  const id = String(value || "").trim();
+  const aliases = new Set([id]);
+  const firstSlash = id.indexOf("/");
+  const lastSlash = id.lastIndexOf("/");
+  if (firstSlash !== -1) aliases.add(id.slice(firstSlash + 1));
+  if (lastSlash !== -1) aliases.add(id.slice(lastSlash + 1));
+  return [...aliases].filter(Boolean);
+}
+
+function modelIdAliases(value) {
+  return new Set(modelIdAliasValues(value).map((alias) => alias.toLowerCase()));
+}
+
+function endpointDiscoverySources() {
+  const sources = ["ollama", "vllm"];
+  if (process.env.OPENROUTER_API_KEY) sources.push("openrouter");
+  return sources;
+}
+
+function endpointURL(value, source) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || ""));
+  } catch {
+    throw new Error(
+      `The ${source} source needs a valid --base-url such as https://host.example/v1.`,
+    );
+  }
+  if (!["http:", "https:"].includes(parsed.protocol))
+    throw new Error("Model base URLs must use http:// or https://.");
+  if (parsed.username || parsed.password)
+    throw new Error("Do not put credentials in a model base URL; use --api-key-env instead.");
+  if (parsed.search || parsed.hash)
+    throw new Error("Model base URLs cannot contain query strings or fragments.");
+  return parsed.href.replace(/\/+$/, "");
+}
+
+function isLoopbackEndpoint(value) {
+  const host = new URL(value).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "::1" ||
+    host === "0:0:0:0:0:0:0:1" ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  );
+}
+
+function endpointConfig(options = {}, { requireModel = true, requireApiKey = true } = {}) {
+  const source = endpointSourceName(options.source || "custom");
+  const preset = MODEL_ENDPOINT_PRESETS[source];
+  const configuredBase =
+    options.baseURL ||
+    process.env[preset.baseURLEnv] ||
+    (source === "custom"
+      ? process.env.BETTERWRIGHT_MODEL_BASE_URL
+      : null) ||
+    preset.baseURL;
+  if (!configuredBase)
+    throw new Error(
+      "The custom endpoint needs --base-url <url> (or BETTERWRIGHT_MODEL_BASE_URL).",
+    );
+  const baseURL = endpointURL(configuredBase, source);
+
+  const explicitApiKeyEnv = String(options.apiKeyEnv || "").trim();
+  if (
+    explicitApiKeyEnv &&
+    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(explicitApiKeyEnv)
+  ) {
+    throw new Error(
+      `Invalid --api-key-env "${explicitApiKeyEnv}". Use an environment variable name such as MODEL_API_KEY.`,
+    );
+  }
+  const apiKeyEnv = explicitApiKeyEnv || preset.apiKeyEnv;
+  const apiKey =
+    options.apiKey !== undefined && options.apiKey !== null
+      ? String(options.apiKey)
+      : String(process.env[apiKeyEnv] || "");
+  if (explicitApiKeyEnv && !apiKey)
+    throw new Error(
+      `The environment variable ${explicitApiKeyEnv} is empty. Set it or remove --api-key-env.`,
+    );
+  if (requireApiKey && preset.requiresApiKey && !apiKey)
+    throw new Error(
+      `OpenRouter needs an API key. Set ${preset.apiKeyEnv} or pass --api-key-env <name>.`,
+    );
+  if (
+    apiKey &&
+    new URL(baseURL).protocol === "http:" &&
+    !isLoopbackEndpoint(baseURL) &&
+    !options.allowInsecureEndpoint
+  ) {
+    throw new Error(
+      `Refusing to send ${apiKeyEnv || "the model API key"} over plain HTTP to ${baseURL}. ` +
+        "Use HTTPS or pass --allow-insecure-model-endpoint.",
+    );
+  }
+
+  const model = String(options.model || "").trim();
+  if (requireModel && !model) {
+    const hint =
+      source === "ollama"
+        ? " Run `betterwright models ollama` or `ollama list`."
+        : ` Run \`betterwright models ${source === "custom" ? "--base-url <url>" : source}\`.`;
+    throw new Error(`The ${source} source needs --model <id>.${hint}`);
+  }
+  const protocol = String(
+    options.protocol || process.env.BETTERWRIGHT_MODEL_PROTOCOL || "chat",
+  )
+    .trim()
+    .toLowerCase();
+  if (!["chat", "responses"].includes(protocol))
+    throw new Error('Model protocol must be "chat" or "responses".');
+
+  const headers = {
+    ...(source === "openrouter"
+      ? {
+          "HTTP-Referer": "https://github.com/BetterWright/betterwright",
+          "X-OpenRouter-Title": "BetterWright",
+        }
+      : {}),
+    ...(options.headers || {}),
+  };
+  return { source, preset, baseURL, apiKey, apiKeyEnv, model, protocol, headers };
+}
+
+/**
+ * A preset-backed OpenAI-compatible endpoint model. Presets only configure
+ * endpoint/auth defaults; model ids remain opaque.
+ * @param {object} options source, model, baseURL, apiKey/apiKeyEnv, protocol
+ */
+export function endpointModel(options = {}) {
+  const config = endpointConfig(options);
+  const common = {
+    ...options,
+    name: config.source,
+    baseURL: config.baseURL,
+    apiKey: config.apiKey,
+    model: config.model,
+    headers: config.headers,
+    // Generic providers converge on max_tokens. Keep optional OpenAI-only
+    // controls out of the baseline request so partial implementations work.
+    maxTokensField: "max_tokens",
+    parallelToolCalls: null,
+  };
+  if (config.protocol === "responses") {
+    return responsesModel({
+      ...common,
+      includeMaxOutputTokens: true,
+      stream: false,
+      store: null,
+    });
+  }
+  return openaiModel(common);
+}
+
+/**
+ * List models from a preset or custom endpoint's OpenAI-compatible /models
+ * route. OpenRouter's list is public; task execution still requires its key.
+ */
+export async function listEndpointModels(options = {}) {
+  const config = endpointConfig(options, { requireModel: false, requireApiKey: false });
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function")
+    throw new Error("No fetch implementation available (need Node 22+ or a fetchImpl).");
+  const response = await fetchImpl(`${config.baseURL}/models`, {
+    headers: {
+      ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
+      ...config.headers,
+    },
+    redirect: "error",
+    signal: options.signal || AbortSignal.timeout(10_000),
+  });
+  const raw = await response.text().catch(() => "");
+  if (!response.ok) {
+    throw new Error(
+      `${config.source} model listing failed (${response.status}): ${raw.slice(0, 500)}`,
+    );
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error(`${config.source} returned a non-JSON response from /models.`);
+  }
+  const entries = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data?.models)
+      ? data.models
+      : [];
+  const models = entries
+    .map((entry) =>
+      typeof entry === "string" ? entry : entry?.id || entry?.name || entry?.model,
+    )
+    .filter(Boolean)
+    .map(String);
+  return {
+    source: config.source,
+    baseURL: config.baseURL,
+    models: [...new Set(models)],
+  };
+}
+
+/**
+ * Choose the shortest unambiguous user selector for each discovered endpoint
+ * model. A source prefix appears only when every bare form collides.
+ */
+export function modelSelectionChoices(entries = []) {
+  const models = [
+    ...new Map(
+      entries.map((entry) => [
+        `${entry.source}\0${entry.model}`,
+        { source: String(entry.source), model: String(entry.model) },
+      ]),
+    ).values(),
+  ];
+  return models.map((entry) => {
+    const aliases = modelIdAliasValues(entry.model).sort(
+      (left, right) => left.length - right.length,
+    );
+    const selector = aliases.find((alias) => {
+      const lowered = alias.toLowerCase();
+      if (qualifiedModelSelector(alias)) return false;
+      const nativeSource = adapterForModelId(lowered);
+      if (nativeSource && nativeSource !== entry.source) return false;
+      return (
+        models.filter((candidate) =>
+          modelIdAliases(candidate.model).has(lowered),
+        ).length === 1
+      );
+    });
+    const qualified = `${entry.source}/${entry.model}`;
+    return {
+      ...entry,
+      selector: selector || qualified,
+      qualified,
+      ambiguous: !selector,
+    };
+  });
+}
+
+export function nativeModelCatalog() {
+  const stored = readCodexConfig();
+  return [
+    {
+      source: "claude",
+      model:
+        process.env.BETTERWRIGHT_CLAUDE_MODEL || "claude-opus-4-8",
+    },
+    {
+      source: "codex",
+      model:
+        process.env.BETTERWRIGHT_CODEX_MODEL ||
+        stored.model ||
+        "gpt-5.6-sol",
+    },
+    {
+      source: "grok",
+      model:
+        process.env.BETTERWRIGHT_GROK_MODEL ||
+        process.env.XAI_MODEL ||
+        "grok-4.3",
+    },
+  ];
+}
+
+async function discoverModelCandidates(model, options = {}) {
+  const wanted = String(model || "").trim().toLowerCase();
+  const discovered = await Promise.all(
+    endpointDiscoverySources().map(async (source) => {
+      try {
+        const timeoutMs =
+          Number(options.discoveryTimeoutMs) ||
+          (source === "openrouter" ? 3_000 : 750);
+        const result = await listEndpointModels({
+          source,
+          fetchImpl: options.fetchImpl,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        return result.models
+          .filter((id) => modelIdAliases(id).has(wanted))
+          .map((id) => ({ source, model: id }));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return discovered.flat();
+}
+
+/**
+ * Resolve the model-first user selector. Explicit source/model ids resolve
+ * immediately. Bare ids are matched across running/configured endpoint
+ * catalogs and only auto-selected when exactly one source exposes them.
+ */
+export async function resolveModelSelection(model, modelOptions = {}) {
+  if (
+    model &&
+    typeof model === "object" &&
+    typeof model.complete === "function"
+  ) {
+    return model;
+  }
+  const selector = String(model || "").trim();
+  const qualified = qualifiedModelSelector(selector);
+  if (modelOptions.baseURL || qualified) {
+    return resolveModel(selector, modelOptions);
+  }
+
+  const candidates = await discoverModelCandidates(selector, modelOptions);
+  const nativeSource = adapterForModelId(selector.toLowerCase());
+  if (nativeSource) {
+    candidates.unshift({ source: nativeSource, model: selector });
+  }
+  const unique = [
+    ...new Map(
+      candidates.map((candidate) => [
+        `${candidate.source}\0${candidate.model}`,
+        candidate,
+      ]),
+    ).values(),
+  ];
+  if (unique.length === 1) {
+    const [match] = unique;
+    if (NATIVE_MODEL_SOURCES[match.source]) {
+      return NATIVE_MODEL_SOURCES[match.source]({
+        ...modelOptions,
+        model: modelOptions.model || match.model,
+      });
+    }
+    return endpointModel({
+      ...modelOptions,
+      source: match.source,
+      model: modelOptions.model || match.model,
+    });
+  }
+  if (unique.length > 1) {
+    const choices = modelSelectionChoices(unique)
+      .map((choice) => choice.selector)
+      .join(", ");
+    throw new Error(
+      `Model "${selector}" is available from multiple sources: ${choices}. ` +
+        "Choose one with --model <source/model-id>.",
+    );
+  }
+  throw new Error(
+    `No available model source exposes "${selector}". Run \`betterwright models\`, ` +
+      "or use --model openrouter/<id>, ollama/<id>, vllm/<id>, or --base-url <url>.",
+  );
+}
+
 /**
  * Resolve a model name (or pass-through object) to a model adapter.
- * @param {string|object} model An adapter name — "claude" | "codex" | "grok"
- *   (aliases: "anthropic" → claude, "openai" → codex, "xai" → grok); a bare
- *   model id whose backend is inferred from its prefix (`gpt-*`/`o*` → codex,
- *   `grok-*` → grok, `claude-*` → claude); or an object with an async `complete`
- *   method to use directly.
+ * @param {string|object} model A model id, a source-qualified model id, or an
+ *   object with an async `complete` method to use directly.
  * @param {object} [modelOptions]
  * @returns {{name: string, complete: Function}}
  */
 export function resolveModel(model, modelOptions = {}) {
   if (model && typeof model === "object" && typeof model.complete === "function") return model;
-  const name = String(model || "").toLowerCase();
-  const adapters = { claude: claudeModel, anthropic: claudeModel, codex: codexModel, openai: codexModel, grok: grokModel, xai: grokModel };
-  if (adapters[name]) return adapters[name](modelOptions);
-  // Not an adapter name — treat it as a model id and route by its prefix, using
-  // it as the model id unless an explicit --model-id already set one.
+  const selector = String(model || "");
+  const name = selector.toLowerCase();
+  const qualified = qualifiedModelSelector(selector);
+  if (modelOptions.baseURL)
+    return endpointModel({
+      ...modelOptions,
+      source: "custom",
+      model: modelOptions.model || selector,
+    });
+  if (qualified) {
+    if (NATIVE_MODEL_SOURCES[qualified.source]) {
+      return NATIVE_MODEL_SOURCES[qualified.source]({
+        ...modelOptions,
+        model: modelOptions.model || qualified.model,
+      });
+    }
+    return endpointModel({
+      ...modelOptions,
+      source: qualified.source,
+      model: modelOptions.model || qualified.model,
+    });
+  }
+  // A bare native model id routes by its family prefix.
   const inferred = adapterForModelId(name);
   if (inferred) {
-    const options = { ...modelOptions, model: modelOptions.model || String(model) };
-    return { claude: claudeModel, codex: codexModel, grok: grokModel }[inferred](options);
+    const options = { ...modelOptions, model: modelOptions.model || selector };
+    return NATIVE_MODEL_SOURCES[inferred](options);
   }
   throw new Error(
-    `Unknown model "${model}". Use an adapter name ("claude", "codex", "grok"), a model id ` +
-      `(e.g. "gpt-5.6-sol", "grok-4.3", "claude-opus-4-8"), or a model object with a complete() method.`,
+    `Unknown model "${model}". Use a model id (for example "gpt-5.6-sol") or ` +
+      `a source-qualified id (for example "ollama/qwen3:8b").`,
   );
 }
 
@@ -889,7 +1374,12 @@ function openaiMessages(system, messages) {
     if (m.role === "user") {
       out.push({ role: "user", content: m.text });
     } else if (m.role === "tool") {
-      for (const r of m.results) out.push({ role: "tool", tool_call_id: r.id, content: r.content });
+      for (const r of m.results)
+        out.push({
+          role: "tool",
+          tool_call_id: r.id,
+          content: r.content,
+        });
     } else {
       const turn = { role: "assistant", content: m.text || null };
       if (m.toolCalls?.length)
@@ -904,24 +1394,60 @@ function openaiMessages(system, messages) {
   return out;
 }
 
+function openaiText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      return typeof part?.text === "string"
+        ? part.text
+        : typeof part?.content === "string"
+          ? part.content
+          : "";
+    })
+    .join("");
+}
+
+function openaiToolInput(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (!value) return {};
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return { _raw: value };
+  }
+}
+
 function parseOpenaiResponse(data) {
   const choice = data?.choices?.[0] || {};
   const msg = choice.message || {};
   const toolCalls = [];
   let synthetic = 0;
   for (const tc of msg.tool_calls || []) {
-    let input = {};
-    try {
-      input = tc.function?.arguments ? JSON.parse(tc.function.arguments) : {};
-    } catch {
-      input = { _raw: tc.function?.arguments };
-    }
     // Some OpenAI-compatible servers omit ids; synthesize a stable one so the
     // assistant turn and its tool result line up on the next request.
     synthetic += 1;
-    toolCalls.push({ id: tc.id || `call_${synthetic}`, name: tc.function?.name, input });
+    toolCalls.push({
+      id: tc.id || `call_${synthetic}`,
+      name: tc.function?.name,
+      input: openaiToolInput(tc.function?.arguments),
+    });
   }
-  return { text: msg.content || "", toolCalls, stopReason: choice.finish_reason, usage: openaiUsage(data?.usage) };
+  if (!toolCalls.length && msg.function_call) {
+    synthetic += 1;
+    toolCalls.push({
+      id: `call_${synthetic}`,
+      name: msg.function_call.name,
+      input: openaiToolInput(msg.function_call.arguments),
+    });
+  }
+  return {
+    text: openaiText(msg.content),
+    toolCalls,
+    stopReason: choice.finish_reason,
+    usage: openaiUsage(data?.usage),
+  };
 }
 
 /**
@@ -942,6 +1468,7 @@ export function openaiModel(options = {}) {
   const baseURL = String(options.baseURL || "https://api.openai.com/v1").replace(/\/+$/, "");
   const modelId = options.model;
   const maxTokens = Number(options.maxTokens) || DEFAULT_MAX_TOKENS;
+  const maxTokensField = options.maxTokensField || "max_completion_tokens";
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (!modelId) throw new Error(`The ${options.name || "openai"} model needs a model id.`);
   if (typeof fetchImpl !== "function")
@@ -957,16 +1484,19 @@ export function openaiModel(options = {}) {
       const apiKey = auth.apiKey ?? options.apiKey;
       const body = {
         model: modelId,
-        max_completion_tokens: maxTokens,
+        [maxTokensField]: maxTokens,
         messages: openaiMessages(system, messages),
         tools: tools.map((t) => ({
           type: "function",
           function: { name: t.name, description: t.description, parameters: t.parameters },
         })),
         tool_choice: "auto",
-        parallel_tool_calls: true,
       };
+      if (typeof options.parallelToolCalls === "boolean")
+        body.parallel_tool_calls = options.parallelToolCalls;
+      else if (options.parallelToolCalls === undefined) body.parallel_tool_calls = true;
       if (options.effort) body.reasoning_effort = options.effort;
+      Object.assign(body, options.bodyExtra || {});
       const response = await fetchImpl(`${baseURL}/chat/completions`, {
         method: "POST",
         headers: {
@@ -977,12 +1507,19 @@ export function openaiModel(options = {}) {
         },
         body: JSON.stringify(body),
         signal,
+        redirect: "error",
       });
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
         throw new Error(`${options.name || "openai"} request failed (${response.status}): ${detail.slice(0, 500)}`);
       }
-      return parseOpenaiResponse(await response.json());
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(`${options.name || "openai"} returned a non-JSON chat response.`);
+      }
+      return parseOpenaiResponse(data);
     },
   };
 }
@@ -1088,6 +1625,7 @@ function parseResponsesStream(raw) {
 function responsesModel(options = {}) {
   const baseURL = String(options.baseURL || "https://api.openai.com/v1").replace(/\/+$/, "");
   const modelId = options.model;
+  const maxTokens = Number(options.maxTokens) || DEFAULT_MAX_TOKENS;
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (!modelId) throw new Error(`The ${options.name || "responses"} model needs a model id.`);
   if (typeof fetchImpl !== "function") throw new Error("No fetch implementation available (need Node 22+ or a fetchImpl).");
@@ -1104,6 +1642,9 @@ function responsesModel(options = {}) {
         model: modelId,
         instructions: system,
         input: responsesInput(messages),
+        ...(options.includeMaxOutputTokens
+          ? { max_output_tokens: maxTokens }
+          : {}),
         tools: tools.map((tool) => ({
           type: "function",
           name: tool.name,
@@ -1111,9 +1652,17 @@ function responsesModel(options = {}) {
           parameters: tool.parameters,
         })),
         tool_choice: "auto",
-        parallel_tool_calls: true,
-        store: false,
-        stream: true,
+        ...(typeof options.parallelToolCalls === "boolean"
+          ? { parallel_tool_calls: options.parallelToolCalls }
+          : options.parallelToolCalls === undefined
+            ? { parallel_tool_calls: true }
+            : {}),
+        ...(typeof options.store === "boolean"
+          ? { store: options.store }
+          : options.store === undefined
+            ? { store: false }
+            : {}),
+        stream: options.stream === undefined ? true : Boolean(options.stream),
         ...(options.effort ? { reasoning: { effort: options.effort } } : {}),
         ...(options.bodyExtra || {}),
       };
@@ -1121,13 +1670,17 @@ function responsesModel(options = {}) {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          accept: "text/event-stream",
+          accept:
+            options.stream === false
+              ? "application/json"
+              : "text/event-stream",
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
           ...(options.headers || {}),
           ...(auth.headers || {}),
         },
         body: JSON.stringify(body),
         signal,
+        redirect: "error",
       });
       const raw = await response.text().catch(() => "");
       if (!response.ok) {

@@ -25,7 +25,13 @@ import {
   type AgentModel,
   type AgentResult,
   claudeModel,
+  endpointModel,
+  listEndpointModels,
+  MODEL_ENDPOINT_PRESETS,
+  modelSelectionChoices,
+  nativeModelCatalog,
   resolveModel,
+  resolveModelSelection,
   runAgentTask,
 } from "betterwright/agent";
 import { type CodexAuth, type LoginResult, loadCodexAuth, loginProvider } from "betterwright/auth";
@@ -99,8 +105,26 @@ const customModel: AgentModel = {
     return { text: "", toolCalls: [] };
   },
 };
-const resolvedModel: AgentModel = resolveModel("claude");
+const resolvedModel: AgentModel = resolveModel("claude-opus-4-8");
+const selectedModel: Promise<AgentModel> =
+  resolveModelSelection("qwen3:8b");
+const modelChoices = modelSelectionChoices(nativeModelCatalog());
 const claudeAdapter: AgentModel = claudeModel({ model: "claude-fable-5", effort: "low" });
+const endpointAdapter: AgentModel = endpointModel({
+  source: "ollama",
+  model: "qwen3:8b",
+});
+const customEndpointAdapter: AgentModel = endpointModel({
+  baseURL: "https://models.example/v1",
+  model: "vendor/opaque-id",
+});
+const endpointModels: Promise<{
+  source: "openrouter" | "ollama" | "vllm" | "custom";
+  baseURL: string;
+  models: string[];
+}> = listEndpointModels({ source: "vllm" });
+const openRouterBaseURL: string | null =
+  MODEL_ENDPOINT_PRESETS.openrouter.baseURL;
 const agentResult: Promise<AgentResult> = runAgentTask({
   task: "read the page title",
   model: customModel,
@@ -140,7 +164,13 @@ void [
   captchaStageName,
   challenge,
   resolvedModel,
+  selectedModel,
+  modelChoices,
   claudeAdapter,
+  endpointAdapter,
+  customEndpointAdapter,
+  endpointModels,
+  openRouterBaseURL,
   agentResult,
   login,
   codexAuth,

@@ -9,6 +9,7 @@
 //   betterwright run <file|-|-c>  execute a Playwright snippet
 //   betterwright repl             run blank-line-separated snippets from stdin
 //   betterwright exec <task>      run a task with BetterWright's own agent loop
+//   betterwright models           list models from OpenAI-compatible endpoints
 //   betterwright view             live web view of the browser (watch/take over)
 //   betterwright auth --login <p> OAuth sign-in for a model backend (codex|grok)
 //   betterwright skill            print paste-ready agent instructions
@@ -31,7 +32,12 @@ import { pathToFileURL } from "node:url";
 
 import { formatAgentUsage } from "../src/agent-usage.mjs";
 import { installChromiumFork } from "../src/chromium-fork-install.mjs";
-import { makeLineReader } from "../src/cli-io.mjs";
+import {
+  createInteractiveBrowserLifecycle,
+  formatHangingText,
+  makeLineReader,
+  readExecTaskFromStdin,
+} from "../src/cli-io.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.mjs";
@@ -392,7 +398,157 @@ async function cmdRepl(flags) {
 
 function flagValue(argv, flag, fallback) {
   const index = argv.indexOf(flag);
-  return index !== -1 && index + 1 < argv.length ? argv[index + 1] : fallback;
+  if (index !== -1 && index + 1 < argv.length) return argv[index + 1];
+  const assigned = argv.find((token) => token.startsWith(`${flag}=`));
+  return assigned ? assigned.slice(flag.length + 1) : fallback;
+}
+
+const VALUE_FLAGS = new Set([
+  "--allow-host",
+  "--api-key-env",
+  "--base-url",
+  "--block-host",
+  "--effort",
+  "--endpoint",
+  "--expose",
+  "--host",
+  "--locale",
+  "--model",
+  "--model-id",
+  "--platform",
+  "--port",
+  "--protocol",
+  "--provider",
+  "--public-host",
+  "--reasoning",
+  "--session",
+  "--timezone",
+  "--upstream-proxy",
+]);
+
+function firstPositional(tokens) {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token.startsWith("-")) return token;
+    if (!token.includes("=") && VALUE_FLAGS.has(token)) index += 1;
+  }
+  return undefined;
+}
+
+function modelEndpointOptions(argv) {
+  const baseURL =
+    flagValue(argv, "--base-url") ||
+    flagValue(argv, "--endpoint") ||
+    undefined;
+  return {
+    ...(baseURL ? { baseURL } : {}),
+    ...(flagValue(argv, "--api-key-env")
+      ? { apiKeyEnv: flagValue(argv, "--api-key-env") }
+      : {}),
+    ...(flagValue(argv, "--protocol")
+      ? { protocol: flagValue(argv, "--protocol") }
+      : {}),
+    ...(argv.includes("--allow-insecure-model-endpoint")
+      ? { allowInsecureEndpoint: true }
+      : {}),
+  };
+}
+
+function modelCliSelection(argv) {
+  const model =
+    flagValue(
+      argv,
+      "--model",
+      process.env.BETTERWRIGHT_MODEL || "claude-opus-4-8",
+    ) || "";
+  const modelOptions = modelEndpointOptions(argv);
+  const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
+  if (effort) modelOptions.effort = effort;
+  return { model, modelOptions };
+}
+
+function removedModelFlagMessage(argv) {
+  if (flagValue(argv, "--provider") !== undefined) {
+    return "--provider was removed. Put the source in --model only when needed, for example --model ollama/qwen3:8b.";
+  }
+  if (flagValue(argv, "--model-id") !== undefined) {
+    return "--model-id was merged into --model. Use --model <id>.";
+  }
+  return "";
+}
+
+const MODEL_ENDPOINT_SOURCES = new Set([
+  "openrouter",
+  "ollama",
+  "vllm",
+  "custom",
+]);
+
+function modelSource(value) {
+  const source = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!source) return "";
+  if (MODEL_ENDPOINT_SOURCES.has(source)) return source;
+  throw new Error(
+    `Unknown model source "${value}". Use openrouter, ollama, vllm, or a custom --base-url.`,
+  );
+}
+
+async function loadModelCatalog(
+  listEndpointModels,
+  nativeModelCatalog,
+  options = {},
+) {
+  const requested = modelSource(options.source);
+  const sources = requested
+    ? [requested]
+    : options.modelOptions?.baseURL
+      ? ["custom"]
+      : [
+          "ollama",
+          "vllm",
+          ...(process.env.OPENROUTER_API_KEY ? ["openrouter"] : []),
+        ];
+  const settled = await Promise.all(
+    sources.map(async (source) => {
+      try {
+        const result = await listEndpointModels({
+          source,
+          ...(source === "custom" ? options.modelOptions : {
+            apiKeyEnv: options.modelOptions?.apiKeyEnv,
+            allowInsecureEndpoint:
+              options.modelOptions?.allowInsecureEndpoint,
+          }),
+          ...(options.quick
+            ? {
+                signal: AbortSignal.timeout(
+                  source === "openrouter" ? 3_000 : 750,
+                ),
+              }
+            : {}),
+        });
+        return {
+          source,
+          models: result.models,
+          baseURL: result.baseURL,
+        };
+      } catch (error) {
+        return {
+          source,
+          models: [],
+          error: error?.message || String(error),
+        };
+      }
+    }),
+  );
+  const entries = settled.flatMap((result) =>
+    result.models.map((model) => ({ source: result.source, model })),
+  );
+  if (!requested && !options.modelOptions?.baseURL) {
+    entries.unshift(...nativeModelCatalog());
+  }
+  return { entries, sources: settled };
 }
 
 // Compact wall-clock: milliseconds under a second, otherwise seconds to 1 dp.
@@ -412,7 +568,9 @@ function styler() {
 
 const INTERACTIVE_HELP = `Commands:
   /help               show this help
-  /model <name>       switch model (claude | codex | grok | a model id)
+  /endpoint <url>     use a custom OpenAI-compatible base URL
+  /models [source]    list available models (optionally one source)
+  /model <id>         switch model; use source/id only to disambiguate
   /reasoning <level>  set reasoning effort (low | medium | high | xhigh | max)
   /headed             show the browser window (/headless to hide it again)
   /new                start a fresh session (clear memory + close open tabs)
@@ -420,7 +578,22 @@ const INTERACTIVE_HELP = `Commands:
   /exit               quit (or Ctrl-D)
 
 Anything else is a task: BetterWright drives the browser to complete it,
-streams what it is doing, and asks you a question if it genuinely needs one.`;
+streams what it is doing, and asks you a question if it genuinely needs one.
+
+While a task is running, type a plain-text message and press Enter to steer
+the next model turn. Slash commands wait until the active task finishes.`;
+
+const EXEC_USAGE = `Usage: betterwright exec "<task>" [options]
+       printf '%s\\n' 'find options under $4000' | betterwright exec --stdin [options]
+
+Shell note: double quotes still expand \`$\`. Use single quotes for literal prices:
+  betterwright exec 'find options under $4000'
+
+Options: --stdin --model <id|source/id> --base-url <url> --api-key-env <name>
+         --protocol chat|responses --effort <level> --session <name> --headed
+         --live-view`;
+const MODELS_USAGE =
+  "Usage: betterwright models [openrouter|ollama|vllm] [--base-url <url>] [--api-key-env <name>] [--json]";
 
 // Bare `betterwright` (no subcommand): an interactive agent console. You type
 // natural-language tasks; BetterWright's own agent loop drives the browser,
@@ -428,17 +601,23 @@ streams what it is doing, and asks you a question if it genuinely needs one.`;
 // ask you a question through the `ask` tool when it genuinely needs input. One
 // browser session persists across tasks until you exit.
 async function cmdInteractive(flags) {
-  const { runAgentTask } = await import("../src/agent.mjs");
+  const {
+    listEndpointModels,
+    modelSelectionChoices,
+    nativeModelCatalog,
+    runAgentTask,
+  } = await import("../src/agent.mjs");
   const argv = process.argv;
   const { dim, bold } = styler();
+  const removedFlag = removedModelFlagMessage(argv);
+  if (removedFlag) {
+    console.error(removedFlag);
+    return 1;
+  }
 
-  let model = flagValue(argv, "--model", "claude");
-  const modelOptions = {};
-  const modelId = flagValue(argv, "--model-id");
-  if (modelId) modelOptions.model = modelId;
-  // `--reasoning` is an alias for `--effort` (both set the reasoning effort).
-  const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
-  if (effort) modelOptions.effort = effort;
+  const selection = modelCliSelection(argv);
+  let model = selection.model;
+  const modelOptions = selection.modelOptions;
   const session = flagValue(argv, "--session", "default");
   // Mutable so `/headed` and `/headless` can switch it (each recreates the
   // browser, since headless is fixed at construction).
@@ -450,7 +629,26 @@ async function cmdInteractive(flags) {
       headless,
       ...cloakingFromFlags(flags),
     });
-  let browser = newBrowser();
+  const interactiveLiveView = liveViewCliOptions(argv);
+  const browsers = createInteractiveBrowserLifecycle({
+    createBrowser: newBrowser,
+    startBrowser: async (browser) => {
+      if (!interactiveLiveView) return;
+      try {
+        const view = await browser.startLiveView({
+          session,
+          ...interactiveLiveView,
+        });
+        if (view?.ok && view.url) {
+          console.log(`\n  ${bold("▶ Watch live:")} ${view.url}\n`);
+          return;
+        }
+        console.log(dim(`  ! live view failed to start: ${view?.error || "no URL returned"}`));
+      } catch (error) {
+        console.log(dim(`  ! live view failed to start: ${error?.message || error}`));
+      }
+    },
+  });
   // The running transcript, so a follow-up task remembers earlier ones. `/new`
   // clears it (and the browser) to start a clean session.
   let history = [];
@@ -458,17 +656,60 @@ async function cmdInteractive(flags) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const nextLine = makeLineReader(rl);
   rl.on("SIGINT", () => rl.close());
+  let taskRunning = false;
 
-  const modelLabel = () => `${model}${modelOptions.model ? ` (${modelOptions.model})` : ""}`;
-  const reasoningLabel = () => modelOptions.effort || "low";
+  const clearInputPrompt = () => {
+    if (!process.stdout.isTTY) return;
+    const rows = Math.max(0, Number(rl.getCursorPos?.().rows) || 0);
+    for (let row = 0; row <= rows; row += 1) {
+      readline.clearLine(process.stdout, 0);
+      if (row < rows) readline.moveCursor(process.stdout, 0, -1);
+    }
+    readline.cursorTo(process.stdout, 0);
+  };
+  const showSteeringPrompt = () => {
+    if (!taskRunning || !process.stdout.isTTY) return;
+    rl.setPrompt(dim("steer ▸ "));
+    rl.prompt(true);
+  };
+  const writeInteractive = (
+    prefix,
+    text,
+    style = (value) => value,
+  ) => {
+    if (taskRunning) clearInputPrompt();
+    const wrapped = formatHangingText(prefix, text, {
+      columns: process.stdout.columns || 100,
+    });
+    process.stdout.write(
+      `${wrapped.split("\n").map((line) => style(line)).join("\n")}\n`,
+    );
+    showSteeringPrompt();
+  };
+  const beginTaskInput = () => {
+    taskRunning = true;
+    showSteeringPrompt();
+  };
+  const endTaskInput = () => {
+    clearInputPrompt();
+    taskRunning = false;
+  };
+
+  const modelLabel = () => model || "(choose a model)";
+  const reasoningLabel = () => modelOptions.effort || "model default";
   console.log(`${bold("BetterWright")} — interactive agent console`);
   console.log(
     dim(`model ${modelLabel()} · reasoning ${reasoningLabel()} · session ${session} · ${headless ? "headless" : "headed"}`),
   );
   console.log(dim("Type a task and press Enter. Follow-ups keep the session; /new starts fresh."));
+  console.log(dim("While it works, type a message and press Enter to steer its next turn."));
   console.log(dim("/help for commands, /exit or Ctrl-D to quit.\n"));
 
   try {
+    // The console owns one viewer for the lifetime of this browser session.
+    // Start it before accepting the first task; runAgentTask only attaches to
+    // the already-running view and therefore cannot churn its URL per message.
+    await browsers.start();
     for (;;) {
       const raw = await nextLine(bold("▸ "));
       if (raw === null) break; // Ctrl-D / closed
@@ -485,6 +726,47 @@ async function cmdInteractive(flags) {
         }
         if (cmd === "clear") {
           console.clear();
+          continue;
+        }
+        if (cmd === "endpoint") {
+          if (!arg) {
+            console.log(dim(`endpoint is ${modelOptions.baseURL || "(not set)"}`));
+            continue;
+          }
+          if (["clear", "off", "none"].includes(arg.toLowerCase())) {
+            delete modelOptions.baseURL;
+            console.log(dim("custom endpoint cleared"));
+            continue;
+          }
+          modelOptions.baseURL = arg;
+          console.log(dim(`custom endpoint is ${arg} · model is ${modelLabel()}`));
+          continue;
+        }
+        if (cmd === "models") {
+          try {
+            const catalog = await loadModelCatalog(
+              listEndpointModels,
+              nativeModelCatalog,
+              {
+                source: arg,
+                modelOptions,
+                quick: !arg,
+              },
+            );
+            const choices = modelSelectionChoices(catalog.entries);
+            if (!choices.length) {
+              console.log(dim("no available models found"));
+            } else {
+              console.log(choices.map((choice) => choice.selector).join("\n"));
+            }
+            for (const source of catalog.sources) {
+              if (source.error) {
+                console.log(dim(`${source.source}: unavailable (${source.error})`));
+              }
+            }
+          } catch (error) {
+            console.log(dim(`could not list models: ${error?.message || error}`));
+          }
           continue;
         }
         if (cmd === "model") {
@@ -507,14 +789,12 @@ async function cmdInteractive(flags) {
           // on-disk profile (logins/cookies) and the conversation carry over;
           // open tabs do not.
           headless = wantHeadless;
-          await browser.close();
-          browser = newBrowser();
+          await browsers.replace();
           console.log(dim(`switched to ${headless ? "headless" : "headed"} (fresh browser; you stay signed in)`));
           continue;
         }
         if (cmd === "new" || cmd === "reset") {
-          await browser.close();
-          browser = newBrowser();
+          await browsers.replace();
           history = [];
           console.log(dim("started a fresh session (browser and memory cleared)"));
           continue;
@@ -524,14 +804,35 @@ async function cmdInteractive(flags) {
       }
 
       let result;
+      const steering = [];
+      beginTaskInput();
+      const stopSteeringCapture = nextLine.capture((line) => {
+        const message = String(line || "").trim();
+        if (!message) return;
+        if (message.startsWith("/")) {
+          writeInteractive(
+            "  ↳ ",
+            "command queued until the active task finishes",
+            dim,
+          );
+          return false;
+        }
+        steering.push(message);
+        writeInteractive(
+          "  ↳ ",
+          "steering queued for the next model turn",
+          dim,
+        );
+      });
       try {
         result = await runAgentTask({
           task,
-          browser,
+          browser: browsers.browser,
           model,
           modelOptions,
           session,
           history,
+          drainSteering: () => steering.splice(0, steering.length),
           liveView: liveViewCliOptions(process.argv),
           onStep: ({ step, tool, note, url }) => {
             // `ask` is rendered by the askUser handler below; skip it here.
@@ -539,48 +840,70 @@ async function cmdInteractive(flags) {
             // Live-view / handoff URLs are for the human — print them loud,
             // not as a dim progress line.
             if (url && (tool === "handoff" || tool === "liveView")) {
-              console.log(`\n  ${bold(tool === "handoff" ? "▶ The agent needs your hands:" : "▶ Watch live:")} ${url}`);
-              if (tool === "handoff") console.log(dim(`    ${note}\n`));
+              writeInteractive(
+                tool === "handoff"
+                  ? "  ▶ The agent needs your hands: "
+                  : "  ▶ Watch live: ",
+                url,
+                bold,
+              );
+              if (tool === "handoff" && note)
+                writeInteractive("    ", note, dim);
               return;
             }
             if (tool === "liveView" && note) {
-              console.log(dim(`  ! ${note}`));
+              writeInteractive("  ! ", note, dim);
               return;
             }
-            process.stdout.write(`${dim(`  · [${step}] ${tool}${note ? `: ${note}` : ""}`)}\n`);
+            writeInteractive(
+              `  · [${step}] ${tool}${note ? ": " : ""}`,
+              note || "",
+              dim,
+            );
           },
           askUser: async ({ question, options }) => {
-            const lines = [bold(`  ? ${question}`)];
-            if (options?.length)
-              for (const [i, o] of options.entries()) lines.push(dim(`      ${i + 1}. ${o}`));
-            console.log(lines.join("\n"));
+            writeInteractive("  ? ", question, bold);
+            if (options?.length) {
+              for (const [i, option] of options.entries())
+                writeInteractive(`      ${i + 1}. `, option, dim);
+            }
             const ans = await nextLine("  answer ▸ ");
+            showSteeringPrompt();
             return ans === null ? "" : ans.trim();
           },
         });
       } catch (error) {
         // A failed task must not kill the console — report and keep going. History
         // is left untouched so the next task still has the prior context.
-        console.log(dim(`  ! ${error?.message || error}`));
+        writeInteractive("  ! ", error?.message || error, dim);
         continue;
+      } finally {
+        stopSteeringCapture();
+        endTaskInput();
       }
 
       // Carry the transcript forward so the next task remembers this one.
       history = result.transcript;
 
-      console.log(result.answer ? `\n${bold(result.answer)}` : dim("\n(no answer returned)"));
-      if (result.proof) console.log(dim(`proof: ${result.proof}`));
-      console.log(
-        dim(
-          `${result.ok ? "done" : `unfinished (${result.reason || "unknown"})`} · ${result.steps} step${result.steps === 1 ? "" : "s"} · ` +
-            `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"} · ${formatDuration(result.durationMs)} · ` +
-            `${formatAgentUsage(result.usage)}\n`,
-        ),
+      process.stdout.write("\n");
+      writeInteractive(
+        "",
+        result.answer || "(no answer returned)",
+        result.answer ? bold : dim,
       );
+      if (result.proof) writeInteractive("proof: ", result.proof, dim);
+      writeInteractive(
+        "",
+        `${result.ok ? "done" : `unfinished (${result.reason || "unknown"})`} · ${result.steps} step${result.steps === 1 ? "" : "s"} · ` +
+          `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"} · ${formatDuration(result.durationMs)} · ` +
+          formatAgentUsage(result.usage),
+        dim,
+      );
+      process.stdout.write("\n");
     }
   } finally {
     rl.close();
-    await browser.close();
+    await browsers.close();
   }
   console.log(dim("bye"));
   return 0;
@@ -594,25 +917,34 @@ async function cmdInteractive(flags) {
 async function cmdExec(flags) {
   const { runAgentTask } = await import("../src/agent.mjs");
   const argv = process.argv;
-  const task = argv.slice(3).find((token) => !token.startsWith("-"));
-  if (!task) {
-    console.error(
-      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort|--reasoning <level>] [--session <name>] [--headed] [--live-view] [--expose lan|local|tailscale] [--host <ip>] [--port <n>] [--public-host <ip>]',
-    );
+  if (flags.has("--help")) {
+    console.log(EXEC_USAGE);
+    return 0;
+  }
+  const removedFlag = removedModelFlagMessage(argv);
+  if (removedFlag) {
+    console.error(removedFlag);
     return 1;
   }
-  const modelOptions = {};
-  const modelId = flagValue(argv, "--model-id");
-  if (modelId) modelOptions.model = modelId;
-  // `--reasoning` is an alias for `--effort` (both set the reasoning effort).
-  const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
-  if (effort) modelOptions.effort = effort;
+  const positionalTask = firstPositional(argv.slice(3));
+  if (flags.has("--stdin") && positionalTask) {
+    console.error("Pass either a task argument or --stdin, not both.");
+    return 1;
+  }
+  const task = flags.has("--stdin")
+    ? readExecTaskFromStdin()
+    : positionalTask;
+  if (!task?.trim()) {
+    console.error(EXEC_USAGE);
+    return 1;
+  }
+  const { model, modelOptions } = modelCliSelection(argv);
 
   let result;
   try {
     result = await runAgentTask({
       task,
-      model: flagValue(argv, "--model", "claude"),
+      model,
       modelOptions,
       session: flagValue(argv, "--session", "default"),
       policy: policyFromFlags(flags),
@@ -662,6 +994,55 @@ async function cmdExec(flags) {
     ),
   );
   return result.ok ? 0 : 1;
+}
+
+async function cmdModels(flags) {
+  const {
+    listEndpointModels,
+    modelSelectionChoices,
+    nativeModelCatalog,
+  } = await import("../src/agent.mjs");
+  if (flags.has("--help")) {
+    console.log(MODELS_USAGE);
+    return 0;
+  }
+  const removedFlag = removedModelFlagMessage(process.argv);
+  if (removedFlag) {
+    console.error(removedFlag);
+    return 1;
+  }
+  try {
+    const source = firstPositional(process.argv.slice(3));
+    const modelOptions = modelEndpointOptions(process.argv);
+    const catalog = await loadModelCatalog(
+      listEndpointModels,
+      nativeModelCatalog,
+      {
+        source,
+        modelOptions,
+        quick: !source && !modelOptions.baseURL,
+      },
+    );
+    const models = modelSelectionChoices(catalog.entries);
+    if (flags.has("--json")) {
+      console.log(JSON.stringify({ models, sources: catalog.sources }, null, 2));
+      return 0;
+    }
+    for (const item of catalog.sources) {
+      if (item.error) {
+        process.stderr.write(`${item.source}: unavailable (${item.error})\n`);
+      }
+    }
+    if (!models.length) {
+      console.error("No available models found.");
+      return 1;
+    }
+    console.log(models.map((model) => model.selector).join("\n"));
+    return 0;
+  } catch (error) {
+    console.error(error?.message || String(error));
+    return 1;
+  }
 }
 
 // `view`: open a live, token-gated web view of this BetterWright browser and
@@ -766,7 +1147,13 @@ async function cmdAuth(rest) {
     console.log(
       `Signed in to ${result.provider}${result.email ? ` as ${result.email}` : ""}. Tokens stored at ${result.file}.`,
     );
-    console.log(`Run a task with: betterwright exec "<task>" --model ${result.provider}`);
+    const model =
+      result.provider === "codex"
+        ? process.env.BETTERWRIGHT_CODEX_MODEL || "gpt-5.6-sol"
+        : process.env.BETTERWRIGHT_GROK_MODEL ||
+          process.env.XAI_MODEL ||
+          "grok-4.3";
+    console.log(`Run a task with: betterwright exec "<task>" --model ${model}`);
     return 0;
   } catch (error) {
     console.error(error?.message || String(error));
@@ -808,7 +1195,7 @@ async function main() {
     }
     if (flags.has("--help") || tokens.includes("-h")) {
       console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|view|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|models|view|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 0;
@@ -831,6 +1218,8 @@ async function main() {
       return cmdRepl(flags);
     case "exec":
       return cmdExec(flags);
+    case "models":
+      return cmdModels(flags);
     case "view":
       return cmdView(flags);
     case "auth":
@@ -846,7 +1235,7 @@ async function main() {
     }
     default:
       console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|view|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|models|view|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 1;

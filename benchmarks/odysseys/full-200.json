@@ -1,0 +1,1013 @@
+{
+  "schema_version": "betterwright-odysseys-sample-v1",
+  "benchmark": "Odysseys",
+  "count": 200,
+  "seed": null,
+  "selection": "All 200 Odysseys tasks from official odysseys.json (arXiv:2604.24964).",
+  "source": "https://github.com/ljang0/Odysseys/blob/main/data/odysseys.json",
+  "partitions": {
+    "benchmark": 200
+  },
+  "tasks": [
+    {
+      "task_id": "0106b570440ffe4427d5e916f39ec986ab3de917",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "03328a94fec2dce938ded3959bdb6ea292c22186",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "041a4bee5d80a28567dc65bc2e41dd198672bfe2",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "082aa17f3e88c3ce10796244e3677c5643dd19c9",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "08b3ee12dd124bd3f046bd568260110899dc8695",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "08e2ad6afc624b6f759afa9950907f470b92f11b",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "09fe03cd3da0fac15bb28f24a627c4bbdea0e611",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "0ab48db6076089bbcf42047d162009a50eb9ca50",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "0ce94d4e773eff1042a6920232f929a1da98c44d",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "0dc4be74eb82df8d0ce1b556260bd615acffedd6",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "0eecee553a8cdda936c2cdd2a9189354a92e00b8",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "10548585c3214aa1a15f7ceef8aa4fde0c2fcdf7",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "1211fbaa646424ab75869c0379431d5d049d2c9b",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "139b0e467c6e335945c64249c22929516253c1bb",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "140960bb7293bdeeb6bcc60931681cb9b815351b",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "148dc4d3bebc57698033c4189935c3e5be4f38c1",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "156e2acc95361db4145f5bc313abb63807750089",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "170314aa3a93c7ca6e959be7757cad178efc06dc",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "17f506970491ac59150ad919a8cc9fbefce52ff4",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "18ddad3e0781d4b8fb2e1998ff836a0b07d0cdce",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "1d20e51c4aa23eb68d37f1eaea56431140ae53c9",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "1d3952479bc687cb5b04e14930533493f959dbe5",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "1f90184fb61690b3d2f0350196418d726a850a7d",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "1fd26abb3743ca1dfdc648af0fcab2c3a2def6e9",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "2075861f234062f252a54c70824524b134a15860",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "20cea7be868a6dbaca0c1ff8a04562101f3fbd91",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "228dda0bbfce65f778b3f421cb1f575c8c8977f1",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "23081b41564a070a7e5a286b20be23d78e3e561c",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "24705fdf2d165f4f844984e62b4511396a88206d",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "24c664186e6839e1a0a117041480ff143bf8c91a",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "2504a7886c3dcb33f1aac7c5d2831985887e789e",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "256342f13c0a03e080f92ee073153fe33a6881c0",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "265abf0668773a8295847d5f5abf3bd003cbe3a3",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "295f11f4eebda80a7551944fd9b6f4e01db92666",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "29e019b665e4eba930fcb1fc28a149eb6522ed29",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "2a8418c2dccdaf5fe23ff143745cc5659d35fc69",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "2ab5a542b36b238ca0b84b812d7846e38e99aa13",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "2cb0ed2a5df6053c6c982a5c5d436d25e006370f",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "2dab64ba576aeaa10453c0c642792f5ac71fb646",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "304ff89d7a6a6df597aafaf720ba11f6c49214c3",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "328ce861b58b2cf2e6da520040193710f95cfe56",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "341d7a70562b121c9702aa8845d51e0843575170",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "365c0ba179de85bd5821988800b5706137576c2a",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "38039bd8d8469c245faab531cb508c3c975c4869",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "3868f9b52e96067b4f55834a3b110e1228b48e65",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "39255449e341c41a589b8a4e17f073be3a4809c9",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "3add0c2ffff8e0b3cacedf2e895d213735702f62",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "3bdaf7a3557ebeb664c36ae28326cc90984c4768",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "3bfacd06345631511177bf106f9040300e5875da",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "3d5fe15ca128986861d570a1e43ee687f2264b57",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "3e106825aab3db868d3b94eb1bd594f9fd4a89be",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "3fd9dfbf35247a1d4db1f88025028e95fb5aef88",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "40735c71648c0ca0e6291d534685853acf1122c1",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "407381583456934981fbca0f1b91e4fa8a0883b2",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "41a741b7b748dece0a069a7f1b1f9279902c4000",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4246dec196c9a3382b4224c7ec3a34a20be9f43f",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "42e2344431639ea57815c2c6b42b047cc7814176",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "437482860f2bd9d99a668952d4516a9d2c2c5878",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "440ed7f388a2a4528a8d9fb75f83e11f934b5b5d",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "44f1e02116715d5fe313996811b358fe25bc3ee4",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4523f5c4b7d3a82e73209a447340dd7d46c53907",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "45408d6942b6c26bd37b4675e183993602b940bb",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4614aa083147e45cbc2977cc8634b9d9db25edfe",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "46ecc9a5dce920d6c72198b4efb1a46855bac7d0",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "47b251d71185920165b7645139ead965cd47441a",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "48a6cb73b8d54934ae1ad3d50abdf17a4dcd6b42",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4b9850333bdd7298442df495aff3832c13b119da",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4b9eb54dde6c129b27ccb642ef24fb060e736913",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4d033a71318c5a2869b0f7132b0bae578bb75876",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4d13c31d463a1277ca8b7ef95947ee4117b0f922",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4d6c838dec27532db3f999755cebc1732f4cbe8b",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4f1f73202b21d2f30cec9737538f1184f119d5ec",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "4fe5b02a8d0d55d5ad7111173e184d4b1c5d3697",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "53419597c0c8897d49f1af65f5255bf265edcfbf",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "543918a53f9196e0f77783e1dc4a9db90ebc6eb9",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "545a1b36d5ada637dea9e0213f0a8c54c31c29dd",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "54c07bd8afe7d70cd55b716977d2c29f1b2a91e9",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "54fdb6126b926e2a48b4e45ffc1fe303e873eb7f",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "55bd922b66b05bcf4cbf5383333df59acce2ab32",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "5632294e494e6e86eb94739235bfa2373b868868",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "56f6e52a7d77ae7831e527f64e6544b1f929904b",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "58c130841b267ab28c26fc1df1a2bdfa00b3b5ba",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "591e86ed962faf5eddbee560c99b020b1c835aaf",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "5944875c7f32a98df978040e4447534f7ba0aadb",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "59c9d2da1b99ec2e643aadf7a74d31998cda2376",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "5aaab80dfeee2bad47c26c6a9b706f3dbaf76ab2",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "5bca23145f1a3e0eaf5d207c4fe3eb4275707ecc",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "5d157ce3b5a1d2ecbd01bc29e8b2c0a309971c33",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "5d3f0704adb650f6dfdea9e8bf1c070e3f4d02c7",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "5e09c06aa92c1e252db5106a72e8d61e59356c7e",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "62689a0f29cfc6bd0b4510c240dec4de17a361e5",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "63658b88215cc7b85e97e36d5b8b39b47904c6b6",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "6365c47591545e1a214a0eae70d5bb7421b21ed8",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "63d68bb25e279fc22e6e3592d8ca59add33b6eb1",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "6421b906fe97b3799960af31c77f20ff25f756b1",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "65c9e7d383e015d946572f04512d5aa166a8f015",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "67ad95421a303ad78cfcd8c3f5a7f6668d2c6a75",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "69782bfcfdb3311496bc9048bf66915b33e692cd",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "6984e84f7f80fd923126e82006bbfaeeeec5b5d2",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "69f48a0950d532a2f04ff51abe4bf0e05ec5649e",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "6e19b9c15e44d2971216e6cd3eee212e33df6586",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "71f8e3e9b5a24f37f492fbf97b7d31e08e9a8d61",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "72875601345415ba90a3c31bd93c25bb5ea54bb2",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "73c63095aeed43efb10a74eee7db7459c5ea9f84",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "73f7a6bce89de66f106a669c85c7908331d3d1b7",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "74da207c4a2c3ee82f3452d0d3c587af3f1a20ff",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "753ce2163f6e018ea33423ad4400ba3f759e9df8",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "78ddd1aab59eebace5f6f523d90012aa6c871c54",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "795687ed918e45a6ad255215aa2a517b3e014aa5",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "7959caf1580d130cedcba72e8f21ab0e9408ba91",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "795bfe117e0f58e49ca37ae8e453a507859a2a2b",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "7aab821efa9c268801d21ad8cf2ca60a82c699b3",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "7bfd58a150de3345ae03d53d828424d95a91d301",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "7c0efe6388e3b7745a4db7e755b4e9b0a7b23508",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "7cc602f239775882273921d82e181020f1769b53",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "7e31dc76193fea7e052767ce6ccd65ecb9f2628d",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "7f9a7d1771191e31cdb77715a4207fcd469346ca",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "80257c727b8e8c5426c1b03a2a4493231747e5d7",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "82af9358ab6a0421057340a0c038498348f2b3ec",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "8464610469e9466cd87449671df0c4e761fa7434",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "86cc69e23296a471c4e9e3da30d63ff54f31665f",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "890a6880049a42684ac91a2e1809442846f9394c",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "8956c9188720c23c45bbb0a5028ce5d61ddb6648",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "8ac68fada21a861a0cf341b10bdef88a7ecd89de",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "8c30f2f9ceeac75b05c725c5397022bb4f9d32a0",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "8e358ff165d3ade4cabe8a64cc95b6058a9aa107",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "8e639395e157ea4df2747a4a873b5f610d70d180",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "8f005e9f09101dd540f1f666063483931e8faa59",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "8fcdeed84a0deb05342b07c26116792a5b6a6a3f",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "908c9a864e81539503be6ca074788c462b2e1319",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "9220309abe6e209dfedc978078c93f79fbd45ef1",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "92cf5ed054aa12e3e99a63bf7ce0e203ea85cee7",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "940d8aaa7700347c9fd9a0508e5de2e07c23cdb5",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "946321e8a9788f485d360f619127a2e7b7e1693a",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "976970ff5d37116847b8a9351a0922196bee88a2",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "9825e1505ad6eacf0ae2af5709a74d9eb0280029",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "985d8f98bc40053112f164b8d6dd010db1dcfd10",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "9acfcc050ae8de65ba5f5de787a47cef0589dd90",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "9ad01a4a4bda2e8df7489c9831931b044c646a20",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "9cf9ea2af003a1efe18b079f18f4824cc581ccb0",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "9dd06f1da59b2d84a9852960561309e02b343476",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "a24232e8f6e7e654f09be4e219e692af4fec62a5",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "a5724e1c94ac221f0a53765c51f625b7bc3cc58e",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "a5a6aae50363919e5500634aa0f97211c3d06feb",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "a5d88b699a2524de24e157d9269d0c42a070edab",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "a89f1d8d1b3d2b74d784c82e09c2511e7e1587fd",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "a8a95699fe40ca1439fb714dcba8e01b022b3e6a",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "a930fe364d5950d8cdcb74fe1316ecebb7d63009",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "a931f7baacfd7f1bcea8409bb8b3d84383734680",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "ad918b380d5fb668438fada2d0ca9cad172f759c",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "ada70bfe81da1cd33bec47d79a9d279d7734a686",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "adc644f33f82d4454d84a983211494eb887074cb",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "b183c34b5697881596a40d77bff64a5e013dc725",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "b1bd700090c23df9e9f6b7b9557ac418df602b8d",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "b21a86441ddca8186175bfffcaae0358ed66eec4",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "b24db77407cc1befa527256883da54fd4f37c256",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "b421f308e18fc92b84ed676609e62a2b536b28b7",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "b4d11b2d7069bf45410b6784544504b23360b34a",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "b6b8ad71aa3112840790066d7d62b498babdfa5c",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "b6bbdc8e0388a5a1e256f561a8f0b7d92c6e772c",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "bacbe73cdb06541360047d8c90677f7d569172bd",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "c4b9782b4f76679169f1438e1e70addd96d7b518",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "c6b29e8564a7ae86dc50a1f074bdc2b5abb3754a",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "c8d7c6136ca692eac6d7532e275d5f8d11ec971b",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "ca5c6ddf8b347ee0935c6044fe65cd182e4fb26c",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "cbe12703e129832feb5e7b56c4141476fb423338",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "cc7eea277860163ddebeea9449a50b65d1890a29",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "d03a08650b62f90b2de5e4bcbb98a50653100e1e",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "d17c0e2905a166df99fa492edc8f7cc5a641de4e",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "d3250da48cc778a40d11683a56fdfca962d6fe19",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "d6007c19e6419c9eefdd57996fc151a2263b22fa",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "d7696e89cb472203c4fe131625ff8a025b86e6e7",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "d8061d694d7a4276f12e8f15c5d3029ab084e7d1",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "d8fe04d1cf29251d68382cde58f4424e80bad07c",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "dd2eedbc88cb41cc69e43dd1da9de7255a81a966",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "ddfec1f140fd9fb3611e241c87c220ab77985b01",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e1184e98c9a0c78c6170d6c740bdf30b8dd11442",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e15345ed27f1933065af403601876e5f6597a943",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e1aca0ae8174c6f1847be80c82d8adc63d031b23",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e1b99d1777a0aa911745b7ca02ba94ef10d7d45b",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e20742e26a4d6f9c3d62a9d1cef634297bd4204f",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e4be2c73dc00107611cd648772a11fb15c18289b",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e53065fe786881377e88667a80ccc2edcb321320",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e7596a6d6079be82e5219c1ac1c5f40f33d2bce8",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e7ae8abcf742d5ba2ef4eef88d16bbe26df978e2",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e8748499c5ee313e307ba6819d4978cd061d8445",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e8b73f739732f8aeb3c473d00f6219af5b8dcdb7",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "e96aa77ab19737990cfa7a4da23533f2b0a0de92",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "ea8661bcf1150ea65b11aa0f2041cd4b1047d90f",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "eb8a01554a84cf5d16a84a766d0f6cfb55d33c81",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "ec290c1a334e976ffa3ba68b71ac6c09c2eb82ba",
+      "level": "medium",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "ef766b69020befdc8e208f47401cb6bce5e9b931",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "f23a062af7be0d5a28f1dcb1f06cc79a89dd04d6",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "f979f723a3f6f65ea8d75903425f22c67505daf1",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "fb2f8bea3fa9528a581ce9e46bcc552c93e186a6",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "fb3f6eb23fad9b18c6c612d213d32ea40d891092",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "fbcfa176b2e1aa42200d4f3adb66dcf0a6ca62ee",
+      "level": "easy",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "fc98d55986ef93480fb659db44e070c04f93301a",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "fe1a5127a1329930e356744b7fd66a214592c630",
+      "level": "hard",
+      "partition": "benchmark"
+    },
+    {
+      "task_id": "feba3355ecae6838d521294bbca8e50cf99f0a53",
+      "level": "hard",
+      "partition": "benchmark"
+    }
+  ]
+}

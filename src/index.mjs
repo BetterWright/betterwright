@@ -1,9 +1,15 @@
 export {
   claudeModel,
   codexModel,
+  endpointModel,
   grokModel,
+  listEndpointModels,
+  MODEL_ENDPOINT_PRESETS,
+  modelSelectionChoices,
+  nativeModelCatalog,
   openaiModel,
   resolveModel,
+  resolveModelSelection,
   runAgentTask,
 } from "./agent.mjs";
 export {

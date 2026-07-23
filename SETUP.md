@@ -15,11 +15,12 @@ to its instructions — `betterwright skill` prints both halves ready to paste.
 There is also a lighter integration that needs no section of this guide at
 all: **delegate whole browser tasks** instead of driving step by step. If the
 host already has a shell tool, it can run
-`betterwright exec "<task in plain language>" --model codex` and read back a
-single JSON answer — BetterWright's own agent loop does the browsing, and the
-transcript stays out of the host's context (see
-[docs/agent.md](docs/agent.md)). The sections below are for the fuller,
-step-by-step integration; the two compose fine.
+`betterwright exec "<task in plain language>" --model gpt-5.6-sol` (or any
+other real model id — Ollama, OpenRouter, Claude, …; see
+[docs/agent.md](docs/agent.md)) and read back a single JSON answer —
+BetterWright's own agent loop does the browsing, and the transcript stays out
+of the host's context. The sections below are for the fuller, step-by-step
+integration; the two compose fine.
 
 ---
 

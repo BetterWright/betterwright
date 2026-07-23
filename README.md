@@ -24,11 +24,9 @@ betterwright run -c "await page.goto('https://example.com'); return page.title()
 # {"ok": true, "result": "Example Domain", ...}
 ```
 
-**92.7% on Online-Mind2Web** — 300 tasks, **98.8% on easy**, 84.2% on hard
-(scored by our own strict multimodal judge,
-[full report](benchmarks/online-mind2web/REPORT.md)) ·
 **30–75% fewer observation tokens** than a standard accessibility dump ·
-read-only tasks finish in **one model turn**.
+read-only tasks finish in **one model turn** · persistent sessions so you
+don't re-pay login and navigation cost every step.
 
 ---
 
@@ -94,22 +92,61 @@ a task in plain language:
 
 ```bash
 betterwright auth --login codex     # OAuth sign-in, no API key to paste
-betterwright exec "find the top Hacker News story and give me its title and points" --model codex
+betterwright exec "find the top Hacker News story and give me its title and points" --model gpt-5.6-sol
 ```
 
 The loop observes with compressed snapshots, acts, verifies, captures a proof
 screenshot, and prints **one JSON object** — answer, steps, token usage,
-proof path. `--model claude|codex|grok`, or any bare model id / OpenAI-compatible
-endpoint. Run bare **`betterwright`** for the interactive console: one browser
-session across tasks, steps streaming as they happen, and an `ask` tool so the
-agent can check with you before consequential choices.
-Details: [docs/agent.md](docs/agent.md).
+proof path.
+
+**Models are selected by real id**, not by adapter nickname. Pass the model
+id you want (`gpt-5.6-sol`, `claude-opus-4-8`, `qwen3:8b`, …). BetterWright
+probes running local servers (Ollama, vLLM), OpenRouter when keyed, and native
+Claude / Codex / Grok routes; if exactly one source exposes that id, it uses
+it. Prefix the source only to pin a collision (`ollama/qwen3:8b`). The words
+`claude`, `codex`, and `grok` alone are **not** model shortcuts.
+
+| You have… | Typical start |
+| --- | --- |
+| ChatGPT / Codex subscription | `betterwright auth --login codex` → `--model gpt-5.6-sol` |
+| Anthropic API key | `ANTHROPIC_API_KEY=…` → `--model claude-opus-4-8` |
+| xAI (OAuth or API key) | `betterwright auth --login grok` or `XAI_API_KEY` → `--model grok-4.3` |
+| Local [Ollama](https://ollama.com) | pull a tool-calling model → `--model qwen3:8b` or `ollama/…` |
+| Local vLLM | serve with tool-calling enabled → `--model <id>` or `vllm/<id>` |
+| [OpenRouter](https://openrouter.ai) | `OPENROUTER_API_KEY=…` → `--model <author/model>` |
+| Any OpenAI-compatible `/v1` | `--base-url https://host/v1 --model <id>` |
+
+```bash
+# Discover what is available (native defaults + reachable endpoints)
+betterwright models
+betterwright models ollama
+
+# Local Ollama — no API key; default base http://127.0.0.1:11434/v1
+betterwright exec "check example.com" --model ollama/qwen3:8b
+
+# OpenRouter — bare author/model id when unambiguous
+OPENROUTER_API_KEY=… betterwright exec "check example.com" \
+  --model anthropic/claude-sonnet-4
+
+# Custom OpenAI-compatible endpoint
+BETTERWRIGHT_MODEL_API_KEY=… betterwright exec "check example.com" \
+  --base-url https://models.example/v1 --model <model-id>
+```
+
+The model must support **function / tool calling** well enough to drive the
+browser tools — text-only chat models are not enough. Full flags, env vars,
+and troubleshooting: [docs/agent.md](docs/agent.md).
+
+Run bare **`betterwright`** for the interactive console: one browser session
+across tasks, steps streaming as they happen, `/model`, `/endpoint`, and
+`/models`, plus an `ask` tool so the agent can check with you before
+consequential choices.
 
 **Use it as a sub-agent.** Because `exec` is one shell command in and one JSON
 object out, a *coding* agent can delegate entire browser tasks to it:
 
 ```bash
-betterwright exec "log in to staging and download this month's invoice" --model codex
+betterwright exec "log in to staging and download this month's invoice" --model gpt-5.6-sol
 ```
 
 The whole browsing transcript — every snapshot, every retry — stays inside the
@@ -135,23 +172,6 @@ BetterWright's whole observation stack is built around that problem:
 | **Single-call finish** | Read-only tasks complete in **one model turn** — the code returns `{finalAnswer}` and the loop ends, no confirmation round-trip |
 | **Persistent session** | One long-lived browser: no re-login, no re-navigation, no re-paying the token cost of getting back to where you were |
 | **Sub-agent delegation** | `betterwright exec` keeps the entire browsing transcript out of your main agent's context — a whole task costs it one tool call |
-
-## Benchmarks
-
-- **[Online-Mind2Web](benchmarks/online-mind2web/REPORT.md)** — **278/300
-  (92.7%)** on the pinned 300-task snapshot: **98.8% easy**, 93.7% medium,
-  84.2% hard. Scored by BetterWright's local strict multimodal judge (not an
-  official leaderboard entry); config, dataset hashes, and per-task results in
-  the report.
-- **[Agent-scaffold head-to-head](benchmarks/exec-headtohead/REPORT.md)** —
-  same model, same effort, 15 tasks × 3 rounds vs another agent scaffold:
-  **14/15 correct vs 12/15**, faster median (10.2s vs 14.7s), and a login →
-  cart → checkout flow in **5 model turns vs 13** — cheap observations mean
-  fewer turns to the same answer.
-- **[Browser-runtime head-to-head](benchmarks/browser-agent-headtohead/REPORT.md)**
-  — per-operation latency at parity with the fastest available browser agent;
-  the wins above come from the scaffold and the token diet, not from cutting
-  corners in the runtime.
 
 ## Watch it, coach it, take the wheel
 
@@ -193,7 +213,7 @@ step from what it sees, in a browser that must still be there next turn:
 | Piece | What it gives you |
 | --- | --- |
 | [**Agent snapshots**](docs/browser-api.md#reading-the-page) | The token-efficiency core: compressed tree, `[ref=eN]` actions, diff and interactive-only modes, password redaction |
-| [**Built-in agent loop**](docs/agent.md) | `betterwright exec` / the interactive console / `runAgentTask()` — a browser-specialized scaffold with claude/codex/grok adapters and a pluggable model interface |
+| [**Built-in agent loop**](docs/agent.md) | `betterwright exec` / the interactive console / `runAgentTask()` — model-first selection across Claude, Codex, Grok, OpenRouter, Ollama, vLLM, and any OpenAI-compatible endpoint |
 | [**Credential vault**](docs/credentials.md) | AES-256-GCM outside the profile; PSL site matching, selector-free login detection, metadata-only account choice |
 | [**Live view & handoff**](docs/live-view.md) | Watch and coach the agent live; token + optional password gated; `handoff` pauses for human hands and resumes on Done |
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
