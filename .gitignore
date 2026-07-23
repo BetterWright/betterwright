@@ -23,4 +23,9 @@ benchmarks/online-mind2web/tasks.local.json
 *.swp
 .idea/
 .vscode/
-CHANGELOG.md
+
+# Local dev scratch (probes, font artifacts, handoff notes)
+.tmp/
+tmp/
+artifacts/
+*.tmp.mjs

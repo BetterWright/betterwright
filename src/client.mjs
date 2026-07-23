@@ -14,18 +14,22 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import {
+  MAX_PENDING_CREDENTIAL_ORIGINS,
+  VAULT_MATCH_MODES,
+  validateCredentialMatchMode,
+} from "./credential-constants.mjs";
 import { normalizeDownloadPolicy } from "./downloads.mjs";
 import { defaultLiveViewListen } from "./live-view.mjs";
 import { loadLiveViewConfig } from "./live-view-config.mjs";
 import { NetworkPolicy } from "./policy.mjs";
 import { listSkills, skillHintsForPages } from "./skills.mjs";
-import { createLocalCredentialVault, VAULT_MATCH_MODES } from "./vault.mjs";
+import { createLocalCredentialVault } from "./vault.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./worker.mjs", import.meta.url));
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const WORKER_START_TIMEOUT_MS = 15_000;
 const WORKER_RPC_DRAIN_TIMEOUT_MS = 250;
-const MAX_PENDING_CREDENTIAL_ORIGINS = 100;
 const VAULT_MATCH_MODE_SET = new Set(VAULT_MATCH_MODES);
 const PENDING_CREDENTIAL_FINALIZE_ACTIONS = new Set(["commit", "discard"]);
 const DEFINITIVE_GENERATE_FAILURE_CODES = new Set([
@@ -44,14 +48,7 @@ const DEFINITIVE_GENERATE_FAILURE_CODES = new Set([
   "VAULT_TOO_LARGE",
 ]);
 
-export function validateCredentialMatchMode(value) {
-  if (typeof value !== "string" || !VAULT_MATCH_MODE_SET.has(value)) {
-    throw new TypeError(
-      'matchMode must be "base-domain", "host", "exact-origin", or "never".',
-    );
-  }
-  return value;
-}
+export { validateCredentialMatchMode };
 
 export class BrowserError extends Error {}
 

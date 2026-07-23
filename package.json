@@ -63,6 +63,7 @@
   },
   "files": [
     "src",
+    "!src/cdpfree",
     "bin",
     "types",
     "skills",
