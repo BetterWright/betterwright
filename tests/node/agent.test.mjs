@@ -648,7 +648,17 @@ test("claudeModel maps to the Anthropic shape and parses content", async () => {
   });
 
   assert.equal(captured.model, "claude-test");
-  assert.equal(captured.system, "SYS");
+  // System goes as a block array with a cache breakpoint after the static
+  // prefix; a second breakpoint sits on the final message's last block so each
+  // turn re-reads the prior conversation from cache and writes only the tail.
+  assert.deepEqual(captured.system, [
+    { type: "text", text: "SYS", cache_control: { type: "ephemeral" } },
+  ]);
+  assert.deepEqual(captured.messages.at(-1).content.at(-1).cache_control, { type: "ephemeral" });
+  const marked = captured.messages
+    .flatMap((m) => m.content)
+    .filter((c) => c.cache_control).length;
+  assert.equal(marked, 1, "exactly one message block carries the moving breakpoint");
   assert.equal(captured.tools[0].input_schema.type, "object");
   assert.equal(requestOptions.signal, controller.signal);
   // A `tool` message maps to a tool_result block (position may shift when adjacent
@@ -905,4 +915,193 @@ test("grok OAuth session calls xAI chat/completions with a bearer token", async 
     process.env = env;
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Live view + handoff
+
+// Extend the fake browser with the live-view surface the handoff tool uses.
+function liveViewBrowser(overrides = {}) {
+  const browser = fakeBrowser(overrides);
+  browser.calls.liveView = [];
+  browser.calls.handoffs = [];
+  browser.calls.asks = [];
+  browser.calls.chatPosts = [];
+  browser.calls.chatDrains = 0;
+  browser.calls.stops = 0;
+  browser._inbox = Array.isArray(overrides.inbox) ? [...overrides.inbox] : [];
+  browser.startLiveView = async (options) => {
+    browser.calls.liveView.push(options);
+    return {
+      ok: true,
+      url: "http://127.0.0.1:4242/?t=secret",
+      alreadyRunning: browser.calls.liveView.length > 1,
+      ...(overrides.startLiveViewResult || {}),
+    };
+  };
+  browser.waitForHandoff = async (options) => {
+    browser.calls.handoffs.push(options);
+    return overrides.handoffResult || { ok: true, action: "done", note: "approved" };
+  };
+  browser.waitForAsk = async (options) => {
+    browser.calls.asks.push(options);
+    return overrides.askResult || { ok: true, action: "answer", answer: "42" };
+  };
+  browser.liveViewPostChat = async (options) => {
+    browser.calls.chatPosts.push(options);
+    return { ok: true };
+  };
+  browser.liveViewDrainChat = async () => {
+    browser.calls.chatDrains += 1;
+    const messages = browser._inbox.splice(0, browser._inbox.length);
+    return { ok: true, messages };
+  };
+  browser.stopLiveView = async () => {
+    browser.calls.stops += 1;
+    return { ok: true, running: false };
+  };
+  return browser;
+}
+
+test("the handoff tool pauses on waitForHandoff and resumes with the human note", async () => {
+  const browser = liveViewBrowser();
+  const steps = [];
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "h1", name: "handoff", input: { reason: "Approve the MFA prompt", expectation: "the dashboard loads" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "signed in" } }] },
+  ]);
+  const result = await runAgentTask({
+    task: "log in",
+    model,
+    browser,
+    onStep: (event) => steps.push(event),
+  });
+
+  assert.equal(result.ok, true);
+  // The handoff tool was offered to the model (onStep is the URL surface).
+  assert.ok(model.seen[0].tools.some((tool) => tool.name === "handoff"));
+  // The viewer started on demand and the loop blocked on waitForHandoff.
+  assert.equal(browser.calls.liveView.length, 1);
+  assert.equal(browser.calls.handoffs.length, 1);
+  assert.match(browser.calls.handoffs[0].prompt, /Approve the MFA prompt/);
+  assert.match(browser.calls.handoffs[0].prompt, /the dashboard loads/);
+  // The URL reached the user through onStep.
+  const handoffStep = steps.find((event) => event.tool === "handoff");
+  assert.equal(handoffStep.url, "http://127.0.0.1:4242/?t=secret");
+  // The human's note reached the model, with a re-observe instruction.
+  const toolTurn = result.transcript.find((m) => m.role === "tool");
+  assert.match(toolTurn.results[0].content, /Human note: approved/);
+  assert.match(toolTurn.results[0].content, /re-observe/);
+  // The agent started the viewer, so it stopped it (external browser).
+  assert.equal(browser.calls.stops, 1);
+});
+
+test("a cancelled handoff tells the model the step is blocked", async () => {
+  const browser = liveViewBrowser({ handoffResult: { ok: true, action: "cancel", note: "wrong account" } });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "h1", name: "handoff", input: { reason: "Approve" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "blocked" } }] },
+  ]);
+  const result = await runAgentTask({ task: "x", model, browser, onStep: () => {} });
+  const toolTurn = result.transcript.find((m) => m.role === "tool");
+  assert.match(toolTurn.results[0].content, /cancelled/);
+  assert.match(toolTurn.results[0].content, /wrong account/);
+  assert.match(toolTurn.results[0].content, /blocked/);
+});
+
+test("handoff is not offered without a URL surface or when liveView is false", async () => {
+  const silent = liveViewBrowser();
+  const model = scriptedModel([{ text: "done", toolCalls: [] }]);
+  await runAgentTask({ task: "x", model, browser: silent });
+  assert.ok(!model.seen[0].tools.some((tool) => tool.name === "handoff"));
+
+  const disabled = liveViewBrowser();
+  const model2 = scriptedModel([{ text: "done", toolCalls: [] }]);
+  await runAgentTask({ task: "x", model: model2, browser: disabled, liveView: false, onStep: () => {} });
+  assert.ok(!model2.seen[0].tools.some((tool) => tool.name === "handoff"));
+  assert.equal(disabled.calls.liveView.length, 0);
+});
+
+test("liveView: true starts the viewer before step 1 and stops it at task end", async () => {
+  const browser = liveViewBrowser();
+  const steps = [];
+  const model = scriptedModel([{ text: "all done", toolCalls: [] }]);
+  const result = await runAgentTask({
+    task: "x",
+    model,
+    browser,
+    liveView: true,
+    onStep: (event) => steps.push(event),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(browser.calls.liveView.length, 1);
+  assert.equal(steps[0].tool, "liveView");
+  assert.equal(steps[0].url, "http://127.0.0.1:4242/?t=secret");
+  assert.equal(browser.calls.stops, 1);
+  // The system prompt tells the model when to reach for handoff vs ask.
+  assert.match(model.seen[0].system, /`handoff` tool/);
+  // Live view also offers ask (chat-backed) and freeform guidance.
+  assert.ok(model.seen[0].tools.some((tool) => tool.name === "ask"));
+  assert.ok(browser.calls.chatPosts.some((line) => /Message the agent/i.test(line.text) || /guidance/i.test(line.text)));
+});
+
+test("live-view chat drains into the transcript between turns", async () => {
+  const browser = liveViewBrowser({
+    inbox: [{ text: "prefer the API docs tab" }],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "b1", name: "browser", input: { code: "return 1", note: "looking" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "found it" } }] },
+  ]);
+  // Seed inbox after live view starts: drain runs at the start of each model turn.
+  // Turn 1 drains empty (inbox set before start is fine — drain on turn 1 picks it up).
+  const result = await runAgentTask({
+    task: "find the version",
+    model,
+    browser,
+    liveView: true,
+    onStep: () => {},
+  });
+  assert.equal(result.ok, true);
+  assert.ok(browser.calls.chatDrains >= 1);
+  // Human guidance appears as a user turn before a later model complete.
+  const guidance = result.transcript.filter(
+    (message) =>
+      message.role === "user" &&
+      /live view/i.test(message.text || "") &&
+      /prefer the API docs tab/i.test(message.text || ""),
+  );
+  assert.ok(guidance.length >= 1);
+  assert.ok(browser.calls.chatPosts.some((line) => line.kind === "browser"));
+});
+
+test("ask tool waits on live-view chat when liveView is available", async () => {
+  const browser = liveViewBrowser({
+    askResult: { ok: true, action: "answer", answer: "account ending 999" },
+  });
+  const model = scriptedModel([
+    {
+      text: "",
+      toolCalls: [
+        {
+          id: "a1",
+          name: "ask",
+          input: { question: "Which account?", options: ["999", "111"] },
+        },
+      ],
+    },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const result = await runAgentTask({
+    task: "sign in",
+    model,
+    browser,
+    liveView: true,
+    onStep: () => {},
+  });
+  assert.equal(result.ok, true);
+  assert.equal(browser.calls.asks.length, 1);
+  assert.equal(browser.calls.asks[0].question, "Which account?");
+  const toolTurn = result.transcript.find((message) => message.role === "tool");
+  assert.match(toolTurn.results[0].content, /account ending 999/);
 });

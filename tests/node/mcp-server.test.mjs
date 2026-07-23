@@ -11,6 +11,7 @@ import {
   downloadPolicyFromEnv,
   headlessFromEnv,
   LOGIN_INPUT_SCHEMA,
+  liveViewFromEnv,
   loginOptionsFromArgs,
   policyFromEnv,
 } from "../../src/mcp-server.mjs";
@@ -31,7 +32,7 @@ test("MCP omits and rejects browser_login when the vault is disabled", async () 
     const listed = await handlers.listTools();
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
-      ["browser", "browser_download", "browser_doctor"],
+      ["browser", "browser_download", "browser_handoff", "browser_doctor"],
     );
 
     const response = await handlers.callTool({
@@ -211,4 +212,244 @@ test("contentForResult separates screenshots from file paths", async () => {
   assert.deepEqual(summary.files, [{ kind: "download", path: "/tmp/report.pdf" }]);
   assert.equal(content[1].type, "image");
   assert.equal(content[1].mimeType, "image/png");
+});
+
+test("liveViewFromEnv defaults to LAN bind and disabled remote exposure", () => {
+  assert.deepEqual(liveViewFromEnv({}, {}), {
+    enabled: false,
+    host: "0.0.0.0",
+    port: 0,
+    publicHost: undefined,
+    expose: undefined,
+    password: undefined,
+    passwordHash: undefined,
+  });
+  assert.deepEqual(
+    liveViewFromEnv(
+      {
+        BETTERWRIGHT_LIVE_VIEW: "1",
+        BETTERWRIGHT_LIVE_VIEW_HOST: "0.0.0.0",
+        BETTERWRIGHT_LIVE_VIEW_PORT: "8484",
+        BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST: "192.168.0.2",
+        BETTERWRIGHT_LIVE_VIEW_EXPOSE: "Tailscale",
+        BETTERWRIGHT_LIVE_VIEW_PASSWORD: "s3cret",
+      },
+      {},
+    ),
+    {
+      enabled: true,
+      host: "0.0.0.0",
+      port: 8484,
+      publicHost: "192.168.0.2",
+      expose: "tailscale",
+      password: "s3cret",
+      passwordHash: undefined,
+    },
+  );
+  // config.json settings apply beneath the env: env wins where both are set.
+  assert.deepEqual(
+    liveViewFromEnv(
+      { BETTERWRIGHT_LIVE_VIEW_EXPOSE: "lan" },
+      { expose: "tailscale", passwordHash: `sha256:${"a".repeat(64)}`, port: 7100 },
+    ),
+    {
+      enabled: false,
+      host: "0.0.0.0",
+      port: 7100,
+      publicHost: undefined,
+      expose: "lan",
+      password: undefined,
+      passwordHash: `sha256:${"a".repeat(64)}`,
+    },
+  );
+});
+
+function handoffBrowser() {
+  const calls = { start: [], stop: 0, status: 0 };
+  return {
+    calls,
+    vault: null,
+    async startLiveView(options) {
+      calls.start.push(options);
+      return {
+        ok: true,
+        url: "http://127.0.0.1:4242/?t=secret",
+        host: "127.0.0.1",
+        port: 4242,
+        token: "secret",
+        interactive: true,
+        running: true,
+      };
+    },
+    async stopLiveView() {
+      calls.stop += 1;
+      return { ok: true, running: false };
+    },
+    async liveViewStatus() {
+      calls.status += 1;
+      return {
+        ok: true,
+        running: true,
+        url: "http://127.0.0.1:4242/?t=secret",
+        token: "secret",
+        viewers: 1,
+        handoff: { active: false },
+      };
+    },
+  };
+}
+
+test("browser_handoff start returns the URL with relay instructions", async () => {
+  const browser = handoffBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "deny",
+    liveView: { enabled: false, host: "127.0.0.1", port: 0 },
+  });
+  const response = await handlers.callTool({
+    params: { name: "browser_handoff", arguments: { reason: "solve the MFA" } },
+  });
+  assert.equal(response.isError, undefined);
+  assert.match(response.content[0].text, /http:\/\/127\.0\.0\.1:4242\/\?t=secret/);
+  assert.match(response.content[0].text, /solve the MFA/);
+  assert.deepEqual(browser.calls.start, [
+    { host: "127.0.0.1", port: 0, interactive: true, session: "default" },
+  ]);
+});
+
+test("browser_handoff refuses a non-loopback host without the env opt-in", async () => {
+  const browser = handoffBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "deny",
+    liveView: { enabled: false, host: "0.0.0.0", port: 0 },
+  });
+  const refused = await handlers.callTool({
+    params: { name: "browser_handoff", arguments: {} },
+  });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /BETTERWRIGHT_LIVE_VIEW=1/);
+  assert.equal(browser.calls.start.length, 0);
+
+  const allowed = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "deny",
+    liveView: { enabled: true, host: "0.0.0.0", port: 0 },
+  });
+  const response = await allowed.callTool({
+    params: { name: "browser_handoff", arguments: {} },
+  });
+  assert.equal(response.isError, undefined);
+  assert.equal(browser.calls.start.length, 1);
+});
+
+test("browser_handoff status never echoes the token or URL back to the model", async () => {
+  const browser = handoffBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "deny",
+    liveView: { enabled: false, host: "127.0.0.1", port: 0 },
+  });
+  const response = await handlers.callTool({
+    params: { name: "browser_handoff", arguments: { action: "status" } },
+  });
+  const status = JSON.parse(response.content[0].text);
+  assert.equal(status.running, true);
+  assert.equal(status.viewers, 1);
+  assert.ok(!("token" in status));
+  assert.ok(!("url" in status));
+
+  const stop = await handlers.callTool({
+    params: { name: "browser_handoff", arguments: { action: "stop" } },
+  });
+  assert.equal(JSON.parse(stop.content[0].text).running, false);
+  assert.equal(browser.calls.stop, 1);
+});
+
+function chatBrowser() {
+  const browser = handoffBrowser();
+  browser.chatQueue = [];
+  browser.posted = [];
+  browser.runs = [];
+  browser.liveViewDrainChat = async () => {
+    const messages = browser.chatQueue.splice(0);
+    return { ok: true, messages };
+  };
+  browser.liveViewPostChat = async (options) => {
+    browser.posted.push(options);
+    return { ok: true };
+  };
+  browser.run = async (code, options) => {
+    browser.runs.push({ code, options });
+    return { ok: true, result: "done" };
+  };
+  return browser;
+}
+
+test("viewer chat rides back on browser results while a live view runs", async () => {
+  const browser = chatBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "deny",
+    liveView: { enabled: false, host: "127.0.0.1", port: 0 },
+  });
+
+  // Before any live view starts, nothing is drained or posted.
+  browser.chatQueue.push({ text: "too early", at: 1 });
+  const quiet = await handlers.callTool({
+    params: { name: "browser", arguments: { code: "1", note: "first step" } },
+  });
+  assert.equal(quiet.isError, undefined);
+  assert.ok(!quiet.content.some((block) => /too early/.test(block.text || "")));
+  assert.equal(browser.posted.length, 0);
+
+  await handlers.callTool({ params: { name: "browser_handoff", arguments: {} } });
+  browser.chatQueue.push({ text: "use the cheaper GPU", at: 2 });
+  const response = await handlers.callTool({
+    params: { name: "browser", arguments: { code: "2", note: "comparing GPUs" } },
+  });
+  assert.equal(response.isError, undefined);
+  const chatBlock = response.content.find((block) =>
+    /live-view chat/.test(block.text || ""),
+  );
+  assert.ok(chatBlock, "drained chat should be appended to the result");
+  assert.match(chatBlock.text, /use the cheaper GPU/);
+  assert.match(chatBlock.text, /fresh user instructions/);
+  // The step note was mirrored into the viewer chat.
+  assert.deepEqual(browser.posted, [
+    { role: "agent", text: "comparing GPUs", kind: "step" },
+  ]);
+});
+
+test("browser_handoff status carries drained viewer chat and stop ends mirroring", async () => {
+  const browser = chatBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "deny",
+    liveView: { enabled: false, host: "127.0.0.1", port: 0 },
+  });
+  await handlers.callTool({ params: { name: "browser_handoff", arguments: {} } });
+  browser.chatQueue.push({ text: "done with MFA", at: 3 });
+  const status = await handlers.callTool({
+    params: { name: "browser_handoff", arguments: { action: "status" } },
+  });
+  const parsed = JSON.parse(status.content[0].text);
+  assert.deepEqual(parsed.userChat, ["done with MFA"]);
+  assert.ok(!("token" in parsed));
+
+  await handlers.callTool({
+    params: { name: "browser_handoff", arguments: { action: "stop" } },
+  });
+  browser.chatQueue.push({ text: "gone", at: 4 });
+  const after = await handlers.callTool({
+    params: { name: "browser", arguments: { code: "3", note: "next" } },
+  });
+  assert.ok(!after.content.some((block) => /gone/.test(block.text || "")));
+  assert.equal(browser.posted.length, 0);
 });

@@ -12,6 +12,15 @@ run a snippet, read back one JSON result. Integrating means giving the agent a
 way to run snippets (the CLI is the simplest) and adding the operator guidance
 to its instructions — `betterwright skill` prints both halves ready to paste.
 
+There is also a lighter integration that needs no section of this guide at
+all: **delegate whole browser tasks** instead of driving step by step. If the
+host already has a shell tool, it can run
+`betterwright exec "<task in plain language>" --model codex` and read back a
+single JSON answer — BetterWright's own agent loop does the browsing, and the
+transcript stays out of the host's context (see
+[docs/agent.md](docs/agent.md)). The sections below are for the fuller,
+step-by-step integration; the two compose fine.
+
 ---
 
 ## Step 0 — Prerequisites (do this for every path)
@@ -67,16 +76,15 @@ tasks, verify with proof screenshots, handle challenges, never touch secrets).
 
 Install the skill where the host reads instructions:
 
-**Claude Code** — write it as a native skill (`--claude` adds the SKILL.md
-frontmatter):
+**Claude Code** — install it as a native skill:
 
 ```bash
-mkdir -p ~/.claude/skills/browser
-betterwright skill --claude > ~/.claude/skills/browser/SKILL.md
+betterwright skill --install    # writes ~/.claude/skills/browser/SKILL.md
 ```
 
-Use `.claude/skills/browser/SKILL.md` inside a repo for a project-scoped skill
-instead.
+Rerun after upgrading betterwright so the skill matches the CLI. For a
+project-scoped skill, redirect the output yourself instead:
+`betterwright skill --claude > .claude/skills/browser/SKILL.md`.
 
 **Codex** — append it to the instructions file Codex reads:
 
@@ -85,10 +93,11 @@ betterwright skill >> ~/.codex/AGENTS.md      # global
 betterwright skill >> AGENTS.md               # or per-repo
 ```
 
-**Hermes or any custom agent** — append the output of `betterwright skill` to
-the agent's system prompt (or drop it in whatever instructions file the
-framework loads), and make sure the agent has a shell/exec tool that can run
-`betterwright`.
+**Hermes or any custom agent** — the same instructions ship as [`SKILL.md`](SKILL.md)
+in the repo and npm package (`node_modules/betterwright/SKILL.md`): copy it into
+whatever instructions file or skills directory your framework loads, or append
+the output of `betterwright skill` to the agent's system prompt. Either way,
+make sure the agent has a shell/exec tool that can run `betterwright`.
 
 That's the whole integration. The agent then works like this:
 

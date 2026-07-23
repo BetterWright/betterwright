@@ -1,14 +1,22 @@
 import type {
+  AskResult,
   BetterWrightOptions,
   CredentialFillResult,
   FillCredentialOptions,
   GenerateAndFillCredentialOptions,
+  HandoffResult,
+  LiveViewChatMessage,
+  LiveViewDrainChatResult,
+  LiveViewOptions,
+  LiveViewStatus,
   PendingCredentialListOptions,
   PendingCredentialListResult,
   PendingCredentialOptions,
   PendingCredentialResult,
   RunOptions,
   RunResult,
+  WaitForAskOptions,
+  WaitForHandoffOptions,
 } from "./public.js";
 import type { CredentialVault } from "./common.js";
 import type { NetworkPolicy } from "./policy.js";
@@ -39,8 +47,30 @@ export class BetterWright {
   headedInvisible: boolean;
   platform: "macos" | "windows" | "linux" | null;
   defaultTimeout: number;
+  liveView: LiveViewOptions;
 
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;
+  /** Start (or return the already-running) token-gated live-view server. */
+  startLiveView(options?: LiveViewOptions): Promise<LiveViewStatus>;
+  /** Stop the live-view server (no-op when not running). */
+  stopLiveView(): Promise<LiveViewStatus>;
+  /** Report live-view server state. */
+  liveViewStatus(): Promise<LiveViewStatus>;
+  /** Block until a human clicks Done/Cancel in the live viewer's handoff banner. */
+  waitForHandoff(options?: WaitForHandoffOptions): Promise<HandoffResult>;
+  /** Post a line into the live-view chat (agent steps / system notices). */
+  liveViewPostChat(options?: {
+    role?: "agent" | "you" | "system";
+    text?: string;
+    kind?: string;
+  }): Promise<{ ok: boolean; message?: LiveViewChatMessage; error?: string }>;
+  /**
+   * Drain freeform human messages typed in the live-view chat since the last
+   * drain (agent harness uses this between turns).
+   */
+  liveViewDrainChat(): Promise<LiveViewDrainChatResult>;
+  /** Block until a human answers a question in the live-view chat. */
+  waitForAsk(options?: WaitForAskOptions): Promise<AskResult>;
   fillCredential(options?: FillCredentialOptions): Promise<CredentialFillResult>;
   generateAndFillCredential(
     options?: GenerateAndFillCredentialOptions,

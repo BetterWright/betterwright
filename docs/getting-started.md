@@ -1,5 +1,26 @@
 # Getting started
 
+## Pick your shape first
+
+BetterWright is used in two ways, and everything else in these docs assumes
+you know which one you're in:
+
+- **Integrated — your agent drives.** You hand your existing agent (Claude
+  Code, Codex, Pi, an MCP client, or your own JS host) the controls: the
+  [skill](../SETUP.md) teaches it the CLI, `betterwright mcp` exposes tools
+  over MCP, and the [JS API](javascript.md) embeds it in code. Your agent
+  decides each browser step itself.
+- **Standalone — BetterWright drives.** You (or your agent) hand over a whole
+  task in plain language — `betterwright exec "<task>"` or the interactive
+  `betterwright` console — and BetterWright's own browser-tuned agent loop
+  does the driving, returning one JSON answer. A coding agent can treat this
+  as a browser *sub-agent*: one shell command in, one answer out, with the
+  entire browsing transcript kept out of its context. See [agent.md](agent.md).
+
+Both shapes share the same persistent sessions, credential vault, network
+policy, and token-efficient snapshots, so nothing below is shape-specific:
+install once and use either — or both.
+
 ## Install and set up
 
 BetterWright drives a managed browser through Playwright, so it needs
@@ -156,6 +177,10 @@ await bw.run("await page.goto('https://example.com')");
 ## Where to go next
 
 - [The browser API](browser-api.md) — every global available inside a snippet.
+- [The built-in agent](agent.md) — `betterwright exec`, the interactive
+  console, and using BetterWright as a browser sub-agent.
+- [Live view & handoff](live-view.md) — watch the agent work, chat guidance,
+  and take the controls for MFA or consequential clicks.
 - [Agent guidance](agent-prompt.md) — make a model drive the browser decisively,
   with configurable guardrails.
 - [Headed and headless browsing](attach-mode.md) — run the same managed Cloak
