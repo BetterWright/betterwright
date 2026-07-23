@@ -50,6 +50,13 @@ export class BetterWright {
   liveView: LiveViewOptions;
 
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;
+  /**
+   * Close one session's pages and forget its state (tabs, `state`, cursor)
+   * without touching the browser, the profile, or other sessions.
+   */
+  closeSession(
+    session?: string,
+  ): Promise<{ ok: boolean; closed: boolean; pagesClosed: number; error?: string }>;
   /** Start (or return the already-running) token-gated live-view server. */
   startLiveView(options?: LiveViewOptions): Promise<LiveViewStatus>;
   /** Stop the live-view server (no-op when not running). */

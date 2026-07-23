@@ -6,9 +6,13 @@
 //   betterwright setup            install Chromium fork (mac/linux) + Cloak fallback
 //   betterwright update           download/refresh the Chromium fork (switches from Cloak)
 //   betterwright doctor           report runtime readiness
-//   betterwright run <file|-|-c>  execute a Playwright snippet
+//   betterwright run <file|-|-c>  execute a Playwright snippet in the
+//                                 persistent session (tabs/state survive calls)
 //   betterwright repl             run blank-line-separated snippets from stdin
 //   betterwright exec <task>      run a task with BetterWright's own agent loop
+//                                 (repeat execs continue the same session)
+//   betterwright sessions         list live sessions in the background daemon
+//   betterwright close [name]     close a session (--all: everything + daemon)
 //   betterwright models           list models from OpenAI-compatible endpoints
 //   betterwright view             live web view of the browser (watch/take over)
 //   betterwright auth --login <p> OAuth sign-in for a model backend (codex|grok)
@@ -22,13 +26,20 @@
 // --block-loopback, --allow-host/--block-host), and --stealth (isolated-world
 // driver that evades main-world automation detection; needs patchright-core).
 // run only: --approve-downloads (one bounded download-enabled run).
+//
+// run/repl/exec share a persistent browser held by a background session
+// daemon (spawned on first use, exits when its last session closes): open
+// tabs, page state, and the repl `state` object survive between invocations,
+// keyed by --session (default "default"). --fresh forgets exec history,
+// --close ends the session after the call, --no-daemon forces the old
+// one-shot behavior.
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { formatAgentUsage } from "../src/agent-usage.mjs";
 import { installChromiumFork } from "../src/chromium-fork-install.mjs";
@@ -38,11 +49,24 @@ import {
   makeLineReader,
   readExecTaskFromStdin,
 } from "../src/cli-io.mjs";
+import { defaultDaemonHome, sessionName } from "../src/daemon.mjs";
+import {
+  connectSessionDaemon,
+  createDaemonBrowser,
+  daemonDisabled,
+  execTask,
+} from "../src/daemon-client.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.mjs";
+import {
+  clearTranscript,
+  loadTranscript,
+  saveTranscript,
+} from "../src/session-store.mjs";
 
 const require = createRequire(import.meta.url);
+const CLI_PATH = fileURLToPath(import.meta.url);
 
 /**
  * Live-view options for CLI `--live-view` / `view`.
@@ -274,20 +298,96 @@ async function readSnippet(arg) {
   return fs.readFileSync(arg, "utf8");
 }
 
+// The browser-shaping options for the session daemon, from the same flags the
+// in-process paths use. The daemon builds its NetworkPolicy/BetterWright from
+// this object AND derives the compatibility signature from it, so flags and
+// signature can never disagree.
+function daemonConfigFromFlags(flags) {
+  return {
+    headless: !flags.has("--headed"),
+    policy: {
+      allowLoopback: !flags.has("--block-loopback"),
+      allowPrivateNetwork: !flags.has("--block-private-network"),
+      allowHosts: collectValues(process.argv, "--allow-host"),
+      blockHosts: collectValues(process.argv, "--block-host"),
+    },
+    cloak: cloakingFromFlags(flags),
+  };
+}
+
+/**
+ * Get a browser for run/repl: the session daemon's persistent session when
+ * possible (spawning the daemon on first use), a private in-process
+ * BetterWright otherwise — with a warning explaining why persistence is off.
+ */
+async function acquireRunBrowser(flags) {
+  const session = sessionName(flagValue(process.argv, "--session", "default"));
+  if (!daemonDisabled(flags)) {
+    const outcome = await connectSessionDaemon({
+      cliPath: CLI_PATH,
+      config: daemonConfigFromFlags(flags),
+    });
+    if (outcome.ok) {
+      const { channel } = outcome;
+      return {
+        session,
+        viaDaemon: true,
+        warning: "",
+        browser: createDaemonBrowser(channel, { session }),
+        cleanup: async ({ closeSession = false } = {}) => {
+          try {
+            if (closeSession)
+              await channel.request({ op: "close_session", session }, 60_000);
+          } finally {
+            channel.end();
+          }
+        },
+      };
+    }
+    const bw = new BetterWright({
+      policy: policyFromFlags(flags),
+      headless: !flags.has("--headed"),
+      ...cloakingFromFlags(flags),
+    });
+    return {
+      session,
+      viaDaemon: false,
+      warning: `session persistence unavailable (${outcome.reason}); this browser closes when the command exits`,
+      browser: bw,
+      cleanup: async () => bw.close(),
+    };
+  }
+  const bw = new BetterWright({
+    policy: policyFromFlags(flags),
+    headless: !flags.has("--headed"),
+    ...cloakingFromFlags(flags),
+  });
+  return {
+    session,
+    viaDaemon: false,
+    warning: "",
+    browser: bw,
+    cleanup: async () => bw.close(),
+  };
+}
+
 async function cmdRun(arg, flags) {
   const code = await readSnippet(arg);
-  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), ...cloakingFromFlags(flags) });
+  const acquired = await acquireRunBrowser(flags);
   try {
     // One bounded download-enabled run; the skill instructs agents to get
     // explicit user approval before passing this (MCP/Pi elicit instead).
-    const result = await bw.run(
-      code,
-      flags.has("--approve-downloads") ? { approvedDownloads: true } : undefined,
-    );
+    const result = await acquired.browser.run(code, {
+      session: acquired.session,
+      ...(flags.has("--approve-downloads") ? { approvedDownloads: true } : {}),
+    });
+    if (acquired.viaDaemon) result.session = acquired.session;
+    if (acquired.warning)
+      result.warnings = [...(result.warnings || []), acquired.warning];
     console.log(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   } finally {
-    await bw.close();
+    await acquired.cleanup({ closeSession: flags.has("--close") });
   }
 }
 
@@ -310,13 +410,17 @@ The command prints one JSON object:
 \`artifacts\` lists files written during the run; screenshots appear there with a
 \`path\` — open that image to actually see the page.
 
-Multi-step task — pipe blank-line-separated snippets into one long-lived session
-so open tabs and in-memory \`state\` persist between steps:
+Invocations share one persistent browser session held by a background daemon:
+open tabs, page state, and the in-memory \`state\` object all survive between
+\`run\` calls, and logins/cookies persist through the on-disk profile. So act in
+small steps — one \`run\` per action-and-observe — and simply call \`run\` again to
+continue where the last call left off. The session auto-closes after ~15 idle
+minutes; run \`betterwright close\` when you finish a task to end it sooner.
+Need isolation for parallel work? Give each worker its own \`--session <name>\`.
 
-    printf '%s\\n\\n%s\\n' "await page.goto('https://site.example')" "return page.title()" | betterwright repl
-
-Logins and cookies persist across every invocation through the on-disk profile;
-open tabs and \`state\` persist only within a single \`repl\` session.
+To batch several steps in one process you can also pipe blank-line-separated
+snippets: \`printf '%s\\n\\n%s\\n' "snippetA" "snippetB" | betterwright repl\`
+(same session, same persistence).
 
 When a result lists \`skills\`, deeper site or provider knowledge matches the
 open pages — read the named pack with \`betterwright skills show <name>\` before
@@ -329,10 +433,12 @@ that — start it first, relay its URL to the user verbatim (it embeds the acces
 token), then keep working. From the plain CLI, snippets cannot start the viewer
 (sealed by design); when the user asks for a live view:
 - delegate the whole task to \`betterwright exec "<task>" --live-view\`, which
-  prints the watch URL as it starts; or
+  prints the watch URL as it starts (repeated execs continue the same session
+  and conversation; \`--fresh\` starts over); or
 - have the user run \`betterwright view\` themselves for a hands-on session with
-  the same logged-in profile — but not while a \`repl\` session is active: the
-  profile has a single holder, and the second process gets a blank ephemeral one.
+  the same logged-in profile — after \`betterwright close\`: the profile has a
+  single holder (the session daemon), and a second holder gets a blank
+  ephemeral profile.
 Never claim a live view is running unless one of these actually produced a URL.
 
 Network access is policy-guarded. Loopback and the private network are reachable
@@ -374,8 +480,15 @@ function cmdSkill(flags) {
 }
 
 async function cmdRepl(flags) {
-  const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), ...cloakingFromFlags(flags) });
-  console.log("BetterWright REPL — blank line runs a snippet, Ctrl-D quits.\n");
+  const acquired = await acquireRunBrowser(flags);
+  const runSnippet = (code) =>
+    acquired.browser.run(code, { session: acquired.session });
+  console.log(
+    acquired.viaDaemon
+      ? `BetterWright REPL — blank line runs a snippet, Ctrl-D quits. Session "${acquired.session}" persists afterwards (betterwright close to end it).\n`
+      : "BetterWright REPL — blank line runs a snippet, Ctrl-D quits.\n",
+  );
+  if (acquired.warning) process.stderr.write(`  ! ${acquired.warning}\n`);
   const rl = readline.createInterface({ input: process.stdin });
   let buffer = [];
   try {
@@ -385,13 +498,13 @@ async function cmdRepl(flags) {
         continue;
       }
       if (!buffer.length) continue;
-      const result = await bw.run(buffer.join("\n"));
+      const result = await runSnippet(buffer.join("\n"));
       buffer = [];
       console.log(JSON.stringify(result, null, 2));
     }
-    if (buffer.length) console.log(JSON.stringify(await bw.run(buffer.join("\n")), null, 2));
+    if (buffer.length) console.log(JSON.stringify(await runSnippet(buffer.join("\n")), null, 2));
   } finally {
-    await bw.close();
+    await acquired.cleanup({ closeSession: flags.has("--close") });
   }
   return 0;
 }
@@ -591,7 +704,11 @@ Shell note: double quotes still expand \`$\`. Use single quotes for literal pric
 
 Options: --stdin --model <id|source/id> --base-url <url> --api-key-env <name>
          --protocol chat|responses --effort <level> --session <name> --headed
-         --live-view`;
+         --live-view --fresh --close --no-daemon
+
+Repeated execs continue the same session: the browser (tabs, logins) stays
+live in a background daemon and the agent remembers the prior conversation.
+--fresh starts the session over; --close ends it after this task.`;
 const MODELS_USAGE =
   "Usage: betterwright models [openrouter|ollama|vllm] [--base-url <url>] [--api-key-env <name>] [--json]";
 
@@ -706,6 +823,18 @@ async function cmdInteractive(flags) {
   console.log(dim("/help for commands, /exit or Ctrl-D to quit.\n"));
 
   try {
+    // The console needs the persistent profile itself: take it back from an
+    // idle session daemon (left by earlier run/exec calls) before launching.
+    const reclaim = await reclaimDaemonProfile();
+    if (reclaim.closedSessions) {
+      console.log(
+        dim(`closed ${reclaim.closedSessions} idle background session(s) to reuse the saved profile`),
+      );
+    } else if (reclaim.busy) {
+      console.log(
+        dim("a background session is mid-task; this console gets a temporary profile (betterwright close --all to reclaim)"),
+      );
+    }
     // The console owns one viewer for the lifetime of this browser session.
     // Start it before accepting the first task; runAgentTask only attaches to
     // the already-running view and therefore cannot churn its URL per message.
@@ -915,7 +1044,6 @@ async function cmdInteractive(flags) {
 // summary) go to stderr; the final {ok, answer, steps, reason, toolCalls,
 // usage, proof} goes to stdout.
 async function cmdExec(flags) {
-  const { runAgentTask } = await import("../src/agent.mjs");
   const argv = process.argv;
   if (flags.has("--help")) {
     console.log(EXEC_USAGE);
@@ -939,43 +1067,101 @@ async function cmdExec(flags) {
     return 1;
   }
   const { model, modelOptions } = modelCliSelection(argv);
+  const session = sessionName(flagValue(argv, "--session", "default"));
+  const fresh = flags.has("--fresh");
+  const home = defaultDaemonHome();
+  const onStep = ({ step, tool, note, url }) => {
+    if (url && (tool === "handoff" || tool === "liveView")) {
+      process.stderr.write(`\n  ▶ ${tool === "handoff" ? "HANDOFF" : "LIVE VIEW"}: ${url}\n`);
+      if (tool === "handoff") process.stderr.write(`    ${note}\n\n`);
+      return;
+    }
+    if (tool === "liveView" && note) {
+      process.stderr.write(`  ! ${note}\n`);
+      return;
+    }
+    process.stderr.write(`  [${step}] ${tool}${note ? `: ${note}` : ""}\n`);
+  };
 
   let result;
-  try {
-    result = await runAgentTask({
-      task,
-      model,
-      modelOptions,
-      session: flagValue(argv, "--session", "default"),
-      policy: policyFromFlags(flags),
-      headless: !flags.has("--headed"),
-      // --live-view starts the viewer at step 0 so the whole run can be
-      // watched; without it the handoff tool still starts one on demand.
-      // Host/port come from --host / env (default 0.0.0.0 + LAN publicHost).
-      liveView: liveViewCliOptions(argv),
-      onStep: ({ step, tool, note, url }) => {
-        if (url && (tool === "handoff" || tool === "liveView")) {
-          process.stderr.write(`\n  ▶ ${tool === "handoff" ? "HANDOFF" : "LIVE VIEW"}: ${url}\n`);
-          if (tool === "handoff") process.stderr.write(`    ${note}\n\n`);
-          return;
-        }
-        if (tool === "liveView" && note) {
-          process.stderr.write(`  ! ${note}\n`);
-          return;
-        }
-        process.stderr.write(`  [${step}] ${tool}${note ? `: ${note}` : ""}\n`);
-      },
+  if (!daemonDisabled(flags)) {
+    const outcome = await connectSessionDaemon({
+      cliPath: CLI_PATH,
+      config: daemonConfigFromFlags(flags),
     });
-  } catch (error) {
-    // Config problems (missing credentials, missing SDK) read better as a plain
-    // line than a stack trace.
-    console.error(error?.message || String(error));
-    return 1;
+    if (outcome.ok) {
+      const { channel } = outcome;
+      try {
+        // The agent loop runs in the daemon, so the conversation and the
+        // browser session both persist for the next exec in this session.
+        result = await execTask(
+          channel,
+          {
+            task,
+            model,
+            modelOptions,
+            session,
+            fresh,
+            // --live-view starts the viewer at step 0 so the whole run can be
+            // watched; without it the handoff tool still starts one on demand.
+            liveView: liveViewCliOptions(argv),
+          },
+          { onStep },
+        );
+        if (flags.has("--close")) {
+          await channel
+            .request({ op: "close_session", session }, 60_000)
+            .catch(() => {});
+        }
+      } catch (error) {
+        // Config problems (missing credentials, missing SDK) read better as a
+        // plain line than a stack trace.
+        console.error(error?.message || String(error));
+        return 1;
+      } finally {
+        channel.end();
+      }
+    } else {
+      process.stderr.write(
+        `  ! session persistence unavailable (${outcome.reason}); running one-shot\n`,
+      );
+    }
+  }
+  if (!result) {
+    // No daemon (disabled or unavailable): one-shot browser, exactly the
+    // pre-daemon behavior — but the transcript still persists on disk, so
+    // the next exec resumes the conversation even without live tabs.
+    const { runAgentTask } = await import("../src/agent.mjs");
+    if (fresh) clearTranscript(home, session);
+    const history = fresh ? [] : loadTranscript(home, session);
+    try {
+      const full = await runAgentTask({
+        task,
+        model,
+        modelOptions,
+        session,
+        history,
+        policy: policyFromFlags(flags),
+        headless: !flags.has("--headed"),
+        liveView: liveViewCliOptions(argv),
+        onStep,
+      });
+      saveTranscript(home, session, full.transcript);
+      const { transcript: _transcript, ...summary } = full;
+      result = { ...summary, session, resumedMessages: history.length };
+    } catch (error) {
+      console.error(error?.message || String(error));
+      return 1;
+    }
   }
   process.stderr.write(
     `  done in ${result.steps} step${result.steps === 1 ? "" : "s"}, ` +
       `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"}, ` +
-      `${formatDuration(result.durationMs)}, ${formatAgentUsage(result.usage)}\n`,
+      `${formatDuration(result.durationMs)}, ${formatAgentUsage(result.usage)}` +
+      (result.resumedMessages
+        ? ` · resumed session "${result.session}" (${result.resumedMessages} prior messages)`
+        : "") +
+      "\n",
   );
   console.log(
     JSON.stringify(
@@ -988,12 +1174,120 @@ async function cmdExec(flags) {
         usage: result.usage,
         durationMs: result.durationMs,
         proof: result.proof,
+        session: result.session,
       },
       null,
       2,
     ),
   );
   return result.ok ? 0 : 1;
+}
+
+// `close [--session <name> | --all]` / `sessions`: manage the session daemon.
+// Management ops talk to whatever daemon is running (any version/config) and
+// never spawn one.
+async function cmdClose(flags, rest) {
+  const outcome = await connectSessionDaemon({
+    cliPath: CLI_PATH,
+    spawnIfNeeded: false,
+    ignoreMismatch: true,
+  });
+  if (!outcome.ok) {
+    console.log("No session daemon is running — nothing to close.");
+    return 0;
+  }
+  const { channel, hello } = outcome;
+  try {
+    if (flags.has("--all")) {
+      const names = (hello.sessions || []).map((entry) => entry.name);
+      for (const name of names) {
+        await channel.request({ op: "close_session", session: name }, 60_000).catch(() => {});
+      }
+      await channel.request({ op: "shutdown" }, 10_000).catch(() => {});
+      console.log(
+        names.length
+          ? `Closed ${names.length} session${names.length === 1 ? "" : "s"} and stopped the browser daemon.`
+          : "Stopped the browser daemon (no sessions were open).",
+      );
+      return 0;
+    }
+    const positional = rest.filter((token) => !token.startsWith("-"));
+    const session = sessionName(
+      flagValue(process.argv, "--session", positional[0] || "default"),
+    );
+    const closed = await channel.request({ op: "close_session", session }, 60_000);
+    console.log(
+      closed?.closed
+        ? `Closed session "${session}"${closed.pagesClosed ? ` (${closed.pagesClosed} tab${closed.pagesClosed === 1 ? "" : "s"})` : ""}.`
+        : `Session "${session}" was not open.`,
+    );
+    return 0;
+  } finally {
+    channel.end();
+  }
+}
+
+async function cmdSessions() {
+  const outcome = await connectSessionDaemon({
+    cliPath: CLI_PATH,
+    spawnIfNeeded: false,
+    ignoreMismatch: true,
+  });
+  if (!outcome.ok) {
+    console.log("No session daemon is running.");
+    return 0;
+  }
+  const { channel, hello } = outcome;
+  channel.end();
+  const { dim } = styler();
+  console.log(
+    dim(
+      `daemon pid ${hello.pid} · v${hello.version} · sessions idle out after ${formatDuration(hello.ttlMs || 0)}`,
+    ),
+  );
+  if (!hello.sessions?.length) {
+    console.log("No open sessions.");
+    return 0;
+  }
+  for (const entry of hello.sessions) {
+    console.log(
+      `${entry.name.padEnd(20)} idle ${formatDuration(entry.idleMs)}${entry.inflight ? ` · ${entry.inflight} call(s) in flight` : ""}`,
+    );
+  }
+  return 0;
+}
+
+/**
+ * Foreground commands that need the persistent profile themselves (the
+ * interactive console, `view`) reclaim it from an idle daemon first; a busy
+ * daemon is left alone and the command falls back to an ephemeral profile
+ * with the worker's usual warning.
+ */
+async function reclaimDaemonProfile() {
+  try {
+    const outcome = await connectSessionDaemon({
+      cliPath: CLI_PATH,
+      spawnIfNeeded: false,
+      ignoreMismatch: true,
+    });
+    if (!outcome.ok) return { reclaimed: true, closedSessions: 0 };
+    const { channel, hello } = outcome;
+    const sessions = Array.isArray(hello.sessions) ? hello.sessions : [];
+    if (sessions.some((entry) => entry.inflight > 0)) {
+      channel.end();
+      return { reclaimed: false, busy: true };
+    }
+    for (const entry of sessions) {
+      await channel
+        .request({ op: "close_session", session: entry.name }, 60_000)
+        .catch(() => {});
+    }
+    await channel.request({ op: "shutdown" }, 10_000).catch(() => {});
+    channel.end();
+    return { reclaimed: true, closedSessions: sessions.length };
+  } catch {
+    return { reclaimed: true, closedSessions: 0 };
+  }
 }
 
 async function cmdModels(flags) {
@@ -1060,6 +1354,12 @@ async function cmdView(flags) {
   const { dim, bold } = styler();
   // Same host resolution as `exec --live-view` so view/exec behave alike.
   const liveOpts = liveViewCliOptions(argv, { required: true });
+  const reclaim = await reclaimDaemonProfile();
+  if (reclaim.busy) {
+    console.log(
+      dim("a background session is mid-task; this view gets a temporary profile (betterwright close --all to reclaim)"),
+    );
+  }
   const browser = new BetterWright({
     policy: policyFromFlags(flags),
     headless: !flags.has("--headed"),
@@ -1195,7 +1495,7 @@ async function main() {
     }
     if (flags.has("--help") || tokens.includes("-h")) {
       console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|models|view|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|sessions|close|models|view|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 0;
@@ -1228,14 +1528,22 @@ async function main() {
       return cmdSkill(flags);
     case "skills":
       return cmdSkills(rest);
+    case "close":
+      return cmdClose(flags, rest);
+    case "sessions":
+      return cmdSessions();
     case "mcp": {
       const { runMcpServer } = await import("../src/mcp-server.mjs");
       await runMcpServer();
       return 0;
     }
+    case "__daemon": {
+      const { runSessionDaemon } = await import("../src/daemon.mjs");
+      return runSessionDaemon(process.argv);
+    }
     default:
       console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|models|view|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|sessions|close|models|view|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 1;
