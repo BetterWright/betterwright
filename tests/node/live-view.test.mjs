@@ -50,13 +50,14 @@ function fakeCdp(respond = {}) {
   };
 }
 
-function makeServer({ pages, cdp, newCDPSession } = {}) {
+function makeServer({ pages, cdp, newCDPSession, preferredPage } = {}) {
   const activity = [];
   const pageList = pages || [{ id: "page-1", page: fakePage(), sessionId: "default", active: true }];
   const session = cdp || fakeCdp();
   const server = createLiveViewServer({
     html: () => "<!doctype html><title>viewer</title>",
     listPages: () => pageList,
+    preferredPage: preferredPage || (() => null),
     newCDPSession: newCDPSession || (async () => session),
     onHumanActivity: (page) => activity.push(page),
   });
@@ -336,7 +337,7 @@ test("stop releases the listener even when CDP teardown hangs", async () => {
   await assert.rejects(() => fetch(info.url));
 });
 
-test("thumbnails broadcast as per-tab deltas, only when they change", async () => {
+test("tab previews use native scale, are cached, and broadcast as per-tab deltas", async () => {
   const shot = Buffer.from("tiny-thumb").toString("base64");
   const cdp = fakeCdp({
     "Page.getLayoutMetrics": { cssLayoutViewport: { clientWidth: 1280, clientHeight: 800 } },
@@ -371,19 +372,105 @@ test("thumbnails broadcast as per-tab deltas, only when they change", async () =
     while (thumbMessages.length === 0 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 10));
     const thumb = thumbMessages[0];
-    // Never capture the streamed tab: doing so corrupts the live screencast.
+    // Never capture the streamed tab: doing so can perturb its live surface.
     assert.equal(thumb.id, "page-2");
     assert.equal(thumb.thumb, `data:image/jpeg;base64,${shot}`);
     const capture = cdp.calls.find((call) => call.method === "Page.captureScreenshot");
     assert.equal(capture.params.format, "jpeg");
-    assert.equal(capture.params.clip.scale, 320 / 1280);
+    // A scaled screenshot can leave Chromium's page surface at that scale,
+    // making a later live screencast collapse to 320px.
+    assert.equal(capture.params.clip.scale, 1);
 
-    // A forced refresh recaptures but the identical thumbnail is not resent.
+    // A forced refresh reuses the cached preview: native-scale captures are
+    // intentionally bounded to one per background stint.
     const before = thumbMessages.length;
+    const capturesBefore = cdp.calls.filter(
+      (call) => call.method === "Page.captureScreenshot",
+    ).length;
     client.send(JSON.stringify({ t: "refresh" }));
     await nextMessage(client, (value) => value.t === "tabs");
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(thumbMessages.length, before);
+    assert.equal(
+      cdp.calls.filter((call) => call.method === "Page.captureScreenshot").length,
+      capturesBefore,
+    );
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a background preview cannot collapse a later live stream to 320x192", async () => {
+  const page1 = fakePage("https://one.example/");
+  const page2 = fakePage("https://two.example/");
+  const pages = [
+    { id: "page-1", page: page1, sessionId: "default", active: true },
+    { id: "page-2", page: page2, sessionId: "default", active: false },
+  ];
+  const surfaces = new Map([
+    [page1, { width: 1280, height: 768 }],
+    [page2, { width: 1280, height: 768 }],
+  ]);
+  const sessions = [];
+  const shot = Buffer.from("preview").toString("base64");
+  const newCDPSession = async (page) => {
+    const surface = surfaces.get(page);
+    const cdp = fakeCdp({
+      "Page.getLayoutMetrics": {
+        cssLayoutViewport: { clientWidth: surface.width, clientHeight: surface.height },
+      },
+      "Page.captureScreenshot": (params) => {
+        // Model Chromium's problematic retained capture surface.
+        surface.width = Math.round(params.clip.width * params.clip.scale);
+        surface.height = Math.round(params.clip.height * params.clip.scale);
+        return { data: shot };
+      },
+    });
+    sessions.push({ page, cdp });
+    return cdp;
+  };
+  const { server, info } = await startedServer({ pages, newCDPSession });
+  try {
+    const client = await connect(info);
+    await nextMessage(client, (message) => message.t === "hello");
+    const previewDeadline = Date.now() + 2_000;
+    while (
+      !sessions.some(
+        ({ page, cdp }) =>
+          page === page2 &&
+          cdp.calls.some((call) => call.method === "Page.captureScreenshot"),
+      ) &&
+      Date.now() < previewDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.deepEqual(surfaces.get(page2), { width: 1280, height: 768 });
+
+    client.send(JSON.stringify({ t: "tab", id: "page-2" }));
+    await nextMessage(
+      client,
+      (message) =>
+        message.t === "tabs" &&
+        message.tabs.some((tab) => tab.id === "page-2" && tab.streaming),
+    );
+    const live = sessions.findLast(
+      ({ page, cdp }) =>
+        page === page2 &&
+        cdp.calls.some((call) => call.method === "Page.startScreencast"),
+    );
+    assert.ok(live);
+    const metaPromise = nextMessage(
+      client,
+      (message) => message.t === "meta" && message.pageId === "page-2",
+    );
+    live.cdp.emitFrame(Buffer.from("full-frame"), {
+      deviceWidth: surfaces.get(page2).width,
+      deviceHeight: surfaces.get(page2).height,
+    });
+    const meta = await metaPromise;
+    assert.equal(meta.deviceWidth, 1280);
+    assert.equal(meta.deviceHeight, 768);
     client.close();
   } finally {
     await server.stop();
@@ -490,6 +577,126 @@ test("tab switch starts the new screencast before stopping the old one", async (
       secondStartIndex < oldStopIndex,
       "the old stream must keep painting until the new one is live",
     );
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("followPreferred streams a newly preferred tab without a strip click", async () => {
+  const page1 = fakePage("https://one.example/");
+  const page2 = fakePage("https://two.example/");
+  const pages = [
+    { id: "page-1", page: page1, sessionId: "default", active: true },
+  ];
+  let preferred = page1;
+  const { server, info } = await startedServer({
+    pages,
+    preferredPage: () => preferred,
+  });
+  try {
+    const client = await connect(info);
+    await nextMessage(client, (message) => message.t === "hello");
+    // Drain the initial tabs broadcast before mutating preferred.
+    client.send(JSON.stringify({ t: "refresh" }));
+    await nextMessage(
+      client,
+      (message) =>
+        message.t === "tabs" && message.tabs.some((tab) => tab.id === "page-1" && tab.streaming),
+    );
+
+    // Agent openPage: new tab becomes preferred (session.currentId).
+    pages.push({ id: "page-2", page: page2, sessionId: "default", active: true });
+    pages[0].active = false;
+    preferred = page2;
+    const followed = nextMessage(
+      client,
+      (message) =>
+        message.t === "tabs" && message.tabs.some((tab) => tab.id === "page-2" && tab.streaming),
+    );
+    await server.followPreferred();
+    assert.ok(await followed, "live view must auto-stream the agent's new tab");
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("followPreferred does not yank a human-selected background tab", async () => {
+  const page1 = fakePage("https://one.example/");
+  const page2 = fakePage("https://two.example/");
+  const pages = [
+    { id: "page-1", page: page1, sessionId: "default", active: true },
+    { id: "page-2", page: page2, sessionId: "default", active: false },
+  ];
+  const preferred = page1;
+  const { server, info } = await startedServer({
+    pages,
+    preferredPage: () => preferred,
+  });
+  try {
+    const client = await connect(info);
+    await nextMessage(client, (message) => message.t === "hello");
+
+    // Human inspects the other tab via the strip.
+    client.send(JSON.stringify({ t: "tab", id: "page-2" }));
+    await nextMessage(
+      client,
+      (message) =>
+        message.t === "tabs" && message.tabs.some((tab) => tab.id === "page-2" && tab.streaming),
+    );
+
+    // Preferred is still page-1 (agent has not moved). A follow tick must not
+    // pull the stream back.
+    await server.followPreferred();
+    client.send(JSON.stringify({ t: "refresh" }));
+    const tabs = await nextMessage(client, (message) => message.t === "tabs");
+    assert.ok(
+      tabs.tabs.some((tab) => tab.id === "page-2" && tab.streaming),
+      "human-selected tab must stay streamed until preferred changes",
+    );
+    assert.ok(tabs.tabs.some((tab) => tab.id === "page-1" && !tab.streaming));
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("followPreferred re-follows when the agent moves after a human inspect", async () => {
+  const page1 = fakePage("https://one.example/");
+  const page2 = fakePage("https://two.example/");
+  const page3 = fakePage("https://three.example/");
+  const pages = [
+    { id: "page-1", page: page1, sessionId: "default", active: true },
+    { id: "page-2", page: page2, sessionId: "default", active: false },
+  ];
+  let preferred = page1;
+  const { server, info } = await startedServer({
+    pages,
+    preferredPage: () => preferred,
+  });
+  try {
+    const client = await connect(info);
+    await nextMessage(client, (message) => message.t === "hello");
+
+    client.send(JSON.stringify({ t: "tab", id: "page-2" }));
+    await nextMessage(
+      client,
+      (message) =>
+        message.t === "tabs" && message.tabs.some((tab) => tab.id === "page-2" && tab.streaming),
+    );
+
+    // Agent opens yet another tab and focuses it.
+    pages.push({ id: "page-3", page: page3, sessionId: "default", active: true });
+    pages[0].active = false;
+    preferred = page3;
+    const followed = nextMessage(
+      client,
+      (message) =>
+        message.t === "tabs" && message.tabs.some((tab) => tab.id === "page-3" && tab.streaming),
+    );
+    await server.followPreferred();
+    assert.ok(await followed, "agent focus change must override a prior human inspect");
     client.close();
   } finally {
     await server.stop();

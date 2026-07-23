@@ -17,6 +17,7 @@ dist/
 .betterwright/
 benchmarks/online-mind2web/runs/
 benchmarks/online-mind2web/tasks.local.json
+benchmarks/odysseys/runs/
 
 # Editor / OS
 .DS_Store
@@ -29,3 +30,6 @@ benchmarks/online-mind2web/tasks.local.json
 tmp/
 artifacts/
 *.tmp.mjs
+logs/
+captcha-probe/
+tests/manual/

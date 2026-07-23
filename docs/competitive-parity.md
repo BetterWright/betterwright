@@ -102,7 +102,6 @@ than hardcoding.
 
 ## Verification
 
-Capability is proven by physical head-to-head runs, not on paper — see
-`benchmarks/`. Identical tasks (a login via the provider skill, a form fill, a
-multi-tab read) run against a strong baseline, comparing success, wall-clock,
-and token efficiency.
+Capability is verified with the unit and integration suites under `tests/`,
+and by running real tasks through `betterwright exec` / the interactive
+console against the models and sites you care about.

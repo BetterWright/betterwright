@@ -971,6 +971,10 @@ function adoptPage(page, sessionId) {
   pageToSession.set(page, session.id);
   session.pages.set(id, page);
   session.currentId = id;
+  // Live view streams one tab at a time; when the agent opens a page (or a
+  // popup lands), follow that tab so the viewer is not stuck on the previous
+  // one until they click the strip.
+  notifyLiveViewPreferred();
 
   if (!page.__betterwrightListeners) {
     Object.defineProperty(page, "__betterwrightListeners", { value: true });
@@ -979,6 +983,7 @@ function adoptPage(page, sessionId) {
       owner?.pages.delete(id);
       if (owner?.currentId === id)
         owner.currentId = owner.pages.keys().next().value || null;
+      notifyLiveViewPreferred();
       if (owner) pushEvent(owner, { type: "page-closed", pageId: id });
     });
     page.on("crash", () => {
@@ -3371,6 +3376,7 @@ function buildSandbox(session, consoleMessages, execution) {
         `Unknown page ${selector}; available: ${entries.map(([id]) => id).join(", ")}`,
       );
     session.currentId = entry[0];
+    notifyLiveViewPreferred();
     return wrap(entry[1], realm);
   });
   sandbox.closePage = realm.safeFunction(async (selector) => {
@@ -4660,6 +4666,15 @@ function liveViewPages() {
 }
 
 let liveViewPreferredSession = "default";
+
+/** Tell a running live view to stream the agent's current tab when it changed. */
+function notifyLiveViewPreferred() {
+  try {
+    liveView?.followPreferred?.();
+  } catch {
+    /* live view must never break page adoption */
+  }
+}
 
 function ensureLiveView(preferredSessionId) {
   liveViewPreferredSession = String(preferredSessionId || "default");

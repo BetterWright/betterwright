@@ -11,7 +11,8 @@ Three surfaces, one server:
 
 | Surface | What it does |
 | --- | --- |
-| `betterwright exec "<task>" --live-view` / console `--live-view` | starts the viewer at step 0 and prints the URL, so you watch the whole run while the agent works |
+| `betterwright exec "<task>" --live-view` | starts the viewer at step 0 and prints the URL, so you watch the whole run while the agent works |
+| interactive console `--live-view` | starts one viewer before the first prompt and keeps its URL across follow-up tasks; `/new`, `/headed`, and `/headless` replace the browser and print a new viewer URL without restarting the CLI |
 | the session dock (chat / ask / handoff) | always-on chat to guide the agent; `ask` questions appear as chips + a reply box; `handoff` elevates the dock with **Done** / **Cancel** and force-enables browser control |
 | `betterwright view` | standalone: opens this machine's BetterWright browser with a live view held open until Ctrl-C — warm up logins by hand, or drive a headless VPS browser from your laptop |
 
