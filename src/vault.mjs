@@ -24,6 +24,8 @@ import { promisify } from "node:util";
 
 import { getDomain } from "tldts";
 
+import { VAULT_MATCH_MODES } from "./credential-constants.mjs";
+
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const KEY_BYTES = 32;
@@ -60,12 +62,7 @@ export const VAULT_CATEGORIES = Object.freeze([
   "ssh-key",
 ]);
 
-export const VAULT_MATCH_MODES = Object.freeze([
-  "base-domain",
-  "host",
-  "exact-origin",
-  "never",
-]);
+export { VAULT_MATCH_MODES };
 
 const CATEGORY_SET = new Set(VAULT_CATEGORIES);
 const MATCH_MODE_SET = new Set(VAULT_MATCH_MODES);

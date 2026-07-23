@@ -216,7 +216,7 @@ async function main(argv = process.argv.slice(2)) {
       `model=${options.model}, effort=${options.effort}, concurrency=${concurrency}`,
   );
   const counts = { completed: 0, failed: 0, skipped: 0 };
-  const results = await mapLimit(selected, concurrency, 300, async (task, index) => {
+  const results = await mapLimit(selected, concurrency, 300, async (task) => {
     const result = await runTask(task, cli.output, options);
     counts[result.status] = (counts[result.status] || 0) + 1;
     const done = counts.completed + counts.failed + counts.skipped;
