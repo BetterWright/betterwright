@@ -7,9 +7,14 @@ import test from "node:test";
 import {
   claudeModel,
   codexModel,
+  endpointModel,
   grokModel,
+  listEndpointModels,
+  MODEL_ENDPOINT_PRESETS,
+  modelSelectionChoices,
   openaiModel,
   resolveModel,
+  resolveModelSelection,
   runAgentTask,
 } from "../../src/agent.mjs";
 import { formatAgentUsage, uncachedInputTokens } from "../../src/agent-usage.mjs";
@@ -525,14 +530,87 @@ test("interactive preamble invites the ask tool; headless does not", async () =>
   assert.doesNotMatch(headless.seen[0].system, /`ask` tool/);
 });
 
-test("resolveModel maps names, passes objects through, rejects unknown", () => {
+test("terminal steering is injected at the next model turn", async () => {
+  const steering = [[], ["use the cheaper option"], [], []];
+  const model = scriptedModel([
+    {
+      text: "",
+      toolCalls: [
+        { id: "b1", name: "browser", input: { code: "return 1" } },
+      ],
+    },
+    {
+      text: "",
+      toolCalls: [{ id: "d1", name: "done", input: { answer: "updated" } }],
+    },
+  ]);
+
+  const result = await runAgentTask({
+    task: "find a computer",
+    model,
+    browser: fakeBrowser(),
+    drainSteering: () => steering.shift() || [],
+  });
+
+  assert.equal(result.answer, "updated");
+  const guidance = model.seen[1].messages.find(
+    (message) =>
+      message.role === "user" &&
+      /interactive terminal/i.test(message.text || ""),
+  );
+  assert.match(guidance.text, /use the cheaper option/);
+});
+
+test("steering that arrives with done defers completion", async () => {
+  const steering = [[], ["also compare warranties"], [], []];
+  const model = scriptedModel([
+    {
+      text: "",
+      toolCalls: [{ id: "d1", name: "done", input: { answer: "too early" } }],
+    },
+    {
+      text: "",
+      toolCalls: [{ id: "d2", name: "done", input: { answer: "compared" } }],
+    },
+  ]);
+
+  const result = await runAgentTask({
+    task: "pick one",
+    model,
+    browser: fakeBrowser(),
+    drainSteering: () => steering.shift() || [],
+  });
+
+  assert.equal(result.answer, "compared");
+  assert.equal(result.steps, 2);
+  const firstToolTurn = result.transcript.find(
+    (message) => message.role === "tool",
+  );
+  assert.match(firstToolTurn.results[0].content, /Completion deferred/);
+  assert.ok(
+    model.seen[1].messages.some(
+      (message) =>
+        message.role === "user" &&
+        /also compare warranties/.test(message.text || ""),
+    ),
+  );
+});
+
+test("resolveModel uses actual model ids, passes objects through, and rejects shortcuts", () => {
   const custom = { name: "mine", complete: async () => ({ text: "", toolCalls: [] }) };
   assert.equal(resolveModel(custom), custom);
-  assert.equal(resolveModel("claude", {}).name, "claude");
+  assert.throws(() => resolveModel("claude"), /Unknown model/);
+  assert.throws(() => resolveModel("codex"), /Unknown model/);
+  assert.throws(() => resolveModel("grok"), /Unknown model/);
+  const endpoint = resolveModel("vendor/opaque-id", {
+    baseURL: "https://models.example/v1",
+  });
+  assert.equal(endpoint.name, "custom");
+  assert.equal(endpoint.modelId, "vendor/opaque-id");
   assert.throws(() => resolveModel("mistral-large"), /Unknown model/);
 });
 
-test("resolveModel accepts a bare model id and infers the backend from its prefix", () => {
+test("resolveModel accepts bare and source-qualified actual model ids", () => {
   // gpt-* / o* → codex, grok-* → grok, claude-* → claude; the id becomes model id.
   const codex = resolveModel("gpt-5.6-luna", { apiKey: "k" });
   assert.equal(codex.name, "codex");
@@ -546,9 +624,328 @@ test("resolveModel accepts a bare model id and infers the backend from its prefi
   assert.equal(claude.name, "claude");
   assert.equal(claude.modelId, "claude-opus-4-8");
 
-  // An explicit --model-id wins over the id passed as the model.
-  const pinned = resolveModel("gpt-5.6-luna", { apiKey: "k", model: "gpt-override" });
-  assert.equal(pinned.modelId, "gpt-override");
+  const pinned = resolveModel("codex/gpt-5.6-luna", { apiKey: "k" });
+  assert.equal(pinned.name, "codex");
+  assert.equal(pinned.modelId, "gpt-5.6-luna");
+
+  const ollama = resolveModel("ollama/qwen3:8b");
+  assert.equal(ollama.name, "ollama");
+  assert.equal(ollama.modelId, "qwen3:8b");
+});
+
+test("bare endpoint ids auto-resolve only when one available source exposes them", async () => {
+  const fetchImpl = async (url) => ({
+    ok: true,
+    async text() {
+      return JSON.stringify({
+        data: url.includes("11434")
+          ? [{ id: "qwen3:8b" }, { id: "gpt-5.6-sol" }]
+          : [],
+      });
+    },
+  });
+
+  const unique = await resolveModelSelection("qwen3:8b", { fetchImpl });
+  assert.equal(unique.name, "ollama");
+  assert.equal(unique.modelId, "qwen3:8b");
+
+  await assert.rejects(
+    resolveModelSelection("gpt-5.6-sol", {
+      apiKey: "native-key",
+      fetchImpl,
+    }),
+    /multiple sources: codex\/gpt-5\.6-sol, ollama\/gpt-5\.6-sol/,
+  );
+
+  await assert.rejects(
+    resolveModelSelection("codex", { fetchImpl }),
+    /No available model source exposes "codex"/,
+  );
+  await assert.rejects(
+    resolveModelSelection("claude", { fetchImpl }),
+    /No available model source exposes "claude"/,
+  );
+  await assert.rejects(
+    resolveModelSelection("grok", { fetchImpl }),
+    /No available model source exposes "grok"/,
+  );
+});
+
+test("model choices omit source prefixes until a real collision", () => {
+  const choices = modelSelectionChoices([
+    { source: "codex", model: "gpt-5.6-sol" },
+    { source: "openrouter", model: "openai/gpt-5.6-sol" },
+    { source: "ollama", model: "qwen3:8b" },
+    { source: "vllm", model: "shared-model" },
+    { source: "ollama", model: "shared-model" },
+  ]);
+  const bySourceAndModel = new Map(
+    choices.map((choice) => [
+      `${choice.source}/${choice.model}`,
+      choice.selector,
+    ]),
+  );
+
+  assert.equal(
+    bySourceAndModel.get("codex/gpt-5.6-sol"),
+    "codex/gpt-5.6-sol",
+  );
+  assert.equal(
+    bySourceAndModel.get("openrouter/openai/gpt-5.6-sol"),
+    "openai/gpt-5.6-sol",
+  );
+  assert.equal(bySourceAndModel.get("ollama/qwen3:8b"), "qwen3:8b");
+  assert.equal(
+    bySourceAndModel.get("vllm/shared-model"),
+    "vllm/shared-model",
+  );
+  assert.equal(
+    bySourceAndModel.get("ollama/shared-model"),
+    "ollama/shared-model",
+  );
+});
+
+test("endpoint presets keep model ids opaque and use a conservative chat request", async () => {
+  let captured;
+  const fetchImpl = async (url, init) => {
+    captured = {
+      url,
+      headers: init.headers,
+      body: JSON.parse(init.body),
+      redirect: init.redirect,
+    };
+    return {
+      ok: true,
+      async json() {
+        return {
+          choices: [
+            {
+              message: {
+                content: [{ type: "text", text: "working" }],
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: {
+                      name: "browser",
+                      arguments: { code: "return page.title()" },
+                    },
+                  },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+        };
+      },
+    };
+  };
+
+  const model = resolveModel("ollama/qwen3:8b", {
+    fetchImpl,
+  });
+  const out = await model.complete({
+    system: "SYS",
+    messages: [{ role: "user", text: "hi" }],
+    tools: [
+      {
+        name: "browser",
+        description: "run browser code",
+        parameters: { type: "object" },
+      },
+    ],
+  });
+
+  assert.equal(model.name, "ollama");
+  assert.equal(model.modelId, "qwen3:8b");
+  assert.equal(captured.url, "http://127.0.0.1:11434/v1/chat/completions");
+  assert.equal(captured.body.model, "qwen3:8b");
+  assert.equal(captured.body.max_tokens, 4096);
+  assert.equal(Object.hasOwn(captured.body, "max_completion_tokens"), false);
+  assert.equal(Object.hasOwn(captured.body, "parallel_tool_calls"), false);
+  assert.equal(Object.hasOwn(captured.headers, "authorization"), false);
+  assert.equal(captured.redirect, "error");
+  assert.equal(out.text, "working");
+  assert.deepEqual(out.toolCalls[0].input, {
+    code: "return page.title()",
+  });
+});
+
+test("OpenRouter preset supplies attribution headers and requires its API key", async () => {
+  assert.throws(
+    () =>
+      endpointModel({
+        source: "openrouter",
+        model: "anthropic/model-id",
+        apiKey: "",
+      }),
+    /OpenRouter needs an API key/,
+  );
+
+  let captured;
+  const model = endpointModel({
+    source: "openrouter",
+    model: "anthropic/model-id",
+    apiKey: "router-key",
+    fetchImpl: async (url, init) => {
+      captured = { url, headers: init.headers };
+      return {
+        ok: true,
+        async json() {
+          return {
+            choices: [{ message: { content: "done" }, finish_reason: "stop" }],
+          };
+        },
+      };
+    },
+  });
+  await model.complete({
+    system: "SYS",
+    messages: [],
+    tools: [],
+  });
+
+  assert.equal(captured.url, "https://openrouter.ai/api/v1/chat/completions");
+  assert.equal(captured.headers.authorization, "Bearer router-key");
+  assert.equal(
+    captured.headers["HTTP-Referer"],
+    "https://github.com/BetterWright/betterwright",
+  );
+  assert.equal(captured.headers["X-OpenRouter-Title"], "BetterWright");
+});
+
+test("custom endpoint validation is helpful and protects non-local API keys", () => {
+  assert.throws(
+    () => endpointModel({ source: "custom", model: "model-id" }),
+    /custom endpoint needs --base-url/,
+  );
+  assert.throws(
+    () =>
+      endpointModel({
+        source: "custom",
+        baseURL: "http://models.example/v1",
+        model: "model-id",
+        apiKey: "secret",
+      }),
+    /Refusing to send.*plain HTTP/,
+  );
+  assert.throws(
+    () =>
+      endpointModel({
+        source: "custom",
+        baseURL: "https://models.example/v1",
+        model: "model-id",
+        apiKeyEnv: "not-a-valid-name",
+      }),
+    /Invalid --api-key-env/,
+  );
+  assert.doesNotThrow(() =>
+    endpointModel({
+      source: "custom",
+      baseURL: "http://127.0.0.1:9000/v1",
+      model: "model-id",
+      apiKey: "local-secret",
+    }),
+  );
+});
+
+test("endpoint Responses protocol is explicit and omits optional compatibility fields", async () => {
+  let captured;
+  const model = endpointModel({
+    source: "vllm",
+    model: "served-model",
+    protocol: "responses",
+    fetchImpl: async (url, init) => {
+      captured = { url, body: JSON.parse(init.body) };
+      return {
+        ok: true,
+        async text() {
+          return JSON.stringify({
+            output: [
+              {
+                type: "message",
+                content: [{ type: "output_text", text: "done" }],
+              },
+            ],
+            status: "completed",
+          });
+        },
+      };
+    },
+  });
+  const out = await model.complete({
+    system: "SYS",
+    messages: [],
+    tools: [],
+  });
+
+  assert.equal(captured.url, "http://127.0.0.1:8000/v1/responses");
+  assert.equal(captured.body.model, "served-model");
+  assert.equal(captured.body.max_output_tokens, 4096);
+  assert.equal(captured.body.stream, false);
+  assert.equal(Object.hasOwn(captured.body, "parallel_tool_calls"), false);
+  assert.equal(Object.hasOwn(captured.body, "store"), false);
+  assert.equal(out.text, "done");
+});
+
+test("listEndpointModels normalizes standard and Ollama-style model lists", async () => {
+  const requests = [];
+  const standard = await listEndpointModels({
+    source: "custom",
+    baseURL: "https://models.example/v1/",
+    apiKey: "key",
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      return {
+        ok: true,
+        async text() {
+          return JSON.stringify({
+            data: [
+              { id: "first/model" },
+              { id: "second-model" },
+              { id: "first/model" },
+            ],
+          });
+        },
+      };
+    },
+  });
+  assert.deepEqual(standard, {
+    source: "custom",
+    baseURL: "https://models.example/v1",
+    models: ["first/model", "second-model"],
+  });
+  assert.equal(requests[0].url, "https://models.example/v1/models");
+  assert.equal(requests[0].init.headers.authorization, "Bearer key");
+  assert.equal(requests[0].init.redirect, "error");
+
+  const ollama = await listEndpointModels({
+    source: "ollama",
+    fetchImpl: async () => ({
+      ok: true,
+      async text() {
+        return JSON.stringify({
+          models: [{ name: "qwen3:8b" }, { model: "gpt-oss:20b" }],
+        });
+      },
+    }),
+  });
+  assert.deepEqual(ollama.models, ["qwen3:8b", "gpt-oss:20b"]);
+});
+
+test("endpoint preset defaults stay stable", () => {
+  assert.equal(
+    MODEL_ENDPOINT_PRESETS.openrouter.baseURL,
+    "https://openrouter.ai/api/v1",
+  );
+  assert.equal(
+    MODEL_ENDPOINT_PRESETS.ollama.baseURL,
+    "http://127.0.0.1:11434/v1",
+  );
+  assert.equal(
+    MODEL_ENDPOINT_PRESETS.vllm.baseURL,
+    "http://127.0.0.1:8000/v1",
+  );
+  assert.equal(MODEL_ENDPOINT_PRESETS.custom.baseURL, null);
 });
 
 test("openaiModel translates the transcript and parses tool calls", async () => {
@@ -1043,6 +1440,28 @@ test("liveView: true starts the viewer before step 1 and stops it at task end", 
   // Live view also offers ask (chat-backed) and freeform guidance.
   assert.ok(model.seen[0].tools.some((tool) => tool.name === "ask"));
   assert.ok(browser.calls.chatPosts.some((line) => /Message the agent/i.test(line.text) || /guidance/i.test(line.text)));
+});
+
+test("liveView reuses a host-owned viewer without re-announcing or stopping it", async () => {
+  const browser = liveViewBrowser({
+    startLiveViewResult: { alreadyRunning: true },
+  });
+  const steps = [];
+  const model = scriptedModel([{ text: "all done", toolCalls: [] }]);
+
+  const result = await runAgentTask({
+    task: "x",
+    model,
+    browser,
+    liveView: true,
+    onStep: (event) => steps.push(event),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(browser.calls.liveView.length, 1);
+  assert.equal(steps.some((event) => event.tool === "liveView"), false);
+  assert.equal(browser.calls.stops, 0);
+  assert.ok(browser.calls.chatDrains >= 1);
 });
 
 test("live-view chat drains into the transcript between turns", async () => {

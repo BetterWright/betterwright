@@ -6,8 +6,7 @@
       "bin/**",
       "scripts/**",
       "tests/**",
-      "benchmarks/**",
-      "!!benchmarks/online-mind2web/runs",
+      "!!tests/manual/**",
       "!!tests/node/fixtures/**"
     ]
   },

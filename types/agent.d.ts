@@ -92,6 +92,14 @@ export interface RunAgentTaskOptions {
     signal: AbortSignal;
   }) => string | Promise<string>;
   /**
+   * Non-blocking host callback drained at model turn boundaries. Returned
+   * messages steer the active task, like live-view chat.
+   */
+  drainSteering?: () =>
+    | string
+    | string[]
+    | Promise<string | string[]>;
+  /**
    * A prior transcript (from a previous call's `transcript`) to continue from, so
    * a follow-up task can refer back to earlier work. Omit for a fresh run.
    */
@@ -101,8 +109,9 @@ export interface RunAgentTaskOptions {
    * `handoff` + live-view-backed `ask` + freeform chat (guidance delivered
    * between turns) when a URL surface exists (`askUser` or `onStep`). Pass
    * `true` — or startLiveView options — to also start the viewer at run start
-   * so the whole task can be watched live; the URL arrives as
-   * `onStep({tool: "liveView", url})`.
+   * so the whole task can be watched live. A newly created viewer's URL arrives
+   * as `onStep({tool: "liveView", url})`; an already-running host viewer is
+   * reused without re-announcing it.
    */
   liveView?: boolean | Record<string, unknown>;
 }
@@ -139,6 +148,10 @@ export interface AgentResult {
 export function runAgentTask(options: RunAgentTaskOptions): Promise<AgentResult>;
 
 export function resolveModel(model: string | AgentModel, modelOptions?: Record<string, unknown>): AgentModel;
+export function resolveModelSelection(
+  model: string | AgentModel,
+  modelOptions?: Record<string, unknown>,
+): Promise<AgentModel>;
 
 export interface ClaudeModelOptions {
   model?: string;
@@ -155,12 +168,83 @@ export interface OpenAIModelOptions {
   apiKey?: string;
   headers?: Record<string, string>;
   maxTokens?: number;
+  maxTokensField?: "max_tokens" | "max_completion_tokens";
+  parallelToolCalls?: boolean | null;
+  bodyExtra?: Record<string, unknown>;
   effort?: string;
   name?: string;
   getAuth?: () => ResolvedAuth | Promise<ResolvedAuth>;
   fetchImpl?: typeof fetch;
 }
 export function openaiModel(options: OpenAIModelOptions): AgentModel;
+
+export type ModelEndpointSource =
+  | "openrouter"
+  | "ollama"
+  | "vllm"
+  | "custom";
+
+export interface ModelEndpointPreset {
+  readonly baseURL: string | null;
+  readonly baseURLEnv: string;
+  readonly apiKeyEnv: string;
+  readonly requiresApiKey: boolean;
+}
+
+export const MODEL_ENDPOINT_PRESETS: Readonly<
+  Record<ModelEndpointSource, ModelEndpointPreset>
+>;
+
+export interface EndpointModelOptions {
+  /** Omit when `baseURL` identifies a custom endpoint. */
+  source?: ModelEndpointSource;
+  model: string;
+  baseURL?: string;
+  apiKey?: string;
+  /** Read the API key from this environment variable instead of the preset default. */
+  apiKeyEnv?: string;
+  protocol?: "chat" | "responses";
+  headers?: Record<string, string>;
+  maxTokens?: number;
+  effort?: string;
+  bodyExtra?: Record<string, unknown>;
+  fetchImpl?: typeof fetch;
+  /** Optional cancellation signal for model discovery. */
+  signal?: AbortSignal;
+  /**
+   * Permit a key-bearing request to a non-loopback http:// endpoint.
+   * HTTPS and loopback endpoints do not need this override.
+   */
+  allowInsecureEndpoint?: boolean;
+}
+
+export function endpointModel(options: EndpointModelOptions): AgentModel;
+
+export interface EndpointModelList {
+  source: ModelEndpointSource;
+  baseURL: string;
+  models: string[];
+}
+
+export function listEndpointModels(
+  options: Omit<EndpointModelOptions, "model"> & { model?: string },
+): Promise<EndpointModelList>;
+
+export interface ModelCatalogEntry {
+  source: string;
+  model: string;
+}
+
+export interface ModelSelectionChoice extends ModelCatalogEntry {
+  selector: string;
+  qualified: string;
+  ambiguous: boolean;
+}
+
+export function modelSelectionChoices(
+  entries?: ModelCatalogEntry[],
+): ModelSelectionChoice[];
+export function nativeModelCatalog(): ModelCatalogEntry[];
 
 export interface OAuthModelOptions {
   baseURL?: string;

@@ -1,6 +1,6 @@
 {
   "name": "betterwright",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A persistent, policy-guarded Playwright browser for AI agents with network controls, trusted credential filling, proof screenshots, and CAPTCHA helpers.",
   "type": "module",
   "main": "src/index.mjs",
@@ -79,7 +79,7 @@
     "test": "node --test tests/node/*.test.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
-    "lint": "biome ci src bin scripts tests benchmarks",
+    "lint": "biome ci src bin scripts tests",
     "check:versions": "node scripts/check-versions.mjs",
     "check:package": "node scripts/check-package.mjs",
     "release:check": "npm run check:versions && npm run lint && npm run test:unit && npm run test:types && npm run check:package",

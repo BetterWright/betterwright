@@ -89,9 +89,11 @@ const BACKPRESSURE_LIMIT = 1_500_000;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const TABS_REFRESH_INTERVAL_MS = 3_000;
 const TITLE_TIMEOUT_MS = 250;
-// Tab-strip thumbnails: every open tab is captured small and cheap so the
-// viewer can see all of them at once; only the streamed tab is full-res.
-const THUMB_WIDTH = 320;
+// Tab-strip previews are captured at the page's native scale. Chromium can
+// retain a scaled Page.captureScreenshot surface on the page, so requesting a
+// 320px capture here can make a later screencast inherit that resolution.
+// Cache each preview until the tab becomes active to keep native-scale capture
+// work bounded.
 const THUMB_QUALITY = 40;
 const THUMB_TIMEOUT_MS = 800;
 // stop() must never hang on a wedged browser transport (e.g. Chromium died
@@ -193,6 +195,10 @@ export function createLiveViewServer({
   let lastFrameEncoded = null;
   let currentStreamWidth = 0;
   let viewportTimer = null;
+  // Track the session's preferred (agent-current) page so we only auto-switch
+  // when the agent changes focus — not when a human clicked a different tab
+  // in the strip to inspect something in the background.
+  let lastFollowedPreferredId = null;
 
   let agentState = "idle"; // "idle" | "driving"
   let handoff = null; // { prompt, resolve, timer }
@@ -210,9 +216,10 @@ export function createLiveViewServer({
   let tabsTimer = null;
   let lastTabsJson = "";
 
-  // One lightweight CDP session per tab, kept while viewers are connected, so
-  // the tab strip can show a live thumbnail of every page — not just the
-  // streamed one. Captures are tiny (320px JPEG) and refresh with the tab list.
+  // One lightweight CDP session per background tab, kept while viewers are
+  // connected, so the tab strip can preview pages other than the streamed one.
+  // Each preview is captured once at native scale and displayed small by the
+  // viewer; scaled CDP captures can corrupt a later live screencast's surface.
   const thumbSessions = new Map(); // pageId -> { page, cdp }
   const thumbCache = new Map(); // pageId -> data URL
 
@@ -434,13 +441,15 @@ export function createLiveViewServer({
     const shot = await cdp.send("Page.captureScreenshot", {
       format: "jpeg",
       quality: THUMB_QUALITY,
-      clip: { x: 0, y: 0, width, height, scale: Math.min(1, THUMB_WIDTH / width) },
+      clip: { x: 0, y: 0, width, height, scale: 1 },
     });
     const data = String(shot?.data || "");
     return data ? `data:image/jpeg;base64,${data}` : "";
   }
 
   async function thumbFor(entry) {
+    const cached = thumbCache.get(entry.id);
+    if (cached) return cached;
     let holder = thumbSessions.get(entry.id);
     if (holder && holder.page !== entry.page) {
       await dropThumbSession(entry.id);
@@ -456,7 +465,15 @@ export function createLiveViewServer({
     }
     try {
       const thumb = await withTimeout(captureThumb(holder.cdp), THUMB_TIMEOUT_MS);
-      if (thumb) thumbCache.set(entry.id, thumb);
+      // The tab may have become active while capture was in flight. Only cache
+      // a result from the still-current background session.
+      if (
+        thumb &&
+        entry.id !== activeId &&
+        thumbSessions.get(entry.id) === holder
+      ) {
+        thumbCache.set(entry.id, thumb);
+      }
     } catch {
       /* keep the last good thumbnail */
     }
@@ -511,10 +528,8 @@ export function createLiveViewServer({
       lastTabsJson = encoded;
       broadcastText({ t: "tabs", tabs });
     }
-    // Thumbnails only matter once there is more than one tab to pick from,
-    // and never for the streamed tab: Page.captureScreenshot re-renders
-    // the surface at clip scale, which corrupts the live screencast's
-    // frames and metadata (observed: a 1280px stream collapsing to 320px).
+    // Previews only matter once there is more than one tab to pick from, and
+    // never for the streamed tab.
     if (entries.length > 1) {
       await Promise.all(
         entries
@@ -522,7 +537,7 @@ export function createLiveViewServer({
           .map(async (entry) => {
             const previous = thumbCache.get(entry.id) || "";
             const thumb = await thumbFor(entry);
-            if (thumb && thumb !== previous) {
+            if (entry.id !== activeId && thumb && thumb !== previous) {
               broadcastText({ t: "thumb", id: entry.id, thumb });
             }
           }),
@@ -651,6 +666,40 @@ export function createLiveViewServer({
     return entries.find((entry) => entry.active) || entries[0] || null;
   }
 
+  /**
+   * Resolve the page the agent currently considers active (preferredPage /
+   * active flag). Returns null when no pages are open.
+   */
+  function preferredEntry() {
+    return pickPage(null);
+  }
+
+  /**
+   * When the agent's current tab changes (openPage, usePage, popup, close),
+   * stream that tab. Leaves a human-selected strip tab alone until preferred
+   * actually moves — so inspecting a background tab is not yanked away every
+   * refresh tick.
+   */
+  function followPreferred() {
+    if (!running || clients.size === 0) return Promise.resolve();
+    const entry = preferredEntry();
+    const preferredId = entry?.id || null;
+    if (preferredId === lastFollowedPreferredId) return Promise.resolve();
+    if (!preferredId) {
+      lastFollowedPreferredId = null;
+      return refreshTabs(true);
+    }
+    if (preferredId === activeId) {
+      // Already streaming it (e.g. human clicked the same tab the agent just
+      // selected); mark followed so we do not thrash.
+      lastFollowedPreferredId = preferredId;
+      return refreshTabs(true);
+    }
+    // ensureStreaming / switchToPage updates lastFollowedPreferredId only
+    // after attach succeeds, so a failed CDP attach can retry next tick.
+    return ensureStreaming(preferredId);
+  }
+
   async function attachTo(entry) {
     if (!entry) {
       await detachActive();
@@ -739,40 +788,30 @@ export function createLiveViewServer({
     await withTimeout(teardownSession(previous), STOP_TEARDOWN_TIMEOUT_MS).catch(
       () => {},
     );
-    // If this tab was thumbnail-captured while in the background, its surface
-    // was last rendered at thumbnail scale and the screencast inherits it
-    // (observed: 320px frames after switching to a static tab). One discarded
-    // full-scale capture forces a proper re-render — and a fresh frame.
-    if (thumbCache.has(id)) {
-      void dropThumbSession(id).catch(() => {});
-      try {
-        const metrics = await withTimeout(
-          cdp.send("Page.getLayoutMetrics"),
-          THUMB_TIMEOUT_MS,
-        );
-        const viewport = metrics?.cssLayoutViewport || {};
-        const width = finiteNumber(viewport.clientWidth, 0);
-        const height = finiteNumber(viewport.clientHeight, 0);
-        if (width >= 1 && height >= 1) {
-          await withTimeout(
-            cdp.send("Page.captureScreenshot", {
-              format: "jpeg",
-              quality: 10,
-              clip: { x: 0, y: 0, width, height, scale: 1 },
-            }),
-            THUMB_TIMEOUT_MS,
-          );
-        }
-      } catch {
-        /* best-effort: the next page damage restores full scale anyway */
-      }
+    // The preview is stale once its tab becomes live. Drop its background CDP
+    // session and cache so a fresh preview is taken if it later goes inactive.
+    if (thumbSessions.has(id) || thumbCache.has(id)) {
+      await withTimeout(dropThumbSession(id), THUMB_TIMEOUT_MS).catch(() => {});
     }
   }
 
   async function switchToPage(requestedId) {
     const entry = pickPage(requestedId);
-    if (entry && entry.id === activeId) return;
+    if (entry && entry.id === activeId) {
+      // Already there — keep follow-tracking in sync for preferred attaches.
+      if (requestedId == null || preferredEntry()?.id === activeId) {
+        lastFollowedPreferredId = activeId;
+      }
+      return;
+    }
     await attachTo(entry);
+    // Only mark followed once the screencast actually landed on this page
+    // (attachTo no-ops activeId on CDP failure so a later tick can retry).
+    if (activeId && (requestedId == null || preferredEntry()?.id === activeId)) {
+      lastFollowedPreferredId = activeId;
+    } else if (!entry) {
+      lastFollowedPreferredId = null;
+    }
     broadcastMeta();
     await refreshTabs(true);
   }
@@ -1176,7 +1215,12 @@ export function createLiveViewServer({
     }, HEARTBEAT_INTERVAL_MS);
     heartbeatTimer.unref?.();
     tabsTimer = setInterval(() => {
-      void refreshTabs().catch(() => {});
+      // Prefer follow over a bare tab refresh: when the agent openPage/usePage
+      // changes focus between ticks, the stream must move even if no one
+      // called followPreferred() from the worker.
+      void followPreferred()
+        .then(() => refreshTabs())
+        .catch(() => {});
     }, TABS_REFRESH_INTERVAL_MS);
     tabsTimer.unref?.();
     log(`live-view: listening on ${boundHost}:${boundPort}`);
@@ -1303,6 +1347,7 @@ export function createLiveViewServer({
     loginFailures.clear();
     lastMeta = null;
     lastTabsJson = "";
+    lastFollowedPreferredId = null;
     if (closing) {
       await new Promise((resolve) => {
         closing.close(() => resolve());
@@ -1326,6 +1371,8 @@ export function createLiveViewServer({
     drainHumanMessages,
     setAgentState,
     refreshTabs: () => refreshTabs(true),
+    /** Stream the agent's current tab when it changed (openPage / usePage / popup). */
+    followPreferred,
     get running() {
       return running;
     },

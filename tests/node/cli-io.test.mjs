@@ -2,7 +2,79 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { makeLineReader } from "../../src/cli-io.mjs";
+import {
+  createInteractiveBrowserLifecycle,
+  formatHangingText,
+  makeLineReader,
+  readExecTaskFromStdin,
+} from "../../src/cli-io.mjs";
+
+test("readExecTaskFromStdin preserves literal money and multiline content", () => {
+  assert.equal(
+    readExecTaskFromStdin(() => "find options under $4000\nand compare prices\n"),
+    "find options under $4000\nand compare prices",
+  );
+  assert.equal(
+    readExecTaskFromStdin(() => "keep the leading space and $4,000\r\n"),
+    "keep the leading space and $4,000",
+  );
+});
+
+test("interactive browser lifecycle starts once and rotates browser plus live view", async () => {
+  const events = [];
+  let nextId = 0;
+  const lifecycle = createInteractiveBrowserLifecycle({
+    createBrowser: () => {
+      const id = ++nextId;
+      return {
+        id,
+        close: async () => events.push(`close:${id}`),
+      };
+    },
+    startBrowser: async (browser) => events.push(`live:${browser.id}`),
+  });
+
+  const first = lifecycle.browser;
+  assert.equal(first.id, 1);
+  assert.equal(await lifecycle.start(), first);
+  assert.deepEqual(events, ["live:1"]);
+
+  const second = await lifecycle.replace();
+  assert.equal(second.id, 2);
+  assert.equal(lifecycle.browser, second);
+  assert.deepEqual(events, ["live:1", "close:1", "live:2"]);
+
+  await lifecycle.close();
+  assert.deepEqual(events, ["live:1", "close:1", "live:2", "close:2"]);
+});
+
+test("formatHangingText wraps words with a stable continuation indent", () => {
+  const prefix = "  · [12] browser: ";
+  const formatted = formatHangingText(
+    prefix,
+    "I am comparing several gaming desktops before choosing the strongest value.",
+    { columns: 48 },
+  );
+  const lines = formatted.split("\n");
+
+  assert.ok(lines.length > 1);
+  assert.ok(lines[0].startsWith(prefix));
+  for (const line of lines.slice(1))
+    assert.ok(line.startsWith(" ".repeat(prefix.length)));
+  for (const line of lines) assert.ok(line.length < 48);
+  assert.match(formatted, /strongest value\./);
+});
+
+test("formatHangingText preserves a label before an overlong first token", () => {
+  const prefix = "  ▶ Watch live: ";
+  const url =
+    "http://127.0.0.1:41717/?t=SXtT3k9PVSN6kpTW_OnAeyNZGY4hgkKC";
+  const lines = formatHangingText(prefix, url, { columns: 48 }).split("\n");
+
+  assert.equal(lines[0], prefix.trimEnd());
+  assert.ok(lines.slice(1).every((line) => line.startsWith(" ".repeat(prefix.length))));
+  assert.equal(lines.join("").replaceAll(" ", ""), `${prefix}${url}`.replaceAll(" ", ""));
+});
 
 // A minimal readline stand-in: emits "line"/"close" and records prompts.
 function fakeReadline() {
@@ -29,6 +101,31 @@ test("makeLineReader buffers a line typed while no one is waiting", async () => 
   const nextLine = makeLineReader(rl);
   rl.emit("line", "early"); // arrives before any awaiter
   assert.equal(await nextLine(), "early");
+});
+
+test("makeLineReader capture routes steering while preserving commands and answers", async () => {
+  const rl = fakeReadline();
+  const nextLine = makeLineReader(rl);
+  const captured = [];
+
+  rl.emit("line", "pasted steering");
+  const stop = nextLine.capture((line) => {
+    if (line.startsWith("/")) return false;
+    captured.push(line);
+  });
+  rl.emit("line", "use the cheaper option");
+  rl.emit("line", "/new");
+  assert.deepEqual(captured, ["pasted steering", "use the cheaper option"]);
+
+  const answer = nextLine("answer ▸ ");
+  rl.emit("line", "yes");
+  assert.equal(await answer, "yes");
+  assert.deepEqual(captured, ["pasted steering", "use the cheaper option"]);
+
+  stop();
+  assert.equal(await nextLine(), "/new");
+  rl.emit("line", "next task");
+  assert.equal(await nextLine(), "next task");
 });
 
 test("makeLineReader resolves null at close, for pending and future reads", async () => {
