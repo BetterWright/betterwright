@@ -1,13 +1,13 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/CuriosityOS/betterwright/main/docs/assets/logo.png" alt="BetterWright" width="96" />
+<img src="https://raw.githubusercontent.com/BetterWright/betterwright/main/docs/assets/logo.png" alt="BetterWright" width="96" />
 
 # BetterWright
 
 **The token-efficient browser for AI agents.**
 
 [![npm](https://img.shields.io/npm/v/betterwright?color=cb3837&logo=npm)](https://www.npmjs.com/package/betterwright)
-[![CI](https://github.com/CuriosityOS/betterwright/actions/workflows/ci.yml/badge.svg)](https://github.com/CuriosityOS/betterwright/actions/workflows/ci.yml)
+[![CI](https://github.com/BetterWright/betterwright/actions/workflows/ci.yml/badge.svg)](https://github.com/BetterWright/betterwright/actions/workflows/ci.yml)
 [![node](https://img.shields.io/node/v/betterwright?color=339933&logo=node.js&logoColor=white)](package.json)
 [![license](https://img.shields.io/npm/l/betterwright)](LICENSE)
 
