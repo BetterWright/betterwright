@@ -19,13 +19,17 @@ The command prints one JSON object:
 `artifacts` lists files written during the run; screenshots appear there with a
 `path` — open that image to actually see the page.
 
-Multi-step task — pipe blank-line-separated snippets into one long-lived session
-so open tabs and in-memory `state` persist between steps:
+Invocations share one persistent browser session held by a background daemon:
+open tabs, page state, and the in-memory `state` object all survive between
+`run` calls, and logins/cookies persist through the on-disk profile. So act in
+small steps — one `run` per action-and-observe — and simply call `run` again to
+continue where the last call left off. The session auto-closes after ~15 idle
+minutes; run `betterwright close` when you finish a task to end it sooner.
+Need isolation for parallel work? Give each worker its own `--session <name>`.
 
-    printf '%s\n\n%s\n' "await page.goto('https://site.example')" "return page.title()" | betterwright repl
-
-Logins and cookies persist across every invocation through the on-disk profile;
-open tabs and `state` persist only within a single `repl` session.
+To batch several steps in one process you can also pipe blank-line-separated
+snippets: `printf '%s\n\n%s\n' "snippetA" "snippetB" | betterwright repl`
+(same session, same persistence).
 
 When a result lists `skills`, deeper site or provider knowledge matches the
 open pages — read the named pack with `betterwright skills show <name>` before
@@ -38,10 +42,12 @@ that — start it first, relay its URL to the user verbatim (it embeds the acces
 token), then keep working. From the plain CLI, snippets cannot start the viewer
 (sealed by design); when the user asks for a live view:
 - delegate the whole task to `betterwright exec "<task>" --live-view`, which
-  prints the watch URL as it starts; or
+  prints the watch URL as it starts (repeated execs continue the same session
+  and conversation; `--fresh` starts over); or
 - have the user run `betterwright view` themselves for a hands-on session with
-  the same logged-in profile — but not while a `repl` session is active: the
-  profile has a single holder, and the second process gets a blank ephemeral one.
+  the same logged-in profile — after `betterwright close`: the profile has a
+  single holder (the session daemon), and a second holder gets a blank
+  ephemeral profile.
 Never claim a live view is running unless one of these actually produced a URL.
 
 Network access is policy-guarded. Loopback and the private network are reachable
