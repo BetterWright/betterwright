@@ -72,6 +72,8 @@ import {
   scrollWheel,
   typeText,
 } from "./human.mjs";
+import { createLiveViewServer } from "./live-view.mjs";
+import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.mjs";
 import {
   acquireProfileLock,
   PROFILE_LOCK_HEARTBEAT_MS,
@@ -157,6 +159,10 @@ let downloadGuardReady = false;
 let currentDownloadBehavior = "deny";
 let approvedDownloadSession = null;
 let vaultCapture = null;
+// The opt-in live-view server (live-view.mjs). Lives in this process because
+// the CDP sessions frames come from are worker-internal; started only by an
+// explicit live_view_start message from the host, loopback + token by default.
+let liveView = null;
 
 const sessions = new Map();
 const pageToSession = new WeakMap();
@@ -1483,6 +1489,11 @@ async function ensureBrowser(config) {
       downloadGuardReady = false;
       disposeVaultCapture();
       releaseProfileLock();
+      // The stream has nothing left to show once the browser is gone; stop the
+      // server so viewers see a clean "ended" screen instead of a dead canvas.
+      const closingLiveView = liveView;
+      liveView = null;
+      if (closingLiveView) void closingLiveView.stop().catch(() => {});
     });
     await installContextGuard(launchedContext);
     await installDownloadGuard(launchedContext);
@@ -4653,6 +4664,8 @@ async function execute(message) {
   activeExecutionRequestId = String(message.id || "");
   activePendingCredentialRecovery = null;
   activeCredentialGenerationStarted = false;
+  // Viewer status pill: the agent is driving for the duration of this execute.
+  liveView?.setAgentState("driving");
   try {
     assertRedactionCapacity();
     await ensureBrowser(message.config);
@@ -4817,6 +4830,7 @@ async function execute(message) {
     execution.acceptingCredentialTasks = false;
     stampModelActivity(session);
     if (approvedDownloadSession === session.id) approvedDownloadSession = null;
+    liveView?.setAgentState("idle");
     activeExecutionSession = null;
     activeExecutionRequestId = null;
     activePendingCredentialRecovery = null;
@@ -4825,6 +4839,207 @@ async function execute(message) {
       setImmediate(() => {
         void shutdown().finally(() => process.exit(1));
       });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Live view + human handoff (live-view.mjs). These handlers run outside the
+// executeQueue on purpose: a viewer must attach, and a handoff must resolve,
+// while an execute is in flight — and a pending handoff must never block a
+// later execute.
+
+function liveViewPages() {
+  const entries = [];
+  for (const [sessionId, session] of sessions) {
+    for (const [id, page] of session.pages) {
+      if (page.isClosed()) continue;
+      entries.push({
+        id,
+        page,
+        sessionId,
+        active: session.currentId === id,
+      });
+    }
+  }
+  return entries;
+}
+
+let liveViewPreferredSession = "default";
+
+function ensureLiveView(preferredSessionId) {
+  liveViewPreferredSession = String(preferredSessionId || "default");
+  liveView ??= createLiveViewServer({
+    html: liveViewHtml,
+    loginHtml: liveViewLoginHtml,
+    listPages: liveViewPages,
+    preferredPage: () => {
+      const session = sessions.get(liveViewPreferredSession);
+      const page = session?.currentId ? session.pages.get(session.currentId) : null;
+      return page && !page.isClosed() ? page : null;
+    },
+    newCDPSession: (page) => browserContext.newCDPSession(page),
+    onHumanActivity: (page) => {
+      const sessionId = pageToSession.get(page);
+      // Human input keeps the owning session warm exactly like model activity,
+      // so the idle reaper never closes tabs under a person's hands.
+      if (sessionId) sessionFor(sessionId);
+    },
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
+  return liveView;
+}
+
+async function liveViewStart(message) {
+  try {
+    await ensureBrowser(message.config);
+    const options = message.options && typeof message.options === "object" ? message.options : {};
+    const view = ensureLiveView(options.session);
+    const info = await view.start(options);
+    sendResult({ type: "result", id: message.id, ...info });
+  } catch (error) {
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: false,
+      error: redactText(error?.message || String(error)),
+    });
+  }
+}
+
+async function liveViewStop(message) {
+  try {
+    const view = liveView;
+    liveView = null;
+    await view?.stop();
+    sendResult({ type: "result", id: message.id, ok: true, running: false });
+  } catch (error) {
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: false,
+      error: redactText(error?.message || String(error)),
+    });
+  }
+}
+
+function liveViewStatus(message) {
+  const info = liveView ? liveView.status() : { ok: true, running: false };
+  sendResult({ type: "result", id: message.id, ...info });
+}
+
+async function handoffWait(message) {
+  const session = sessionFor(message.sessionId);
+  try {
+    if (!liveView?.running) {
+      throw new Error("Live view is not running; start it before requesting a handoff.");
+    }
+    // The reaper hold used by the ask flow: pages stay alive for the whole
+    // human turn even if it outlasts the idle timeout.
+    session.awaitingAnswerSince = Date.now();
+    const outcome = await liveView.beginHandoff(String(message.prompt || ""), {
+      timeoutMs: Math.max(Number(message.timeoutMs) || 0, 1_000),
+    });
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: true,
+      action: outcome.action,
+      note: redactText(outcome.note || ""),
+    });
+  } catch (error) {
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: false,
+      error: redactText(error?.message || String(error)),
+    });
+  } finally {
+    session.awaitingAnswerSince = null;
+  }
+}
+
+async function askWait(message) {
+  const session = sessionFor(message.sessionId);
+  try {
+    if (!liveView?.running) {
+      throw new Error("Live view is not running; start it before requesting an ask.");
+    }
+    session.awaitingAnswerSince = Date.now();
+    const options = Array.isArray(message.options) ? message.options : [];
+    const outcome = await liveView.beginAsk(String(message.question || ""), {
+      options,
+      timeoutMs: Math.max(Number(message.timeoutMs) || 0, 1_000),
+    });
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: true,
+      action: outcome.action,
+      answer: redactText(outcome.answer || ""),
+    });
+  } catch (error) {
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: false,
+      error: redactText(error?.message || String(error)),
+    });
+  } finally {
+    session.awaitingAnswerSince = null;
+  }
+}
+
+function liveViewChatPost(message) {
+  try {
+    if (!liveView?.running) {
+      sendResult({
+        type: "result",
+        id: message.id,
+        ok: false,
+        error: "Live view is not running.",
+      });
+      return;
+    }
+    const posted = liveView.postChat({
+      role: String(message.role || "agent"),
+      text: String(message.text || ""),
+      kind: message.kind ? String(message.kind) : undefined,
+    });
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: true,
+      message: posted,
+    });
+  } catch (error) {
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: false,
+      error: redactText(error?.message || String(error)),
+    });
+  }
+}
+
+function liveViewChatDrain(message) {
+  try {
+    const messages = liveView?.running ? liveView.drainHumanMessages() : [];
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: true,
+      messages: messages.map((item) => ({
+        text: redactText(item.text || ""),
+        at: item.at,
+      })),
+    });
+  } catch (error) {
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: false,
+      error: redactText(error?.message || String(error)),
+    });
   }
 }
 
@@ -4841,6 +5056,17 @@ async function performShutdown() {
   const ephemeralProfileDir = profileLock?.ephemeral
     ? profileLock.profileDir
     : null;
+  const closingLiveView = liveView;
+  liveView = null;
+  try {
+    // Worker teardown (restart or host close) drops viewer sockets without
+    // the terminal "bye": viewers reconnect, and if the host revives the
+    // view in a replacement worker (same port + token) they resume
+    // seamlessly. Only an explicit live_view_stop announces the end.
+    await closingLiveView?.stop({ notify: false });
+  } catch {
+    /* parent/process exit */
+  }
   await closeDownloadGuard();
   disposeVaultCapture();
   try {
@@ -4911,15 +5137,33 @@ input.on("line", (line) => {
       () => credentialPending(message),
     );
   }
+  // Live-view control runs outside the executeQueue: viewers attach and
+  // handoffs/asks resolve while executes are in flight, and a pending human
+  // wait must never block a queued execute (or vice versa).
+  if (message.type === "live_view_start") void liveViewStart(message);
+  if (message.type === "live_view_stop") void liveViewStop(message);
+  if (message.type === "live_view_status") liveViewStatus(message);
+  if (message.type === "live_view_chat_post") liveViewChatPost(message);
+  if (message.type === "live_view_chat_drain") liveViewChatDrain(message);
+  if (message.type === "handoff_wait") void handoffWait(message);
+  if (message.type === "ask_wait") void askWait(message);
 });
+// A worker whose host is gone must never linger: if graceful shutdown wedges
+// (e.g. a browser transport died mid-teardown), force the exit after a grace
+// period so self-hosters cannot leak orphaned workers holding ports.
+function exitAfterShutdown(code) {
+  const failsafe = setTimeout(() => process.exit(code), 15_000);
+  failsafe.unref?.();
+  void shutdown().finally(() => process.exit(code));
+}
 input.on("close", () => {
-  void shutdown().finally(() => process.exit(0));
+  exitAfterShutdown(0);
 });
 process.on("SIGTERM", () => {
-  void shutdown().finally(() => process.exit(0));
+  exitAfterShutdown(0);
 });
 process.on("SIGINT", () => {
-  void shutdown().finally(() => process.exit(130));
+  exitAfterShutdown(130);
 });
 
 const idleReaper = setInterval(() => {

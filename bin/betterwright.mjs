@@ -9,17 +9,22 @@
 //   betterwright run <file|-|-c>  execute a Playwright snippet
 //   betterwright repl             run blank-line-separated snippets from stdin
 //   betterwright exec <task>      run a task with BetterWright's own agent loop
+//   betterwright view             live web view of the browser (watch/take over)
 //   betterwright auth --login <p> OAuth sign-in for a model backend (codex|grok)
 //   betterwright skill            print paste-ready agent instructions
+//                                 (--claude: SKILL.md to stdout; --install:
+//                                 write ~/.claude/skills/browser/SKILL.md)
 //   betterwright skills [list|show]  read on-demand site/provider knowledge packs
 //   betterwright mcp              serve the MCP stdio server (needs the MCP SDK)
 //
 // run/repl flags: --headed, network flags (--block-private-network,
 // --block-loopback, --allow-host/--block-host), and --stealth (isolated-world
 // driver that evades main-world automation detection; needs patchright-core).
+// run only: --approve-downloads (one bounded download-enabled run).
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
@@ -29,8 +34,108 @@ import { installChromiumFork } from "../src/chromium-fork-install.mjs";
 import { makeLineReader } from "../src/cli-io.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
+import { defaultLiveViewListen, guessLanHost } from "../src/live-view.mjs";
 
 const require = createRequire(import.meta.url);
+
+/**
+ * Live-view options for CLI `--live-view` / `view`.
+ * Always defaults to LAN-reachable bind + publicHost (never localhost unless
+ * explicitly requested). Override with `--host` / env.
+ */
+function liveViewCliOptions(argv = process.argv, { required = false } = {}) {
+  const flags = new Set(argv.filter((token) => token.startsWith("--")));
+  if (!required && !flags.has("--live-view")) return undefined;
+  const lan = defaultLiveViewListen();
+  const host = String(
+    flagValue(argv, "--host", process.env.BETTERWRIGHT_LIVE_VIEW_HOST || lan.host),
+  );
+  const port = Number(
+    flagValue(argv, "--port", process.env.BETTERWRIGHT_LIVE_VIEW_PORT || 0),
+  ) || 0;
+  const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const wildcard = host === "0.0.0.0" || host === "::" || host === "";
+  const publicHost = String(
+    flagValue(
+      argv,
+      "--public-host",
+      process.env.BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST ||
+        (loopback ? host : wildcard ? lan.publicHost || guessLanHost() : host),
+    ),
+  );
+  // One-word hosting presets; an explicit --host wins over --expose (and over
+  // an expose preset stored in config.json, hence the explicit empty string).
+  let expose = String(
+    flagValue(argv, "--expose", process.env.BETTERWRIGHT_LIVE_VIEW_EXPOSE || ""),
+  )
+    .trim()
+    .toLowerCase();
+  if (expose && flags.has("--host")) {
+    process.stderr.write("--host overrides --expose; ignoring --expose.\n");
+    expose = "";
+  }
+  // The password comes from config.json (`betterwright view --set-password`)
+  // or the env var — never a flag, so it stays out of shell history and ps.
+  const password = String(process.env.BETTERWRIGHT_LIVE_VIEW_PASSWORD || "");
+  return {
+    host,
+    port,
+    publicHost,
+    interactive: !flags.has("--watch-only"),
+    ...(expose || flags.has("--host") ? { expose } : {}),
+    ...(password ? { password } : {}),
+  };
+}
+
+/** Prompt on the TTY with echo suppressed (for --set-password). */
+async function promptHidden(question) {
+  const { createInterface } = await import("node:readline");
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    let muted = false;
+    const write = rl._writeToOutput?.bind(rl);
+    rl._writeToOutput = (text) => {
+      if (!muted) write?.(text);
+    };
+    rl.question(question, (answer) => {
+      muted = false;
+      rl.close();
+      process.stdout.write("\n");
+      resolve(answer);
+    });
+    muted = true;
+  });
+}
+
+/** `view --set-password` / `--clear-password`: manage the stored password hash. */
+async function cmdViewPassword(flags) {
+  const { saveLiveViewPassword, liveViewConfigPath } = await import("../src/live-view-config.mjs");
+  const { dim } = styler();
+  if (flags.has("--clear-password")) {
+    const file = saveLiveViewPassword(null);
+    console.log(`Live-view password cleared (${file}).`);
+    return 0;
+  }
+  if (!process.stdin.isTTY) {
+    console.error("--set-password needs an interactive terminal.");
+    return 1;
+  }
+  const first = await promptHidden("New live-view password: ");
+  if (first.length < 4) {
+    console.error("Password must be at least 4 characters.");
+    return 1;
+  }
+  const second = await promptHidden("Repeat it: ");
+  if (first !== second) {
+    console.error("Passwords did not match — nothing saved.");
+    return 1;
+  }
+  const file = saveLiveViewPassword(first);
+  console.log(`Live-view password saved (hashed) to ${file}.`);
+  console.log(dim("Every live view (view, exec --live-view, MCP handoffs) now requires it."));
+  console.log(dim(`Config path: ${liveViewConfigPath()} — remove with \`betterwright view --clear-password\`.`));
+  return 0;
+}
 
 function policyFromFlags(flags) {
   // Private networks and loopback are open by default; --block-private-network
@@ -167,7 +272,12 @@ async function cmdRun(arg, flags) {
   const code = await readSnippet(arg);
   const bw = new BetterWright({ policy: policyFromFlags(flags), headless: !flags.has("--headed"), ...cloakingFromFlags(flags) });
   try {
-    const result = await bw.run(code);
+    // One bounded download-enabled run; the skill instructs agents to get
+    // explicit user approval before passing this (MCP/Pi elicit instead).
+    const result = await bw.run(
+      code,
+      flags.has("--approve-downloads") ? { approvedDownloads: true } : undefined,
+    );
     console.log(JSON.stringify(result, null, 2));
     return result.ok ? 0 : 1;
   } finally {
@@ -207,12 +317,26 @@ open pages — read the named pack with \`betterwright skills show <name>\` befo
 improvising on that site. \`betterwright skills list\` shows what is available;
 read the \`credential-manager\` pack before any login, signup, or checkout.
 
+The user can watch the browser live (and take over for MFA or tough steps). If
+your host exposes a handoff or live-view tool (MCP \`browser_handoff\`, Pi), use
+that — start it first, relay its URL to the user verbatim (it embeds the access
+token), then keep working. From the plain CLI, snippets cannot start the viewer
+(sealed by design); when the user asks for a live view:
+- delegate the whole task to \`betterwright exec "<task>" --live-view\`, which
+  prints the watch URL as it starts; or
+- have the user run \`betterwright view\` themselves for a hands-on session with
+  the same logged-in profile — but not while a \`repl\` session is active: the
+  profile has a single holder, and the second process gets a blank ephemeral one.
+Never claim a live view is running unless one of these actually produced a URL.
+
 Network access is policy-guarded. Loopback and the private network are reachable
 by default; add \`--block-private-network\` / \`--block-loopback\` to lock down, or
 \`--allow-host <host>\` / \`--block-host <host>\` to adjust. Cloud-metadata endpoints
 are always blocked.
 
-Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet".`;
+Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet", and the
+"approval-gated download tool" is \`betterwright run --approve-downloads\`: one
+bounded download-enabled run, used only after the user explicitly approves.`;
 
 // YAML frontmatter for `skill --claude`, so the output is a complete Claude
 // Code SKILL.md.
@@ -223,6 +347,22 @@ description: Drive a persistent, policy-guarded real web browser via the betterw
 
 function cmdSkill(flags) {
   const body = `${SKILL_PREAMBLE}\n\n${agentSystemPrompt()}`;
+  if (flags.has("--install")) {
+    // Claude Code personal skill: ~/.claude/skills/browser/SKILL.md. The file
+    // is generated (not vendored) so it always matches this CLI's version —
+    // rerun after `betterwright update` or an npm upgrade.
+    const dir = path.join(os.homedir(), ".claude", "skills", "browser");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "SKILL.md");
+    fs.writeFileSync(file, `${CLAUDE_SKILL_FRONTMATTER}\n\n${body}\n`);
+    console.log(`Installed ${file}`);
+    console.log(
+      "Claude Code picks it up automatically. Rerun this after upgrading " +
+        "betterwright; for other agents, `betterwright skill` prints the same " +
+        "instructions to paste anywhere.",
+    );
+    return 0;
+  }
   console.log(flags.has("--claude") ? `${CLAUDE_SKILL_FRONTMATTER}\n\n${body}` : body);
   return 0;
 }
@@ -392,9 +532,21 @@ async function cmdInteractive(flags) {
           modelOptions,
           session,
           history,
-          onStep: ({ step, tool, note }) => {
+          liveView: liveViewCliOptions(process.argv),
+          onStep: ({ step, tool, note, url }) => {
             // `ask` is rendered by the askUser handler below; skip it here.
             if (tool === "ask") return;
+            // Live-view / handoff URLs are for the human — print them loud,
+            // not as a dim progress line.
+            if (url && (tool === "handoff" || tool === "liveView")) {
+              console.log(`\n  ${bold(tool === "handoff" ? "▶ The agent needs your hands:" : "▶ Watch live:")} ${url}`);
+              if (tool === "handoff") console.log(dim(`    ${note}\n`));
+              return;
+            }
+            if (tool === "liveView" && note) {
+              console.log(dim(`  ! ${note}`));
+              return;
+            }
             process.stdout.write(`${dim(`  · [${step}] ${tool}${note ? `: ${note}` : ""}`)}\n`);
           },
           askUser: async ({ question, options }) => {
@@ -445,7 +597,7 @@ async function cmdExec(flags) {
   const task = argv.slice(3).find((token) => !token.startsWith("-"));
   if (!task) {
     console.error(
-      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort|--reasoning <level>] [--session <name>] [--headed]',
+      'Usage: betterwright exec "<task>" [--model claude|codex|grok|<model-id>] [--model-id <id>] [--effort|--reasoning <level>] [--session <name>] [--headed] [--live-view] [--expose lan|local|tailscale] [--host <ip>] [--port <n>] [--public-host <ip>]',
     );
     return 1;
   }
@@ -465,8 +617,22 @@ async function cmdExec(flags) {
       session: flagValue(argv, "--session", "default"),
       policy: policyFromFlags(flags),
       headless: !flags.has("--headed"),
-      onStep: ({ step, tool, note }) =>
-        process.stderr.write(`  [${step}] ${tool}${note ? `: ${note}` : ""}\n`),
+      // --live-view starts the viewer at step 0 so the whole run can be
+      // watched; without it the handoff tool still starts one on demand.
+      // Host/port come from --host / env (default 0.0.0.0 + LAN publicHost).
+      liveView: liveViewCliOptions(argv),
+      onStep: ({ step, tool, note, url }) => {
+        if (url && (tool === "handoff" || tool === "liveView")) {
+          process.stderr.write(`\n  ▶ ${tool === "handoff" ? "HANDOFF" : "LIVE VIEW"}: ${url}\n`);
+          if (tool === "handoff") process.stderr.write(`    ${note}\n\n`);
+          return;
+        }
+        if (tool === "liveView" && note) {
+          process.stderr.write(`  ! ${note}\n`);
+          return;
+        }
+        process.stderr.write(`  [${step}] ${tool}${note ? `: ${note}` : ""}\n`);
+      },
     });
   } catch (error) {
     // Config problems (missing credentials, missing SDK) read better as a plain
@@ -496,6 +662,67 @@ async function cmdExec(flags) {
     ),
   );
   return result.ok ? 0 : 1;
+}
+
+// `view`: open a live, token-gated web view of this BetterWright browser and
+// hold it until Ctrl-C. This launches (or reuses) this process's own managed
+// browser — it is the remote-desktop shape: warm up logins by hand, drive a
+// headless VPS browser from your laptop, or watch what a later `exec` in the
+// same process would do. To watch an agent run live, prefer
+// `betterwright exec --live-view` / the interactive console, which stream the
+// agent's own browser.
+async function cmdView(flags) {
+  if (flags.has("--set-password") || flags.has("--clear-password")) {
+    return cmdViewPassword(flags);
+  }
+  const argv = process.argv;
+  const { dim, bold } = styler();
+  // Same host resolution as `exec --live-view` so view/exec behave alike.
+  const liveOpts = liveViewCliOptions(argv, { required: true });
+  const browser = new BetterWright({
+    policy: policyFromFlags(flags),
+    headless: !flags.has("--headed"),
+    ...cloakingFromFlags(flags),
+  });
+  try {
+    const view = await browser.startLiveView({
+      ...liveOpts,
+      session: flagValue(argv, "--session", "default"),
+    });
+    if (!view.ok || !view.url) {
+      console.error(view.error || "The live view failed to start.");
+      return 1;
+    }
+    // Give the viewer something to show before the first human navigation.
+    await browser.run("if (page.url() === 'about:blank') await page.goto('about:blank'); 'ready'");
+    console.log(`${bold("Live view:")} ${view.url}`);
+    const reach =
+      view.expose === "tailscale"
+        ? "devices on your tailnet (Tailscale)"
+        : view.expose === "local"
+          ? "only this machine (bring your own tunnel)"
+          : "devices on your local network";
+    console.log(
+      dim(
+        `who can open it: ${reach} · ${view.interactive ? "interactive" : "watch-only"} · ` +
+          (view.passwordProtected
+            ? "password required"
+            : "no password (set one with `betterwright view --set-password`)"),
+      ),
+    );
+    if (view.expose === "local" || ["127.0.0.1", "localhost", "::1"].includes(view.host)) {
+      console.log(dim(`tunnel it:  ssh -L ${view.port}:127.0.0.1:${view.port} <this-host>`));
+      console.log(dim(`       or:  cloudflared tunnel --url http://127.0.0.1:${view.port}`));
+    }
+    console.log(dim("The URL embeds a capability token — treat it like a password. Ctrl-C to stop."));
+    await new Promise((resolve) => {
+      process.once("SIGINT", resolve);
+      process.once("SIGTERM", resolve);
+    });
+    return 0;
+  } finally {
+    await browser.close();
+  }
 }
 
 // `auth --login codex|grok` / `auth --status`: OAuth sign-in for the built-in
@@ -581,7 +808,7 @@ async function main() {
     }
     if (flags.has("--help") || tokens.includes("-h")) {
       console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|view|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 0;
@@ -604,6 +831,8 @@ async function main() {
       return cmdRepl(flags);
     case "exec":
       return cmdExec(flags);
+    case "view":
+      return cmdView(flags);
     case "auth":
       return cmdAuth(rest);
     case "skill":
@@ -617,7 +846,7 @@ async function main() {
     }
     default:
       console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|view|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 1;

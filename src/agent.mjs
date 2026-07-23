@@ -70,11 +70,15 @@ const HARNESS_AUTONOMY_INTERACTIVE = `You are operating in an interactive sessio
 
 const HARNESS_PREAMBLE_TAIL = `When finished, end the task: either return \`{ finalAnswer }\` from the final \`browser\` call (preferred — saves a round-trip) or call the \`done\` tool with a clear answer for the user. On any task with a visible result, capture \`screenshot({kind: 'proof'})\` of the end state first — in the same \`browser\` call as your final action when you can. Finish exactly once.`;
 
+// Extra guidance when the live-view surface is available: chat, ask, and handoff.
+const HARNESS_HANDOFF_NOTE = `A live view is available for the human: they can watch the browser and send you freeform guidance in the chat (delivered between your turns — incorporate it and continue). An \`ask\` tool puts a question in that same chat and waits for their answer. A \`handoff\` tool gives them live interactive control of this same browser and pauses you until they click Done. Use \`handoff\` when human HANDS are needed in the browser (MFA/passkey, a resistant CAPTCHA, a login the vault cannot fill, a step they should perform personally); use \`ask\` when a typed answer suffices. After a handoff, re-observe before acting.`;
+
 // Assemble the harness preamble, choosing the autonomy paragraph by whether an
 // `ask` tool is available (interactive) or not (headless `exec`).
-function harnessPreamble({ withAsk } = {}) {
+function harnessPreamble({ withAsk, withHandoff } = {}) {
   const autonomy = withAsk ? HARNESS_AUTONOMY_INTERACTIVE : HARNESS_AUTONOMY_HEADLESS;
-  return `${HARNESS_PREAMBLE_HEAD}\n\n${autonomy}\n\n${HARNESS_PREAMBLE_TAIL}`;
+  const handoff = withHandoff ? `\n\n${HARNESS_HANDOFF_NOTE}` : "";
+  return `${HARNESS_PREAMBLE_HEAD}\n\n${autonomy}${handoff}\n\n${HARNESS_PREAMBLE_TAIL}`;
 }
 
 function taskSkillGuidance(task) {
@@ -108,6 +112,23 @@ const ASK_TOOL_PARAMETERS = {
     },
   },
   required: ["question"],
+};
+
+const HANDOFF_TOOL_DESCRIPTION = `Hand the live browser to the user and pause until they finish. Their view is the REAL session — cookies, logins, and page state carry over both ways. Use ONLY when human hands are genuinely needed in the browser itself: an MFA prompt or passkey, a CAPTCHA that resisted captcha.solve(), a login the vault cannot fill, or a consequential step the user should perform personally. Do not use it for typed answers (use ask) or for steps you can do yourself. The user is shown your reason and a live, interactive view of the browser; when they click Done (or Cancel), you resume — re-observe with snapshot({diff:true}) before acting, because the page state may have changed under their hands.`;
+
+const HANDOFF_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {
+    reason: {
+      type: "string",
+      description: "Why human hands are needed, shown to the user in the live viewer (e.g. 'Approve the MFA prompt for account ending 999').",
+    },
+    expectation: {
+      type: "string",
+      description: "Optional: what the page should look like when they are finished, so they know when to click Done.",
+    },
+  },
+  required: ["reason"],
 };
 
 const LOGIN_TOOL_PARAMETERS = {
@@ -186,7 +207,7 @@ function openaiUsage(usage) {
   };
 }
 
-function toolsForHarness({ withLogin, withAsk }) {
+function toolsForHarness({ withLogin, withAsk, withHandoff }) {
   const tools = [
     { name: "browser", description: BROWSER_TOOL_DESCRIPTION, parameters: BROWSER_TOOL_PARAMETERS },
     { name: "done", description: DONE_TOOL_DESCRIPTION, parameters: DONE_TOOL_PARAMETERS },
@@ -195,6 +216,8 @@ function toolsForHarness({ withLogin, withAsk }) {
     tools.push({ name: "login", description: LOGIN_TOOL_DESCRIPTION, parameters: LOGIN_TOOL_PARAMETERS });
   if (withAsk)
     tools.push({ name: "ask", description: ASK_TOOL_DESCRIPTION, parameters: ASK_TOOL_PARAMETERS });
+  if (withHandoff)
+    tools.push({ name: "handoff", description: HANDOFF_TOOL_DESCRIPTION, parameters: HANDOFF_TOOL_PARAMETERS });
   return tools;
 }
 
@@ -297,6 +320,14 @@ async function withinDeadline(operation, deadline) {
  * @param {object[]} [options.history] a prior transcript (from a previous call's
  *   `transcript`) to continue from, so a follow-up task can refer back to earlier
  *   work. Omit for a fresh, single-shot run.
+ * @param {boolean|object} [options.liveView] live browser view for the human.
+ *   Any value except `false` offers live-view chat (freeform guidance between
+ *   turns), a chat-backed `ask` tool, and `handoff` (pause + interactive
+ *   takeover, resume on Done) as long as a URL surface exists (`askUser` or
+ *   `onStep`). Pass `true` (or an options object forwarded to `startLiveView`)
+ *   to ALSO start the viewer at run start, so the user can watch the whole
+ *   task live while the agent works; the URL is emitted as
+ *   `onStep({tool: "liveView", url})`.
  * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
  */
 export async function runAgentTask(options = {}) {
@@ -327,17 +358,108 @@ export async function runAgentTask(options = {}) {
       ...(Object.hasOwn(options, "vault") ? { vault: options.vault } : {}),
     });
   const withLogin = Boolean(browser.vault);
-  const withAsk = Boolean(askUser);
+  // The handoff tool needs the live-view server (started on demand when the
+  // model calls it) plus somewhere to put the URL in front of the user.
+  const liveViewOption = options.liveView;
+  const withHandoff =
+    liveViewOption !== false &&
+    typeof browser.startLiveView === "function" &&
+    (Boolean(askUser) || typeof options.onStep === "function");
+  // Live view doubles as a chat + ask surface, so offer `ask` whenever the
+  // host provided askUser OR a live-view chat channel can answer.
+  const withAsk = Boolean(askUser) || withHandoff;
+  let agentStartedLiveView = false;
+  let liveViewReady = false;
+
+  async function ensureAgentLiveView() {
+    if (!withHandoff || typeof browser.startLiveView !== "function") return null;
+    try {
+      const view = await browser.startLiveView({
+        session,
+        ...(liveViewOption && typeof liveViewOption === "object" ? liveViewOption : {}),
+      });
+      if (view?.ok && view.url) {
+        if (!view.alreadyRunning) agentStartedLiveView = true;
+        liveViewReady = true;
+        return view;
+      }
+      // Explicit --live-view / options object: surface the failure so the URL
+      // absence is not silent. On-demand handoff stays quiet if start fails.
+      if (liveViewOption) {
+        onStep({
+          step: 0,
+          tool: "liveView",
+          note: `live view failed to start: ${view?.error || "no url returned"}`,
+        });
+      }
+    } catch (error) {
+      if (liveViewOption) {
+        onStep({
+          step: 0,
+          tool: "liveView",
+          note: `live view failed to start: ${error?.message || error}`,
+        });
+      }
+    }
+    return null;
+  }
+
+  async function postLiveChat({ text, kind, role = "agent" } = {}) {
+    if (!withHandoff || typeof browser.liveViewPostChat !== "function") return;
+    const body = String(text || "").trim();
+    if (!body) return;
+    try {
+      if (!liveViewReady) await ensureAgentLiveView();
+      if (!liveViewReady) return;
+      await browser.liveViewPostChat({ role, text: body, kind });
+    } catch {
+      /* chat mirror must never break the agent loop */
+    }
+  }
+
+  async function drainLiveChatIntoMessages() {
+    if (!withHandoff || typeof browser.liveViewDrainChat !== "function") return;
+    if (!liveViewReady) return;
+    try {
+      const drained = await browser.liveViewDrainChat();
+      const items = Array.isArray(drained?.messages) ? drained.messages : [];
+      const lines = items
+        .map((item) => String(item?.text || "").trim())
+        .filter(Boolean);
+      if (!lines.length) return;
+      messages.push({
+        role: "user",
+        text:
+          "The human sent guidance from the live view while you were working. " +
+          "Incorporate it and continue the task:\n\n" +
+          lines.map((line) => `- ${line}`).join("\n"),
+      });
+    } catch {
+      /* drain is best-effort */
+    }
+  }
+
+  function reportStep(event) {
+    onStep(event);
+    // Mirror progress into the live-view chat so watching feels alive.
+    // ask/handoff post their own chat lines when the wait begins; liveView is
+    // host-facing URL noise.
+    if (event?.tool === "liveView" || event?.tool === "ask" || event?.tool === "handoff") return;
+    const note = String(event?.note || "").trim();
+    const label = event?.tool ? String(event.tool) : "step";
+    const text = note || label;
+    void postLiveChat({ text, kind: label });
+  }
 
   const matchedSkills = taskSkillGuidance(task);
   const system = [
-    harnessPreamble({ withAsk }),
+    harnessPreamble({ withAsk, withHandoff }),
     agentSystemPrompt(options.guardrails || {}),
     matchedSkills,
   ]
     .filter(Boolean)
     .join("\n\n");
-  const tools = toolsForHarness({ withLogin, withAsk });
+  const tools = toolsForHarness({ withLogin, withAsk, withHandoff });
   // Seed from a prior transcript when continuing a session (the interactive
   // console passes the previous task's transcript), so a follow-up task can refer
   // back to earlier work; otherwise start fresh.
@@ -362,6 +484,20 @@ export async function runAgentTask(options = {}) {
   const startedAt = Date.now();
   const deadline = startedAt + maxDurationMs;
   try {
+    // Explicitly enabled live view starts before step 1, so the user can watch
+    // the whole run (watch-only by default while the agent drives). Best
+    // effort: a failed viewer must never stop the task itself.
+    if (withHandoff && liveViewOption) {
+      const view = await ensureAgentLiveView();
+      if (view?.url) {
+        reportStep({ step: 0, tool: "liveView", note: `watch live: ${view.url}`, url: view.url });
+        await postLiveChat({
+          role: "system",
+          kind: "system",
+          text: "You can message the agent here — guidance is delivered between its turns. Use Take control or wait for a handoff to drive the browser.",
+        });
+      }
+    }
     // No step cap: the loop runs until the model finishes or the wall-clock
     // budget expires.
     for (steps = 1; ; steps += 1) {
@@ -369,6 +505,8 @@ export async function runAgentTask(options = {}) {
         reason = "context_limit";
         break;
       }
+      // Human freeform chat lands at turn boundaries (never mid-browser step).
+      await drainLiveChatIntoMessages();
       const response = await withinDeadline(
         (signal) => model.complete({ system, messages, tools, signal }),
         deadline,
@@ -411,7 +549,7 @@ export async function runAgentTask(options = {}) {
           continue;
         }
         if (call.name === "login") {
-          onStep({ step: steps, tool: "login", note: "filling credential" });
+          reportStep({ step: steps, tool: "login", note: "filling credential" });
           try {
             const remainingSeconds = Math.max(0.001, (deadline - Date.now()) / 1000);
             if (remainingSeconds <= 0.001) throw AGENT_TIMEOUT;
@@ -429,18 +567,42 @@ export async function runAgentTask(options = {}) {
         if (call.name === "ask") {
           const question = String(call.input?.question ?? "").trim();
           const choices = Array.isArray(call.input?.options) ? call.input.options.map(String) : [];
-          onStep({ step: steps, tool: "ask", note: question });
-          // The `ask` tool is only offered when askUser was provided, so this is
-          // reachable only in interactive mode; still guard against a stray call.
-          if (!askUser) {
+          reportStep({ step: steps, tool: "ask", note: question });
+          if (!askUser && !withHandoff) {
             results.push({ id: call.id, name: call.name, content: "No user is available to answer in this run." });
             continue;
           }
           try {
-            const reply = String((await withinDeadline(
-              (signal) => askUser({ question, options: choices, signal }),
-              deadline,
-            )) ?? "").trim();
+            const remainingSeconds = Math.max(5, Math.floor((deadline - Date.now()) / 1000));
+            let reply = "";
+            // Prefer the live-view chat when the viewer surface is available;
+            // fall back to the host's askUser (CLI) when it is not.
+            const canLiveAsk =
+              withHandoff && typeof browser.waitForAsk === "function";
+            if (canLiveAsk) {
+              const view = await withinDeadline(() => ensureAgentLiveView(), deadline);
+              if (view?.url) {
+                const outcome = await withinDeadline(
+                  () =>
+                    browser.waitForAsk({
+                      session,
+                      question,
+                      options: choices,
+                      timeout: remainingSeconds,
+                    }),
+                  deadline,
+                );
+                if (!outcome?.ok) throw new Error(outcome?.error || "the ask failed");
+                if (outcome.action === "answer")
+                  reply = String(outcome.answer || "").trim();
+              }
+            }
+            if (!reply && askUser) {
+              reply = String((await withinDeadline(
+                (signal) => askUser({ question, options: choices, signal }),
+                deadline,
+              )) ?? "").trim();
+            }
             results.push({
               id: call.id,
               name: call.name,
@@ -452,9 +614,52 @@ export async function runAgentTask(options = {}) {
           }
           continue;
         }
+        if (call.name === "handoff") {
+          const handoffReason =
+            String(call.input?.reason ?? "").trim() ||
+            "The agent needs your hands in the browser.";
+          const expectation = String(call.input?.expectation ?? "").trim();
+          if (!withHandoff) {
+            results.push({ id: call.id, name: call.name, content: "Handoff is not available in this run." });
+            continue;
+          }
+          try {
+            const view = await withinDeadline(() => ensureAgentLiveView(), deadline);
+            if (!view?.ok || !view.url)
+              throw new Error(view?.error || "the live view failed to start");
+            const prompt = expectation ? `${handoffReason} — done when: ${expectation}` : handoffReason;
+            reportStep({
+              step: steps,
+              tool: "handoff",
+              note: `${handoffReason} — open ${view.url} and click Done when finished`,
+              url: view.url,
+              prompt,
+            });
+            // The viewer's Done/Cancel buttons are the single ack channel; the
+            // remaining wall-clock budget bounds the wait on both sides.
+            const remainingSeconds = Math.max(5, Math.floor((deadline - Date.now()) / 1000));
+            const outcome = await withinDeadline(
+              () => browser.waitForHandoff({ session, prompt, timeout: remainingSeconds }),
+              deadline,
+            );
+            if (!outcome?.ok) throw new Error(outcome?.error || "the handoff failed");
+            const humanNote = String(outcome.note || "").trim();
+            const content =
+              outcome.action === "done"
+                ? `Human handoff finished (done).${humanNote ? ` Human note: ${humanNote}` : ""} The page state may have changed under their hands — re-observe with snapshot({diff:true}) before acting.`
+                : outcome.action === "cancel"
+                  ? `The user cancelled the handoff${humanNote ? ` with note: ${humanNote}` : ""}. Treat this step as blocked — do not retry the handoff; finish with what you have or report the blocker.`
+                  : "The handoff timed out with no human response. Treat this step as blocked and report it in your answer.";
+            results.push({ id: call.id, name: call.name, content });
+          } catch (error) {
+            if (error === AGENT_TIMEOUT) throw error;
+            results.push({ id: call.id, name: call.name, content: `handoff error: ${error?.message || error}` });
+          }
+          continue;
+        }
         if (call.name === "browser") {
           const note = String(call.input?.note || "");
-          onStep({ step: steps, tool: "browser", note });
+          reportStep({ step: steps, tool: "browser", note });
           const remainingSeconds = Math.max(0.001, (deadline - Date.now()) / 1000);
           if (remainingSeconds <= 0.001) throw AGENT_TIMEOUT;
           // BetterWright's own timeout path terminates and restarts the worker,
@@ -482,6 +687,9 @@ export async function runAgentTask(options = {}) {
       messages.push({ role: "tool", results });
       if (finished) break;
     }
+    if (finished && answer) {
+      await postLiveChat({ text: answer, kind: "done" });
+    }
   } catch (error) {
     if (error === AGENT_TIMEOUT) reason = "timeout";
     else throw error;
@@ -489,6 +697,15 @@ export async function runAgentTask(options = {}) {
     // Measure task wall-clock before tearing down an owned browser, so the
     // reported time is the work, not the teardown.
     durationMs = Date.now() - startedAt;
+    // Stop only a viewer this run started; a live view the host was already
+    // running (e.g. `betterwright view`) is not ours to tear down.
+    if (agentStartedLiveView && !ownsBrowser) {
+      try {
+        await browser.stopLiveView();
+      } catch {
+        /* viewer teardown is best effort */
+      }
+    }
     if (ownsBrowser) await browser.close();
   }
 
@@ -638,14 +855,24 @@ export function claudeModel(options = {}) {
     modelId,
     async complete({ system, messages, tools, signal }) {
       const anthropic = await client();
+      // Anthropic prompt caching is opt-in per request, so mark the two standard
+      // breakpoints: after the static prefix (tools + system) and on the final
+      // message, so each turn reads the whole prior conversation from cache and
+      // writes only the new tail. Prompts under the model's cacheable minimum
+      // just ignore the marks.
+      const mapped = anthropicMessages(messages);
+      const lastBlock = mapped.at(-1)?.content.at(-1);
+      if (lastBlock) lastBlock.cache_control = { type: "ephemeral" };
       const message = await anthropic.messages.create(
         {
           model: modelId,
           max_tokens: maxTokens,
-          system,
+          system: system
+            ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+            : undefined,
           output_config: { effort },
           tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })),
-          messages: anthropicMessages(messages),
+          messages: mapped,
         },
         { signal },
       );

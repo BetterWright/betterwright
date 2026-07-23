@@ -25,6 +25,16 @@
 //     BETTERWRIGHT_BLOCK_HOSTS=ads.com     always-block list (comma-separated)
 //     BETTERWRIGHT_DOWNLOAD_POLICY=ask     ask (default), allow, or deny downloads
 //     BETTERWRIGHT_HEADLESS=0              run the managed browser headed
+//     BETTERWRIGHT_TIMEZONE=<IANA tz>      pin the browser timezone to the egress
+//                                          geography (unset: host timezone)
+//     BETTERWRIGHT_LOCALE=<locale>         browser locale for the same identity
+//     BETTERWRIGHT_LIVE_VIEW_HOST=...      live-view bind host (default 127.0.0.1)
+//     BETTERWRIGHT_LIVE_VIEW_PORT=...      live-view port (default ephemeral)
+//     BETTERWRIGHT_LIVE_VIEW=1             allow a non-loopback live-view host
+//     BETTERWRIGHT_LIVE_VIEW_EXPOSE=...    lan | local | tailscale hosting preset
+//     BETTERWRIGHT_LIVE_VIEW_PASSWORD=...  require a password to open the live view
+//     (live-view settings persist in <home>/config.json too — see docs/live-view.md;
+//     `betterwright view --set-password` stores a hashed password there)
 //
 // Screenshots are returned as native MCP image content, so a client renders
 // them directly — you never hand it a file path or guess a MIME type.
@@ -37,6 +47,7 @@ import {
 } from "./client.mjs";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
 import { doctorReport } from "./doctor.mjs";
+import { loadLiveViewConfig } from "./live-view-config.mjs";
 import { piImageArtifacts, piImageContent } from "./pi.mjs";
 import { VAULT_MATCH_MODES } from "./vault.mjs";
 
@@ -86,6 +97,42 @@ export function headlessFromEnv(env = process.env) {
   // explicit BETTERWRIGHT_HEADLESS=0/1 when the deployer sets one.
   if (!String(env.BETTERWRIGHT_HEADLESS || "").trim()) return "auto";
   return boolEnv(env, "BETTERWRIGHT_HEADLESS");
+}
+
+export function liveViewFromEnv(env = process.env, fileConfig = loadLiveViewConfig()) {
+  // Default bind is LAN-reachable (0.0.0.0). Non-loopback still requires the
+  // deployer opt-in BETTERWRIGHT_LIVE_VIEW=1 for MCP exposure. Persistent
+  // settings from <home>/config.json apply beneath the env overrides, so
+  // `betterwright view --set-password` also protects MCP-started views.
+  const host =
+    String(env.BETTERWRIGHT_LIVE_VIEW_HOST || "").trim() ||
+    (typeof fileConfig.host === "string" && fileConfig.host) ||
+    "0.0.0.0";
+  return {
+    enabled: boolEnv(env, "BETTERWRIGHT_LIVE_VIEW"),
+    host,
+    port:
+      Number(env.BETTERWRIGHT_LIVE_VIEW_PORT) || Number(fileConfig.port) || 0,
+    publicHost:
+      String(env.BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST || "").trim() ||
+      fileConfig.publicHost ||
+      undefined,
+    expose:
+      String(env.BETTERWRIGHT_LIVE_VIEW_EXPOSE || "").trim().toLowerCase() ||
+      fileConfig.expose ||
+      undefined,
+    password:
+      String(env.BETTERWRIGHT_LIVE_VIEW_PASSWORD || "") ||
+      fileConfig.password ||
+      undefined,
+    passwordHash: fileConfig.passwordHash || undefined,
+  };
+}
+
+function isLoopbackHost(host) {
+  return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(
+    String(host || "").toLowerCase(),
+  );
 }
 
 // The summary keys deliberately match a single documented shape (snake_case
@@ -268,6 +315,61 @@ const RUN_INPUT_SCHEMA = {
   required: ["code"],
 };
 
+const HANDOFF_DESCRIPTION = `Give the user a live web view of this browser — to watch you work, or to take over (human handoff).
+
+Start it in two situations:
+- The user asks to watch: "live view", "show me", "watch you", "share the
+  browser". Start it FIRST, relay the URL, then do the task while they watch.
+  Never claim a live view is running unless this tool returned its URL.
+- Human hands are needed in the real session — an MFA prompt or passkey, a
+  CAPTCHA that resisted captcha.solve(), a login the vault cannot fill, or a
+  consequential step the user should perform personally. Cookies and page
+  state carry over both ways.
+
+action "start" returns a URL: relay it to the user VERBATIM (it embeds a
+capability token — never log or share it elsewhere) and tell them what to do
+in the page. For a handoff, call action "status" to see when they are done
+(viewers count, current handoff state) before resuming browser calls, and
+re-read the page with a snapshot afterwards. When they are only watching,
+just keep working — the view follows your session. action "stop" ends the
+view; do not stop a view the user asked for while they may still be watching.
+While a view is running, anything the user types in its chat box is delivered
+to you appended to browser tool results (and under "userChat" in action
+"status") — treat those lines as fresh user instructions. Your "note" on each
+browser call is mirrored into that chat so the user can follow along; write
+notes for them. While they watch, prefer opening comparison pages via
+openPage() — every open tab appears in the viewer's tab strip and they can
+click between live thumbnails, whereas reusing one tab makes the view jump.
+The server binds 127.0.0.1 unless the deployer set
+BETTERWRIGHT_LIVE_VIEW_HOST / BETTERWRIGHT_LIVE_VIEW_EXPOSE (non-loopback
+hosts also require BETTERWRIGHT_LIVE_VIEW=1).`;
+
+const HANDOFF_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    action: {
+      type: "string",
+      enum: ["start", "status", "stop"],
+      description: "start the live view (default), check it, or stop it.",
+      default: "start",
+    },
+    reason: {
+      type: "string",
+      description: "Why the user is needed — include it in your message to them.",
+    },
+    session: {
+      type: "string",
+      description: "Which session's current tab streams first.",
+      default: "default",
+    },
+    interactive: {
+      type: "boolean",
+      description: "Allow the viewer to control the browser (default true).",
+      default: true,
+    },
+  },
+};
+
 async function loadSdk() {
   try {
     const [
@@ -329,6 +431,11 @@ function mcpTools(withLogin) {
     });
   }
   tools.push({
+    name: "browser_handoff",
+    description: HANDOFF_DESCRIPTION,
+    inputSchema: HANDOFF_INPUT_SCHEMA,
+  });
+  tools.push({
     name: "browser_doctor",
     description: "Report whether the BetterWright browser runtime is installed and ready.",
     inputSchema: { type: "object", properties: {} },
@@ -336,8 +443,84 @@ function mcpTools(withLogin) {
   return tools;
 }
 
-function createMcpHandlers({ browser, server, downloadPolicy }) {
+function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveViewFromEnv() }) {
   const withLogin = Boolean(browser.vault);
+  // Chat plumbing between the live-view page and the MCP client's model. The
+  // standalone agent harness drains viewer chat at its own turn boundaries;
+  // over MCP the host's loop is opaque, so the boundary is each tool call:
+  // notes go viewer-ward before a run, typed guidance rides back on results.
+  let liveViewActive = false;
+  const drainViewerChat = async () => {
+    if (!liveViewActive) return [];
+    try {
+      const drained = await browser.liveViewDrainChat();
+      return Array.isArray(drained?.messages) ? drained.messages : [];
+    } catch {
+      return [];
+    }
+  };
+  const viewerChatBlock = (messages) => ({
+    type: "text",
+    text:
+      "The user typed in the live-view chat while you worked — treat these " +
+      "as fresh user instructions:\n" +
+      messages.map((item) => `- ${String(item.text || "")}`).join("\n"),
+  });
+  const handleHandoff = async (args) => {
+    const action = String(args.action || "start");
+    if (action === "stop") {
+      const stopped = await browser.stopLiveView();
+      liveViewActive = false;
+      return { content: [{ type: "text", text: JSON.stringify(stopped) }] };
+    }
+    if (action === "status") {
+      const status = await browser.liveViewStatus();
+      liveViewActive = Boolean(status?.running);
+      const userChat = (await drainViewerChat()).map((item) => String(item.text || ""));
+      // Never echo the token back on status; start already returned the URL.
+      const { token: _token, url: _url, ...safe } = status;
+      return {
+        content: [
+          { type: "text", text: JSON.stringify(userChat.length ? { ...safe, userChat } : safe) },
+        ],
+      };
+    }
+    if (action !== "start") throw new Error(`Unknown browser_handoff action: ${action}`);
+    // "local" (loopback) never needs the opt-in; lan/tailscale — like any
+    // non-loopback bind host — require the deployer to set the env flag.
+    const reachesBeyondThisMachine = liveView.expose
+      ? liveView.expose !== "local"
+      : !isLoopbackHost(liveView.host);
+    if (reachesBeyondThisMachine && !liveView.enabled) {
+      throw new Error(
+        "The live view would be reachable beyond this machine; the deployer must " +
+          "set BETTERWRIGHT_LIVE_VIEW=1 to allow that (or set " +
+          "BETTERWRIGHT_LIVE_VIEW_EXPOSE=local for loopback-only).",
+      );
+    }
+    const view = await browser.startLiveView({
+      host: liveView.host,
+      port: liveView.port,
+      ...(liveView.publicHost ? { publicHost: liveView.publicHost } : {}),
+      ...(liveView.expose ? { expose: liveView.expose } : {}),
+      ...(liveView.password ? { password: liveView.password } : {}),
+      ...(liveView.passwordHash ? { passwordHash: liveView.passwordHash } : {}),
+      interactive: args.interactive !== false,
+      session: String(args.session || "default"),
+    });
+    if (!view.ok || !view.url) throw new Error(view.error || "The live view failed to start.");
+    liveViewActive = true;
+    const text =
+      `Live view started: ${view.url}\n\n` +
+      "Relay that URL to the user verbatim (it embeds a one-time capability " +
+      "token) and tell them exactly what to do in the page" +
+      (args.reason ? ` — reason: ${args.reason}` : "") +
+      ". If the URL is on 127.0.0.1 and they are remote, they can tunnel with " +
+      `\`ssh -L ${view.port}:127.0.0.1:${view.port} <host>\`. ` +
+      "Poll browser_handoff {action: \"status\"} to see when they are done, " +
+      "then re-observe the page with a snapshot before continuing.";
+    return { content: [{ type: "text", text }] };
+  };
   return {
     listTools: async () => ({ tools: mcpTools(withLogin) }),
     callTool: async (request) => {
@@ -350,7 +533,13 @@ function createMcpHandlers({ browser, server, downloadPolicy }) {
         }
         if (name === "browser_login" && withLogin) {
           const result = await browser.fillCredential(loginOptionsFromArgs(args));
-          return { content: await contentForResult(result) };
+          const chat = await drainViewerChat();
+          const content = await contentForResult(result);
+          if (chat.length) content.push(viewerChatBlock(chat));
+          return { content };
+        }
+        if (name === "browser_handoff") {
+          return await handleHandoff(args);
         }
         if (name !== "browser" && name !== "browser_download") {
           throw new Error(`Unknown tool: ${name}`);
@@ -368,8 +557,16 @@ function createMcpHandlers({ browser, server, downloadPolicy }) {
           if (downloadPolicy === "ask") await approveDownload(server, options.note);
           options.approvedDownloads = true;
         }
+        if (liveViewActive && options.note) {
+          await browser
+            .liveViewPostChat({ role: "agent", text: options.note, kind: "step" })
+            .catch(() => {});
+        }
         const result = await browser.run(String(args.code || ""), options);
-        return { content: await contentForResult(result) };
+        const chat = await drainViewerChat();
+        const content = await contentForResult(result);
+        if (chat.length) content.push(viewerChatBlock(chat));
+        return { content };
       } catch (error) {
         return {
           content: [{ type: "text", text: error?.message || String(error) }],
@@ -395,6 +592,15 @@ export async function runMcpServer(env = process.env, options = {}) {
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
+    // Identity must match egress geography (see docs/getting-started.md):
+    // a headless server whose exit IP sits in another country needs these
+    // pinned or geo-sensitive sites challenge every run.
+    ...(String(env.BETTERWRIGHT_TIMEZONE || "").trim()
+      ? { timezone: String(env.BETTERWRIGHT_TIMEZONE).trim() }
+      : {}),
+    ...(String(env.BETTERWRIGHT_LOCALE || "").trim()
+      ? { locale: String(env.BETTERWRIGHT_LOCALE).trim() }
+      : {}),
     ...(Object.hasOwn(options, "vault") ? { vault: options.vault } : {}),
   });
 
