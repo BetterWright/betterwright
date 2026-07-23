@@ -4900,6 +4900,30 @@ async function performShutdown() {
   }
 }
 
+// Explicitly close one session: close its pages and forget it, exactly like
+// the idle reaper would. Used by `betterwright close` (via the session daemon)
+// so an agent can end a persistent session before the TTL does.
+async function sessionClose(message) {
+  const sessionId = String(message.sessionId || "default");
+  const session = sessions.get(sessionId);
+  let pagesClosed = 0;
+  if (session) {
+    for (const page of session.pages.values()) {
+      if (page.isClosed()) continue;
+      pagesClosed += 1;
+      void page.close().catch(() => {});
+    }
+    sessions.delete(sessionId);
+  }
+  sendResult({
+    type: "result",
+    id: message.id,
+    ok: true,
+    closed: Boolean(session),
+    pagesClosed,
+  });
+}
+
 const input = readline.createInterface({
   input: process.stdin,
   crlfDelay: Infinity,
@@ -4945,6 +4969,14 @@ input.on("line", (line) => {
     executeQueue = executeQueue.then(
       () => credentialPending(message),
       () => credentialPending(message),
+    );
+  }
+  // Session teardown rides the executeQueue so pages never close under an
+  // in-flight execute on the same session.
+  if (message.type === "session_close") {
+    executeQueue = executeQueue.then(
+      () => sessionClose(message),
+      () => sessionClose(message),
     );
   }
   // Live-view control runs outside the executeQueue: viewers attach and

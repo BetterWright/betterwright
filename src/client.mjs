@@ -967,6 +967,28 @@ export class BetterWright {
   }
 
   /**
+   * Close one session's pages and forget its state (tabs, `state`, cursor)
+   * without touching the browser, the profile, or other sessions. Resolves
+   * with `{ok, closed, pagesClosed}`; a no-op when the worker is not running
+   * or the session does not exist.
+   * @param {string} [session="default"] session name
+   */
+  closeSession(session) {
+    return this._enqueue(async () => {
+      if (
+        !this._process ||
+        this._process.exitCode !== null ||
+        this._process.signalCode !== null
+      )
+        return { ok: true, closed: false, pagesClosed: 0 };
+      return this._dispatch(
+        { type: "session_close", sessionId: String(session || "default") },
+        30,
+      );
+    });
+  }
+
+  /**
    * Start (or return the already-running) live-view server in the worker: a
    * token-gated local web page that streams the live browser and, when
    * interactive, relays the viewer's mouse and keyboard into it.
