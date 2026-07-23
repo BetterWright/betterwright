@@ -11,11 +11,13 @@ you know which one you're in:
   over MCP, and the [JS API](javascript.md) embeds it in code. Your agent
   decides each browser step itself.
 - **Standalone — BetterWright drives.** You (or your agent) hand over a whole
-  task in plain language — `betterwright exec "<task>"` or the interactive
-  `betterwright` console — and BetterWright's own browser-tuned agent loop
-  does the driving, returning one JSON answer. A coding agent can treat this
-  as a browser *sub-agent*: one shell command in, one answer out, with the
-  entire browsing transcript kept out of its context. See [agent.md](agent.md).
+  task in plain language — `betterwright exec "<task>" --model <id>` or the
+  interactive `betterwright` console — and BetterWright's own browser-tuned
+  agent loop does the driving, returning one JSON answer. Pass a real model
+  id (Claude, Codex/GPT, Grok, Ollama, vLLM, OpenRouter, or any
+  OpenAI-compatible endpoint); see [agent.md](agent.md#choosing-a-model). A
+  coding agent can treat this as a browser *sub-agent*: one shell command in,
+  one answer out, with the entire browsing transcript kept out of its context.
 
 Both shapes share the same persistent sessions, credential vault, network
 policy, and token-efficient snapshots, so nothing below is shape-specific:
