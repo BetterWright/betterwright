@@ -1736,20 +1736,40 @@ test("runAgentTask never retries after the deadline aborts the model call", asyn
   assert.equal(calls.length, 1);
 });
 
-// Regression: the backoff timer used to be unref'd, so during a retry pause the
-// process had no ref'd handles left, Node drained the event loop, and the run
-// exited without ever retrying — `runAgentTask` simply never settled. Every
-// in-process assertion still "passed" locally because the test runner itself
-// held the loop open; only a real child process exposes it. The child does
-// nothing but retry, which is exactly the shape of a short-lived CLI run.
-test("a retry backoff keeps the process alive when it is the only pending work", async () => {
-  const dir = makeTempDir("bw-retry-liveness-");
-  const script = path.join(dir, "retry.mjs");
-  fs.writeFileSync(
-    script,
-    `import { runAgentTask } from ${JSON.stringify(pathToFileURL(path.resolve("src/agent.mjs")).href)};
+// Regression: both of the agent's internal timers were unref'd — the retry
+// backoff and the deadline watchdog. The watchdog was the operative bug: when a
+// model adapter's promise settles only on abort, that timer is the process's
+// last handle, so Node drained the loop and the run exited 0 with no output —
+// no timeout, no error, `runAgentTask` never settling. (The backoff unref was
+// masked by it, since the watchdog is armed during a pause; it is ref'd now so
+// a retry's liveness does not hinge on an unrelated timer.)
+//
+// This has to run in a real child process. In-process the assertions pass on
+// any Node version, because the test runner's own handles hold the loop open;
+// only a process doing nothing but the agent run exposes it, which is exactly
+// the shape of a short-lived CLI invocation.
+function runInChildProcess(name, body) {
+  const dir = makeTempDir(`bw-liveness-${name}-`);
+  const script = path.join(dir, "run.mjs");
+  const agentUrl = JSON.stringify(pathToFileURL(path.resolve("src/agent.mjs")).href);
+  fs.writeFileSync(script, `import { runAgentTask } from ${agentUrl};\n${body}`);
 
-let calls = 0;
+  const { status, stdout, stderr } = spawnSync(process.execPath, [script], {
+    encoding: "utf8",
+    cwd: path.resolve("."),
+    timeout: 30_000,
+  });
+  assert.equal(status, 0, `child failed: ${stderr}`);
+  // The failure mode is a silent exit 0, so empty stdout is the real signal —
+  // without this check the test would pass against the very bug it guards.
+  assert.notEqual(stdout, "", "child exited early instead of completing the run");
+  return JSON.parse(stdout);
+}
+
+test("a retry backoff keeps the process alive when it is the only pending work", () => {
+  const out = runInChildProcess(
+    "retry",
+    `let calls = 0;
 const model = {
   async complete() {
     calls += 1;
@@ -1762,16 +1782,24 @@ const result = await runAgentTask({ task: "x", model, browser });
 process.stdout.write(JSON.stringify({ answer: result.answer, calls }));
 `,
   );
+  assert.deepEqual(out, { answer: "recovered", calls: 2 });
+});
 
-  const { status, stdout, stderr } = spawnSync(process.execPath, [script], {
-    encoding: "utf8",
-    cwd: path.resolve("."),
-    timeout: 30_000,
-  });
-
-  // An unref'd backoff exits 0 with empty stdout: silent, and indistinguishable
-  // from success unless the output is checked.
-  assert.equal(status, 0, `child failed: ${stderr}`);
-  assert.notEqual(stdout, "", "child exited during the backoff without retrying");
-  assert.deepEqual(JSON.parse(stdout), { answer: "recovered", calls: 2 });
+test("the deadline watchdog still fires when the model call holds no handles", () => {
+  const out = runInChildProcess(
+    "deadline",
+    `const model = {
+  // Settles only on abort, so the watchdog is the process's only live handle.
+  async complete({ signal }) {
+    return new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  },
+};
+const browser = { async run() { return { ok: true }; }, async close() {} };
+const result = await runAgentTask({ task: "x", model, browser, maxDurationMs: 200 });
+process.stdout.write(JSON.stringify({ ok: result.ok, reason: result.reason }));
+`,
+  );
+  assert.deepEqual(out, { ok: false, reason: "timeout" });
 });
