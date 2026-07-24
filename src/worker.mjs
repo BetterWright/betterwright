@@ -54,8 +54,11 @@ import {
   validateCredentialMatchMode,
 } from "./credential-constants.mjs";
 import {
+  CREDENTIAL_FRAME_PROBE_MS,
   collectCredentialFrameDetections,
+  credentialProbeTimedOut,
   disposeCredentialFrameDetections,
+  withProbeDeadline,
 } from "./credential-target-scan.mjs";
 import {
   downloadBehaviorParams,
@@ -145,14 +148,47 @@ const STEALTH_WARNING =
   "as undefined. DOM access, clicks, and typing are unaffected.";
 let useSetContentCompatibility = false;
 let shutdownPromise = null;
-let activeExecutionSession = null;
-let activeExecutionRequestId = null;
-let activePendingCredentialRecovery = null;
-let activeCredentialGenerationStarted = false;
+// Which sessions are running model-driven code right now. A ref-count rather
+// than a plain set, so overlapping entry points on one session (an execute
+// that hands off to a credential fill) unwind in any order.
+const activeExecutionCounts = new Map();
+function beginExecutionFor(sessionId) {
+  const key = String(sessionId);
+  activeExecutionCounts.set(key, (activeExecutionCounts.get(key) || 0) + 1);
+}
+function endExecutionFor(sessionId) {
+  const key = String(sessionId);
+  const next = (activeExecutionCounts.get(key) || 0) - 1;
+  if (next > 0) activeExecutionCounts.set(key, next);
+  else activeExecutionCounts.delete(key);
+}
+function sessionIsExecuting(sessionId) {
+  return sessionId != null && activeExecutionCounts.has(String(sessionId));
+}
+/**
+ * The session to blame for a page whose owner is not yet known — a popup that
+ * opened before it was adopted, say. Meaningful only when exactly one session
+ * is executing; with several running at once, no honest attribution exists, so
+ * this returns null and the caller falls back to its neutral default.
+ */
+function soleExecutingSession() {
+  if (activeExecutionCounts.size !== 1) return null;
+  for (const key of activeExecutionCounts.keys()) return key;
+  return null;
+}
 let downloadCdpSession = null;
 let downloadGuardReady = false;
 let currentDownloadBehavior = "deny";
-let approvedDownloadSession = null;
+// Sessions whose currently-running execute was granted download approval.
+// A set rather than a scalar because two sessions can execute at once; the
+// download handler still matches the owning page's session against it, so an
+// approval never leaks sideways into another session's downloads.
+const approvedDownloadSessions = new Set();
+// Executes currently asking for an open download gate. The browser-level CDP
+// permission is one switch for the whole context, so it is reference-counted:
+// it opens for the first holder and closes after the last one leaves, instead
+// of the last execute to start stomping on a peer's approval.
+let downloadAllowHolders = 0;
 let vaultCapture = null;
 // The opt-in live-view server (live-view.mjs). Lives in this process because
 // the CDP sessions frames come from are worker-internal; started only by an
@@ -239,7 +275,28 @@ function secretCapacityRequiresRestart(error) {
 const pendingDownloadTasks = new Set();
 let rpcCounter = 0;
 let pageCounter = 0;
-let executeQueue = Promise.resolve();
+// One execute queue per session. Calls within a session stay strictly ordered
+// — a snippet must never land on pages another snippet is halfway through
+// changing — while separate sessions, which own disjoint page sets, proceed at
+// the same time. The host queues the same way (see BetterWright#_enqueue).
+const executeQueues = new Map();
+function enqueueForSession(sessionId, job) {
+  const key = String(sessionId || "default");
+  const tail = executeQueues.get(key) || Promise.resolve();
+  const task = tail.then(job, job);
+  // Drop the lane once it drains, so a long-lived worker does not keep one
+  // dead promise per session name it has ever seen.
+  executeQueues.set(key, task);
+  void task.then(
+    () => {
+      if (executeQueues.get(key) === task) executeQueues.delete(key);
+    },
+    () => {
+      if (executeQueues.get(key) === task) executeQueues.delete(key);
+    },
+  );
+  return task;
+}
 let searchPacingQueue = Promise.resolve();
 let lastPublicSearchAt = 0;
 
@@ -408,9 +465,11 @@ async function guardUrl(url, details, executeId) {
 }
 
 function transportExecuteId() {
-  return activeExecutionSession
-    ? `active:${activeExecutionSession}`
-    : "background";
+  // Attribution for the transport guard. With several sessions executing at
+  // once there is no single one to name, so use the neutral label rather than
+  // blame an arbitrary session.
+  const sole = soleExecutingSession();
+  return sole ? `active:${sole}` : "background";
 }
 
 // Transport-level SOCKS5 guard proxy; policy checks stay here via guardUrl.
@@ -473,10 +532,27 @@ async function setDownloadPermission(allowed) {
   }
 }
 
+/**
+ * Take or release a claim on the open download gate.
+ *
+ * `Browser.setDownloadBehavior` is one switch for the whole browser context,
+ * but sessions execute concurrently, so the switch is reference-counted: it
+ * opens for the first claim and closes after the last one is released. Without
+ * this, the second execute to start would close the gate under the first one's
+ * approved download. Which session an open gate actually permits is a separate
+ * question, still answered by `approvedDownloadSessions` in the handler.
+ */
+async function holdDownloadGate(open) {
+  downloadAllowHolders = Math.max(0, downloadAllowHolders + (open ? 1 : -1));
+  await setDownloadPermission(downloadAllowHolders > 0);
+}
+
 async function closeDownloadGuard() {
   const session = downloadCdpSession;
   downloadCdpSession = null;
   downloadGuardReady = false;
+  downloadAllowHolders = 0;
+  approvedDownloadSessions.clear();
   currentDownloadBehavior = "deny";
   if (session) {
     await session
@@ -529,6 +605,10 @@ function sessionFor(id) {
       nextDialog: null,
       awaitingAnswerSince: null,
       cursor: { x: 0, y: 0, initialized: false },
+      // State that belongs to the execute currently running on this session.
+      // Per-session, not global: sessions run concurrently, so one execute's
+      // teardown must not clear another's request id or pending credential.
+      execution: { requestId: null, pendingRecovery: null, generationStarted: false },
     };
     sessions.set(sessionId, session);
   }
@@ -559,7 +639,7 @@ function stampModelActivity(session) {
 }
 
 function lastModelActivityFor(page, origin) {
-  if (activeExecutionSession === pageToSession.get(page)) return Date.now();
+  if (sessionIsExecuting(pageToSession.get(page))) return Date.now();
   return Math.max(
     modelActivityPages.get(page) || 0,
     modelActivityOrigins.get(origin) || 0,
@@ -839,8 +919,8 @@ async function handleDownload(page, download) {
     const runApprovalMatchesOwner =
       currentDownloadBehavior === "allow" &&
       ownerSid != null &&
-      approvedDownloadSession === ownerSid &&
-      activeExecutionSession === ownerSid;
+      approvedDownloadSessions.has(ownerSid) &&
+      sessionIsExecuting(ownerSid);
     if (!policyAllowsAll && !runApprovalMatchesOwner) {
       await rejectDownload("explicit user approval required");
       return;
@@ -932,7 +1012,7 @@ async function waitForPendingDownloads(timeoutMs) {
 }
 
 async function handleDialog(page, dialog) {
-  const sid = pageToSession.get(page) || activeExecutionSession || "default";
+  const sid = pageToSession.get(page) || soleExecutingSession() || "default";
   const session = sessionFor(sid);
   const prepared = session.nextDialog;
   session.nextDialog = null;
@@ -999,7 +1079,7 @@ function adoptPage(page, sessionId) {
     });
     page.on("popup", (popup) => {
       const owner =
-        pageToSession.get(page) || activeExecutionSession || session.id;
+        pageToSession.get(page) || soleExecutingSession() || session.id;
       adoptPage(popup, owner);
       pushEvent(sessionFor(owner), {
         type: "popup",
@@ -1228,7 +1308,7 @@ async function installContextGuard(context) {
       ) {
         try {
           const owner =
-            pageToSession.get(request.frame().page()) || activeExecutionSession;
+            pageToSession.get(request.frame().page()) || soleExecutingSession();
           if (owner) {
             pushEvent(sessionFor(owner), {
               type: "public-search-blocked",
@@ -1522,7 +1602,7 @@ async function ensureBrowser(config) {
       }
     }
     launchedContext.on("page", (page) => {
-      const owner = activeExecutionSession || "default";
+      const owner = soleExecutingSession() || "default";
       if (!pageToSession.has(page)) adoptPage(page, owner);
     });
     return launchedContext;
@@ -1982,7 +2062,7 @@ async function vaultCallAtOrigin(session, origin, action, payload = {}, key = nu
   const response = await rpc(
     "vault",
     { action, origin, payload },
-    key || activeExecutionRequestId || `active:${session.id}`,
+    key || session.execution.requestId || `active:${session.id}`,
   );
   if (response?.secret) trackSecret(response.secret);
   return response;
@@ -2019,14 +2099,14 @@ async function finalizePendingCredential(
     pendingId,
   });
   session.pendingCredentialOrigins.delete(pendingId);
-  if (activePendingCredentialRecovery?.pendingId === pendingId) {
-    activePendingCredentialRecovery = null;
+  if (session.execution.pendingRecovery?.pendingId === pendingId) {
+    session.execution.pendingRecovery = null;
   }
   return response;
 }
 
-function recoveryFromError(error) {
-  const recovery = error?.pendingCredential || activePendingCredentialRecovery;
+function recoveryFromError(error, session = null) {
+  const recovery = error?.pendingCredential || session?.execution?.pendingRecovery;
   if (!recovery?.pendingId) return null;
   return redactDeep(recovery);
 }
@@ -2655,12 +2735,29 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
         candidateFrames: 0,
         fields: {},
       });
-    const detection = await detectCredentialTargetsInFrame(
-      frame,
-      requestedAction,
-      anchor,
+    // Same deadline as the frame scan below: an anchored probe rides on the
+    // same never-settling evaluate when its frame is wedged.
+    const detection = await withProbeDeadline(
+      detectCredentialTargetsInFrame(frame, requestedAction, anchor),
+      CREDENTIAL_FRAME_PROBE_MS,
+      (late) => late?.dispose?.().catch?.(() => {}),
     );
-    detection.origin = await credentialOriginForFrame(frame);
+    if (credentialProbeTimedOut(detection))
+      return emptyCredentialDetection({
+        action: requestedAction,
+        status: "not-found",
+        reason:
+          "the explicit credential target's frame did not respond in time (still loading or blocked) — let the page settle and retry",
+        candidateForms: 0,
+        candidateFrames: 0,
+        unresponsiveFrames: 1,
+        fields: {},
+      });
+    const origin = await withProbeDeadline(
+      credentialOriginForFrame(frame),
+      CREDENTIAL_FRAME_PROBE_MS,
+    );
+    detection.origin = credentialProbeTimedOut(origin) ? "" : origin;
     detection.metadata = {
       ...detection.metadata,
       candidateFrames: detection.metadata.status === "ready" ? 1 : 0,
@@ -2670,7 +2767,7 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
     return detection;
   }
 
-  const detections = await collectCredentialFrameDetections({
+  const { detections, unresponsive } = await collectCredentialFrameDetections({
     frames: page.frames(),
     requestedAction,
     originForFrame: credentialOriginForFrame,
@@ -2687,12 +2784,20 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
       (total, { metadata }) => total + Number(metadata.candidateForms || 0),
       0,
     );
-    const reason = ambiguous[0]?.metadata.reason ||
-      (viable.length > 1
-        ? "multiple frames contain visible credential forms"
-        : requestedAction === "generate"
-          ? "no visible enabled new-password field was found in any frame"
-          : "no visible enabled current-password or login password field was found in any frame");
+    // A frame that never answered may well be the one holding the form, so say
+    // so instead of reporting a clean "no password field" the caller would take
+    // at face value. Waiting for the page to settle is the fix, not a retry.
+    const stalled = unresponsive.length
+      ? `; ${unresponsive.length} frame${unresponsive.length === 1 ? "" : "s"} did not respond in time (still loading or blocked) — let the page settle and retry, or pass explicit selectors`
+      : "";
+    const reason =
+      (ambiguous[0]?.metadata.reason ||
+        (viable.length > 1
+          ? "multiple frames contain visible credential forms"
+          : requestedAction === "generate"
+            ? "no visible enabled new-password field was found in any frame"
+            : "no visible enabled current-password or login password field was found in any frame")) +
+      stalled;
     await disposeCredentialFrameDetections(detections);
     return emptyCredentialDetection({
       action: requestedAction === "generate" ? "generate" : "fill",
@@ -2700,6 +2805,7 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
       reason,
       candidateForms,
       candidateFrames: ambiguous.length + viable.length,
+      unresponsiveFrames: unresponsive.length,
       fields: {
         username: null,
         currentPassword: null,
@@ -2962,7 +3068,7 @@ async function buildEnvelope(
 async function performCredentialFill(
   session,
   spec,
-  requestId = activeExecutionRequestId,
+  requestId = session.execution.requestId,
 ) {
   const fields = spec.fields && typeof spec.fields === "object" ? spec.fields : {};
   const action = spec.action === "generate" ? "generate" : "fill";
@@ -3026,7 +3132,7 @@ async function performCredentialFill(
     }
 
     if (action === "generate") {
-      if (activeCredentialGenerationStarted) {
+      if (session.execution.generationStarted) {
         throw new Error(
           "Only one credential may be generated per browser execution; " +
             "recover or finalize the first pending credential before generating another.",
@@ -3034,7 +3140,7 @@ async function performCredentialFill(
       }
       // Reserve immediately before the RPC. Calls that fail validation or form
       // detection can be corrected, while concurrent generate RPCs cannot race.
-      activeCredentialGenerationStarted = true;
+      session.execution.generationStarted = true;
     }
     const record = await vaultCallAtOrigin(
       session,
@@ -3047,7 +3153,7 @@ async function performCredentialFill(
     );
     if (action === "generate") {
       recovery = pendingCredentialRecovery(record, generateSpec, origin);
-      if (recovery) activePendingCredentialRecovery = recovery;
+      if (recovery) session.execution.pendingRecovery = recovery;
       if (!recovery) {
         throw new Error(
           "The vault did not return the pendingId required to recover the generated credential.",
@@ -3164,10 +3270,12 @@ async function credentialFill(message) {
   const session = sessionFor(message.sessionId);
   session.awaitingAnswerSince = null;
   const firstEvent = session.events.length;
-  activeExecutionSession = session.id;
-  activeExecutionRequestId = String(message.id || "");
-  activePendingCredentialRecovery = null;
-  activeCredentialGenerationStarted = false;
+  beginExecutionFor(session.id);
+  session.execution = {
+    requestId: String(message.id || ""),
+    pendingRecovery: null,
+    generationStarted: false,
+  };
   const spec = message.spec && typeof message.spec === "object" ? message.spec : {};
   try {
     assertRedactionCapacity();
@@ -3188,7 +3296,7 @@ async function credentialFill(message) {
       sendRedactionCapacityFailure(message);
       return;
     }
-    const pendingCredential = recoveryFromError(error);
+    const pendingCredential = recoveryFromError(error, session);
     const restartWorker = secretCapacityRequiresRestart(error);
     sendResult(
       await buildEnvelope(session, message, started, {
@@ -3202,10 +3310,8 @@ async function credentialFill(message) {
     );
   } finally {
     stampModelActivity(session);
-    activeExecutionSession = null;
-    activeExecutionRequestId = null;
-    activePendingCredentialRecovery = null;
-    activeCredentialGenerationStarted = false;
+    endExecutionFor(session.id);
+    session.execution = { requestId: null, pendingRecovery: null, generationStarted: false };
   }
 }
 
@@ -3216,7 +3322,7 @@ async function credentialPending(message) {
   const session = sessionFor(message.sessionId);
   session.awaitingAnswerSince = null;
   const firstEvent = session.events.length;
-  activeExecutionSession = session.id;
+  beginExecutionFor(session.id);
   try {
     assertRedactionCapacity();
     const action = String(message.action || "");
@@ -3270,7 +3376,7 @@ async function credentialPending(message) {
       }),
     );
   } finally {
-    activeExecutionSession = null;
+    endExecutionFor(session.id);
   }
 }
 
@@ -4418,16 +4524,31 @@ async function execute(message) {
   const firstArtifact = session.artifacts.length;
   let restartWorker = false;
   let downloadRunConfigured = false;
+  // Whether this execute holds a claim on the shared download gate, so the
+  // release below is exactly balanced with the claim above on every path.
+  let holdsDownloadGate = false;
   let downloadPolicy = "ask";
   let downloadDeadline = 0;
   const execution = {
     acceptingCredentialTasks: true,
     credentialTasks: [],
   };
-  activeExecutionSession = session.id;
-  activeExecutionRequestId = String(message.id || "");
-  activePendingCredentialRecovery = null;
-  activeCredentialGenerationStarted = false;
+  // Give back this execute's claim on the shared download gate, at most once,
+  // whether the snippet succeeded, threw, or timed out.
+  const releaseDownloadGate = async () => {
+    if (holdsDownloadGate) {
+      holdsDownloadGate = false;
+      await holdDownloadGate(false);
+      return;
+    }
+    await setDownloadPermission(downloadAllowHolders > 0);
+  };
+  beginExecutionFor(session.id);
+  session.execution = {
+    requestId: String(message.id || ""),
+    pendingRecovery: null,
+    generationStarted: false,
+  };
   // Viewer status pill: the agent is driving for the duration of this execute.
   liveView?.setAgentState("driving");
   try {
@@ -4440,12 +4561,17 @@ async function execute(message) {
     const downloadsAllowed =
       downloadPolicy === "allow" ||
       (downloadPolicy === "ask" && message.approvedDownloads === true);
-    await setDownloadPermission(downloadsAllowed);
-    approvedDownloadSession =
-      downloadPolicy === "ask" && message.approvedDownloads === true
-        ? session.id
-        : null;
+    if (downloadPolicy === "ask" && message.approvedDownloads === true)
+      approvedDownloadSessions.add(session.id);
+    // Claim the gate before the snippet runs; the finally below releases it.
+    // Under "deny" nothing is claimed, and the count stays at zero.
     downloadRunConfigured = true;
+    if (downloadsAllowed) {
+      holdsDownloadGate = true;
+      await holdDownloadGate(true);
+    } else {
+      await setDownloadPermission(downloadAllowHolders > 0);
+    }
     await ensureSessionPage(session);
     const { context } = buildSandbox(session, consoleMessages, execution);
     const script = compileCode(String(message.code || ""));
@@ -4462,7 +4588,7 @@ async function execute(message) {
     const executionOutcome = scriptOutcome.then(async (outcome) => {
       await waitForCredentialTasks(execution);
       if (!outcome.ok) throw outcome.error;
-      const recovery = activePendingCredentialRecovery;
+      const recovery = session.execution.pendingRecovery;
       if (
         recovery?.pendingId &&
         !resultContainsPendingId(outcome.result, String(recovery.pendingId))
@@ -4485,9 +4611,11 @@ async function execute(message) {
     ]).finally(() => clearTimeout(timer));
     assertRedactionCapacity();
     await waitForPendingDownloads(downloadDeadline - Date.now());
-    approvedDownloadSession = null;
-    await setDownloadPermission(downloadPolicy === "allow");
-    downloadRunConfigured = false;
+    approvedDownloadSessions.delete(session.id);
+    if (downloadRunConfigured) {
+      downloadRunConfigured = false;
+      await releaseDownloadGate();
+    }
     if (
       session.events
         .slice(firstEvent)
@@ -4556,15 +4684,15 @@ async function execute(message) {
       sendRedactionCapacityFailure(message);
       return;
     }
-    const pendingCredential = recoveryFromError(error);
+    const pendingCredential = recoveryFromError(error, session);
     let failure = error;
     if (downloadRunConfigured) {
-      approvedDownloadSession = null;
+      approvedDownloadSessions.delete(session.id);
       try {
         // Close the approval window before waiting on a failed or timed-out
         // download. This prevents background page work from starting another.
-        await setDownloadPermission(downloadPolicy === "allow");
         downloadRunConfigured = false;
+        await releaseDownloadGate();
         await waitForPendingDownloads(2_000);
       } catch (resetError) {
         failure = resetError;
@@ -4593,12 +4721,18 @@ async function execute(message) {
   } finally {
     execution.acceptingCredentialTasks = false;
     stampModelActivity(session);
-    if (approvedDownloadSession === session.id) approvedDownloadSession = null;
+    approvedDownloadSessions.delete(session.id);
+    // Bookkeeping backstop for the early-return paths above: give the claim
+    // back so the gate cannot be pinned open by a run that skipped its own
+    // release. Deliberately no CDP call — a throw here would mask the real
+    // failure, and the next execute reconciles the browser to the count.
+    if (holdsDownloadGate) {
+      holdsDownloadGate = false;
+      downloadAllowHolders = Math.max(0, downloadAllowHolders - 1);
+    }
     liveView?.setAgentState("idle");
-    activeExecutionSession = null;
-    activeExecutionRequestId = null;
-    activePendingCredentialRecovery = null;
-    activeCredentialGenerationStarted = false;
+    endExecutionFor(session.id);
+    session.execution = { requestId: null, pendingRecovery: null, generationStarted: false };
     if (restartWorker)
       setImmediate(() => {
         void shutdown().finally(() => process.exit(1));
@@ -4917,32 +5051,20 @@ input.on("line", (line) => {
     return;
   }
   if (message.type === "execute") {
-    executeQueue = executeQueue.then(
-      () => execute(message),
-      () => execute(message),
-    );
+    void enqueueForSession(message.sessionId, () => execute(message));
   }
   if (message.type === "credential_fill") {
-    executeQueue = executeQueue.then(
-      () => credentialFill(message),
-      () => credentialFill(message),
-    );
+    void enqueueForSession(message.sessionId, () => credentialFill(message));
   }
   if (message.type === "credential_pending") {
-    executeQueue = executeQueue.then(
-      () => credentialPending(message),
-      () => credentialPending(message),
-    );
+    void enqueueForSession(message.sessionId, () => credentialPending(message));
   }
-  // Session teardown rides the executeQueue so pages never close under an
+  // Session teardown rides that session's queue so pages never close under an
   // in-flight execute on the same session.
   if (message.type === "session_close") {
-    executeQueue = executeQueue.then(
-      () => sessionClose(message),
-      () => sessionClose(message),
-    );
+    void enqueueForSession(message.sessionId, () => sessionClose(message));
   }
-  // Live-view control runs outside the executeQueue: viewers attach and
+  // Live-view control runs outside the execute queues: viewers attach and
   // handoffs/asks resolve while executes are in flight, and a pending human
   // wait must never block a queued execute (or vice versa).
   if (message.type === "live_view_start") void liveViewStart(message);
@@ -4975,7 +5097,7 @@ const idleReaper = setInterval(() => {
   const timeout = Number(launchConfig?.pageIdleTimeoutMs || 1_800_000);
   const cutoff = Date.now() - Math.max(timeout, 600_000);
   for (const [sessionId, session] of sessions) {
-    if (session.lastActivity >= cutoff || sessionId === activeExecutionSession)
+    if (session.lastActivity >= cutoff || sessionIsExecuting(sessionId))
       continue;
     if (
       session.awaitingAnswerSince &&

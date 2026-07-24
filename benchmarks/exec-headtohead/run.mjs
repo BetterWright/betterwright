@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Head-to-head: BetterWright's built-in agent harness (`betterwright exec`) vs
-// Aside's agent (`aside exec`), both plugged into the SAME model
+// a reference browser agent's own CLI, both plugged into the SAME model
 // (codex / gpt-5.6-sol) at the SAME reasoning effort (low). Matching the model
 // isolates the AGENT SCAFFOLD — the observe/act/verify loop — which is the thing
 // this benchmark measures. The browser runtime itself was already at parity in
@@ -9,6 +9,9 @@
 //   node benchmarks/exec-headtohead/run.mjs [--only <substr>] [--timeout <ms>]
 //
 // Writes results.json next to this file; REPORT.md is authored from it.
+//
+// The comparison CLI is named by REFERENCE_CLI (default "reference-agent"); it
+// is expected to take `<cli> exec -m <provider/model> --effort <e> "<task>"`.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -19,6 +22,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
 const MODEL = "gpt-5.6-sol";
 const EFFORT = "low";
+const REFERENCE_CLI = process.env.REFERENCE_CLI || "reference-agent";
 
 const argv = process.argv.slice(2);
 const onlyIndex = argv.indexOf("--only");
@@ -106,9 +110,9 @@ const TASKS = [
   },
 ];
 
-// Fairness: BetterWright has no subagents, so Aside must not use its
-// child-session/subagent machinery either. There is no CLI flag for this, so it
-// is enforced at the prompt level.
+// Fairness: BetterWright has no subagents, so the reference agent must not use
+// its child-session/subagent machinery either. There is no CLI flag for this,
+// so it is enforced at the prompt level.
 const NO_SUBAGENTS =
   " Important: do everything yourself in this single session — do not spawn subagents, child sessions, or parallel agent sessions.";
 
@@ -122,8 +126,8 @@ function stripAnsi(s) {
 function run(cmd, args, { cwd } = {}) {
   return new Promise((resolve) => {
     const start = Date.now();
-    // stdin = ignore so children that read stdin (aside exec) get EOF instead of
-    // blocking on an open, dataless pipe.
+    // stdin = ignore so children that read stdin get EOF instead of blocking on
+    // an open, dataless pipe.
     const child = spawn(cmd, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
@@ -182,9 +186,9 @@ async function runBetterwright(task) {
   };
 }
 
-async function runAside(task) {
-  const r = await run("aside", ["exec", "-m", `openai-codex/${MODEL}`, "--effort", EFFORT, task + NO_SUBAGENTS]);
-  // Count `repl(` invocations as a rough step proxy for Aside.
+async function runReference(task) {
+  const r = await run(REFERENCE_CLI, ["exec", "-m", `openai-codex/${MODEL}`, "--effort", EFFORT, task + NO_SUBAGENTS]);
+  // Count `repl(` invocations as a rough step proxy for the reference agent.
   const steps = (stripAnsi(r.stdout).match(/^\s*repl\(/gm) || []).length || null;
   return {
     elapsedMs: r.elapsedMs,
@@ -204,10 +208,12 @@ async function main() {
     process.stderr.write("  betterwright… ");
     const bw = await runBetterwright(t.task);
     process.stderr.write(`${(bw.elapsedMs / 1000).toFixed(1)}s ${bw.ok ? "ok" : "FAIL"} (${bw.steps} steps)\n`);
-    process.stderr.write("  aside……… ");
-    const aside = await runAside(t.task);
-    process.stderr.write(`${(aside.elapsedMs / 1000).toFixed(1)}s ${aside.ok ? "ok" : "FAIL"} (${aside.steps} steps)\n`);
-    results.push({ ...t, betterwright: bw, aside });
+    process.stderr.write("  reference…… ");
+    const reference = await runReference(t.task);
+    process.stderr.write(
+      `${(reference.elapsedMs / 1000).toFixed(1)}s ${reference.ok ? "ok" : "FAIL"} (${reference.steps} steps)\n`,
+    );
+    results.push({ ...t, betterwright: bw, reference });
     fs.writeFileSync(path.join(HERE, "results.json"), JSON.stringify({ model: MODEL, effort: EFFORT, results }, null, 2));
   }
   process.stderr.write("\nDone. results.json written.\n");
