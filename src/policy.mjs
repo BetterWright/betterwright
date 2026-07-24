@@ -98,6 +98,15 @@ function categorizeIpv4(host) {
   return "public";
 }
 
+// Value of the leading 16-bit group of a validated IPv6 address. A leading "::"
+// elides zeros, so the first group is 0 in that form.
+function firstHextet(bare) {
+  if (bare.startsWith("::")) return 0;
+  const head = bare.slice(0, bare.indexOf(":"));
+  const value = Number.parseInt(head, 16);
+  return Number.isNaN(value) ? 0 : value;
+}
+
 function categorizeIp(host) {
   const bare = host.replace(/^\[|\]$/g, "");
   const family = net.isIP(bare);
@@ -108,13 +117,19 @@ function categorizeIp(host) {
     if (METADATA_ADDRESSES.has(bare) || bare.startsWith("fd00:ec2:"))
       return "metadata";
     if (bare === "::1") return "loopback";
+    // Classify on the first 16-bit group rather than a text prefix: link-local
+    // is fe80::/10, so a `startsWith("fe80:")` test let fe90:: through febf::
+    // fall through to "public" and reach the network in hardened mode.
+    const group = firstHextet(bare);
     if (
       bare === "::" ||
-      bare.startsWith("fe80:") ||
-      bare.startsWith("fc") ||
-      bare.startsWith("fd") ||
-      // Multicast (ff00::/8) is non-public.
-      bare.startsWith("ff")
+      // Link-local fe80::/10 and deprecated site-local fec0::/10.
+      (group & 0xffc0) === 0xfe80 ||
+      (group & 0xffc0) === 0xfec0 ||
+      // Unique local fc00::/7.
+      (group & 0xfe00) === 0xfc00 ||
+      // Multicast ff00::/8.
+      (group & 0xff00) === 0xff00
     )
       return "private";
     return "public";

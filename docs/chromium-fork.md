@@ -129,8 +129,6 @@ verified (2026-07-22): UA/UA-CH at the source, `navigator.platform`, WebGL
 renderer/vendor, deterministic per-profile canvas/audio farbling, screen
 geometry, and a bundled macOS-metric font set loaded through a launch-time
 `FONTCONFIG_FILE`. With timezone/locale matched to egress geography the
-headless Linux fork returns real Google SERPs instead of `/sorry`; see
-[HANDOFF-linux-mac-identity-2026-07-22.md](HANDOFF-linux-mac-identity-2026-07-22.md)
-§9 for the verification record.
+headless Linux fork returns real Google SERPs instead of `/sorry`.
 
 Cloaking V2 identity coherence still applies; see [cloaking-v2.md](cloaking-v2.md).

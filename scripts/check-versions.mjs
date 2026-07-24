@@ -21,10 +21,28 @@ if (lock.version !== pkg.version || lockRoot.version !== pkg.version) {
     `package-lock.json version must be ${pkg.version}; found ${lock.version}/${lockRoot.version}`,
   );
 }
-for (const dependency of ["playwright-core", "cloakbrowser"]) {
+// These are pinned exactly on purpose. playwright-core and cloakbrowser each
+// ship a coupled browser binary, and tldts carries the Public Suffix List
+// snapshot that `getDomain` uses to decide a credential's base-domain scope in
+// vault.mjs — so a routine bump there silently widens which origins a saved
+// credential is offered to. Drift in any of them must fail the release.
+for (const dependency of ["playwright-core", "cloakbrowser", "tldts"]) {
   if (lockRoot.dependencies?.[dependency] !== pkg.dependencies[dependency]) {
     failures.push(`package-lock.json ${dependency} pin does not match package.json`);
   }
+}
+// patchright-core is optional but must track playwright-core exactly: patchright
+// republishes playwright's releases 1:1 and swaps in a patched driver, so a
+// caret range there can float the stealth driver out of lockstep with the
+// pinned playwright-core it is meant to shadow.
+const patchright = pkg.optionalDependencies?.["patchright-core"];
+if (patchright !== pkg.dependencies["playwright-core"]) {
+  failures.push(
+    `patchright-core must be pinned to playwright-core's exact version ${pkg.dependencies["playwright-core"]}; found ${patchright ?? "nothing"}`,
+  );
+}
+if (lockRoot.optionalDependencies?.["patchright-core"] !== patchright) {
+  failures.push("package-lock.json patchright-core pin does not match package.json");
 }
 const npmVersion = String(pkg.packageManager || "").match(/^npm@(.+)$/)?.[1];
 if (!npmVersion) failures.push("packageManager must pin an exact npm version");

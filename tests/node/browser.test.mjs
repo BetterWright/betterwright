@@ -4,12 +4,12 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 import { cloakRuntime } from "../../src/doctor.mjs";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../src/index.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const ready = (await cloakRuntime()).installed;
 // On a laptop without the runtime, skipping is friendly. In CI it would mean
@@ -24,7 +24,7 @@ if (!ready && process.env.BETTERWRIGHT_REQUIRE_BROWSER) {
 const opts = { skip: ready ? false : "browser runtime not installed" };
 
 function tempHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-test-"));
+  return makeTempDir("betterwright-test-");
 }
 
 async function listen(handler) {

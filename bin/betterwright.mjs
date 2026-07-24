@@ -186,10 +186,21 @@ function policyFromFlags(flags) {
   });
 }
 
+// Every value given for a repeatable flag, in argv order, accepting both
+// `--flag value` and `--flag=value`. Single source of truth for value-flag
+// parsing (flagValue builds on it). A trailing `--flag` with no value is
+// ignored; `--flag=` yields an empty string, which NetworkPolicy treats as
+// matching nothing, so it can never widen an allow list or mute a block list.
 function collectValues(argv, flag) {
+  const assigned = `${flag}=`;
   const values = [];
-  for (let i = 0; i < argv.length - 1; i += 1)
-    if (argv[i] === flag) values.push(argv[i + 1]);
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === flag) {
+      if (i + 1 < argv.length) values.push(argv[i + 1]);
+    } else if (argv[i].startsWith(assigned)) {
+      values.push(argv[i].slice(assigned.length));
+    }
+  }
   return values;
 }
 
@@ -438,65 +449,17 @@ async function cmdRun(arg, flags) {
 // command.
 const SKILL_PREAMBLE = `# Browser tool: BetterWright
 
-You can operate a real, persistent web browser by running the \`betterwright\`
-command. Use it whenever a task needs the live web — logging in, filling forms,
-booking, buying, or reading a page an API will not give you.
-
-Single action — pass async Playwright JavaScript; a trailing expression (or an
-explicit \`return\`) is the result:
+Operate a real, persistent web browser with the \`betterwright\` command whenever a task needs the live web. Pass async Playwright JavaScript; a trailing expression (or explicit \`return\`) is the result:
 
     betterwright run -c "await page.goto('https://example.com'); return page.title()"
 
-The command prints one JSON object:
-{ok, result, error, console, events, artifacts, pages, challenges, warnings, durationMs}.
-\`artifacts\` lists files written during the run; screenshots appear there with a
-\`path\` — open that image to actually see the page.
+It prints one JSON object {ok, result, error, console, events, artifacts, pages, challenges, warnings, durationMs}; \`artifacts\` lists files written during the run — screenshots there have a \`path\`; open that image to actually see the page.
 
-Invocations share one persistent browser session held by a background daemon:
-open tabs, page state, and the in-memory \`state\` object all survive between
-\`run\` calls, and logins/cookies persist through the on-disk profile. So act in
-small steps — one \`run\` per action-and-observe — and simply call \`run\` again to
-continue where the last call left off. The session auto-closes after ~15 idle
-minutes; run \`betterwright close\` when you finish a task to end it sooner.
-Need isolation for parallel work? Give each worker its own \`--session <name>\`.
+Invocations share one persistent session (background daemon): open tabs, page state, and the in-memory \`state\` object survive between \`run\` calls; logins/cookies persist in the on-disk profile. Act in small steps — one \`run\` per action-and-observe — and call \`run\` again to continue. The session auto-closes after ~15 idle minutes; run \`betterwright close\` when you finish to end it sooner; give parallel workers their own \`--session <name>\`. Batch steps in one process by piping blank-line-separated snippets: \`printf '%s\\n\\n%s\\n' "snippetA" "snippetB" | betterwright repl\` (same session).
 
-To batch several steps in one process you can also pipe blank-line-separated
-snippets: \`printf '%s\\n\\n%s\\n' "snippetA" "snippetB" | betterwright repl\`
-(same session, same persistence).
+Surface details for "Live view and handoff" below: \`browser_handoff\` action "start" opens it, "status" waits for takeover Done; \`live_view\` watches without pausing, \`handoff\` pauses until they click Done; interactive accepts \`/live\`; \`exec "<task>" --live-view\` opens the viewer at step 0; \`betterwright view\` prints a URL for the open tabs without closing them (takeover: Take control / the dock).
 
-When a result lists \`skills\`, deeper site or provider knowledge matches the
-open pages — read the named pack with \`betterwright skills show <name>\` before
-improvising on that site. \`betterwright skills list\` shows what is available;
-read the \`credential-manager\` pack before any login, signup, or checkout.
-
-Live view and handoff work anytime mid-session — not only at the start. When
-the user asks to watch, share the browser, open a live view, take over, or
-hand off (MFA, resistant CAPTCHA, a step they must do themselves), do it now
-with the surface you are on; do not restart the session or claim you cannot:
-
-1. MCP integrated mode — call \`browser_handoff\` with action "start", relay the
-   URL verbatim, keep working (watch) or wait on action "status" (takeover).
-2. Standalone \`betterwright exec\` / interactive console — use the \`live_view\`
-   tool to open a watch URL without pausing, or \`handoff\` to pause until they
-   click Done. Interactive also accepts \`/live\` anytime.
-3. Integrated CLI+skill (\`betterwright run\` / \`repl\`) — snippets cannot start
-   the viewer (sealed). Run \`betterwright view\` (or have the user run it): it
-   attaches to the same session daemon, prints a URL for the open tabs, and
-   does not close them. Relay that URL; for takeover, tell them to use Take
-   control / the dock, then wait for their "done" in chat before more \`run\`s.
-
-Optional: \`exec "<task>" --live-view\` opens the viewer at step 0. Never claim
-a live view is running unless a tool or \`betterwright view\` actually returned
-its URL.
-
-Network access is policy-guarded. Loopback and the private network are reachable
-by default; add \`--block-private-network\` / \`--block-loopback\` to lock down, or
-\`--allow-host <host>\` / \`--block-host <host>\` to adjust. Cloud-metadata endpoints
-are always blocked.
-
-Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet", and the
-"approval-gated download tool" is \`betterwright run --approve-downloads\`: one
-bounded download-enabled run, used only after the user explicitly approves.`;
+Network access is policy-guarded: loopback and the private network are reachable by default; \`--block-private-network\` / \`--block-loopback\` lock down; \`--allow-host <host>\` / \`--block-host <host>\` adjust. Cloud-metadata endpoints are always blocked. Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet"; the "approval-gated download tool" is \`betterwright run --approve-downloads\`: one bounded download-enabled run, used only after the user explicitly approves.`;
 
 function cmdSkill(flags) {
   const body = agentSkillBody();
@@ -551,11 +514,13 @@ async function cmdRepl(flags) {
   return 0;
 }
 
+// First value for a flag: `--flag value` wins when present (historical
+// precedence), then the first `--flag=value`; `fallback` when neither form
+// carries a value. `--flag=` is an explicit empty value, not the fallback.
 function flagValue(argv, flag, fallback) {
   const index = argv.indexOf(flag);
   if (index !== -1 && index + 1 < argv.length) return argv[index + 1];
-  const assigned = argv.find((token) => token.startsWith(`${flag}=`));
-  return assigned ? assigned.slice(flag.length + 1) : fallback;
+  return collectValues(argv, flag)[0] ?? fallback;
 }
 
 const VALUE_FLAGS = new Set([
@@ -1679,6 +1644,10 @@ async function main() {
       return 1;
   }
 }
+
+// For tests only (tests/node/cli-flags.test.mjs); the CLI has no library
+// consumers. Importing this module still runs main() below.
+export { collectValues, flagValue };
 
 main().then(
   (code) => process.exit(code),

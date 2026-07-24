@@ -6,13 +6,13 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { cloakRuntime } from "../../src/doctor.mjs";
 import { BetterWright } from "../../src/index.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(__dirname, "fixtures", "captcha");
@@ -34,7 +34,7 @@ const liveOpts = {
 };
 
 function tempHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-captcha-"));
+  return makeTempDir("betterwright-captcha-");
 }
 
 async function startFixtureServer() {
