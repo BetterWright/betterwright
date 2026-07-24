@@ -21,18 +21,6 @@ if (lock.version !== pkg.version || lockRoot.version !== pkg.version) {
     `package-lock.json version must be ${pkg.version}; found ${lock.version}/${lockRoot.version}`,
   );
 }
-const relayPkg = JSON.parse(read("relay/package.json"));
-const relayLock = JSON.parse(read("relay/package-lock.json"));
-const relayLockRoot = relayLock.packages?.[""] || {};
-if (
-  relayPkg.version !== pkg.version ||
-  relayLock.version !== pkg.version ||
-  relayLockRoot.version !== pkg.version
-) {
-  failures.push(
-    `relay package versions must be ${pkg.version}; found ${relayPkg.version}/${relayLock.version}/${relayLockRoot.version}`,
-  );
-}
 for (const dependency of ["playwright-core", "cloakbrowser"]) {
   if (lockRoot.dependencies?.[dependency] !== pkg.dependencies[dependency]) {
     failures.push(`package-lock.json ${dependency} pin does not match package.json`);
@@ -73,5 +61,5 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(
-  `versions aligned: betterwright/relay ${pkg.version}, playwright-core ${pkg.dependencies["playwright-core"]}, cloakbrowser ${pkg.dependencies.cloakbrowser}`,
+  `versions aligned: betterwright ${pkg.version}, playwright-core ${pkg.dependencies["playwright-core"]}, cloakbrowser ${pkg.dependencies.cloakbrowser}`,
 );

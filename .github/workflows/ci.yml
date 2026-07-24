@@ -25,15 +25,6 @@ jobs:
       - run: npm run test:unit
       - run: npm run test:types
       - run: npm run check:package
-      - name: Install relay dependencies
-        working-directory: relay
-        run: npm ci --ignore-scripts
-      - name: Type-check relay
-        working-directory: relay
-        run: npm run typecheck
-      - name: Test relay and deployment bundle
-        working-directory: relay
-        run: npm test && npx wrangler deploy --dry-run
 
   node:
     # Keep this display name stable because main branch protection requires it.

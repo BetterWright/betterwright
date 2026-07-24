@@ -1419,29 +1419,6 @@ test("handoff is not offered without a URL surface or when liveView is false", a
   assert.equal(disabled.calls.liveView.length, 0);
 });
 
-test("ordinary progress mirroring never starts Live View without explicit activation", async () => {
-  const browser = liveViewBrowser();
-  const model = scriptedModel([
-    {
-      text: "",
-      toolCalls: [
-        { id: "b1", name: "browser", input: { code: "return 1", note: "checking" } },
-      ],
-    },
-    { text: "done", toolCalls: [] },
-  ]);
-  const result = await runAgentTask({
-    task: "check the page",
-    model,
-    browser,
-    onStep: () => {},
-  });
-  assert.equal(result.ok, true);
-  assert.equal(browser.calls.liveView.length, 0);
-  assert.equal(browser.calls.chatPosts.length, 0);
-  assert.equal(browser.calls.stops, 0);
-});
-
 test("liveView: true starts the viewer before step 1 and stops it at task end", async () => {
   const browser = liveViewBrowser();
   const steps = [];

@@ -58,6 +58,7 @@ import {
 } from "../src/daemon-client.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
+import { defaultLiveViewListen, guessLanHost } from "../src/live-view.mjs";
 import {
   clearTranscript,
   loadTranscript,
@@ -76,64 +77,52 @@ const require = createRequire(import.meta.url);
 const CLI_PATH = fileURLToPath(import.meta.url);
 
 /**
- * Live-view options for CLI `--live-view` / `view`. Only explicit CLI/env
- * values are returned, so persisted setup choices remain authoritative. The
- * library's no-config default is loopback.
+ * Live-view options for CLI `--live-view` / `view`.
+ * Always defaults to LAN-reachable bind + publicHost (never localhost unless
+ * explicitly requested). Override with `--host` / env.
  */
 function liveViewCliOptions(argv = process.argv, { required = false } = {}) {
-  const has = (name) => argv.some((token) => token === name || token.startsWith(`${name}=`));
-  if (!required && !has("--live-view")) return undefined;
-  const out = { interactive: !has("--watch-only") };
-  const hostValue = flagValue(argv, "--host", process.env.BETTERWRIGHT_LIVE_VIEW_HOST);
-  const portValue = flagValue(argv, "--port", process.env.BETTERWRIGHT_LIVE_VIEW_PORT);
-  const publicHostValue = flagValue(
-    argv,
-    "--public-host",
-    process.env.BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST,
+  const flags = new Set(argv.filter((token) => token.startsWith("--")));
+  if (!required && !flags.has("--live-view")) return undefined;
+  const lan = defaultLiveViewListen();
+  const host = String(
+    flagValue(argv, "--host", process.env.BETTERWRIGHT_LIVE_VIEW_HOST || lan.host),
   );
+  const port = Number(
+    flagValue(argv, "--port", process.env.BETTERWRIGHT_LIVE_VIEW_PORT || 0),
+  ) || 0;
+  const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const wildcard = host === "0.0.0.0" || host === "::" || host === "";
+  const publicHost = String(
+    flagValue(
+      argv,
+      "--public-host",
+      process.env.BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST ||
+        (loopback ? host : wildcard ? lan.publicHost || guessLanHost() : host),
+    ),
+  );
+  // One-word hosting presets; an explicit --host wins over --expose (and over
+  // an expose preset stored in config.json, hence the explicit empty string).
   let expose = String(
     flagValue(argv, "--expose", process.env.BETTERWRIGHT_LIVE_VIEW_EXPOSE || ""),
   )
     .trim()
     .toLowerCase();
-  let mode = String(
-    flagValue(
-      argv,
-      "--live-view-mode",
-      flagValue(argv, "--transport", process.env.BETTERWRIGHT_LIVE_VIEW_TRANSPORT || ""),
-    ),
-  )
-    .trim()
-    .toLowerCase();
-  if (expose === "relay") {
-    mode = "relay";
+  if (expose && flags.has("--host")) {
+    process.stderr.write("--host overrides --expose; ignoring --expose.\n");
     expose = "";
   }
-  if (["local", "lan", "tailscale"].includes(mode)) {
-    expose = mode;
-    mode = "direct";
-  }
-  if (mode && !["direct", "relay"].includes(mode)) {
-    throw new Error(
-      `Unknown live-view mode "${mode}"; use relay, local, lan, tailscale, or direct.`,
-    );
-  }
-  if (hostValue != null && hostValue !== "") {
-    out.host = String(hostValue);
-    if (expose) {
-      process.stderr.write("--host overrides --expose; ignoring --expose.\n");
-      expose = "";
-    }
-    if (!mode) mode = "direct";
-  }
-  if (portValue != null && portValue !== "") out.port = Number(portValue) || 0;
-  if (publicHostValue != null && publicHostValue !== "") out.publicHost = String(publicHostValue);
-  if (expose) out.expose = expose;
-  if (mode) out.transport = mode;
-  // The password comes from config.json or env, never a flag.
+  // The password comes from config.json (`betterwright view --set-password`)
+  // or the env var — never a flag, so it stays out of shell history and ps.
   const password = String(process.env.BETTERWRIGHT_LIVE_VIEW_PASSWORD || "");
-  if (password) out.password = password;
-  return out;
+  return {
+    host,
+    port,
+    publicHost,
+    interactive: !flags.has("--watch-only"),
+    ...(expose || flags.has("--host") ? { expose } : {}),
+    ...(password ? { password } : {}),
+  };
 }
 
 /** Prompt on the TTY with echo suppressed (for --set-password). */
@@ -156,169 +145,6 @@ async function promptHidden(question) {
   });
 }
 
-async function promptLine(question) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(String(answer || "").trim());
-    });
-  });
-}
-
-const LIVE_VIEW_SETUP_MODES = new Set(["relay", "local", "lan", "tailscale"]);
-
-async function configureLiveView(flags, { allowUnconfigured = false } = {}) {
-  const { saveLiveViewSettings } = await import("../src/live-view-config.mjs");
-  const {
-    BETTERWRIGHT_ACCOUNT_URL,
-    loadAccountConfig,
-    saveAccountApiKey,
-    verifyBetterWrightApiKey,
-  } = await import("../src/account-config.mjs");
-  const argv = process.argv;
-  let mode = String(
-    flagValue(
-      argv,
-      "--live-view-mode",
-      flagValue(argv, "--transport", process.env.BETTERWRIGHT_LIVE_VIEW_TRANSPORT || ""),
-    ),
-  )
-    .trim()
-    .toLowerCase();
-  if (mode === "direct") {
-    mode = String(
-      flagValue(argv, "--expose", process.env.BETTERWRIGHT_LIVE_VIEW_EXPOSE || "local"),
-    )
-      .trim()
-      .toLowerCase();
-  }
-  const canPrompt = process.stdin.isTTY && process.stdout.isTTY && !flags.has("--non-interactive");
-  if (!mode && canPrompt) {
-    console.log("\nLive View sharing");
-    console.log("  1  BetterWright Relay  recommended · works anywhere · hides your host IP");
-    console.log("  2  This computer only  loopback, nothing shared");
-    console.log("  3  Local network       reachable on the same LAN/Wi-Fi");
-    console.log("  4  Tailscale network   private to your tailnet");
-    console.log("  5  Decide later        keep the safe loopback default");
-    const answer = await promptLine("Choose [1]: ");
-    mode = ({ "": "relay", "1": "relay", "2": "local", "3": "lan", "4": "tailscale", "5": "local" })[answer] || answer;
-  }
-  if (!mode) return { ok: true, configured: false };
-  if (!LIVE_VIEW_SETUP_MODES.has(mode)) {
-    return {
-      ok: false,
-      error: `Unknown live-view mode "${mode}"; use relay, local, lan, or tailscale.`,
-    };
-  }
-  if (mode === "relay") {
-    const account = loadAccountConfig();
-    let apiKey = account.apiKey || "";
-    let persistApiKey = false;
-    if (!apiKey && flags.has("--api-key-stdin")) {
-      apiKey = fs.readFileSync(0, "utf8").trim();
-      persistApiKey = true;
-    }
-    if (!apiKey && canPrompt) {
-      console.log(`\nCreate a personal API key at ${BETTERWRIGHT_ACCOUNT_URL}`);
-      console.log("The key is stored only in ~/.betterwright/account.json with mode 0600.");
-      apiKey = String(await promptHidden("Paste BetterWright API key: ")).trim();
-      persistApiKey = Boolean(apiKey);
-    }
-    if (!apiKey) {
-      const error =
-        `Managed relay requires a BetterWright account API key. Create one at ${BETTERWRIGHT_ACCOUNT_URL}, then run \`betterwright account set-key\`.`;
-      return allowUnconfigured
-        ? { ok: true, configured: false, mode: "local", warning: `${error} Keeping the safe local default.` }
-        : { ok: false, configured: false, error };
-    }
-    const checked = await verifyBetterWrightApiKey(apiKey, { relayUrl: account.relayUrl });
-    if (!checked.ok) {
-      if (allowUnconfigured) {
-        return {
-          ok: true,
-          configured: false,
-          warning:
-            `${checked.error} Browser setup completed and Live View settings were left unchanged; ` +
-            "the safe no-config default is local-only.",
-        };
-      }
-      return checked;
-    }
-    // A key supplied through BETTERWRIGHT_API_KEY remains environment-only;
-    // only a value explicitly pasted/piped here is persisted.
-    if (persistApiKey) saveAccountApiKey(apiKey, { relayUrl: account.relayUrl });
-    const file = saveLiveViewSettings({ transport: "relay", expose: "local" });
-    return { ok: true, configured: true, mode, file, quota: checked.quota };
-  }
-  const file = saveLiveViewSettings({ transport: "direct", expose: mode });
-  return { ok: true, configured: true, mode, file };
-}
-
-async function cmdAccount(rest, flags) {
-  const {
-    BETTERWRIGHT_ACCOUNT_URL,
-    accountConfigPath,
-    clearAccountConfig,
-    loadAccountConfig,
-    maskBetterWrightApiKey,
-    saveAccountApiKey,
-    verifyBetterWrightApiKey,
-  } = await import("../src/account-config.mjs");
-  const action = firstPositional(rest) || "status";
-  if (action === "logout" || action === "clear") {
-    const file = clearAccountConfig();
-    console.log(`BetterWright account API key removed (${file}).`);
-    return 0;
-  }
-  if (action === "set-key" || action === "login") {
-    let apiKey = String(process.env.BETTERWRIGHT_API_KEY || "").trim();
-    if (!apiKey && flags.has("--api-key-stdin")) apiKey = fs.readFileSync(0, "utf8").trim();
-    if (!apiKey && process.stdin.isTTY) {
-      console.log(`Create a personal key at ${BETTERWRIGHT_ACCOUNT_URL}`);
-      apiKey = String(await promptHidden("Paste BetterWright API key: ")).trim();
-    }
-    if (!apiKey) {
-      console.error("No API key provided. Set BETTERWRIGHT_API_KEY or use --api-key-stdin.");
-      return 1;
-    }
-    const account = loadAccountConfig();
-    const checked = await verifyBetterWrightApiKey(apiKey, { relayUrl: account.relayUrl });
-    if (!checked.ok) {
-      console.error(checked.error);
-      return 1;
-    }
-    const file = saveAccountApiKey(apiKey, { relayUrl: account.relayUrl });
-    console.log(`BetterWright account connected (${file}).`);
-    if (checked.quota) {
-      console.log(`Managed relay: ${Math.floor(Number(checked.quota.remainingSeconds || 0) / 60)} minutes remaining this week.`);
-    }
-    return 0;
-  }
-  if (action !== "status") {
-    console.error("Usage: betterwright account [status | set-key | logout]");
-    return 1;
-  }
-  const account = loadAccountConfig();
-  if (!account.apiKey) {
-    console.log(`Not connected. Create a key at ${BETTERWRIGHT_ACCOUNT_URL}`);
-    return 1;
-  }
-  console.log(`Stored key: ${maskBetterWrightApiKey(account.apiKey)} (${account.source})`);
-  console.log(`Credential file: ${accountConfigPath()}`);
-  const checked = await verifyBetterWrightApiKey(account.apiKey, { relayUrl: account.relayUrl });
-  if (!checked.ok) {
-    console.error(checked.error);
-    return 1;
-  }
-  console.log("Relay authentication: valid");
-  if (checked.quota) {
-    const remaining = Math.max(0, Number(checked.quota.remainingSeconds || 0));
-    console.log(`Weekly allowance: ${Math.floor(remaining / 60)} minutes remaining · resets ${checked.quota.resetAt || "next Monday UTC"}`);
-  }
-  return 0;
-}
-
 /** `view --set-password` / `--clear-password`: manage the stored password hash. */
 async function cmdViewPassword(flags) {
   const { saveLiveViewPassword, liveViewConfigPath } = await import("../src/live-view-config.mjs");
@@ -333,8 +159,8 @@ async function cmdViewPassword(flags) {
     return 1;
   }
   const first = await promptHidden("New live-view password: ");
-  if (first.length < 8) {
-    console.error("Password must be at least 8 characters.");
+  if (first.length < 4) {
+    console.error("Password must be at least 4 characters.");
     return 1;
   }
   const second = await promptHidden("Repeat it: ");
@@ -344,7 +170,7 @@ async function cmdViewPassword(flags) {
   }
   const file = saveLiveViewPassword(first);
   console.log(`Live-view password saved (hashed) to ${file}.`);
-  console.log(dim("Direct live views now require it. Managed relay links use their private URL capability instead."));
+  console.log(dim("Every live view (view, exec --live-view, MCP handoffs) now requires it."));
   console.log(dim(`Config path: ${liveViewConfigPath()} — remove with \`betterwright view --clear-password\`.`));
   return 0;
 }
@@ -496,16 +322,6 @@ async function cmdSetup(flags) {
 
   const cloakCode = await installCloakBrowser();
   if (cloakCode !== 0) return cloakCode;
-
-  const liveViewSetup = await configureLiveView(flags, { allowUnconfigured: true });
-  if (!liveViewSetup.ok) {
-    console.error(`\nLive View setup failed: ${liveViewSetup.error}`);
-    return 1;
-  }
-  if (liveViewSetup.configured) {
-    console.log(`\nLive View mode: ${liveViewSetup.mode || "relay"}`);
-  }
-  if (liveViewSetup.warning) console.log(`\n${liveViewSetup.warning}`);
 
   console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
   if (!cloakOnly) {
@@ -751,7 +567,6 @@ const VALUE_FLAGS = new Set([
   "--endpoint",
   "--expose",
   "--host",
-  "--live-view-mode",
   "--locale",
   "--model",
   "--model-id",
@@ -763,7 +578,6 @@ const VALUE_FLAGS = new Set([
   "--reasoning",
   "--session",
   "--timezone",
-  "--transport",
   "--upstream-proxy",
 ]);
 
@@ -1602,24 +1416,6 @@ function printLiveViewBanner(view, { dim, bold, attached = false } = {}) {
   if (attached) {
     console.log(dim("attached to the session daemon (same tabs as run/exec)"));
   }
-  if (view.transport === "relay" || view.expose === "relay") {
-    const remaining = Number(view.quota?.remainingSeconds);
-    console.log(
-      dim(
-        `who can open it: anyone with the encrypted capability link · ${view.interactive ? "interactive" : "watch-only"} · host IP hidden`,
-      ),
-    );
-    if (Number.isFinite(remaining)) {
-      console.log(
-        dim(
-          `managed allowance: ${Math.max(0, Math.ceil(remaining / 60))} minutes left this week` +
-            (view.quota?.resetAt ? ` · resets ${view.quota.resetAt}` : ""),
-        ),
-      );
-    }
-    console.log(dim("The # fragment holds the encryption key and is never sent to the relay. Treat the whole link like a password."));
-    return;
-  }
   const reach =
     view.expose === "tailscale"
       ? "devices on your tailnet (Tailscale)"
@@ -1728,10 +1524,7 @@ async function cmdView(flags) {
       console.error(view.error || "The live view failed to start.");
       return 1;
     }
-    await browser.run(
-      "if (page.url() === 'about:blank') await page.goto('about:blank'); 'ready'",
-      { session },
-    );
+    await browser.run("if (page.url() === 'about:blank') await page.goto('about:blank'); 'ready'");
     printLiveViewBanner(view, { dim, bold, attached: false });
     await new Promise((resolve) => {
       process.once("SIGINT", resolve);
@@ -1819,26 +1612,6 @@ async function cmdSkills(rest) {
   return 1;
 }
 
-async function cmdConfigure(rest, flags) {
-  const target = firstPositional(rest);
-  if (target !== "live-view") {
-    console.error("Usage: betterwright configure live-view [--live-view-mode relay|local|lan|tailscale]");
-    return 1;
-  }
-  const outcome = await configureLiveView(flags);
-  if (!outcome.ok) {
-    console.error(outcome.error);
-    return 1;
-  }
-  if (!outcome.configured) {
-    console.error("No mode selected. Pass --live-view-mode in a non-interactive shell.");
-    return 1;
-  }
-  console.log(`Live View mode saved: ${outcome.mode || "relay"}`);
-  if (outcome.warning) console.log(outcome.warning);
-  return 0;
-}
-
 async function main() {
   const tokens = process.argv.slice(2);
   const flags = new Set(tokens.filter((token) => token.startsWith("--")));
@@ -1852,7 +1625,7 @@ async function main() {
     }
     if (flags.has("--help") || tokens.includes("-h")) {
       console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|sessions|close|models|view|account|configure|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|sessions|close|models|view|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 0;
@@ -1879,10 +1652,6 @@ async function main() {
       return cmdModels(flags);
     case "view":
       return cmdView(flags);
-    case "account":
-      return cmdAccount(rest, flags);
-    case "configure":
-      return cmdConfigure(rest, flags);
     case "auth":
       return cmdAuth(rest);
     case "skill":
@@ -1904,7 +1673,7 @@ async function main() {
     }
     default:
       console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|sessions|close|models|view|account|configure|auth|skill|skills|mcp> [options]\n" +
+        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|sessions|close|models|view|auth|skill|skills|mcp> [options]\n" +
           "Run `betterwright` with no arguments for the interactive agent console.",
       );
       return 1;
