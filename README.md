@@ -47,8 +47,11 @@ Any agent that can run a shell command can drive the browser.
 plus operator guidance. No server, no SDK, no glue code.
 
 ```bash
-# Claude Code — install as a skill (writes ~/.claude/skills/browser/SKILL.md)
+# Claude Code + Agent Skills dirs (stamped with this package version)
 betterwright skill --install
+# also ~/.cursor/skills:  betterwright skill --install --all
+# After npm upgrade: setup/update refresh already-installed skill files;
+# doctor tips if a managed skill is still stale.
 
 # Codex — append to AGENTS.md
 betterwright skill >> ~/.codex/AGENTS.md

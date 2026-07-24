@@ -297,6 +297,40 @@ test("createDaemonBrowser proxies run and survives daemon death with an envelope
   }
 });
 
+test("createDaemonBrowser proxies startLiveView mid-session on the daemon browser", async () => {
+  const browser = stubBrowser();
+  browser.startLiveView = async (options) => {
+    browser.calls.push(["startLiveView", options]);
+    return {
+      ok: true,
+      url: "http://127.0.0.1:4242/?t=tok",
+      host: "127.0.0.1",
+      port: 4242,
+      session: options.session,
+    };
+  };
+  const { home, cleanup } = await startTestDaemon({ browser });
+  try {
+    // Simulate work already happening in the session.
+    const seed = await connectSessionDaemon({ home, spawnIfNeeded: false });
+    assert.equal(seed.ok, true);
+    await createDaemonBrowser(seed.channel, { session: "default" }).run("warmup", {});
+    seed.channel.end();
+
+    const outcome = await connectSessionDaemon({ home, spawnIfNeeded: false });
+    const proxy = createDaemonBrowser(outcome.channel, { session: "default" });
+    const view = await proxy.startLiveView({ expose: "local" });
+    assert.equal(view.ok, true);
+    assert.equal(view.url, "http://127.0.0.1:4242/?t=tok");
+    assert.equal(browser.calls.some((c) => c[0] === "startLiveView"), true);
+    const liveCall = browser.calls.find((c) => c[0] === "startLiveView");
+    assert.equal(liveCall[1].session, "default");
+    await proxy.close();
+  } finally {
+    await cleanup();
+  }
+});
+
 test("config mismatch on a busy daemon falls back; ignoreMismatch connects anyway", async () => {
   const { home, cleanup } = await startTestDaemon({
     config: { policy: { blockHosts: ["x.example"] } },
