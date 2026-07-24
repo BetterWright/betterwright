@@ -58,6 +58,7 @@ import {
   collectCredentialFrameDetections,
   credentialProbeTimedOut,
   disposeCredentialFrameDetections,
+  probePinnedCredentialOrigin,
   withProbeDeadline,
 } from "./credential-target-scan.mjs";
 import {
@@ -1266,7 +1267,7 @@ function unwrapHumanTarget(page, value) {
   );
 }
 
-async function humanTargetBox(page, value, timeout = 10_000) {
+async function humanTargetBox(page, value, timeout = 10_000, inputLikeOverride) {
   const target = unwrapHumanTarget(page, value);
   if (typeof target?.boundingBox !== "function") {
     return { target: null, box: target, inputLike: false };
@@ -1274,19 +1275,27 @@ async function humanTargetBox(page, value, timeout = 10_000) {
   await target.scrollIntoViewIfNeeded?.({ timeout });
   const box = await target.boundingBox({ timeout });
   if (!box) throw new Error("human target is not visible.");
-  const inputLike = await target
-    .evaluate(
-      (element) =>
-        ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) ||
-        element.isContentEditable,
-    )
-    .catch(() => false);
+  const inputLike =
+    typeof inputLikeOverride === "boolean"
+      ? inputLikeOverride
+      : await target
+          .evaluate(
+            (element) =>
+              ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) ||
+              element.isContentEditable,
+          )
+          .catch(() => false);
   return { target, box, inputLike };
 }
 
 async function humanClickTarget(page, session, value, options = {}) {
   const timeout = Math.max(1, Number(options?.timeout) || 10_000);
-  const { box, inputLike } = await humanTargetBox(page, value, timeout);
+  const { box, inputLike } = await humanTargetBox(
+    page,
+    value,
+    timeout,
+    options?.inputLike,
+  );
   const point = pointInside(box, inputLike);
   await movePointer(page.mouse, session.cursor, point, options);
   await pressPointer(page.mouse, inputLike);
@@ -2788,7 +2797,7 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
     // so instead of reporting a clean "no password field" the caller would take
     // at face value. Waiting for the page to settle is the fix, not a retry.
     const stalled = unresponsive.length
-      ? `; ${unresponsive.length} frame${unresponsive.length === 1 ? "" : "s"} did not respond in time (still loading or blocked) — let the page settle and retry, or pass explicit selectors`
+      ? `; ${unresponsive.length} frame${unresponsive.length === 1 ? "" : "s"} did not respond in time (still loading or blocked) — let the page settle, stop or reduce live page activity, or retry from a lightweight same-origin page; pass explicit selectors when the form itself is ambiguous`
       : "";
     const reason =
       (ambiguous[0]?.metadata.reason ||
@@ -2842,7 +2851,10 @@ async function fillCredentialField(page, frame, session, target, value) {
     await locator.waitFor({ state: "visible", timeout: 10_000 });
   else await locator.waitForElementState?.("visible", { timeout: 10_000 });
   try {
-    await humanClickTarget(page, session, locator, { timeout: 10_000 });
+    await humanClickTarget(page, session, locator, {
+      timeout: 10_000,
+      inputLike: true,
+    });
   } catch {
     await locator.focus({ timeout: 10_000 }).catch(() => {});
   }
@@ -2892,14 +2904,23 @@ async function pinnedCredentialOrigin(frame, handles) {
     }
   };
 
-  const documentUrlBefore = await inspectDocument();
+  const probe = await probePinnedCredentialOrigin({
+    inspectDocument,
+    originForFrame: () => credentialOriginForFrame(frame),
+  });
+  if (probe.timedOut) {
+    throw new Error(
+      `The explicit credential target frame did not respond in time during ${probe.phase} ` +
+        "(still loading or blocked) — let the page settle, stop or reduce live page activity, " +
+        "or retry from a lightweight same-origin page.",
+    );
+  }
+  const { documentUrlBefore, documentUrlAfter, origin } = probe;
   if (documentUrlBefore == null) {
     throw new Error(
       "The explicit credential targets became detached or their document changed before vault access.",
     );
   }
-  const origin = await credentialOriginForFrame(frame);
-  const documentUrlAfter = await inspectDocument();
   const documentOriginBefore = urlOrigin(documentUrlBefore);
   const documentOriginAfter = urlOrigin(documentUrlAfter);
   if (
@@ -3234,7 +3255,7 @@ async function performCredentialFill(
     // Fire blur so forms that validate the password/confirm match on blur (not
     // just on input) run their check before any submit.
     if (lastLocator) {
-      await lastLocator.evaluate((element) => element.blur?.()).catch(() => {});
+      await lastLocator.press("Tab", { timeout: CREDENTIAL_FRAME_PROBE_MS }).catch(() => {});
     }
 
     let submitted = false;
@@ -3243,6 +3264,7 @@ async function performCredentialFill(
     if (submitTarget) {
       await humanClickTarget(page, session, submitTarget, {
         timeout: 10_000,
+        inputLike: false,
       });
       submitted = true;
     }
