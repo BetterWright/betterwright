@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import {
   claudeModel,
@@ -1732,4 +1734,44 @@ test("runAgentTask never retries after the deadline aborts the model call", asyn
   assert.equal(result.ok, false);
   assert.equal(result.reason, "timeout");
   assert.equal(calls.length, 1);
+});
+
+// Regression: the backoff timer used to be unref'd, so during a retry pause the
+// process had no ref'd handles left, Node drained the event loop, and the run
+// exited without ever retrying — `runAgentTask` simply never settled. Every
+// in-process assertion still "passed" locally because the test runner itself
+// held the loop open; only a real child process exposes it. The child does
+// nothing but retry, which is exactly the shape of a short-lived CLI run.
+test("a retry backoff keeps the process alive when it is the only pending work", async () => {
+  const dir = makeTempDir("bw-retry-liveness-");
+  const script = path.join(dir, "retry.mjs");
+  fs.writeFileSync(
+    script,
+    `import { runAgentTask } from ${JSON.stringify(pathToFileURL(path.resolve("src/agent.mjs")).href)};
+
+let calls = 0;
+const model = {
+  async complete() {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("rate limited"), { status: 429 });
+    return { text: "recovered", toolCalls: [] };
+  },
+};
+const browser = { async run() { return { ok: true }; }, async close() {} };
+const result = await runAgentTask({ task: "x", model, browser });
+process.stdout.write(JSON.stringify({ answer: result.answer, calls }));
+`,
+  );
+
+  const { status, stdout, stderr } = spawnSync(process.execPath, [script], {
+    encoding: "utf8",
+    cwd: path.resolve("."),
+    timeout: 30_000,
+  });
+
+  // An unref'd backoff exits 0 with empty stdout: silent, and indistinguishable
+  // from success unless the output is checked.
+  assert.equal(status, 0, `child failed: ${stderr}`);
+  assert.notEqual(stdout, "", "child exited during the backoff without retrying");
+  assert.deepEqual(JSON.parse(stdout), { answer: "recovered", calls: 2 });
 });
