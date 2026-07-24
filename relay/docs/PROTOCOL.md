@@ -71,7 +71,7 @@ salt = SHA-256(
 ```
 
 Use HKDF-SHA-256 with that salt and one of these exact info strings to derive a
-non-exportable 256-bit AES-GCM key:
+256-bit AES-GCM key:
 
 ```text
 BetterWright relay host-to-viewer AES-GCM v1
