@@ -427,6 +427,7 @@ export class RelaySession implements DurableObject {
     }
     await this.closeAll(CLOSE_CODE.SESSION_CLOSED, reason, "session_closed");
     await this.state.storage.deleteAlarm();
+    await this.state.storage.deleteAll();
     return jsonResponse({ ok: true, idempotent });
   }
 
@@ -477,6 +478,19 @@ export class RelaySession implements DurableObject {
       const nowMs = Date.now();
       if (nowMs >= session.expiresAtMs) {
         await this.closeAll(CLOSE_CODE.SESSION_EXPIRED, "session expired", "session_expired");
+        try {
+          await this.env.DB
+            .prepare("DELETE FROM sessions WHERE id = ?1 AND user_id = ?2")
+            .bind(session.sessionId, session.userId)
+            .run();
+        } catch (error) {
+          // Keep the minimal config and retry cleanup rather than orphaning a
+          // permanent D1 row after a transient database failure.
+          await this.state.storage.setAlarm(nowMs + 60_000);
+          throw error;
+        }
+        await this.state.storage.deleteAlarm();
+        await this.state.storage.deleteAll();
         return;
       }
       const viewer = this.state.getWebSockets("viewer")[0];

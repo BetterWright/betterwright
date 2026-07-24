@@ -69,9 +69,20 @@ export function internalHeaders(env: Env): HeadersInit {
 
 export function clerkPrincipalFromVerification(result: unknown): ClerkPrincipal {
   if (!result || typeof result !== "object") throw new Error("invalid Clerk verification result");
-  const verified = result as { data?: { sub?: unknown; sid?: unknown }; errors?: unknown };
-  if (verified.errors || !verified.data) throw new Error("Clerk token verification failed");
-  const payload = verified.data;
+  // @clerk/backend's public verifyToken() returns the verified JwtPayload
+  // directly. Accept the older low-level {data, errors} shape too so a patch
+  // release cannot turn every valid production session into a 401.
+  const verified = result as {
+    sub?: unknown;
+    sid?: unknown;
+    data?: { sub?: unknown; sid?: unknown };
+    errors?: unknown;
+  };
+  const legacyShape = Object.hasOwn(verified, "data");
+  if (legacyShape && (verified.errors || !verified.data)) {
+    throw new Error("Clerk token verification failed");
+  }
+  const payload = legacyShape ? verified.data! : verified;
   if (typeof payload.sub !== "string" || !/^user_[A-Za-z0-9]+$/.test(payload.sub)) {
     throw new Error("missing Clerk subject");
   }

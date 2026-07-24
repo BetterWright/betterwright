@@ -44,6 +44,7 @@ import {
   listActiveSessionIds,
   listSessionIdsForUser,
   publicSession,
+  removeSession,
   type SessionRow,
 } from "./repositories/sessions";
 import { billingWindow, toIso } from "./time";
@@ -173,6 +174,10 @@ async function createSession(
   });
   if (!initialized.ok) {
     await endSession(env.DB, sessionId, principal.userId, "initialization failed", nowMs);
+    await internalFetch(stub, env, "/terminate", "POST", {
+      reason: "initialization failed",
+    }).catch(() => null);
+    await removeSession(env.DB, sessionId, principal.userId);
     throw new HttpError(503, "session_unavailable", "The relay session could not be initialized");
   }
 
@@ -259,6 +264,10 @@ async function deleteSession(
     { reason: "session deleted" },
   );
   if (!response.ok) throw new HttpError(503, "session_close_pending", "Session was marked ended but peers may still be closing");
+  const removed = await removeSession(env.DB, sessionId, principal.userId);
+  if (!removed) {
+    throw new HttpError(503, "session_cleanup_pending", "Session peers closed but metadata cleanup is still pending");
+  }
   return emptyResponse();
 }
 

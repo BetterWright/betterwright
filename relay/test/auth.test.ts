@@ -9,7 +9,17 @@ import { getConfig } from "../src/config";
 import { makeBaseEnv } from "./helpers";
 
 describe("Clerk verification result handling", () => {
-  it("reads the current @clerk/backend {data, errors} return shape", () => {
+  it("reads the direct JwtPayload returned by the locked @clerk/backend verifyToken", () => {
+    expect(
+      clerkPrincipalFromVerification({
+        sub: "user_2RfWKJREkjKbHZy0Wqa5qrHeAnb",
+        sid: "sess_123",
+        errors: "a custom JWT claim must not be mistaken for SDK errors",
+      }),
+    ).toEqual({ userId: "user_2RfWKJREkjKbHZy0Wqa5qrHeAnb", sessionId: "sess_123" });
+  });
+
+  it("retains compatibility with the low-level {data, errors} result shape", () => {
     expect(
       clerkPrincipalFromVerification({
         data: { sub: "user_2RfWKJREkjKbHZy0Wqa5qrHeAnb", sid: "sess_123" },
@@ -22,6 +32,7 @@ describe("Clerk verification result handling", () => {
     {},
     { errors: [new Error("bad")] },
     { data: {} },
+    { sub: "not-a-clerk-user" },
     { data: { sub: "not-a-clerk-user" } },
   ])("fails closed for malformed verification result %#", (result) => {
     expect(() => clerkPrincipalFromVerification(result)).toThrow();

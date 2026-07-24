@@ -17,6 +17,11 @@ export class MemoryStorage {
     return this.values.delete(key);
   }
 
+  async deleteAll(): Promise<void> {
+    this.values.clear();
+    this.alarm = null;
+  }
+
   async setAlarm(time: number | Date): Promise<void> {
     this.alarm = time instanceof Date ? time.getTime() : time;
   }
@@ -167,6 +172,15 @@ class FakeStatement {
       if (row) {
         row.ended_at_ms ??= now;
         row.ended_reason ??= reason;
+        changes = 1;
+      }
+    } else if (sql.startsWith("delete from sessions where id = ?1 and user_id = ?2")) {
+      const [id, userId] = this.parameters as [string, string];
+      const index = this.db.sessions.findIndex(
+        (entry) => entry.id === id && entry.user_id === userId,
+      );
+      if (index !== -1) {
+        this.db.sessions.splice(index, 1);
         changes = 1;
       }
     } else if (sql.startsWith("update relay_control")) {

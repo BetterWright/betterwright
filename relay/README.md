@@ -37,6 +37,10 @@ deploys itself.
   current 15-minute lease and cannot reconnect.
 - One host and one viewer are accepted per session. WebSockets use Cloudflare's
   hibernation API and store rate/lease metadata in socket attachments.
+- Explicitly ended and absolutely expired sessions are removed from both D1 and
+  Durable Object storage after peers and quota leases close. Initialization
+  failures are purged too; ordinary production traffic does not accumulate
+  permanent per-session records.
 - Peer payloads must be binary and at most 2 MiB. Default token buckets allow 15
   messages per second sustained, 20 burst, and 10 Mbps per sender. Slow peers
   are closed rather than accumulating unbounded queues.
@@ -62,11 +66,11 @@ the session Durable Object. The viewer URL puts the root in `#k=...`; URL
 fragments are not sent in HTTP requests. The page removes the fragment from the
 address bar immediately after reading it.
 
-The root derives separate AES-256-GCM keys for host-to-viewer and
-viewer-to-host traffic with HKDF-SHA-256. The viewer sends an encrypted random
-challenge after every connection. `HostRelayCodec` does not release viewer
-input to BetterWright until it has validated that challenge and returned the
-encrypted response. The relay forwards all encrypted text and JPEG messages as
+The root derives separate, epoch-bound AES-256-GCM keys for host-to-viewer and
+viewer-to-host traffic with HKDF-SHA-256. The host sends an encrypted random
+challenge after every viewer connection. `HostRelayCodec` does not release
+viewer input to BetterWright until the viewer has decrypted and echoed that
+challenge exactly. The relay forwards all encrypted text and JPEG messages as
 opaque binary WebSocket messages.
 
 No WebRTC API is used. The relay never gives a peer the other peer's address.
