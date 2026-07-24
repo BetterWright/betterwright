@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 
 import {
@@ -12,12 +9,13 @@ import {
 } from "../../src/credential-target-scan.mjs";
 import { cloakRuntime } from "../../src/doctor.mjs";
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const ready = (await cloakRuntime()).installed;
 const opts = { skip: ready ? false : "browser runtime not installed" };
 
 function tempHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-credential-test-"));
+  return makeTempDir("betterwright-credential-test-");
 }
 
 test("frame detection disposes earlier handles before propagating a later scan failure", async () => {

@@ -332,6 +332,45 @@
       "reason_contains": "private or internal address"
     },
     {
+      "name": "ipv6 link-local upper half of fe80::/10 blocked in strict mode",
+      "url": "http://[fea0::1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "ipv6 link-local last address of fe80::/10 blocked in strict mode",
+      "url": "http://[febf::ffff]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "ipv6 deprecated site-local fec0::/10 blocked in strict mode",
+      "url": "http://[fec0::1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal address"
+    },
+    {
+      "name": "ipv6 fe00::/8 is outside every reserved range and stays public",
+      "url": "http://[fe00::1]/",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": true
+    },
+    {
       "name": "ipv6 unique-local fc blocked in strict mode",
       "url": "http://[fc00::1]/",
       "policy": {

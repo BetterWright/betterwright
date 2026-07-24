@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -9,6 +8,7 @@ import {
   forkMacIdentity,
   prepareForkFontsConfig,
 } from "../../src/fork-identity.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 test("fork mac identity carries no linux or headless markers", () => {
   const id = forkMacIdentity("150.0.7871.129");
@@ -51,7 +51,7 @@ test("fork mac identity matches real consumer hardware", () => {
 });
 
 test("fonts config is generated next to the binary's font bundle", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bw-fonts-"));
+  const root = makeTempDir("bw-fonts-");
   const binDir = path.join(root, "linux-x64");
   const fontsDir = path.join(binDir, "fonts", "ttf");
   fs.mkdirSync(fontsDir, { recursive: true });
@@ -69,7 +69,7 @@ test("fonts config is generated next to the binary's font bundle", () => {
 });
 
 test("fonts config is null without a bundle (host fontconfig fallback)", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bw-fonts-none-"));
+  const root = makeTempDir("bw-fonts-none-");
   const result = prepareForkFontsConfig({
     forkBinary: path.join(root, "chrome"),
     runtimeDir: root,
@@ -79,7 +79,7 @@ test("fonts config is null without a bundle (host fontconfig fallback)", () => {
 });
 
 test("forkFontsDir finds fonts/ttf next to the binary", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bw-fonts-dir-"));
+  const root = makeTempDir("bw-fonts-dir-");
   const fontsDir = path.join(root, "fonts", "ttf");
   fs.mkdirSync(fontsDir, { recursive: true });
   assert.equal(forkFontsDir(path.join(root, "chrome")), fontsDir);

@@ -8,8 +8,9 @@ test("default prompt is permissive", () => {
   const compact = prompt.replace(/\s+/g, " ");
   // Budget history: 6,500 → 7,000 on 2026-07-23 for the "Live view and
   // handoff" section (agents were claiming a live view was running without
-  // ever starting one). Grow this only for guidance that pays for itself.
-  assert.ok(prompt.length < 7_000, `default prompt grew to ${prompt.length} characters`);
+  // ever starting one); back to 6,900 on 2026-07-25 after the compression pass.
+  // Grow this only for guidance that pays for itself.
+  assert.ok(prompt.length < 6_900, `default prompt grew to ${prompt.length} characters`);
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
   // Reading escalation, ref discipline, batching, and recovery guidance.

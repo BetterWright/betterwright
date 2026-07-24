@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 
@@ -14,6 +13,7 @@ import {
   loginProvider,
   refreshCodexToken,
 } from "../../src/auth.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function base64url(buffer) {
   return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -40,8 +40,8 @@ let prevCodexHome;
 let prevGrokHome;
 
 before(() => {
-  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "bw-auth-"));
-  tmpGrokHome = fs.mkdtempSync(path.join(os.tmpdir(), "bw-auth-grok-"));
+  tmpHome = makeTempDir("bw-auth-");
+  tmpGrokHome = makeTempDir("bw-auth-grok-");
   prevCodexHome = process.env.CODEX_HOME;
   prevGrokHome = process.env.GROK_HOME;
   process.env.CODEX_HOME = tmpHome;

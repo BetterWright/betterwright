@@ -30,9 +30,10 @@ import {
   NetworkPolicy,
 } from "./client.mjs";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
+import { importOptionalPeer } from "./optional-peer.mjs";
 import { agentSystemPrompt } from "./prompt.mjs";
 import { matchSkillsForText, readSkill } from "./skills.mjs";
-import { VAULT_MATCH_MODES } from "./vault.mjs";
+import { agentBrowserToolParameters, agentLoginToolParameters } from "./tool-schemas.mjs";
 
 // The ChatGPT backend Responses endpoint the codex CLI drives with a ChatGPT
 // OAuth access token (overridable if the backend path moves).
@@ -45,6 +46,25 @@ const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
 const MAX_TIMER_MS = 2_147_483_647;
 const OBSERVATION_LIMIT = 12_000;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
+
+// Bounded retry around the model call. Three attempts total with exponential
+// backoff + jitter covers the transient blips (429s, 5xx, dropped
+// connections) without turning a hard failure into a stall: per-sleep and
+// honored Retry-After are capped, so the worst case adds well under half a
+// minute — and the whole retry loop still runs under the agent deadline, so
+// it can never outlive the wall-clock budget. The Anthropic SDK adapter
+// already retries twice internally; the small caps keep the layered retries
+// from compounding into a long wait.
+const MODEL_RETRY_MAX_ATTEMPTS = 3;
+const MODEL_RETRY_BASE_DELAY_MS = 500;
+const MODEL_RETRY_MAX_DELAY_MS = 8_000;
+
+// Adapter stopReason vocabularies, normalized. Anthropic reports
+// "max_tokens" / "refusal"; OpenAI-compatible chat reports "length" /
+// "content_filter"; the Responses API reports an "incomplete" status when the
+// output-token limit cuts the response.
+const TRUNCATED_STOP_REASONS = new Set(["max_tokens", "length", "incomplete"]);
+const REFUSAL_STOP_REASONS = new Set(["refusal", "content_filter"]);
 
 export const MODEL_ENDPOINT_PRESETS = Object.freeze({
   openrouter: Object.freeze({
@@ -171,37 +191,11 @@ const LIVE_VIEW_TOOL_PARAMETERS = {
   },
 };
 
-const LOGIN_TOOL_PARAMETERS = {
-  type: "object",
-  properties: {
-    passwordSelector: { type: "string", description: "Optional CSS or aria-ref target for the password or new-password field." },
-    currentPasswordSelector: { type: "string", description: "Optional CSS or aria-ref target for the current-password field during rotation." },
-    usernameSelector: { type: "string", description: "Optional CSS or aria-ref target for the username/email field." },
-    confirmPasswordSelector: { type: "string", description: "Optional CSS or aria-ref target for the confirmation field." },
-    submitSelector: { type: "string", description: "Optional CSS or aria-ref target clicked to submit." },
-    submit: { type: "boolean", description: "Detect and submit the matching form after filling." },
-    id: { type: "string", description: "Select the saved record by id." },
-    username: { type: "string", description: "Select the saved record by username, or set the new one on signup." },
-    generate: { type: "boolean", description: "Generate, stage, and fill a strong password (signup/rotation)." },
-    length: { type: "integer", description: "Generated password length (default 24)." },
-    includeSymbols: { type: "boolean", description: "Include symbols in a generated password (default true)." },
-    label: { type: "string", description: "Human label for a newly saved record." },
-    matchMode: {
-      type: "string",
-      enum: [...VAULT_MATCH_MODES],
-      description: "URL scope for the generated credential (default base-domain).",
-    },
-  },
-};
+// Parameter schemas are shared across the agent/MCP/Pi surfaces; the shared
+// module is the single source of truth (see src/tool-schemas.mjs).
+const LOGIN_TOOL_PARAMETERS = agentLoginToolParameters();
 
-const BROWSER_TOOL_PARAMETERS = {
-  type: "object",
-  properties: {
-    code: { type: "string", description: "The async Playwright JavaScript to execute." },
-    note: { type: "string", description: "A short present-tense status line describing this step." },
-  },
-  required: ["code"],
-};
+const BROWSER_TOOL_PARAMETERS = agentBrowserToolParameters();
 
 const DONE_TOOL_PARAMETERS = {
   type: "object",
@@ -319,17 +313,134 @@ async function withinDeadline(operation, deadline) {
   try {
     return await Promise.race([
       Promise.resolve().then(() => operation(controller.signal)),
+      // Not unref'd: this watchdog exists to guarantee the operation ends in a
+      // reported timeout, and an unref'd timer cannot make that guarantee. If
+      // the operation is pending on nothing that holds the loop -- a model
+      // adapter whose promise only settles on abort -- Node drains the loop and
+      // the process exits silently instead of timing out. The `finally` below
+      // already stops the timer from outliving the race, so ref'ing it costs
+      // nothing once the operation settles.
       new Promise((_, reject) => {
         timer = setTimeout(() => {
           controller.abort(AGENT_TIMEOUT);
           reject(AGENT_TIMEOUT);
         }, remainingMs);
-        timer.unref?.();
       }),
     ]);
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Pull an HTTP status out of a failed model call. SDK errors (Anthropic)
+// carry a numeric `status`; the fetch-based adapters embed it in their
+// "... request failed (429): ..." message.
+function statusFromModelError(error) {
+  if (!error || typeof error !== "object") return null;
+  if (typeof error.status === "number") return error.status;
+  const match = /request failed \((\d{3})\)/.exec(String(error.message || ""));
+  return match ? Number(match[1]) : null;
+}
+
+const NETWORK_ERROR_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+// Retry only what can plausibly succeed on a second try: rate limits,
+// server-side failures, and network-level drops. Client errors (400/401/403),
+// refusals, and programming mistakes are not transient and must surface.
+function isTransientModelError(error) {
+  const status = statusFromModelError(error);
+  if (status != null) return status === 408 || status === 429 || status >= 500;
+  if (!(error instanceof Error)) return false;
+  if (error.name === "APIConnectionError" || error.name === "APIConnectionTimeoutError") return true;
+  if (NETWORK_ERROR_CODES.has(error.code) || NETWORK_ERROR_CODES.has(error.cause?.code)) return true;
+  // Undici surfaces network failures from bare fetch() as TypeError.
+  return error instanceof TypeError && /fetch/i.test(error.message);
+}
+
+// Honor a Retry-After header when the failing client preserved response
+// headers (the Anthropic SDK does). Accepts delta-seconds or an HTTP-date.
+function retryAfterMsFromError(error) {
+  const headers = error?.headers;
+  if (!headers) return null;
+  const value =
+    typeof headers.get === "function"
+      ? headers.get("retry-after")
+      : (headers["retry-after"] ?? headers["Retry-After"]);
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? null : Math.max(0, date - Date.now());
+}
+
+// A sleep that ends immediately when the surrounding deadline aborts, so a
+// backoff pause can never hold the loop past the wall-clock budget.
+//
+// This timer is deliberately NOT unref'd. During a backoff the pause *is* the
+// pending work -- the failed model call has settled and the browser is idle --
+// so an unref'd timer here would leave the loop to be held only by the deadline
+// watchdog in `withinDeadline`. That happens to be enough today, but it makes a
+// retry's liveness depend on an unrelated timer's ref state; ref this one so the
+// sleep stands on its own. The deadline is still enforced by the abort listener
+// below and by the caller's `Date.now() + delay >= deadline` check, so holding
+// the loop for the length of the pause costs nothing.
+function sleepWithSignal(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const fail = () => {
+      cleanup();
+      reject(signal?.reason ?? new Error("aborted"));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener?.("abort", fail);
+    };
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error("aborted"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    signal?.addEventListener?.("abort", fail, { once: true });
+  });
+}
+
+// One model turn with bounded retries, all under the agent deadline. Aborts
+// (timeout) are never retried; only transient failures are, with exponential
+// backoff + jitter, honoring a capped Retry-After when present, and never
+// sleeping past the deadline.
+async function completeWithRetry(model, request, deadline) {
+  return withinDeadline(async (signal) => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await model.complete({ ...request, signal });
+      } catch (error) {
+        if (signal.aborted || error === AGENT_TIMEOUT) throw error;
+        if (attempt >= MODEL_RETRY_MAX_ATTEMPTS || !isTransientModelError(error)) throw error;
+        const backoff = Math.min(
+          MODEL_RETRY_MAX_DELAY_MS,
+          MODEL_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+        );
+        const jittered = backoff * (0.5 + Math.random() * 0.5);
+        const delay = Math.min(
+          MODEL_RETRY_MAX_DELAY_MS,
+          Math.max(retryAfterMsFromError(error) ?? 0, jittered),
+        );
+        if (Date.now() + delay >= deadline) throw error;
+        await sleepWithSignal(delay, signal);
+      }
+    }
+  }, deadline);
 }
 
 /**
@@ -593,10 +704,18 @@ export async function runAgentTask(options = {}) {
       }
       // Human guidance lands at turn boundaries (never mid-browser step).
       appendHumanGuidance(await collectHumanGuidance());
-      const response = await withinDeadline(
-        (signal) => model.complete({ system, messages, tools, signal }),
-        deadline,
-      );
+      let response;
+      try {
+        response = await completeWithRetry(model, { system, messages, tools }, deadline);
+      } catch (error) {
+        if (error === AGENT_TIMEOUT || !isTransientModelError(error)) throw error;
+        // A transient provider failure that survived the bounded retries:
+        // return a partial result that preserves the transcript instead of
+        // throwing the whole run away. Non-transient errors (bad request,
+        // auth) still throw so configuration problems surface loudly.
+        reason = "model_error";
+        break;
+      }
       const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
       if (response.usage) {
         // Provider input totals include cached reads. Keep the full last-turn
@@ -616,6 +735,19 @@ export async function runAgentTask(options = {}) {
       if (!toolCalls.length) {
         if (appendHumanGuidance(await collectHumanGuidance())) continue;
         answer = String(response.text || "").trim();
+        const stopReason = String(response.stopReason || "");
+        if (TRUNCATED_STOP_REASONS.has(stopReason)) {
+          // The provider cut the response at the output-token limit, so the
+          // text is an unfinished fragment, not an answer. Keep it (and the
+          // transcript) in the result, but do not report success.
+          reason = "max_tokens";
+          break;
+        }
+        if (REFUSAL_STOP_REASONS.has(stopReason)) {
+          // The model declined the task; distinct from an ordinary answer.
+          reason = "refusal";
+          break;
+        }
         reason = answer ? "answered" : "stopped";
         finished = true;
         break;
@@ -1412,14 +1544,10 @@ export function claudeModel(options = {}) {
   async function client() {
     if (!clientPromise)
       clientPromise = (async () => {
-        let Anthropic;
-        try {
-          ({ default: Anthropic } = await import("@anthropic-ai/sdk"));
-        } catch {
-          throw new Error(
-            "The Claude model needs the Anthropic SDK. Install it with `npm install @anthropic-ai/sdk`.",
-          );
-        }
+        const { default: Anthropic } = await importOptionalPeer(
+          "@anthropic-ai/sdk",
+          "The Claude model",
+        );
         return new Anthropic(options.apiKey ? { apiKey: options.apiKey } : {});
       })();
     return clientPromise;

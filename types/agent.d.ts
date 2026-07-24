@@ -120,7 +120,24 @@ export interface AgentResult {
   ok: boolean;
   answer: string;
   steps: number;
-  reason: "answered" | "stopped" | "done" | "timeout" | "context_limit";
+  /**
+   * How the run ended. Success reasons: "answered" (prose answer), "done"
+   * (done tool or finalAnswer). Failure reasons: "stopped" (no answer),
+   * "timeout" (wall-clock budget), "context_limit" (transcript budget),
+   * "max_tokens" (the provider truncated the final response at the
+   * output-token limit — `answer` holds the fragment), "refusal" (the model
+   * declined the task), "model_error" (a transient provider failure survived
+   * the bounded retries — the transcript is preserved).
+   */
+  reason:
+    | "answered"
+    | "stopped"
+    | "done"
+    | "timeout"
+    | "context_limit"
+    | "max_tokens"
+    | "refusal"
+    | "model_error";
   /** How many tool calls the model issued; can exceed `steps` when a turn batches several. */
   toolCalls: number;
   /**

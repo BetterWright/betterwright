@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import {
   claudeModel,
@@ -18,6 +19,10 @@ import {
   runAgentTask,
 } from "../../src/agent.mjs";
 import { formatAgentUsage, uncachedInputTokens } from "../../src/agent-usage.mjs";
+import { _createMcpHandlersForTest } from "../../src/mcp-server.mjs";
+import { PI_BROWSER_PARAMETERS, PI_LOGIN_PARAMETERS } from "../../src/pi-extension.mjs";
+import { browserToolProperties, loginToolProperties } from "../../src/tool-schemas.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function base64url(buffer) {
   return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -1090,7 +1095,7 @@ test("codex and grok adapters require credentials", () => {
 test("codex OAuth session calls the ChatGPT backend with the account header", async () => {
   const env = { ...process.env };
   for (const key of ["OPENAI_API_KEY", "CODEX_BASE_URL", "OPENAI_BASE_URL"]) delete process.env[key];
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-codex-"));
+  const home = makeTempDir("bw-codex-");
   process.env.CODEX_HOME = home;
   fs.writeFileSync(
     path.join(home, "auth.json"),
@@ -1256,7 +1261,7 @@ test("codexModel reads the configured model id from config.toml", () => {
   const env = { ...process.env };
   for (const key of ["OPENAI_API_KEY", "CODEX_BASE_URL", "OPENAI_BASE_URL", "BETTERWRIGHT_CODEX_MODEL"])
     delete process.env[key];
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-codexcfg-"));
+  const home = makeTempDir("bw-codexcfg-");
   process.env.CODEX_HOME = home;
   fs.writeFileSync(path.join(home, "config.toml"), 'model = "gpt-custom-9"\n');
   fs.writeFileSync(
@@ -1278,7 +1283,7 @@ test("codexModel reads the configured model id from config.toml", () => {
 test("grok OAuth session calls xAI chat/completions with a bearer token", async () => {
   const env = { ...process.env };
   for (const key of ["GROK_API_KEY", "XAI_API_KEY", "GROK_BASE_URL", "XAI_BASE_URL"]) delete process.env[key];
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-grok-"));
+  const home = makeTempDir("bw-grok-");
   process.env.GROK_HOME = home;
   fs.writeFileSync(
     path.join(home, "auth.json"),
@@ -1551,4 +1556,250 @@ test("ask tool waits on live-view chat when liveView is available", async () => 
   assert.equal(browser.calls.asks[0].question, "Which account?");
   const toolTurn = result.transcript.find((message) => message.role === "tool");
   assert.match(toolTurn.results[0].content, /account ending 999/);
+});
+
+// --- Tool schema parity across the three surfaces --------------------------
+
+// Drop the keys a surface layers on top of the shared field schemas, so the
+// remainder must match the single source of truth exactly.
+function stripKey(properties, key) {
+  return Object.fromEntries(
+    Object.entries(properties).map(([name, def]) => {
+      const { [key]: _dropped, ...rest } = def;
+      return [name, rest];
+    }),
+  );
+}
+
+test("agent harness tools use the shared parameter schemas verbatim", async () => {
+  const model = scriptedModel([{ text: "hi", toolCalls: [] }]);
+  await runAgentTask({ task: "x", model, browser: fakeBrowser({ vault: {} }) });
+  const tools = Object.fromEntries(model.seen[0].tools.map((tool) => [tool.name, tool.parameters]));
+
+  assert.deepEqual(tools.browser, {
+    type: "object",
+    properties: browserToolProperties(),
+    required: ["code"],
+  });
+  assert.deepEqual(tools.login, { type: "object", properties: loginToolProperties() });
+
+  // The tool list is resent on every turn of the agent loop, so it is charged
+  // once per step, not once per task. Budget set from the 2026-07-25 pass
+  // (6,211 → 5,588 collapsed characters) with room for one more field.
+  const size = JSON.stringify(model.seen[0].tools).replace(/\s+/g, " ").length;
+  assert.ok(size < 6_000, `agent tool list grew to ${size} collapsed characters`);
+});
+
+test("MCP tool input schemas match the shared schemas plus the session/default layer", async () => {
+  const handlers = _createMcpHandlersForTest({
+    browser: { vault: {} },
+    server: {},
+    downloadPolicy: "deny",
+  });
+  const listed = await handlers.listTools();
+  const byName = Object.fromEntries(listed.tools.map((tool) => [tool.name, tool.inputSchema]));
+
+  // browser (run) tool: shared fields + a session argument, defaults layered.
+  const { session: runSession, ...runProps } = byName.browser.properties;
+  assert.deepEqual(stripKey(runProps, "default"), browserToolProperties());
+  assert.deepEqual(byName.browser.required, ["code"]);
+  assert.equal(runSession.default, "default");
+  assert.equal(runSession.type, "string");
+
+  // browser_login tool: shared fields + session, submit/generate defaults.
+  const { session: loginSession, ...loginProps } = byName.browser_login.properties;
+  assert.deepEqual(stripKey(loginProps, "default"), loginToolProperties());
+  assert.equal(loginSession.default, "default");
+  assert.equal(loginProps.submit.default, false);
+  assert.equal(loginProps.generate.default, false);
+});
+
+test("Pi tool parameters match the shared schemas plus the strict-validation layer", () => {
+  assert.equal(PI_BROWSER_PARAMETERS.additionalProperties, false);
+  assert.deepEqual(stripKey(PI_BROWSER_PARAMETERS.properties, "minLength"), browserToolProperties());
+  assert.deepEqual(PI_BROWSER_PARAMETERS.required, ["code"]);
+  assert.equal(PI_BROWSER_PARAMETERS.properties.code.minLength, 1);
+
+  assert.equal(PI_LOGIN_PARAMETERS.additionalProperties, false);
+  assert.deepEqual(stripKey(PI_LOGIN_PARAMETERS.properties, "minLength"), loginToolProperties());
+  assert.equal(PI_LOGIN_PARAMETERS.properties.passwordSelector.minLength, 1);
+  assert.ok(!PI_LOGIN_PARAMETERS.required?.includes("passwordSelector"));
+});
+
+// --- stopReason handling ---------------------------------------------------
+
+test("a response truncated at the output-token limit is not reported as answered", async () => {
+  // Anthropic says "max_tokens", OpenAI chat says "length", the Responses API
+  // reports an "incomplete" status — all mean the text is a cut fragment.
+  for (const stopReason of ["max_tokens", "length", "incomplete"]) {
+    const model = scriptedModel([{ text: "partial fragment", toolCalls: [], stopReason }]);
+    const result = await runAgentTask({ task: "x", model, browser: fakeBrowser() });
+    assert.equal(result.ok, false, `stopReason=${stopReason}`);
+    assert.equal(result.reason, "max_tokens", `stopReason=${stopReason}`);
+    // The fragment is preserved for inspection, just not reported as success.
+    assert.equal(result.answer, "partial fragment");
+  }
+});
+
+test("a refusal is its own terminal reason, not an answer", async () => {
+  for (const stopReason of ["refusal", "content_filter"]) {
+    const model = scriptedModel([{ text: "I cannot help with that.", toolCalls: [], stopReason }]);
+    const result = await runAgentTask({ task: "x", model, browser: fakeBrowser() });
+    assert.equal(result.ok, false, `stopReason=${stopReason}`);
+    assert.equal(result.reason, "refusal", `stopReason=${stopReason}`);
+  }
+});
+
+test("a normal end-of-turn prose answer still reports answered", async () => {
+  const model = scriptedModel([{ text: "the answer", toolCalls: [], stopReason: "end_turn" }]);
+  const result = await runAgentTask({ task: "x", model, browser: fakeBrowser() });
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "answered");
+  assert.equal(result.answer, "the answer");
+});
+
+// --- Bounded retry around the model call -----------------------------------
+
+// A model that fails with the scripted errors before succeeding.
+function flakyModel(errors, response) {
+  const calls = [];
+  let i = 0;
+  return {
+    name: "flaky",
+    calls,
+    async complete(request) {
+      calls.push(request);
+      if (i < errors.length) throw errors[i++];
+      return response;
+    },
+  };
+}
+
+test("runAgentTask retries a transient 429 (honoring Retry-After) and succeeds", async () => {
+  // SDK-shaped error: numeric status plus preserved response headers.
+  const rateLimited = Object.assign(new Error("rate limited"), {
+    status: 429,
+    headers: { "retry-after": "1" },
+  });
+  const model = flakyModel([rateLimited], { text: "recovered answer", toolCalls: [] });
+  const started = Date.now();
+  const result = await runAgentTask({ task: "x", model, browser: fakeBrowser() });
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, "recovered answer");
+  assert.equal(model.calls.length, 2);
+  // The 1s Retry-After hint was honored over the smaller default backoff.
+  assert.ok(Date.now() - started >= 900);
+});
+
+test("runAgentTask does not retry a non-transient 400 error", async () => {
+  // fetch-adapter-shaped error: the status only lives in the message.
+  const model = flakyModel([new Error("openai request failed (400): bad request")], {
+    text: "never reached",
+    toolCalls: [],
+  });
+  await assert.rejects(
+    runAgentTask({ task: "x", model, browser: fakeBrowser() }),
+    /request failed \(400\)/,
+  );
+  assert.equal(model.calls.length, 1);
+});
+
+test("runAgentTask caps retry attempts and returns a partial result", async () => {
+  const upstream = () => new Error("openai request failed (503): upstream unavailable");
+  const model = flakyModel([upstream(), upstream(), upstream(), upstream()], {
+    text: "never reached",
+    toolCalls: [],
+  });
+  const result = await runAgentTask({ task: "x", model, browser: fakeBrowser() });
+  // Three attempts total, then a partial result instead of a thrown run.
+  assert.equal(model.calls.length, 3);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "model_error");
+  // The transcript survives so the caller can see how far the task got.
+  assert.deepEqual(result.transcript, [{ role: "user", text: "x" }]);
+});
+
+test("runAgentTask never retries after the deadline aborts the model call", async () => {
+  const calls = [];
+  const model = {
+    name: "hanging",
+    async complete({ signal }) {
+      calls.push(1);
+      return new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  };
+  const result = await runAgentTask({ task: "x", model, browser: fakeBrowser(), maxDurationMs: 200 });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "timeout");
+  assert.equal(calls.length, 1);
+});
+
+// Regression: both of the agent's internal timers were unref'd — the retry
+// backoff and the deadline watchdog. The watchdog was the operative bug: when a
+// model adapter's promise settles only on abort, that timer is the process's
+// last handle, so Node drained the loop and the run exited 0 with no output —
+// no timeout, no error, `runAgentTask` never settling. (The backoff unref was
+// masked by it, since the watchdog is armed during a pause; it is ref'd now so
+// a retry's liveness does not hinge on an unrelated timer.)
+//
+// This has to run in a real child process. In-process the assertions pass on
+// any Node version, because the test runner's own handles hold the loop open;
+// only a process doing nothing but the agent run exposes it, which is exactly
+// the shape of a short-lived CLI invocation.
+function runInChildProcess(name, body) {
+  const dir = makeTempDir(`bw-liveness-${name}-`);
+  const script = path.join(dir, "run.mjs");
+  const agentUrl = JSON.stringify(pathToFileURL(path.resolve("src/agent.mjs")).href);
+  fs.writeFileSync(script, `import { runAgentTask } from ${agentUrl};\n${body}`);
+
+  const { status, stdout, stderr } = spawnSync(process.execPath, [script], {
+    encoding: "utf8",
+    cwd: path.resolve("."),
+    timeout: 30_000,
+  });
+  assert.equal(status, 0, `child failed: ${stderr}`);
+  // The failure mode is a silent exit 0, so empty stdout is the real signal —
+  // without this check the test would pass against the very bug it guards.
+  assert.notEqual(stdout, "", "child exited early instead of completing the run");
+  return JSON.parse(stdout);
+}
+
+test("a retry backoff keeps the process alive when it is the only pending work", () => {
+  const out = runInChildProcess(
+    "retry",
+    `let calls = 0;
+const model = {
+  async complete() {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("rate limited"), { status: 429 });
+    return { text: "recovered", toolCalls: [] };
+  },
+};
+const browser = { async run() { return { ok: true }; }, async close() {} };
+const result = await runAgentTask({ task: "x", model, browser });
+process.stdout.write(JSON.stringify({ answer: result.answer, calls }));
+`,
+  );
+  assert.deepEqual(out, { answer: "recovered", calls: 2 });
+});
+
+test("the deadline watchdog still fires when the model call holds no handles", () => {
+  const out = runInChildProcess(
+    "deadline",
+    `const model = {
+  // Settles only on abort, so the watchdog is the process's only live handle.
+  async complete({ signal }) {
+    return new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  },
+};
+const browser = { async run() { return { ok: true }; }, async close() {} };
+const result = await runAgentTask({ task: "x", model, browser, maxDurationMs: 200 });
+process.stdout.write(JSON.stringify({ ok: result.ok, reason: result.reason }));
+`,
+  );
+  assert.deepEqual(out, { ok: false, reason: "timeout" });
 });
