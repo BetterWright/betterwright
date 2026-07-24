@@ -214,11 +214,10 @@ test("contentForResult separates screenshots from file paths", async () => {
   assert.equal(content[1].mimeType, "image/png");
 });
 
-test("liveViewFromEnv defaults to loopback direct mode and disabled remote exposure", () => {
+test("liveViewFromEnv defaults to LAN bind and disabled remote exposure", () => {
   assert.deepEqual(liveViewFromEnv({}, {}), {
     enabled: false,
-    transport: "direct",
-    host: "127.0.0.1",
+    host: "0.0.0.0",
     port: 0,
     publicHost: undefined,
     expose: undefined,
@@ -239,26 +238,11 @@ test("liveViewFromEnv defaults to loopback direct mode and disabled remote expos
     ),
     {
       enabled: true,
-      transport: "direct",
       host: "0.0.0.0",
       port: 8484,
       publicHost: "192.168.0.2",
       expose: "tailscale",
       password: "s3cret",
-      passwordHash: undefined,
-    },
-  );
-  // A persisted relay choice is an explicit MCP authorization by itself.
-  assert.deepEqual(
-    liveViewFromEnv({}, { transport: "relay", expose: "local" }),
-    {
-      enabled: true,
-      transport: "relay",
-      host: "127.0.0.1",
-      port: 0,
-      publicHost: undefined,
-      expose: "local",
-      password: undefined,
       passwordHash: undefined,
     },
   );
@@ -270,8 +254,7 @@ test("liveViewFromEnv defaults to loopback direct mode and disabled remote expos
     ),
     {
       enabled: false,
-      transport: "direct",
-      host: "127.0.0.1",
+      host: "0.0.0.0",
       port: 7100,
       publicHost: undefined,
       expose: "lan",
@@ -439,7 +422,7 @@ test("viewer chat rides back on browser results while a live view runs", async (
   assert.match(chatBlock.text, /fresh user instructions/);
   // The step note was mirrored into the viewer chat.
   assert.deepEqual(browser.posted, [
-    { session: "default", role: "agent", text: "comparing GPUs", kind: "step" },
+    { role: "agent", text: "comparing GPUs", kind: "step" },
   ]);
 });
 
@@ -469,55 +452,4 @@ test("browser_handoff status carries drained viewer chat and stop ends mirroring
   });
   assert.ok(!after.content.some((block) => /gone/.test(block.text || "")));
   assert.equal(browser.posted.length, 0);
-});
-
-test("MCP viewer chat never crosses browser, download, or login sessions", async () => {
-  const browser = chatBrowser();
-  browser.vault = {};
-  browser.fillCredential = async (options) => ({
-    ok: true,
-    filled: true,
-    session: options.session,
-  });
-  const handlers = _createMcpHandlersForTest({
-    browser,
-    server: {},
-    downloadPolicy: "allow",
-    liveView: { enabled: false, host: "127.0.0.1", port: 0 },
-  });
-
-  await handlers.callTool({
-    params: {
-      name: "browser_handoff",
-      arguments: { action: "start", session: "private-a" },
-    },
-  });
-  browser.chatQueue.push({ text: "secret instruction for A", at: 9 });
-
-  for (const [name, toolArguments] of [
-    ["browser", { code: "1", session: "other-b" }],
-    ["browser_download", { code: "2", session: "other-b" }],
-    ["browser_login", { session: "other-b" }],
-  ]) {
-    const response = await handlers.callTool({
-      params: { name, arguments: toolArguments },
-    });
-    assert.equal(response.isError, undefined);
-    assert.ok(
-      !response.content.some((block) =>
-        /secret instruction for A/.test(block.text || ""),
-      ),
-      `${name} must not receive another session's chat`,
-    );
-  }
-
-  const owner = await handlers.callTool({
-    params: { name: "browser_login", arguments: { session: "private-a" } },
-  });
-  assert.ok(
-    owner.content.some((block) =>
-      /secret instruction for A/.test(block.text || ""),
-    ),
-    "the bound session should receive its own queued chat",
-  );
 });
