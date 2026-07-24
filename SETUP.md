@@ -77,14 +77,18 @@ tasks, verify with proof screenshots, handle challenges, never touch secrets).
 
 Install the skill where the host reads instructions:
 
-**Claude Code** — install it as a native skill:
+**Claude Code / Agent Skills hosts** — install it as a native skill:
 
 ```bash
-betterwright skill --install    # writes ~/.claude/skills/browser/SKILL.md
+betterwright skill --install    # ~/.claude/skills + ~/.agents/skills (browser/SKILL.md)
+betterwright skill --install --all   # also ~/.cursor/skills/browser/SKILL.md
 ```
 
-Rerun after upgrading betterwright so the skill matches the CLI. For a
-project-scoped skill, redirect the output yourself instead:
+Each install is stamped with the package version. After an npm upgrade,
+`betterwright setup` or `betterwright update` **refresh any already-installed**
+skill files automatically (they never create new ones; first install stays
+explicit). `betterwright doctor` warns if a managed skill is stale.
+For a project-scoped skill, redirect the output yourself:
 `betterwright skill --claude > .claude/skills/browser/SKILL.md`.
 
 **Codex** — append it to the instructions file Codex reads:

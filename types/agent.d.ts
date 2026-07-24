@@ -106,12 +106,12 @@ export interface RunAgentTaskOptions {
   history?: AgentMessage[];
   /**
    * Live browser view for the human. Anything except `false` offers the model
-   * `handoff` + live-view-backed `ask` + freeform chat (guidance delivered
-   * between turns) when a URL surface exists (`askUser` or `onStep`). Pass
-   * `true` — or startLiveView options — to also start the viewer at run start
-   * so the whole task can be watched live. A newly created viewer's URL arrives
-   * as `onStep({tool: "liveView", url})`; an already-running host viewer is
-   * reused without re-announcing it.
+   * `live_view` (watch anytime mid-task), `handoff` (pause for human hands),
+   * live-view-backed `ask`, and freeform chat when a URL surface exists
+   * (`askUser` or `onStep`). Pass `true` — or startLiveView options — to also
+   * start the viewer at run start so the whole task can be watched live. A
+   * newly created viewer's URL arrives as `onStep({tool: "liveView", url})`;
+   * an already-running host viewer is reused without re-announcing it.
    */
   liveView?: boolean | Record<string, unknown>;
 }
