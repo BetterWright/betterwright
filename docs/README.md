@@ -23,6 +23,7 @@ BetterWright is used in two ways; most pages apply to both, and
 | [JavaScript API](javascript.md) | `BetterWright`, `NetworkPolicy`, the result envelope, vault API |
 | [Browser API](browser-api.md) | Every sandboxed global inside a snippet: `page`, `snapshot`, `screenshot`, `human`, … |
 | [Recipes](browser-recipes.md) | Short copy-paste patterns for common flows |
+| [Sessions & the daemon](sessions.md) | Persistence, concurrency, interrupting a run, reconnecting |
 
 ## Capabilities
 

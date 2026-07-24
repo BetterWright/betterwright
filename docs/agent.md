@@ -79,6 +79,18 @@ budget and a 1,000,000-character transcript bound so a stalled or repetitive
 provider cannot run forever or grow context without limit. Expiry aborts model
 requests, and BetterWright's worker timeout terminates in-flight browser work.
 
+A third bound catches the loop that is running but not progressing: when a
+browser step fails **the same way three times in a row**, the observation carries
+a warning telling the model to change approach; at five, the run ends with
+`reason: "no_progress"` rather than spending the rest of the budget on a step
+that cannot succeed. Any successful browser call — or new human steering through
+the live view — clears the streak.
+
+`reason` is one of `done`, `stopped`, `interrupted` (see
+[sessions.md](sessions.md)), `timeout`, `context_limit`, `no_progress`, or
+`model_error`. Only `done` yields `ok: true`; every other reason still returns
+the partial answer and the full transcript.
+
 Flags:
 
 | Flag | Default | Meaning |

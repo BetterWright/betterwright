@@ -387,6 +387,81 @@ test("runAgentTask bounds its transcript without imposing a step count", async (
   assert.equal(model.seen.length, 0);
 });
 
+// A model that keeps issuing the same browser call, the way a stuck agent does.
+function loopingModel(input = { code: "await open()", note: "retry" }) {
+  let turns = 0;
+  return {
+    name: "looping",
+    get turns() {
+      return turns;
+    },
+    async complete() {
+      turns += 1;
+      return { text: "", toolCalls: [{ id: `c${turns}`, name: "browser", input }] };
+    },
+  };
+}
+
+function observationsFrom(transcript) {
+  return transcript
+    .filter((message) => message.role === "tool")
+    .flatMap((message) =>
+      message.results
+        .filter((result) => result.name === "browser")
+        .map((result) => JSON.parse(result.content)),
+    );
+}
+
+test("a browser step that keeps failing identically ends the run", async () => {
+  const failure = { ok: false, error: "Playwright code timed out after 45000ms", artifacts: [], durationMs: 45000 };
+  const browser = fakeBrowser({ runs: Array.from({ length: 20 }, () => ({ ...failure })) });
+  const model = loopingModel();
+
+  const result = await runAgentTask({ task: "sign up", model, browser });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "no_progress");
+  assert.equal(browser.calls.run.length, 5, "the loop stopped at the identical-failure limit");
+  const warnings = observationsFrom(result.transcript).flatMap((o) => o.warnings || []);
+  assert.equal(warnings.length, 3, "warned on the 3rd, 4th, and 5th identical failure");
+  assert.match(warnings[0], /failed the same way 3 times in a row/);
+  assert.match(warnings.at(-1), /the run stops here/);
+});
+
+test("the identical-failure limit tolerates differing failures and resets on success", async () => {
+  const browser = fakeBrowser({
+    runs: [
+      { ok: false, error: "no element matches #a", artifacts: [], durationMs: 5 },
+      { ok: false, error: "no element matches #b", artifacts: [], durationMs: 5 },
+      { ok: false, error: "no element matches #b", artifacts: [], durationMs: 5 },
+      { ok: true, result: "found it", artifacts: [], durationMs: 5 },
+      { ok: false, error: "no element matches #b", artifacts: [], durationMs: 5 },
+      { ok: false, error: "no element matches #b", artifacts: [], durationMs: 5 },
+      { ok: true, result: "done", artifacts: [], durationMs: 5 },
+    ],
+  });
+  let turn = 0;
+  const model = {
+    name: "mixed",
+    async complete() {
+      turn += 1;
+      return turn <= 7
+        ? { text: "", toolCalls: [{ id: `c${turn}`, name: "browser", input: { code: "look()" } }] }
+        : { text: "", toolCalls: [{ id: "d", name: "done", input: { answer: "finished" } }] };
+    },
+  };
+
+  const result = await runAgentTask({ task: "look around", model, browser });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, "finished");
+  assert.equal(browser.calls.run.length, 7, "a success cleared the streak");
+  assert.deepEqual(
+    observationsFrom(result.transcript).flatMap((o) => o.warnings || []),
+    [],
+  );
+});
+
 test("login tool is offered only with a vault and runs fillCredential", async () => {
   const withVault = fakeBrowser({ vault: {} });
   const model = scriptedModel([

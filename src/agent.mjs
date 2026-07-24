@@ -46,6 +46,55 @@ const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
 const MAX_TIMER_MS = 2_147_483_647;
 const OBSERVATION_LIMIT = 12_000;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
+// A caller-requested stop (the session daemon's `interrupt` op, a Ctrl-C that
+// reached the daemon). Travels the same path as the timeout symbol: thrown
+// past tool-level catch blocks so nothing swallows it, then turned into a
+// partial result with `reason: "interrupted"` — the transcript is kept, so the
+// next task in the session resumes from where the user cut it off.
+const AGENT_INTERRUPT = Symbol("agent-interrupt");
+// The loop has no step cap by design, so a browser step that fails the same way
+// every time is otherwise free to repeat until the whole wall-clock budget is
+// gone — a page the harness cannot act on, a snippet that keeps hitting the
+// worker deadline, a form that will not accept input. Identical consecutive
+// failures escalate instead: first a warning the model can act on, then the run
+// ends and reports the blocker rather than burning the remaining budget.
+const REPEATED_FAILURE_WARNING = 3;
+const REPEATED_FAILURE_LIMIT = 5;
+
+/** Control-flow signals that a tool-level `catch` must never absorb. */
+function isControlSignal(error) {
+  return error === AGENT_TIMEOUT || error === AGENT_INTERRUPT;
+}
+
+/**
+ * Close an unfinished turn so the transcript stays a valid conversation.
+ *
+ * When a run ends mid-turn — the wall-clock budget expired, or the caller
+ * interrupted it — the model's tool calls are already in the transcript with
+ * no results behind them. Every provider rejects a dangling tool call on the
+ * next request, which would make the saved session unresumable. Answer each
+ * orphaned call with a stub instead. Mutates in place; a no-op on a transcript
+ * that already ends cleanly.
+ */
+export function sealTranscript(messages, reason = "stopped") {
+  if (!Array.isArray(messages) || !messages.length) return messages;
+  const last = messages[messages.length - 1];
+  if (last?.role !== "assistant" || !Array.isArray(last.toolCalls) || !last.toolCalls.length)
+    return messages;
+  const note =
+    reason === "interrupted"
+      ? "Cut short: the user interrupted the run before this call completed. Its effect on the page is unknown — re-observe before acting on it."
+      : "Cut short: the run ended before this call completed. Its effect on the page is unknown — re-observe before acting on it.";
+  messages.push({
+    role: "tool",
+    results: last.toolCalls.map((call) => ({
+      id: call.id,
+      name: call.name,
+      content: note,
+    })),
+  });
+  return messages;
+}
 
 // Bounded retry around the model call. Three attempts total with exponential
 // backoff + jitter covers the transient blips (429s, 5xx, dropped
@@ -286,6 +335,27 @@ function observationFromResult(result) {
   return text;
 }
 
+/** A stable fingerprint for a failed browser observation, used to notice a step
+ * that is repeating rather than progressing. Numbers are collapsed so failures
+ * differing only in a timeout, a count, or an element ref still read as the same
+ * failure. A successful call has no signature, which clears the streak. */
+function failureSignature(result) {
+  if (!result || result.ok) return "";
+  const text = String(result.error || "").trim();
+  if (!text) return "";
+  return text
+    .toLowerCase()
+    .replace(/\d+/g, "#")
+    .replace(/\s+/g, " ")
+    .slice(0, 200);
+}
+
+function repeatedFailureAdvice(count) {
+  return count >= REPEATED_FAILURE_LIMIT
+    ? `This browser step has now failed the same way ${count} times in a row, so the run stops here. Report what you established and what blocked you.`
+    : `This browser step has failed the same way ${count} times in a row. Repeating it will not help — change approach (a different selector, a reload, another route to the goal), or finish with what you have and report the blocker. The run stops after ${REPEATED_FAILURE_LIMIT} identical failures.`;
+}
+
 // A browser call can end the task in the same turn: when the model's code
 // returns `{ finalAnswer: "..." }`, the harness treats it as `done` without
 // spending another model round-trip. Only an ok result counts — an errored
@@ -304,15 +374,31 @@ function finalAnswerFromResult(result) {
   return null;
 }
 
-async function withinDeadline(operation, deadline) {
+// Run one operation under the agent's wall-clock deadline and, when the caller
+// supplied one, under an external stop signal. Both resolve to an abort on the
+// controller the operation sees, so an in-flight model call or browser step
+// ends promptly instead of running to completion after the user gave up.
+async function withinDeadline(operation, deadline, stopSignal) {
   const remainingMs = deadline - Date.now();
+  if (stopSignal?.aborted) throw AGENT_INTERRUPT;
   if (remainingMs <= 0) throw AGENT_TIMEOUT;
 
   const controller = new AbortController();
   let timer;
+  let onStop;
   try {
     return await Promise.race([
       Promise.resolve().then(() => operation(controller.signal)),
+      // The external stop, when there is one. Same shape as the watchdog
+      // below: abort what the operation is doing, then reject the race.
+      new Promise((_, reject) => {
+        if (!stopSignal) return;
+        onStop = () => {
+          controller.abort(AGENT_INTERRUPT);
+          reject(AGENT_INTERRUPT);
+        };
+        stopSignal.addEventListener("abort", onStop, { once: true });
+      }),
       // Not unref'd: this watchdog exists to guarantee the operation ends in a
       // reported timeout, and an unref'd timer cannot make that guarantee. If
       // the operation is pending on nothing that holds the loop -- a model
@@ -329,6 +415,7 @@ async function withinDeadline(operation, deadline) {
     ]);
   } finally {
     clearTimeout(timer);
+    if (onStop) stopSignal?.removeEventListener?.("abort", onStop);
   }
 }
 
@@ -419,13 +506,13 @@ function sleepWithSignal(ms, signal) {
 // (timeout) are never retried; only transient failures are, with exponential
 // backoff + jitter, honoring a capped Retry-After when present, and never
 // sleeping past the deadline.
-async function completeWithRetry(model, request, deadline) {
+async function completeWithRetry(model, request, deadline, stopSignal) {
   return withinDeadline(async (signal) => {
     for (let attempt = 1; ; attempt += 1) {
       try {
         return await model.complete({ ...request, signal });
       } catch (error) {
-        if (signal.aborted || error === AGENT_TIMEOUT) throw error;
+        if (signal.aborted || isControlSignal(error)) throw error;
         if (attempt >= MODEL_RETRY_MAX_ATTEMPTS || !isTransientModelError(error)) throw error;
         const backoff = Math.min(
           MODEL_RETRY_MAX_DELAY_MS,
@@ -440,7 +527,7 @@ async function completeWithRetry(model, request, deadline) {
         await sleepWithSignal(delay, signal);
       }
     }
-  }, deadline);
+  }, deadline, stopSignal);
 }
 
 /**
@@ -465,6 +552,10 @@ async function completeWithRetry(model, request, deadline) {
  * @param {object|false|null} [options.vault] override or disable the built-in
  *   credential vault for a new browser (ignored when an external `browser` is
  *   passed, whose own vault decides login availability)
+ * @param {AbortSignal} [options.signal] stop the run early. The in-flight model
+ *   call or browser step is aborted, the loop returns a partial result with
+ *   `reason: "interrupted"`, and the transcript is preserved so the session can
+ *   pick up where it left off.
  * @param {(event: object) => void} [options.onStep] progress callback per step
  * @param {(q: {question: string, options: string[]}) => (string|Promise<string>)} [options.askUser]
  *   when provided, the loop exposes an `ask` tool so the model can put a question
@@ -497,6 +588,7 @@ export async function runAgentTask(options = {}) {
     options.modelOptions || {},
   );
   const session = String(options.session || "default");
+  const stopSignal = options.signal instanceof AbortSignal ? options.signal : null;
   const onStep = typeof options.onStep === "function" ? options.onStep : () => {};
   const askUser = typeof options.askUser === "function" ? options.askUser : null;
   const drainSteering =
@@ -677,6 +769,10 @@ export async function runAgentTask(options = {}) {
   let contextTokens = 0;
   let toolCallCount = 0;
   let durationMs = 0;
+  // The current run of identical browser failures, and whether it has gone on
+  // long enough to end the task.
+  let repeated = { signature: "", count: 0 };
+  let noProgress = false;
 
   const startedAt = Date.now();
   const deadline = startedAt + maxDurationMs;
@@ -698,6 +794,13 @@ export async function runAgentTask(options = {}) {
     // No step cap: the loop runs until the model finishes or the wall-clock
     // budget expires.
     for (steps = 1; ; steps += 1) {
+      // A stop that arrived between turns ends the run here, before spending
+      // another model call. Mid-turn stops abort through `withinDeadline`.
+      if (stopSignal?.aborted) {
+        steps = Math.max(1, steps - 1);
+        reason = "interrupted";
+        break;
+      }
       if (JSON.stringify(messages).length > maxTranscriptChars) {
         reason = "context_limit";
         break;
@@ -706,9 +809,9 @@ export async function runAgentTask(options = {}) {
       appendHumanGuidance(await collectHumanGuidance());
       let response;
       try {
-        response = await completeWithRetry(model, { system, messages, tools }, deadline);
+        response = await completeWithRetry(model, { system, messages, tools }, deadline, stopSignal);
       } catch (error) {
-        if (error === AGENT_TIMEOUT || !isTransientModelError(error)) throw error;
+        if (isControlSignal(error) || !isTransientModelError(error)) throw error;
         // A transient provider failure that survived the bounded retries:
         // return a partial result that preserves the transcript instead of
         // throwing the whole run away. Non-transient errors (bad request,
@@ -778,7 +881,7 @@ export async function runAgentTask(options = {}) {
             });
             results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
           } catch (error) {
-            if (error === AGENT_TIMEOUT) throw error;
+            if (isControlSignal(error)) throw error;
             results.push({ id: call.id, name: call.name, content: `login error: ${error?.message || error}` });
           }
           continue;
@@ -799,7 +902,7 @@ export async function runAgentTask(options = {}) {
             const canLiveAsk =
               withHandoff && typeof browser.waitForAsk === "function";
             if (canLiveAsk) {
-              const view = await withinDeadline(() => ensureAgentLiveView(), deadline);
+              const view = await withinDeadline(() => ensureAgentLiveView(), deadline, stopSignal);
               if (view?.url) {
                 const outcome = await withinDeadline(
                   () =>
@@ -810,6 +913,7 @@ export async function runAgentTask(options = {}) {
                       timeout: remainingSeconds,
                     }),
                   deadline,
+                  stopSignal,
                 );
                 if (!outcome?.ok) throw new Error(outcome?.error || "the ask failed");
                 if (outcome.action === "answer")
@@ -820,6 +924,7 @@ export async function runAgentTask(options = {}) {
               reply = String((await withinDeadline(
                 (signal) => askUser({ question, options: choices, signal }),
                 deadline,
+                stopSignal,
               )) ?? "").trim();
             }
             results.push({
@@ -828,7 +933,7 @@ export async function runAgentTask(options = {}) {
               content: reply ? `User answered: ${reply}` : "User gave no answer; use your best judgment or report it blocked.",
             });
           } catch (error) {
-            if (error === AGENT_TIMEOUT) throw error;
+            if (isControlSignal(error)) throw error;
             results.push({ id: call.id, name: call.name, content: `ask error: ${error?.message || error}` });
           }
           continue;
@@ -879,7 +984,7 @@ export async function runAgentTask(options = {}) {
               });
               continue;
             }
-            const view = await withinDeadline(() => ensureAgentLiveView(), deadline);
+            const view = await withinDeadline(() => ensureAgentLiveView(), deadline, stopSignal);
             if (!view?.ok || !view.url) {
               throw new Error(view?.error || "the live view failed to start");
             }
@@ -899,7 +1004,7 @@ export async function runAgentTask(options = {}) {
                 "Keep working — they can watch and type guidance in the chat. Use handoff only if they need to drive the browser themselves.",
             });
           } catch (error) {
-            if (error === AGENT_TIMEOUT) throw error;
+            if (isControlSignal(error)) throw error;
             results.push({
               id: call.id,
               name: call.name,
@@ -918,7 +1023,7 @@ export async function runAgentTask(options = {}) {
             continue;
           }
           try {
-            const view = await withinDeadline(() => ensureAgentLiveView(), deadline);
+            const view = await withinDeadline(() => ensureAgentLiveView(), deadline, stopSignal);
             if (!view?.ok || !view.url)
               throw new Error(view?.error || "the live view failed to start");
             const prompt = expectation ? `${handoffReason} — done when: ${expectation}` : handoffReason;
@@ -935,6 +1040,7 @@ export async function runAgentTask(options = {}) {
             const outcome = await withinDeadline(
               () => browser.waitForHandoff({ session, prompt, timeout: remainingSeconds }),
               deadline,
+              stopSignal,
             );
             if (!outcome?.ok) throw new Error(outcome?.error || "the handoff failed");
             const humanNote = String(outcome.note || "").trim();
@@ -946,7 +1052,7 @@ export async function runAgentTask(options = {}) {
                   : "The handoff timed out with no human response. Treat this step as blocked and report it in your answer.";
             results.push({ id: call.id, name: call.name, content });
           } catch (error) {
-            if (error === AGENT_TIMEOUT) throw error;
+            if (isControlSignal(error)) throw error;
             results.push({ id: call.id, name: call.name, content: `handoff error: ${error?.message || error}` });
           }
           continue;
@@ -958,13 +1064,36 @@ export async function runAgentTask(options = {}) {
           if (remainingSeconds <= 0.001) throw AGENT_TIMEOUT;
           // BetterWright's own timeout path terminates and restarts the worker,
           // so browser mutations cannot continue after this await returns.
-          const result = await browser.run(String(call.input?.code || ""), {
-            session,
-            note: note || undefined,
-            timeout: remainingSeconds,
-          });
+          // A stop signal abandons the await rather than the step: the worker
+          // finishes (or times out) the snippet it already started, so no page
+          // mutation is left half-applied, and the session's queue keeps the
+          // next call behind it.
+          const result = await withinDeadline(
+            () =>
+              browser.run(String(call.input?.code || ""), {
+                session,
+                note: note || undefined,
+                timeout: remainingSeconds,
+              }),
+            deadline,
+            stopSignal,
+          );
           for (const shot of result.artifacts || [])
             if (shot.kind === "proof" && shot.path) proof = shot.path;
+          const signature = failureSignature(result);
+          repeated =
+            signature && signature === repeated.signature
+              ? { signature, count: repeated.count + 1 }
+              : { signature, count: signature ? 1 : 0 };
+          if (repeated.count >= REPEATED_FAILURE_WARNING) {
+            // Carried in the observation's own warnings, so the model reads it
+            // in the same place it reads every other harness advisory.
+            result.warnings = [
+              ...(result.warnings || []),
+              repeatedFailureAdvice(repeated.count),
+            ];
+            if (repeated.count >= REPEATED_FAILURE_LIMIT) noProgress = true;
+          }
           // Returning { finalAnswer } from the code completes the task in this
           // same turn — the single-call shape that saves a full model round-trip.
           const final = finalAnswerFromResult(result);
@@ -991,16 +1120,29 @@ export async function runAgentTask(options = {}) {
         finished = false;
         reason = "stopped";
         answer = "";
+        // New instructions are a new approach: let the model try again rather
+        // than ending a run the human just redirected.
+        repeated = { signature: "", count: 0 };
+        noProgress = false;
       }
       if (finished) break;
+      if (noProgress) {
+        reason = "no_progress";
+        break;
+      }
     }
     if (finished && answer) {
       await postLiveChat({ text: answer, kind: "done" });
     }
   } catch (error) {
     if (error === AGENT_TIMEOUT) reason = "timeout";
+    else if (error === AGENT_INTERRUPT) reason = "interrupted";
     else throw error;
   } finally {
+    // A run cut short mid-turn (timeout, interrupt) leaves the model's tool
+    // calls unanswered. Every provider rejects that shape on the next request,
+    // so close the turn before the transcript is handed back for persistence.
+    sealTranscript(messages, reason);
     // Measure task wall-clock before tearing down an owned browser, so the
     // reported time is the work, not the teardown.
     durationMs = Date.now() - startedAt;
