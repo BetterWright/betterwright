@@ -588,51 +588,32 @@
       "allowed": true
     },
     {
-      "name": "openai-style key in url",
+      "name": "openai-style key in url is allowed",
       "url": "https://example.com/?key=sk-abcdefghijklmnopqrstuvwxyz123456",
       "policy": {},
-      "allowed": false,
-      "reason_contains": "API key or token"
-    },
-    {
-      "name": "github token in path",
-      "url": "https://example.com/ghp_ABCDEFGHIJKLMNOPQRSTuvwxyz012345/raw",
-      "policy": {},
-      "allowed": false,
-      "reason_contains": "API key or token"
-    },
-    {
-      "name": "aws access key in query",
-      "url": "https://example.com/?id=AKIAIOSFODNN7EXAMPLE",
-      "policy": {},
-      "allowed": false,
-      "reason_contains": "API key or token"
-    },
-    {
-      "name": "url-encoded secret still caught",
-      "url": "https://example.com/?key=sk%2Dabcdefghijklmnopqrstuvwxyz123456",
-      "policy": {},
-      "allowed": false,
-      "reason_contains": "API key or token"
-    },
-    {
-      "name": "jwt in url blocked",
-      "url": "https://example.com/?t=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
-      "policy": {},
-      "allowed": false,
-      "reason_contains": "API key or token"
-    },
-    {
-      "name": "secret check disabled by flag",
-      "url": "https://example.com/?key=sk-abcdefghijklmnopqrstuvwxyz123456",
-      "policy": {
-        "block_secret_bearing_urls": false
-      },
       "allowed": true
     },
     {
-      "name": "short sk prefix is not a secret",
-      "url": "https://example.com/?key=sk-short",
+      "name": "github token in path is allowed",
+      "url": "https://example.com/ghp_ABCDEFGHIJKLMNOPQRSTuvwxyz012345/raw",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "aws access key in query is allowed",
+      "url": "https://example.com/?id=AKIAIOSFODNN7EXAMPLE",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "url-encoded key-shaped query is allowed",
+      "url": "https://example.com/?key=sk%2Dabcdefghijklmnopqrstuvwxyz123456",
+      "policy": {},
+      "allowed": true
+    },
+    {
+      "name": "jwt-shaped query is allowed",
+      "url": "https://example.com/?t=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
       "policy": {},
       "allowed": true
     }

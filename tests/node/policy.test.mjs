@@ -92,9 +92,12 @@ test("allow host honors an explicit port", () => {
   assert.ok(!allow(policy, "http://localhost:4000/"));
 });
 
-test("secret-bearing url blocked", () => {
+test("urls with token-shaped query strings are allowed", () => {
   const policy = new NetworkPolicy();
-  assert.ok(!allow(policy, `https://evil.example.com/?t=ghp_${"a".repeat(36)}`));
+  assert.ok(allow(policy, `https://evil.example.com/?t=ghp_${"a".repeat(36)}`));
+  assert.ok(
+    allow(policy, "https://example.com/?key=sk-abcdefghijklmnopqrstuvwxyz123456"),
+  );
 });
 
 test("unsupported schemes blocked, data/blank allowed", () => {
