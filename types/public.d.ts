@@ -62,37 +62,38 @@ export interface BetterWrightOptions {
    */
   platform?: "macos" | "windows" | "linux";
   /**
-   * Defaults for `startLiveView()`. Binds `0.0.0.0` with a LAN `publicHost` by
-   * default so printed URLs open from another machine on the network. Pass
-   * `{host:"127.0.0.1"}` for loopback-only.
+   * Defaults for `startLiveView()`. The no-config default is loopback-only;
+   * managed relay and direct LAN/Tailscale exposure are explicit choices.
    */
   liveView?: LiveViewOptions;
 }
 
 /** Options for the live-view server (constructor defaults and per-start overrides). */
 export interface LiveViewOptions {
+  /** Transport: direct self-hosting (default) or the account-backed relay. */
+  transport?: "direct" | "relay";
   /**
-   * One-word hosting preset (overrides host/publicHost):
-   * - "lan": bind all interfaces, print the LAN IP (default behavior)
-   * - "local": loopback only — pair with your own tunnel (ssh, cloudflared, …)
+   * Direct hosting preset (overrides host/publicHost):
+   * - "local": loopback only (safe default)
+   * - "lan": bind all interfaces and print the LAN IP
    * - "tailscale": bind this machine's Tailscale address only
    */
   expose?: "lan" | "local" | "tailscale";
   /**
-   * Require this password (min 4 chars) before the viewer loads, on top of the
-   * URL capability token. Verified constant-time; grants a 12 h HttpOnly
-   * session cookie. Failed attempts are rate-limited per source address.
-   * Prefer persisting a hash in <home>/config.json via
-   * `betterwright view --set-password` instead of passing plaintext here.
+   * Require this password (min 8 chars) before a direct viewer loads, on top
+   * of the URL capability token. Verified constant-time; grants a 12 h
+   * HttpOnly session cookie. Failed attempts are rate-limited per source.
+   * Managed relay links use their fragment capability instead. Prefer
+   * persisting a hash via `betterwright view --set-password`.
    */
   password?: string;
   /**
-   * Stored password digest ("sha256:<64 hex>") — what
-   * `betterwright view --set-password` writes to <home>/config.json.
-   * Ignored when `password` is also set.
+   * Stored password verifier. New values use salted scrypt; legacy
+   * `sha256:<64 hex>` values remain accepted for upgrade compatibility.
+   * Ignored when `password` is also set and applies only to direct mode.
    */
   passwordHash?: string;
-  /** Bind host (default "0.0.0.0"). */
+  /** Bind host for direct mode (default "127.0.0.1"). */
   host?: string;
   /** Bind port (default 0 = ephemeral). */
   port?: number;
@@ -106,6 +107,13 @@ export interface LiveViewOptions {
   publicHost?: string;
   /** Which session's current tab streams first (default "default"). */
   session?: string;
+  /** Managed-relay endpoint override, primarily for self-hosting/tests. */
+  relayUrl?: string;
+  /**
+   * BetterWright personal API key for managed relay. Prefer
+   * `BETTERWRIGHT_API_KEY` or `betterwright account set-key` over source code.
+   */
+  apiKey?: string;
 }
 
 /** Result of `startLiveView()` / `liveViewStatus()`. */
@@ -117,7 +125,9 @@ export interface LiveViewStatus {
   host?: string;
   port?: number;
   token?: string;
-  /** Hosting preset in effect ("lan", "local", or "tailscale"). */
+  /** Transport in effect. */
+  transport?: "direct" | "relay";
+  /** Hosting preset in effect (including "relay" for managed links). */
   expose?: string;
   /** True when a password gate is active. */
   passwordProtected?: boolean;
@@ -128,6 +138,21 @@ export interface LiveViewStatus {
   ask?: { active: boolean; question?: string; options?: string[] };
   /** Count of freeform human chat messages waiting for the agent to drain. */
   pendingChat?: number;
+  /** Daemon session immutably bound to this capability. */
+  session?: string;
+  /** Opaque managed relay session ID. */
+  sessionId?: string;
+  /** Managed-relay allowance state. */
+  quota?: {
+    limitSeconds?: number;
+    usedSeconds?: number;
+    remainingSeconds?: number;
+    startsAt?: string;
+    endsAt?: string;
+    resetAt?: string;
+  } | null;
+  /** Managed relay session expiry. */
+  expiresAt?: string | null;
   /** True when start() found the server already running (URL unchanged). */
   alreadyRunning?: boolean;
   error?: string;

@@ -79,6 +79,7 @@ import {
 } from "./human.mjs";
 import { createLiveViewServer } from "./live-view.mjs";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.mjs";
+import { createManagedRelayBridge } from "./managed-relay.mjs";
 import {
   dismissObstructiveOverlays,
   inspectControls,
@@ -158,6 +159,7 @@ let vaultCapture = null;
 // the CDP sessions frames come from are worker-internal; started only by an
 // explicit live_view_start message from the host, loopback + token by default.
 let liveView = null;
+let managedRelay = null;
 
 const sessions = new Map();
 const pageToSession = new WeakMap();
@@ -1489,11 +1491,26 @@ async function ensureBrowser(config) {
       downloadGuardReady = false;
       disposeVaultCapture();
       releaseProfileLock();
-      // The stream has nothing left to show once the browser is gone; stop the
-      // server so viewers see a clean "ended" screen instead of a dead canvas.
-      const closingLiveView = liveView;
-      liveView = null;
-      if (closingLiveView) void closingLiveView.stop().catch(() => {});
+      // The stream has nothing left to show once the browser is gone. Clear
+      // every capability atomically and DELETE managed relay state rather than
+      // leaving a stale public URL alive until its TTL.
+      const endedSession = liveViewBoundSession;
+      const hadLiveView = Boolean(liveView || managedRelay);
+      void teardownLiveView({ preserve: false, notify: true })
+        .then((cleared) => {
+          if (hadLiveView && cleared) {
+            send({
+              type: "live_view_ended",
+              session: endedSession,
+              reason: "Browser context closed.",
+            });
+          }
+        })
+        .catch((error) => {
+          process.stderr.write(
+            `live-view: browser-close cleanup failed: ${error?.message || error}\n`,
+          );
+        });
     });
     await installContextGuard(launchedContext);
     await installDownloadGuard(launchedContext);
@@ -4651,21 +4668,26 @@ async function execute(message) {
 
 function liveViewPages() {
   const entries = [];
-  for (const [sessionId, session] of sessions) {
-    for (const [id, page] of session.pages) {
-      if (page.isClosed()) continue;
-      entries.push({
-        id,
-        page,
-        sessionId,
-        active: session.currentId === id,
-      });
-    }
+  // A capability for one session must never reveal tabs owned by another
+  // daemon session in the same browser worker.
+  if (!liveViewBoundSession) return entries;
+  const selected = sessions.get(liveViewBoundSession);
+  if (!selected) return entries;
+  for (const [id, page] of selected.pages) {
+    if (page.isClosed()) continue;
+    entries.push({
+      id,
+      page,
+      sessionId: liveViewBoundSession,
+      active: selected.currentId === id,
+    });
   }
   return entries;
 }
 
-let liveViewPreferredSession = "default";
+// A running capability is immutably bound to one daemon session. It can never
+// be retargeted to another session without stopping and minting a fresh view.
+let liveViewBoundSession = null;
 
 /** Tell a running live view to stream the agent's current tab when it changed. */
 function notifyLiveViewPreferred() {
@@ -4676,14 +4698,56 @@ function notifyLiveViewPreferred() {
   }
 }
 
+function liveViewSessionId(value) {
+  return String(value || "default");
+}
+
+async function teardownLiveView({
+  expectedRelay = null,
+  preserve = false,
+  notify = true,
+} = {}) {
+  if (expectedRelay && managedRelay !== expectedRelay) return false;
+  const relay = managedRelay;
+  const view = liveView;
+  managedRelay = null;
+  liveView = null;
+  liveViewBoundSession = null;
+  const failures = [];
+  try {
+    await relay?.stop({ preserve });
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    await view?.stop({ notify });
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length) throw failures[0];
+  return Boolean(relay || view);
+}
+
+function assertLiveViewSession(value) {
+  const requested = liveViewSessionId(value);
+  if (liveView && liveViewBoundSession !== requested) {
+    throw new Error(
+      `Live view is bound to session "${liveViewBoundSession}"; stop it before viewing session "${requested}".`,
+    );
+  }
+  return requested;
+}
+
 function ensureLiveView(preferredSessionId) {
-  liveViewPreferredSession = String(preferredSessionId || "default");
-  liveView ??= createLiveViewServer({
+  const requested = assertLiveViewSession(preferredSessionId);
+  if (!liveView) {
+    liveViewBoundSession = requested;
+    liveView = createLiveViewServer({
     html: liveViewHtml,
     loginHtml: liveViewLoginHtml,
     listPages: liveViewPages,
     preferredPage: () => {
-      const session = sessions.get(liveViewPreferredSession);
+      const session = sessions.get(liveViewBoundSession);
       const page = session?.currentId ? session.pages.get(session.currentId) : null;
       return page && !page.isClosed() ? page : null;
     },
@@ -4695,7 +4759,8 @@ function ensureLiveView(preferredSessionId) {
       if (sessionId) sessionFor(sessionId);
     },
     log: (line) => process.stderr.write(`${line}\n`),
-  });
+    });
+  }
   return liveView;
 }
 
@@ -4703,10 +4768,136 @@ async function liveViewStart(message) {
   try {
     await ensureBrowser(message.config);
     const options = message.options && typeof message.options === "object" ? message.options : {};
-    const view = ensureLiveView(options.session);
+    const requestedSession = liveViewSessionId(options.session);
+    const transport = String(options.transport || "direct").trim().toLowerCase();
+    if (!["direct", "relay"].includes(transport)) {
+      throw new Error(`Unknown live-view transport "${transport}"; use "direct" or "relay".`);
+    }
+    // A terminal bridge cannot be revived. Remove it and its hidden loopback
+    // server before session-binding checks so an explicit start mints a fresh
+    // relay session instead of returning a dead URL.
+    if (managedRelay?.status().terminal) {
+      await teardownLiveView({
+        expectedRelay: managedRelay,
+        preserve: false,
+        notify: true,
+      });
+    }
+    assertLiveViewSession(requestedSession);
+
+    if (transport === "relay") {
+      if (managedRelay) {
+        const relayStatus = managedRelay.status();
+        const localStatus = liveView.status();
+        sendResult({
+          type: "result",
+          id: message.id,
+          ...relayStatus,
+          url: relayStatus.url,
+          transport: "relay",
+          expose: "relay",
+          session: liveViewBoundSession,
+          agent: localStatus.agent,
+          handoff: localStatus.handoff,
+          ask: localStatus.ask,
+          pendingChat: localStatus.pendingChat,
+          alreadyRunning: true,
+        });
+        return;
+      }
+      if (liveView?.running) {
+        throw new Error(
+          "A direct live view is already running; stop it before starting the managed relay.",
+        );
+      }
+      const apiKey = String(options.apiKey || "").trim();
+      if (!apiKey) {
+        throw new Error(
+          "BetterWright Relay needs an account API key. Create one at https://betterwright.com/account, then run `betterwright account set-key`.",
+        );
+      }
+      const view = ensureLiveView(requestedSession);
+      // The browser-facing origin remains token-gated but is reachable only on
+      // loopback. The bridge is its sole client and the local URL is never
+      // returned or printed. Managed links use their fragment capability;
+      // direct-view passwords are intentionally not part of the relay protocol.
+      const localInfo = await view.start({
+        ...options,
+        transport: "direct",
+        expose: "local",
+        host: "127.0.0.1",
+        publicHost: "127.0.0.1",
+        password: "",
+        passwordHash: "",
+      });
+      let bridge;
+      bridge = createManagedRelayBridge({
+        localUrl: localInfo.url,
+        apiKey,
+        relayUrl: options.relayUrl,
+        interactive: options.interactive !== false,
+        clientVersion: options.clientVersion,
+        restore: options.relayRestore,
+        log: (line) => process.stderr.write(`${line}\n`),
+        onTerminal: async ({ reason }) => {
+          const endedSession = liveViewBoundSession;
+          const cleared = await teardownLiveView({
+            expectedRelay: bridge,
+            preserve: false,
+            notify: true,
+          });
+          if (cleared) {
+            send({
+              type: "live_view_ended",
+              session: endedSession,
+              reason: redactText(reason),
+            });
+          }
+          process.stderr.write(`managed-relay: ${reason}\n`);
+        },
+      });
+      try {
+        const relayInfo = await bridge.start();
+        if (!relayInfo.running || relayInfo.terminal) {
+          throw new Error(relayInfo.error || "Managed relay session ended during startup.");
+        }
+        managedRelay = bridge;
+        sendResult({
+          type: "result",
+          id: message.id,
+          ...relayInfo,
+          session: liveViewBoundSession,
+          agent: view.status().agent,
+          handoff: view.status().handoff,
+          ask: view.status().ask,
+        });
+      } catch (error) {
+        await bridge.stop().catch(() => {});
+        await view.stop().catch(() => {});
+        if (liveView === view) liveView = null;
+        liveViewBoundSession = null;
+        throw error;
+      }
+      return;
+    }
+
+    if (managedRelay) {
+      throw new Error("A managed live view is already running; stop it before starting a direct view.");
+    }
+    const view = ensureLiveView(requestedSession);
     const info = await view.start(options);
-    sendResult({ type: "result", id: message.id, ...info });
+    sendResult({
+      type: "result",
+      id: message.id,
+      ...info,
+      transport: "direct",
+      session: liveViewBoundSession,
+    });
   } catch (error) {
+    if (liveView && !liveView.running && !managedRelay) {
+      liveView = null;
+      liveViewBoundSession = null;
+    }
     sendResult({
       type: "result",
       id: message.id,
@@ -4718,11 +4909,12 @@ async function liveViewStart(message) {
 
 async function liveViewStop(message) {
   try {
-    const view = liveView;
-    liveView = null;
-    await view?.stop();
+    await teardownLiveView({ preserve: false, notify: true });
     sendResult({ type: "result", id: message.id, ok: true, running: false });
   } catch (error) {
+    process.stderr.write(
+      `live-view: managed cleanup failed: ${error?.message || error}\n`,
+    );
     sendResult({
       type: "result",
       id: message.id,
@@ -4733,13 +4925,46 @@ async function liveViewStop(message) {
 }
 
 function liveViewStatus(message) {
-  const info = liveView ? liveView.status() : { ok: true, running: false };
-  sendResult({ type: "result", id: message.id, ...info });
+  const local = liveView ? liveView.status() : { ok: true, running: false };
+  const relay = managedRelay?.status();
+  if (relay?.terminal) {
+    void teardownLiveView({
+      expectedRelay: managedRelay,
+      preserve: false,
+      notify: true,
+    }).catch((error) => {
+      process.stderr.write(
+        `live-view: terminal cleanup failed: ${error?.message || error}\n`,
+      );
+    });
+    sendResult({ type: "result", id: message.id, ok: true, running: false });
+    return;
+  }
+  const info = relay
+    ? {
+        ...relay,
+        url: relay.url,
+        transport: "relay",
+        expose: "relay",
+        agent: local.agent,
+        handoff: local.handoff,
+        ask: local.ask,
+        pendingChat: local.pendingChat,
+      }
+    : local;
+  sendResult({
+    type: "result",
+    id: message.id,
+    ...info,
+    ...(liveViewBoundSession ? { session: liveViewBoundSession } : {}),
+  });
 }
 
 async function handoffWait(message) {
-  const session = sessionFor(message.sessionId);
+  const requestedSession = liveViewSessionId(message.sessionId);
+  const session = sessionFor(requestedSession);
   try {
+    assertLiveViewSession(requestedSession);
     if (!liveView?.running) {
       throw new Error("Live view is not running; start it before requesting a handoff.");
     }
@@ -4769,8 +4994,10 @@ async function handoffWait(message) {
 }
 
 async function askWait(message) {
-  const session = sessionFor(message.sessionId);
+  const requestedSession = liveViewSessionId(message.sessionId);
+  const session = sessionFor(requestedSession);
   try {
+    assertLiveViewSession(requestedSession);
     if (!liveView?.running) {
       throw new Error("Live view is not running; start it before requesting an ask.");
     }
@@ -4801,6 +5028,7 @@ async function askWait(message) {
 
 function liveViewChatPost(message) {
   try {
+    assertLiveViewSession(message.sessionId);
     if (!liveView?.running) {
       sendResult({
         type: "result",
@@ -4833,6 +5061,7 @@ function liveViewChatPost(message) {
 
 function liveViewChatDrain(message) {
   try {
+    assertLiveViewSession(message.sessionId);
     const messages = liveView?.running ? liveView.drainHumanMessages() : [];
     sendResult({
       type: "result",
@@ -4867,12 +5096,22 @@ async function performShutdown() {
     ? profileLock.profileDir
     : null;
   const closingLiveView = liveView;
+  const closingRelay = managedRelay;
   liveView = null;
+  managedRelay = null;
+  liveViewBoundSession = null;
+  try {
+    // Preserve the Cloudflare relay session across worker replacement. The
+    // parent owns opaque restore state and reconnects the new bridge.
+    await closingRelay?.stop({ preserve: true });
+  } catch {
+    /* parent/process exit */
+  }
   try {
     // Worker teardown (restart or host close) drops viewer sockets without
     // the terminal "bye": viewers reconnect, and if the host revives the
-    // view in a replacement worker (same port + token) they resume
-    // seamlessly. Only an explicit live_view_stop announces the end.
+    // view in a replacement worker they resume seamlessly. Only an explicit
+    // live_view_stop ends the managed relay session.
     await closingLiveView?.stop({ notify: false });
   } catch {
     /* parent/process exit */
@@ -4907,6 +5146,17 @@ async function sessionClose(message) {
   const sessionId = String(message.sessionId || "default");
   const session = sessions.get(sessionId);
   let pagesClosed = 0;
+  let cleanupError = null;
+  if ((liveView || managedRelay) && liveViewBoundSession === sessionId) {
+    try {
+      await teardownLiveView({ preserve: false, notify: true });
+    } catch (error) {
+      cleanupError = error;
+      process.stderr.write(
+        `live-view: session-close cleanup failed: ${error?.message || error}\n`,
+      );
+    }
+  }
   if (session) {
     for (const page of session.pages.values()) {
       if (page.isClosed()) continue;
@@ -4918,11 +5168,16 @@ async function sessionClose(message) {
   sendResult({
     type: "result",
     id: message.id,
-    ok: true,
+    ok: !cleanupError,
     closed: Boolean(session),
     pagesClosed,
+    ...(cleanupError
+      ? { error: redactText(cleanupError?.message || String(cleanupError)) }
+      : {}),
   });
 }
+
+let liveViewStopInFlight = Promise.resolve();
 
 const input = readline.createInterface({
   input: process.stdin,
@@ -4983,7 +5238,11 @@ input.on("line", (line) => {
   // handoffs/asks resolve while executes are in flight, and a pending human
   // wait must never block a queued execute (or vice versa).
   if (message.type === "live_view_start") void liveViewStart(message);
-  if (message.type === "live_view_stop") void liveViewStop(message);
+  if (message.type === "live_view_stop") {
+    liveViewStopInFlight = liveViewStopInFlight
+      .catch(() => {})
+      .then(() => liveViewStop(message));
+  }
   if (message.type === "live_view_status") liveViewStatus(message);
   if (message.type === "live_view_chat_post") liveViewChatPost(message);
   if (message.type === "live_view_chat_drain") liveViewChatDrain(message);
@@ -4996,7 +5255,13 @@ input.on("line", (line) => {
 function exitAfterShutdown(code) {
   const failsafe = setTimeout(() => process.exit(code), 15_000);
   failsafe.unref?.();
-  void shutdown().finally(() => process.exit(code));
+  // EOF can arrive immediately after a terminal live_view_stop. Wait for its
+  // relay DELETE before tearing down the process so a session is not left
+  // active until TTL expiry.
+  void liveViewStopInFlight
+    .catch(() => {})
+    .then(() => shutdown())
+    .finally(() => process.exit(code));
 }
 input.on("close", () => {
   exitAfterShutdown(0);
@@ -5013,6 +5278,14 @@ const idleReaper = setInterval(() => {
   const cutoff = Date.now() - Math.max(timeout, 600_000);
   for (const [sessionId, session] of sessions) {
     if (session.lastActivity >= cutoff || sessionId === activeExecutionSession)
+      continue;
+    // Watching is active use too. Keep the selected session alive while a
+    // local or managed viewer is connected, even if the human is watch-only.
+    if (
+      sessionId === liveViewBoundSession &&
+      liveView?.running &&
+      Number(liveView.status().viewers || 0) > 0
+    )
       continue;
     if (
       session.awaitingAnswerSince &&
