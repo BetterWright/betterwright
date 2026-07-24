@@ -1,0 +1,28 @@
+{
+  "name": "@betterwright/relay-worker",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Cloudflare Worker relay for end-to-end encrypted BetterWright live-view sessions",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
+    "dev": "wrangler dev -c wrangler.toml",
+    "cf-typegen": "wrangler types -c wrangler.toml"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@clerk/backend": "^3.13.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260724.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.114.0"
+  }
+}

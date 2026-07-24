@@ -1,229 +1,340 @@
-# Live view, chat & human handoff
+# Live View, chat, and human handoff
 
-Watch — coach — and when needed, drive — BetterWright's browser from an
-ordinary web page. This is BetterWright's self-hosted answer to cloud "session
-viewer / human-in-the-loop" products: the agent keeps its persistent,
-policy-guarded session, and a human can watch it live, message it, take the
-controls, or complete a step the agent cannot (MFA, a resistant CAPTCHA, a
-consequential click) — then hand control straight back.
+Live View lets a person watch BetterWright's browser, chat with the agent,
+answer an `ask`, or take control for a handoff without moving the browser to a
+cloud VM.
 
-Three surfaces, one server:
+BetterWright has two first-class transports:
 
-| Surface | What it does |
+- **Managed relay**: an account-backed, encrypted link at
+  `https://live.betterwright.com`. Both host and viewer connect outbound to
+  Cloudflare. No port forwarding, public listener, SSH tunnel, or host IP in
+  the viewer is required.
+- **Direct**: a self-hosted listener on this machine. It is loopback-only by
+  default. LAN and Tailscale exposure are explicit choices.
+
+The Live View data plane does not pass through the BetterWright website. The
+website is only for sign-in and API-key management.
+
+## Where Live View appears
+
+| Surface | How to start it |
 | --- | --- |
-| `betterwright exec "<task>" --live-view` | starts the viewer at step 0 and prints the URL, so you watch the whole run while the agent works |
-| interactive console `--live-view` or `/live` | `--live-view` starts a viewer before the first prompt; **`/live` opens one anytime mid-session**; `/live stop` closes it; `/new`, `/headed`, and `/headless` re-open the viewer when live is enabled |
-| the session dock (chat / ask / handoff) | always-on chat to guide the agent; `ask` questions appear as chips + a reply box; `handoff` elevates the dock with **Done** / **Cancel** and force-enables browser control |
-| agent `live_view` tool | mid-task watch without pausing: the model can open the viewer whenever the user asks, relay the URL, and keep working (`handoff` still pauses for human hands) |
-| MCP `browser_handoff` | `action: "start"` anytime during an MCP session (watch or handoff) |
-| `betterwright view` | attaches to the **session daemon** when one is running (same tabs as `run`/`exec`/`skill` agents) and holds the viewer until Ctrl-C; if no daemon, starts a private browser for warm-up / remote-desktop |
+| One CLI task | `betterwright exec "<task>" --live-view` |
+| Interactive console | start with `--live-view`, or use `/live` at any time |
+| Existing daemon session | `betterwright view --session <name>` |
+| Built-in agent | the `live_view` tool watches without pausing; `handoff` pauses for the person |
+| MCP | `browser_handoff` with `action: "start"` |
+| JavaScript API | `startLiveView()`, `stopLiveView()`, and `liveViewStatus()` |
 
-Library equivalents: `browser.startLiveView()`, `browser.stopLiveView()`,
-`browser.liveViewStatus()`, `browser.waitForHandoff()`, `browser.waitForAsk()`,
-`browser.liveViewPostChat()`, `browser.liveViewDrainChat()`, and
-`runAgentTask({liveView: true})` (or omit the flag and call the agent
-`live_view` / `handoff` tools mid-task). MCP clients get a `browser_handoff` tool.
+The viewer follows exactly one daemon session. Once a capability is created,
+it cannot silently retarget to a different session. Chat, ask, handoff, status,
+and teardown are checked against that same session.
 
-**Live view is invocable anytime** — not only at process or task start. The
-code sandbox still cannot start it (sealed); host surfaces above can.
+Ordinary progress messages never start a listener or managed session. Only an
+explicit Live View, ask, or handoff action activates it.
 
-## How it works
+## Managed relay quick start
 
-The viewer server runs inside the browser worker (the only process holding
-CDP). Frames are CDP `Page.startScreencast` JPEGs pushed over a WebSocket to a
-single self-contained HTML page; your mouse and keyboard travel back as CDP
-`Input.dispatch*` events on the same page. The stream is damage-driven — an
-idle page costs ~nothing; a busy one is roughly screen-share bandwidth
-(~25–80 KB per frame). Several things keep that budget honest:
+1. Sign in at <https://betterwright.com/account> and create a personal Live
+   View API key.
+2. Store and verify it without putting it in shell history:
 
-- the screencast resolution adapts to the largest connected viewer window
-  (bucketed, debounced), so a small laptop window never streams 1440px frames;
-- a viewer whose browser tab is hidden stops receiving frames entirely and
-  repaints from the latest frame the moment it returns;
-- the latest frame is replayed to newly connected viewers, so joining never
-  shows a black canvas waiting for page damage;
-- tab-strip thumbnails travel as per-tab deltas, sent only when the thumbnail
-  actually changed — never re-broadcast wholesale.
+   ```bash
+   betterwright account set-key
+   betterwright account status
+   ```
 
-While the agent is driving, the viewer defaults to watching; **Take control**
-enables your input with a visible warning that agent and human inputs can
-race. The bottom **session dock** is always available:
+   In a non-interactive environment, pipe it on standard input:
 
-- **Chat** — type freeform guidance ("use the work account", "skip that").
-  Messages are queued and delivered to the agent at the next turn boundary
-  (never mid-`browser` step), so the agent incorporates them safely. Over MCP
-  the boundary is each tool call: your messages arrive appended to the next
-  `browser` tool result (and in `browser_handoff` status), and the agent's
-  per-step notes are mirrored into this chat.
-- **Ask** — when the model calls `ask`, the dock elevates with the question and
-  optional choice chips; your reply (chip or text) unblocks the agent.
-- **Handoff** — when the model calls `handoff`, input is force-enabled and the
-  dock shows the reason plus **Done** / **Cancel**. An optional note (the chat
-  field) returns to the model verbatim.
+   ```bash
+   printf '%s' "$BETTERWRIGHT_API_KEY" | betterwright account set-key --api-key-stdin
+   ```
 
-Agent step notes (`browser`, `login`, …) and the final answer are mirrored into
-the same chat log so watching the run feels alive.
+3. Save managed relay as the default and start a view:
 
-Human browser input goes through every existing guard: the SOCKS policy proxy,
-download limits, and credential capture treat takeover navigation exactly like
-model-driven navigation. **Takeover does not bypass network policy.** Chat is
-allowed even in watch-only mode (watch-only only blocks mouse/keyboard into the
-page).
+   ```bash
+   betterwright configure live-view --live-view-mode relay
+   betterwright view
+   ```
 
-## Hosting: pick who can open it
-
-You shouldn't need to know what a bind host is. One word says who can reach
-the viewer, and one flag locks it:
+Use it for one invocation without changing the saved default:
 
 ```bash
-betterwright view                          # devices on your local network (default)
-betterwright view --expose tailscale       # your tailnet only — auto-detects the Tailscale IP
-betterwright view --expose local           # only this machine — pair with your own tunnel
-betterwright view --set-password           # prompt once; every live view now needs it
+betterwright exec "check the production dashboard" --live-view --transport relay
+betterwright view --transport relay --session default
 ```
 
-The same words work everywhere: `exec "<task>" --live-view --expose tailscale`,
-`BETTERWRIGHT_LIVE_VIEW_EXPOSE=tailscale` (CLI and MCP), and
-`startLiveView({expose: "tailscale"})` in the library. Settings you want
-permanent go in `~/.betterwright/config.json` (see below) and apply to all
-three surfaces. What each preset does:
+`betterwright setup` also offers this choice interactively. In a
+non-interactive shell, setup does not change the Live View mode unless
+`--live-view-mode` is provided.
 
-- **`lan`** (default) — binds all interfaces and prints a URL with your
-  machine's private LAN IP, so a phone or laptop on the same network opens it
-  directly.
-- **`tailscale`** — binds *only* your Tailscale address (detected from the
-  100.64.0.0/10 interface; fails with a clear error if Tailscale isn't up).
-  Nothing on the LAN or internet can reach it, traffic is end-to-end
-  encrypted by the tailnet, and the printed URL works from any of your
-  tailnet devices. This is the recommended way to watch a remote VPS.
-- **`local`** — loopback only, for bringing your own tunnel. The CLI prints
-  copy-paste commands for the two common ones:
+### Upgrading from 1.1.x
 
-  ```bash
-  ssh -L PORT:127.0.0.1:PORT <host>                  # then open the printed URL locally
-  cloudflared tunnel --url http://127.0.0.1:PORT     # gives you an https URL to share
-  ```
+Version 1.2.0 deliberately removes implicit network exposure. If an older
+workflow relied on `betterwright view` being LAN-reachable, choose that risk
+explicitly once with `betterwright configure live-view --live-view-mode lan`;
+otherwise it now stays on loopback. Tailscale, user-owned HTTPS tunnels, and
+experimental Quick Tunnels still work as Direct alternatives.
 
-An explicit `--host` still overrides everything for advanced setups.
+Managed Relay is new in 1.2.0 and requires a BetterWright account, a personal
+API key, and an explicit saved, environment, CLI, or API transport choice. A
+saved Relay choice applies to MCP too, so it does not need a redundant
+`BETTERWRIGHT_LIVE_VIEW=1`; that variable remains the safety opt-in for
+non-loopback Direct MCP listeners. New Direct passwords require at least eight
+characters and are stored as salted scrypt verifiers. Existing legacy SHA-256
+verifiers remain readable for a non-breaking upgrade.
 
-### Persistent settings & password
+### Account credentials
 
-`~/.betterwright/config.json` (or `$BETTERWRIGHT_HOME/config.json`) holds
-live-view settings you set once and forget. The CLI, the library and the MCP
-server all read it; flags and env vars override it per run:
+The API key is stored in `~/.betterwright/account.json` with owner-only
+permissions. It is separate from ordinary `config.json`, is masked in status
+output, and is never accepted as a normal command-line value. Revoke a key from
+the account page or remove the local copy with:
+
+```bash
+betterwright account logout
+```
+
+`BETTERWRIGHT_API_KEY` overrides the stored key for an ephemeral process and is
+not persisted automatically. `BETTERWRIGHT_RELAY_URL` can point to a compatible
+self-hosted relay; it must be HTTPS, except for explicit loopback tests. An
+invalid custom relay URL fails closed rather than falling back to the hosted
+service.
+
+## Managed quota and availability
+
+Each account receives **7,200 viewer-connected seconds per ISO week**, which is
+two hours. The week begins Monday at 00:00 UTC.
+
+- Time starts only after an authorized viewer WebSocket is accepted.
+- A waiting host, an idle session with no viewer, and session creation do not
+  consume the allowance.
+- Disconnecting stops the clock. Usage is reconciled against a bounded
+  15-minute lease so a dropped connection cannot run indefinitely.
+- Only one viewer lease can be active for an account at a time.
+- There is no byte-transfer allowance to manage. The time allowance is the
+  user-facing quota.
+
+The account page and `betterwright account status` show the remaining time and
+reset date. Admission also fails closed if quota, budget, or service control
+state cannot be verified.
+
+## Cloudflare-only data path
+
+For managed mode, the host sends an outbound WSS connection directly to
+`live.betterwright.com`. The viewer loads the shell and opens its own WSS
+connection to the same Cloudflare Worker. A per-session Durable Object pairs
+one host and one viewer. D1 stores account, API-key digest, session, and quota
+metadata.
+
+```text
+BetterWright host  -- outbound WSS -->  Cloudflare Durable Object
+                                              ^
+Viewer browser     -- HTTPS + WSS ------------|
+```
+
+The relay path does not traverse Azure or the marketing website. It never
+needs an inbound port on the host and does not give the viewer the host's IP
+address.
+
+### End-to-end encryption
+
+The complete viewer link looks like:
+
+```text
+https://live.betterwright.com/s/<session-id>#k=<root-key>
+```
+
+The `#k=` fragment stays in the viewer browser and is not sent in HTTP requests.
+BetterWright creates the session ID and 32-byte root locally, sends only a
+session-bound proof to the relay, and appends the root to the returned viewer
+URL after validating the response origin and path.
+
+The root derives separate host-to-viewer and viewer-to-host AES-256-GCM keys
+with HKDF-SHA-256. Each direction uses a fresh 16-byte epoch and monotonic
+64-bit sequence numbers. The authenticated header binds protocol version,
+direction, epoch, and sequence; tampering, replay, wrong-direction frames, and
+mid-connection epoch changes are rejected.
+
+On every viewer connection, BetterWright sends an encrypted random challenge.
+The viewer must return the exact encrypted response before mouse, keyboard,
+paste, chat, tab switching, or handoff messages are accepted. The Durable
+Object forwards opaque ciphertext and control events only.
+
+The relay can observe account/session metadata, connection timing, IP
+metadata available to Cloudflare, and ciphertext sizes. It cannot decrypt the
+screen, input, or chat. Anyone who has the complete viewer link can access the
+session, so treat the whole link like a password.
+
+## Direct and user-owned networking
+
+Without saved configuration, Direct mode binds to `127.0.0.1`:
+
+```bash
+betterwright view                         # safe loopback default
+betterwright view --expose local          # explicit loopback
+betterwright view --expose lan            # explicit same-network listener
+betterwright view --expose tailscale      # explicit tailnet-only listener
+```
+
+The presets mean:
+
+- `local`: loopback only. Use an SSH tunnel or a tunnel you own when needed.
+- `lan`: bind all interfaces and print the private LAN address.
+- `tailscale`: bind only the detected Tailscale address. It fails clearly if
+  Tailscale is unavailable.
+
+For a user-owned tunnel, keep BetterWright on loopback:
+
+```bash
+ssh -L PORT:127.0.0.1:PORT <host>
+cloudflared tunnel --url http://127.0.0.1:PORT
+```
+
+Cloudflare Quick Tunnels are an experimental convenience here, not the managed
+production relay. Their URL and availability are controlled by Cloudflare's
+Quick Tunnel service.
+
+### Direct-view password
+
+A direct capability URL is always required. Add a separate password gate with:
+
+```bash
+betterwright view --set-password
+betterwright view --clear-password
+```
+
+Passwords must be at least eight characters. New stored verifiers use salted
+scrypt in `~/.betterwright/config.json`; legacy SHA-256 verifiers remain
+readable for upgrade compatibility. The plaintext is not stored or accepted as
+a CLI flag. A direct password does not apply to managed links, which use the
+fragment capability and endpoint encryption.
+
+Direct viewing is plain HTTP unless the surrounding LAN, tailnet, SSH tunnel,
+or user-owned tunnel supplies transport protection.
+
+## Persistent configuration and precedence
+
+Saved settings live under the `liveView` section of
+`~/.betterwright/config.json`:
 
 ```json
 {
   "liveView": {
-    "expose": "tailscale",
-    "passwordHash": "sha256:…"
+    "transport": "relay",
+    "expose": "local"
   }
 }
 ```
 
-**Password.** `betterwright view --set-password` prompts (hidden input,
-confirmed twice) and stores a SHA-256 hash in that file with `0600`
-permissions — the plaintext never touches a flag, your shell history, or
-`ps`. From then on every live view — `view`, `exec --live-view`, and
-MCP-started handoffs — shows a branded login screen in front of the viewer,
-on top of the capability token that's already in the URL: the token gets
-someone to the door, the password gets them in. Remove it with
-`betterwright view --clear-password`. (Library callers can also pass
-`startLiveView({password})` per start; MCP deployments that prefer env can
-set `BETTERWRIGHT_LIVE_VIEW_PASSWORD`.)
+The API key is never placed in that file. Configuration is resolved in this
+order:
 
-## Security model
+1. explicit per-call API options or CLI flags;
+2. explicit constructor options and surface environment variables;
+3. `account.json` and the `liveView` section of `config.json`;
+4. safe built-ins: Direct transport on `127.0.0.1` with an ephemeral port.
 
-Unlike cloud debug URLs, the self-hosted viewer is authenticated by default:
+Files are re-read on every start, so changing the mode, deleting a saved
+setting, or revoking/removing a local key takes effect in an already-running
+daemon. Choosing an explicit host or exposure preset selects Direct mode; a
+saved Relay choice cannot silently turn that listener into a remote relay.
 
-- **Capability token.** Every server start generates a fresh
-  `?t=<random-192-bit>` token required on the page, every HTTP request, and
-  the WebSocket upgrade (constant-time compare, 404 otherwise). The URL *is*
-  the credential — treat it like a password; don't paste it into chats or
-  ticket systems.
-- **LAN by default.** Live view binds `0.0.0.0` and prints a URL with the
-  machine's private LAN IP (e.g. `http://192.168.0.2:PORT/?t=…`) so another
-  device on the network can open it directly. Loopback only if you ask:
+Useful environment variables:
 
-  ```bash
-  betterwright exec "…" --live-view --host 127.0.0.1
-  # or
-  BETTERWRIGHT_LIVE_VIEW_HOST=127.0.0.1 betterwright exec "…" --live-view
-  ```
+| Variable | Purpose |
+| --- | --- |
+| `BETTERWRIGHT_API_KEY` | ephemeral account API key |
+| `BETTERWRIGHT_RELAY_URL` | managed or compatible self-hosted relay origin |
+| `BETTERWRIGHT_LIVE_VIEW_TRANSPORT` | `direct` or `relay` |
+| `BETTERWRIGHT_LIVE_VIEW_EXPOSE` | Direct preset: `local`, `lan`, or `tailscale` |
+| `BETTERWRIGHT_LIVE_VIEW_HOST` | explicit Direct bind host |
+| `BETTERWRIGHT_LIVE_VIEW_PORT` | explicit Direct bind port |
+| `BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST` | host printed for a wildcard Direct bind |
+| `BETTERWRIGHT_LIVE_VIEW_PASSWORD` | ephemeral Direct-view password |
+| `BETTERWRIGHT_LIVE_VIEW=1` | MCP deployer opt-in for non-loopback Direct access; an explicit saved/environment Relay selection authorizes Relay itself |
 
-  Pin the printed host with `--public-host` / `BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST`.
-  Over MCP, a non-loopback host still requires `BETTERWRIGHT_LIVE_VIEW=1` —
-  the deployer, not the model, opts in.
-- **Optional password gate.** With a password set (`betterwright view
-  --set-password`), the token only reaches a login page; the viewer (and the
-  WebSocket) additionally require a session established by the password. At
-  rest only a SHA-256 hash is stored, in `config.json` with `0600` permissions. Verification is constant-time against a
-  SHA-256 digest; the session is a random 192-bit id in an `HttpOnly;
-  SameSite=Strict` cookie valid 12 hours; failed logins lock the source
-  address out after 10 attempts per 15 minutes; sessions die with the server.
-  The page is plain http — rely on the network layer (LAN, tailnet, or an
-  https tunnel) for transport privacy, which every preset provides.
-- **Server-side watch-only.** `--watch-only` (or `interactive: false`) is
-  enforced in the worker; the browser-side toggle is a convenience, never an
-  authority. Handoffs force interactive on for their duration only.
-- **Origin check + headers.** WebSocket upgrades with a mismatched `Origin`
-  are dropped; the page is served with `Cache-Control: no-store`,
-  `Referrer-Policy: no-referrer`, and `X-Frame-Options: DENY`.
-- **Sealed from the model.** Nothing live-view-related exists in the code
-  sandbox. The model can *request* a handoff; it cannot start servers, read
-  the token, or synthesize input.
+## Viewer behavior
 
-## Options
+The active page is streamed from CDP screencast frames. The largest visible
+viewer controls the bucketed stream size; hidden viewer tabs stop receiving
+frames and repaint from the latest frame on return. Tab thumbnails are sent as
+deltas.
 
-| Option / flag | Env | Default | Meaning |
-| --- | --- | --- | --- |
-| `--expose` / `liveView.expose` | `BETTERWRIGHT_LIVE_VIEW_EXPOSE` | `lan` | hosting preset: `lan`, `local`, or `tailscale` |
-| `view --set-password` / config `passwordHash` / `liveView.password` | `BETTERWRIGHT_LIVE_VIEW_PASSWORD` | off | require a password (min 4 chars) before the viewer loads |
-| `--host` / `liveView.host` | `BETTERWRIGHT_LIVE_VIEW_HOST` | `0.0.0.0` | bind host (LAN-reachable by default; overrides `--expose`) |
-| `--public-host` / `liveView.publicHost` | `BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST` | LAN IPv4 | host printed in the URL when bind is wildcard |
-| `--port` / `liveView.port` | `BETTERWRIGHT_LIVE_VIEW_PORT` | `0` (ephemeral) | bind port |
-| `--watch-only` / `interactive: false` | — | interactive | forbid viewer input outside handoffs |
-| `quality` | — | `60` | screencast JPEG quality (10–90) |
-| `maxWidth` | — | `1440` | max frame dimension in px (the stream also shrinks to fit the largest connected viewer window) |
-| `session` | — | `default` | which session's current tab streams first |
-| — | `BETTERWRIGHT_LIVE_VIEW=1` | off | (MCP) allow a non-loopback bind host |
+The viewer starts in watch mode. **Take control** enables browser input. Human
+navigation still goes through BetterWright's network policy, download limits,
+and credential-capture rules.
 
-## Timeouts & lifecycle
+The session dock supports:
 
-- `waitForHandoff({timeout})` defaults to 1800 s. The worker resolves
-  `action: "timeout"` just before the client's own timeout would fire —
-  letting the client timeout expire instead restarts the browser worker (open
-  tabs are lost; the persistent profile survives). Size handoff timeouts for
-  the worst-case human wait.
-- A pending handoff sets the same page hold the `ask` tool uses, so the idle
-  reaper never closes tabs mid-takeover; any viewer input also refreshes the
-  session's activity clock.
-- **The view survives worker restarts.** A snippet timeout or crash restarts
-  the browser worker, which would otherwise take the in-worker view server
-  with it. The host notices, respawns the worker immediately, and revives the
-  view on the *same port and token* — so the URL you already shared keeps
-  working. The viewer page rides it out with a "Reconnecting…" overlay and
-  resumes automatically (it gives up after ~15 minutes of unreachability).
-  Open tabs are still lost to the restart, and chat history/pending handoffs
-  reset with it.
-- Stopping the browser deliberately stops the viewer (viewers see a clean
-  "ended" screen — only an explicit stop announces one). The agent stops a
-  viewer it started once the task ends, but never one you started yourself.
+- **Chat**: guidance is delivered at the next safe agent-turn boundary.
+- **Ask**: choice chips and free text resolve the agent's pending question.
+- **Handoff**: input is enabled and Done/Cancel returns control to the agent.
+
+Agent progress and the final answer are mirrored only after a Live View has
+been explicitly started.
+
+## JavaScript API
+
+```js
+import { BetterWright } from "betterwright";
+
+const browser = new BetterWright({
+  liveView: { transport: "relay" },
+});
+
+const view = await browser.startLiveView({
+  session: "support-case-42",
+  interactive: true,
+});
+console.log(view.url);
+
+const status = await browser.liveViewStatus();
+await browser.liveViewPostChat({
+  session: "support-case-42",
+  role: "agent",
+  text: "Waiting for your confirmation",
+});
+await browser.stopLiveView();
+await browser.close();
+```
+
+`startLiveView()` returns `transport`, the immutable `session`, viewer count,
+and transport-specific fields. Managed results can include `sessionId`, quota,
+and expiry metadata. Do not log the returned URL.
+
+## Lifecycle and recovery
+
+- An explicit stop closes the viewer and terminates the managed session.
+- The host performs best-effort managed-session deletion on normal teardown.
+- A worker crash or snippet timeout reconnects the bound Live View without
+  silently creating a different session or changing its URL.
+- Managed sessions expire no later than the service session TTL, currently 24
+  hours. Direct capabilities end with their listener.
+- A viewer reconnects after a bounded lease ends if quota and service admission
+  still allow it.
+- If the host disconnects, viewer input is closed rather than buffered for a
+  later process.
+
+## Security checklist
+
+- Treat the complete viewer URL and personal API key as credentials.
+- Revoke unused API keys from <https://betterwright.com/account>; at most five
+  active keys are allowed per account.
+- Use `--watch-only` or `interactive: false` when control is unnecessary.
+- Do not put API keys or viewer links in logs, issue trackers, or model prompts.
+- Use Relay, Tailscale, SSH, or an HTTPS tunnel for remote use. Never expose a
+  Direct HTTP listener to the public internet.
+- Re-observe the page after a handoff before automation continues.
 
 ## Limitations
 
-- Native Chrome UI is not part of the screencast: OS file pickers and
-  permission bubbles are invisible to the viewer (JS dialogs are already
-  auto-handled by the worker). If a step needs a file picker, use the
-  download/upload APIs instead.
-- Credentials you type manually during a handoff are treated as *manual*
-  logins by the capture engine: in headless sessions the save prompt cannot
-  render, so they are not captured into the vault. The characters you type are
-  visible as pixels in your own viewer stream (and nowhere else — frames never
-  enter the model transcript).
-- One page streams full-res at a time. When more than one tab is open, the
-  tab strip shows a live low-res thumbnail of every tab (refreshed every few
-  seconds, re-sent only when it changes); click a card to switch the main
-  stream — the old stream keeps painting until the new tab's first frame
-  lands, with the thumbnail as an instant placeholder. All connected viewers
-  see (and, if interactive, share) the same controls.
+- Native browser chrome, OS file pickers, and permission bubbles are not part
+  of the page screencast.
+- One page streams at full resolution at a time. The tab strip provides live
+  thumbnails for other pages.
+- One host and one viewer are paired per managed session, with one active
+  viewer lease across the account.
+- Manual credentials typed during a headless handoff are not automatically
+  saved when no trusted save prompt can be shown.
