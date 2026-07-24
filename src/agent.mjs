@@ -313,12 +313,18 @@ async function withinDeadline(operation, deadline) {
   try {
     return await Promise.race([
       Promise.resolve().then(() => operation(controller.signal)),
+      // Not unref'd: this watchdog exists to guarantee the operation ends in a
+      // reported timeout, and an unref'd timer cannot make that guarantee. If
+      // the operation is pending on nothing that holds the loop -- a model
+      // adapter whose promise only settles on abort -- Node drains the loop and
+      // the process exits silently instead of timing out. The `finally` below
+      // already stops the timer from outliving the race, so ref'ing it costs
+      // nothing once the operation settles.
       new Promise((_, reject) => {
         timer = setTimeout(() => {
           controller.abort(AGENT_TIMEOUT);
           reject(AGENT_TIMEOUT);
         }, remainingMs);
-        timer.unref?.();
       }),
     ]);
   } finally {
@@ -379,13 +385,14 @@ function retryAfterMsFromError(error) {
 // A sleep that ends immediately when the surrounding deadline aborts, so a
 // backoff pause can never hold the loop past the wall-clock budget.
 //
-// This timer is deliberately NOT unref'd, unlike the deadline watchdog above.
-// During a backoff the pause *is* the pending work: the failed model call is
-// settled and the browser is idle, so an unref'd timer is often the only handle
-// left and Node drains the loop, exits, and the retry silently never happens —
-// `runAgentTask` just never settles. The deadline is already enforced here by
-// the abort listener and by the caller's `Date.now() + delay >= deadline`
-// check, so holding the loop for the pause costs nothing.
+// This timer is deliberately NOT unref'd. During a backoff the pause *is* the
+// pending work -- the failed model call has settled and the browser is idle --
+// so an unref'd timer here would leave the loop to be held only by the deadline
+// watchdog in `withinDeadline`. That happens to be enough today, but it makes a
+// retry's liveness depend on an unrelated timer's ref state; ref this one so the
+// sleep stands on its own. The deadline is still enforced by the abort listener
+// below and by the caller's `Date.now() + delay >= deadline` check, so holding
+// the loop for the length of the pause costs nothing.
 function sleepWithSignal(ms, signal) {
   return new Promise((resolve, reject) => {
     const fail = () => {
