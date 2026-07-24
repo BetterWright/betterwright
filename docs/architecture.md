@@ -89,27 +89,12 @@ These are independent of the sandbox and of each other. See
 [network-policy.md](network-policy.md) for the metadata-endpoint rationale in
 full.
 
-The worker's loopback SOCKS proxy is its only always-on listener. Live View is
-off by default and starts only after an explicit trusted-host message. Direct
-mode creates a token-gated listener on `127.0.0.1`; LAN or Tailscale binds must
-be selected explicitly.
-
-Managed mode keeps that browser-facing server hidden on loopback and adds a
-host bridge that connects outbound over WSS to `live.betterwright.com`. The
-viewer also connects outbound to Cloudflare. A hibernating Durable Object
-forwards authenticated binary envelopes but never receives the 256-bit root
-key, which exists only in the host-created URL fragment. Direction-separated
-HKDF keys, AES-256-GCM sequence envelopes, replay rejection, and a host-issued
-root-key challenge protect screen, input, and chat end to end. The relay never
-opens a port on the host, exposes its IP to the viewer, or sends browser traffic
-through the Azure-hosted website.
-
-Each capability is immutably bound to one BetterWright daemon session. The
-worker clears the local server, relay bridge, and binding together on explicit
-stop, terminal relay events, browser-context loss, and session closure. Worker
-restarts preserve only opaque reconnect state; final shutdown waits for relay
-DELETE within a bounded grace period. See [live-view.md](live-view.md) for the
-protocol, quota, and operator model.
+The worker's loopback SOCKS proxy is its only always-on listener. One opt-in
+second listener exists: the [live-view server](live-view.md) (off by default,
+`127.0.0.1` + capability token, started only by an explicit host message),
+which streams CDP screencast frames to a human viewer and relays their input.
+It runs in the worker because that is where the CDP sessions live; it is not
+reachable from the model sandbox.
 
 ### Secrets
 
@@ -140,8 +125,6 @@ Everything lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`):
 
 ```
 ~/.betterwright/
-├── account.json       owner-only managed-relay API key (optional)
-├── config.json        non-secret Live View and runtime settings
 ├── browser/
 │   ├── profile/        persistent browser profile (cookies, logins)
 │   └── runtime/        ephemeral profiles when the main one is locked

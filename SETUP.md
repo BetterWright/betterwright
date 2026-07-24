@@ -213,27 +213,6 @@ servers) and confirm a `browser` tool appears. Then do **§5**.
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
-`browser_handoff` is always present, but remote reachability is a deployer
-choice. With no configuration it uses a Direct loopback-only viewer. For the
-account-backed managed relay, create a personal key at
-<https://betterwright.com/account>, run `betterwright account set-key`, then
-save Relay mode once:
-
-```bash
-betterwright configure live-view --live-view-mode relay
-```
-
-That explicit saved choice applies to the CLI, library, daemon, and MCP server.
-Environment-only deployments can set `BETTERWRIGHT_LIVE_VIEW_TRANSPORT=relay`;
-selecting Relay there is also the authorization, so no redundant second flag is
-required. `BETTERWRIGHT_LIVE_VIEW=1` remains the separate safety opt-in for a
-non-loopback Direct listener. The API key stays in owner-only
-`~/.betterwright/account.json` (or the ephemeral `BETTERWRIGHT_API_KEY`
-environment variable). Managed screen, input,
-and chat traffic is endpoint-encrypted and travels directly through
-`live.betterwright.com`; it does not traverse the BetterWright website. Full
-modes, quota, and threat model: [docs/live-view.md](docs/live-view.md).
-
 Managed launches use CloakBrowser in headed and headless modes to reduce
 common automation false positives; hosts with the native Chromium fork
 artifact installed (`~/.betterwright/chromium/`) run that instead — see
@@ -336,26 +315,6 @@ using an alternate source or requesting human help.
 ---
 
 ## §6 — Safeguards (configure to taste)
-
-**Live View remote access.** The no-config default is Direct mode on
-`127.0.0.1`; nothing is exposed to the LAN or internet. Choose a remote path
-explicitly:
-
-```bash
-# Account-backed, outbound-only managed relay
-betterwright account set-key
-betterwright configure live-view --live-view-mode relay
-
-# Or a Direct network you operate
-betterwright configure live-view --live-view-mode tailscale
-betterwright configure live-view --live-view-mode lan
-```
-
-Managed relay accounts include two viewer-connected hours per ISO week. A
-waiting host is not charged. The complete returned URL is a capability and must
-be treated like a password. Direct LAN mode is plain HTTP; prefer Relay,
-Tailscale, SSH, or an HTTPS tunnel for remote access. See
-[docs/live-view.md](docs/live-view.md).
 
 By default BetterWright blocks only cloud-metadata endpoints; the public
 internet, private networks, and loopback are all reachable so an agent can

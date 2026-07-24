@@ -178,31 +178,21 @@ BetterWright's whole observation stack is built around that problem:
 
 ## Watch it, coach it, take the wheel
 
-Every run can carry an encrypted [Live View](docs/live-view.md): a web page
+Every run can carry a self-hosted [live view](docs/live-view.md): a web page
 showing the browser in real time, with chat to guide the agent between turns
-and a **handoff** flow for MFA, a resistant CAPTCHA, or a consequential step.
-The agent pauses, you take control, click **Done**, and it resumes with your
-note.
+and a **handoff** flow for the moments automation shouldn't finish alone —
+MFA, a resistant CAPTCHA, a consequential click. The agent pauses, you take
+the controls, hit **Done**, and it resumes with your note.
 
 ```bash
-# Managed: account-backed, outbound-only, no ports or host-IP disclosure
-betterwright account set-key              # create the key at betterwright.com/account
-betterwright configure live-view --live-view-mode relay
-betterwright exec "…" --live-view
-
-# Direct alternatives stay available; the no-config default is loopback-only
-betterwright view --expose local
-betterwright view --expose tailscale
-betterwright view --expose lan             # explicit LAN exposure
-betterwright view --set-password           # Direct mode only, salted scrypt
+betterwright exec "…" --live-view          # watch the whole run
+betterwright view --expose tailscale       # drive a headless VPS browser from your laptop
+betterwright view --set-password           # lock every viewer behind a password
 ```
 
-Managed host and viewer traffic goes directly through Cloudflare, not the
-BetterWright website or Azure. The viewer root stays in the URL fragment and
-end-to-end encrypts screen, input, and chat. Each account includes two hours of
-viewer-connected time per ISO week; a waiting host consumes none. Direct mode,
-Tailscale, user-owned tunnels, and experimental Cloudflare Quick Tunnels remain
-available.
+Hosting is one word (`lan`, `local`, `tailscale`), auth is a capability token
+plus an optional config-stored password, and nothing live-view-related is
+reachable from model code.
 
 ## Why not just Playwright?
 
@@ -228,7 +218,7 @@ step from what it sees, in a browser that must still be there next turn:
 | [**Agent snapshots**](docs/browser-api.md#reading-the-page) | The token-efficiency core: compressed tree, `[ref=eN]` actions, diff and interactive-only modes, password redaction |
 | [**Built-in agent loop**](docs/agent.md) | `betterwright exec` / the interactive console / `runAgentTask()` — model-first selection across Claude, Codex, Grok, OpenRouter, Ollama, vLLM, and any OpenAI-compatible endpoint |
 | [**Credential vault**](docs/credentials.md) | AES-256-GCM outside the profile; PSL site matching, selector-free login detection, metadata-only account choice |
-| [**Live View & handoff**](docs/live-view.md) | Cloudflare-only managed relay with endpoint encryption and account quota, plus loopback, LAN, Tailscale, and user-owned tunnel modes |
+| [**Live view & handoff**](docs/live-view.md) | Watch and coach the agent live; token + optional password gated; `handoff` pauses for human hands and resumes on Done |
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
 | [**Human-shaped input**](docs/browser-api.md#human-shaped-interactions) | Curved pointer movement, paced typing, eased wheel — no extra dependency |

@@ -8,9 +8,9 @@
 // proxy, download limits, credential capture — exactly like model-driven
 // navigation. Takeover does not bypass policy.
 //
-// Security model (self-host): the listener is off by default and binds to
-// loopback unless the caller explicitly selects LAN or Tailscale exposure.
-// Every HTTP request and WebSocket upgrade must present
+// Security model (self-host): the listener is off by default; bind defaults to
+// all interfaces with a LAN publicHost so printed URLs open from another
+// machine on the network. Every HTTP request and WebSocket upgrade must present
 // the per-start capability token (`?t=...`). Watch-only vs interactive is
 // enforced here, server-side; the viewer's "take control" toggle is a
 // client-side convenience, never an authority. Nothing in this module is
@@ -79,9 +79,9 @@ export function guessLanHost() {
   return preferred[0] || others[0] || "127.0.0.1";
 }
 
-/** Safe default bind: this machine only. LAN exposure is always explicit. */
+/** Default bind: all interfaces + LAN hostname in the printed URL. */
 export function defaultLiveViewListen() {
-  return { host: "127.0.0.1", publicHost: "127.0.0.1" };
+  return { host: "0.0.0.0", publicHost: guessLanHost() };
 }
 // Latest-frame-wins: skip a viewer whose socket backlog exceeds this instead
 // of queueing unbounded JPEG history on a slow tunnel.
@@ -113,11 +113,7 @@ const SESSION_LIMIT = 200;
 const LOGIN_MAX_FAILURES = 10;
 const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1_000;
 const LOGIN_BODY_LIMIT = 4_096;
-const MIN_PASSWORD_LENGTH = 8;
-const LEGACY_PASSWORD_HASH_PATTERN = /^(sha256:)?[0-9a-f]{64}$/i;
-const SCRYPT_PASSWORD_HASH_PATTERN =
-  /^scrypt:16384:8:1:([A-Za-z0-9_-]{22}):([A-Za-z0-9_-]{43})$/;
-const SCRYPT_OPTIONS = { N: 16_384, r: 8, p: 1, maxmem: 32 * 1024 * 1024 };
+const MIN_PASSWORD_LENGTH = 4;
 const EXPOSE_MODES = new Set(["", "lan", "local", "tailscale"]);
 
 // Unstyled fallback login form; the worker injects the branded page from
@@ -175,10 +171,7 @@ export function createLiveViewServer({
   let boundHost = "";
   let boundPort = 0;
   let exposeMode = "";
-  // { algorithm: "scrypt"|"sha256", digest: Buffer, salt?: Buffer }.
-  // Legacy SHA-256 verifiers remain readable; newly supplied/stored passwords
-  // use salted scrypt.
-  let passwordHash = null;
+  let passwordHash = null; // sha256 Buffer when a password is set
   const sessions = new Map(); // session id -> expiry epoch ms
   const loginFailures = new Map(); // remote address -> { count, resetAt }
   let options = {
@@ -239,19 +232,8 @@ export function createLiveViewServer({
 
   function passwordOk(candidate) {
     if (!passwordHash || typeof candidate !== "string" || !candidate) return false;
-    let digest;
-    try {
-      digest =
-        passwordHash.algorithm === "scrypt"
-          ? crypto.scryptSync(candidate, passwordHash.salt, 32, SCRYPT_OPTIONS)
-          : crypto.createHash("sha256").update(candidate).digest();
-    } catch {
-      return false;
-    }
-    return (
-      digest.length === passwordHash.digest.length &&
-      crypto.timingSafeEqual(digest, passwordHash.digest)
-    );
+    const digest = crypto.createHash("sha256").update(candidate).digest();
+    return crypto.timingSafeEqual(digest, passwordHash);
   }
 
   function sessionIdOf(request) {
@@ -1150,13 +1132,12 @@ export function createLiveViewServer({
       host = tailnet;
       publicHostOverride = tailnet;
     } else if (expose === "lan") {
-      host = "0.0.0.0";
-      publicHostOverride = startOptions.publicHost || guessLanHost();
+      host = defaults.host;
+      publicHostOverride = startOptions.publicHost || defaults.publicHost;
     }
     exposeMode = expose || (host === "127.0.0.1" ? "local" : "lan");
     // Password gate: either a plaintext password (library callers, env) or a
-    // stored salted scrypt verifier. Legacy SHA-256 verifiers remain accepted
-    // so upgrading never locks out an existing direct viewer.
+    // stored "sha256:<hex>" digest from the config file — never both needed.
     const password = typeof startOptions.password === "string" ? startOptions.password : "";
     const storedHash =
       typeof startOptions.passwordHash === "string" ? startOptions.passwordHash.trim() : "";
@@ -1165,37 +1146,17 @@ export function createLiveViewServer({
         `The live-view password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
       );
     }
-    const scryptMatch = storedHash.match(SCRYPT_PASSWORD_HASH_PATTERN);
-    if (
-      storedHash &&
-      !scryptMatch &&
-      !LEGACY_PASSWORD_HASH_PATTERN.test(storedHash)
-    ) {
+    if (storedHash && !/^(sha256:)?[0-9a-f]{64}$/i.test(storedHash)) {
       throw new Error(
-        "Invalid live-view passwordHash; set it with `betterwright view --set-password`.",
+        'Invalid live-view passwordHash — expected "sha256:<64 hex chars>" ' +
+          "(set it with `betterwright view --set-password`).",
       );
     }
-    if (password) {
-      const salt = crypto.randomBytes(16);
-      passwordHash = {
-        algorithm: "scrypt",
-        salt,
-        digest: crypto.scryptSync(password, salt, 32, SCRYPT_OPTIONS),
-      };
-    } else if (scryptMatch) {
-      passwordHash = {
-        algorithm: "scrypt",
-        salt: Buffer.from(scryptMatch[1], "base64url"),
-        digest: Buffer.from(scryptMatch[2], "base64url"),
-      };
-    } else if (storedHash) {
-      passwordHash = {
-        algorithm: "sha256",
-        digest: Buffer.from(storedHash.replace(/^sha256:/i, ""), "hex"),
-      };
-    } else {
-      passwordHash = null;
-    }
+    passwordHash = password
+      ? crypto.createHash("sha256").update(password).digest()
+      : storedHash
+        ? Buffer.from(storedHash.replace(/^sha256:/i, ""), "hex")
+        : null;
     const port = clamp(Math.round(finiteNumber(startOptions.port, 0)), 0, 65_535);
     options = {
       interactive: startOptions.interactive !== false,
@@ -1228,8 +1189,8 @@ export function createLiveViewServer({
     boundPort = address?.port || port;
     const wildcard = host === "0.0.0.0" || host === "::" || host === "";
     const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
-    // A wildcard bind is explicit advanced/LAN exposure. Never invent a LAN
-    // URL for the safe loopback default.
+    // Always prefer a LAN address in the printed URL unless the bind is
+    // deliberately loopback-only (or the caller set publicHost).
     const urlHost = loopback
       ? host === "::1"
         ? "[::1]"
