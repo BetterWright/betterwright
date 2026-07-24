@@ -5,6 +5,7 @@ import type {
   HeadlessMode,
 } from "./common.js";
 import type { NetworkPolicy } from "./policy.js";
+import type { LiveViewOptions } from "./public.js";
 
 export interface McpContentBlock {
   type: string;
@@ -37,11 +38,19 @@ export function headlessFromEnv(
   env?: Record<string, string | undefined>,
 ): HeadlessMode;
 
-/** Read BETTERWRIGHT_LIVE_VIEW / _HOST / _PORT for the browser_handoff tool. */
-export function liveViewFromEnv(env?: Record<string, string | undefined>): {
+/** Merge BETTERWRIGHT_LIVE_VIEW_* over optional persisted handoff settings. */
+export function liveViewFromEnv(
+  env?: Record<string, string | undefined>,
+  fileConfig?: LiveViewOptions,
+): {
   enabled: boolean;
+  transport: "direct" | "relay" | string;
   host: string;
   port: number;
+  publicHost?: string;
+  expose?: "local" | "lan" | "tailscale" | string;
+  password?: string;
+  passwordHash?: string;
 };
 
 /** Convert a run result to MCP content: a JSON text summary then image blocks. */

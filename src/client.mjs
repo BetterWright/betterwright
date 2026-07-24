@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
-
+import { loadAccountConfig } from "./account-config.mjs";
 import {
   MAX_PENDING_CREDENTIAL_ORIGINS,
   VAULT_MATCH_MODES,
@@ -288,9 +288,10 @@ export class BetterWright {
    *   realistic consumer-Mac fingerprint captured from real Chrome on Apple
    *   Silicon); the managed CloakBrowser path defaults to the host platform.
    * @param {object} [options.liveView] defaults for {@link startLiveView}:
-   *   `{host, port, interactive, quality, maxWidth, publicHost}`. Defaults to
-   *   bind `0.0.0.0` with a LAN `publicHost` so printed URLs open from another
-   *   machine on the network. Pass `{host:"127.0.0.1"}` for loopback-only.
+   *   `{transport, expose, host, port, interactive, quality, maxWidth,
+   *   publicHost}`. The safe default is a direct loopback-only viewer. Select
+   *   `{transport:"relay"}` for BetterWright's managed outbound relay or
+   *   `{expose:"lan"}` explicitly for a direct LAN listener.
    */
   constructor(options = {}) {
     this.home = options.home || defaultHome();
@@ -334,23 +335,51 @@ export class BetterWright {
     this.platform = options.platform || null;
     this.defaultTimeout = Math.max(Number(options.defaultTimeout) || DEFAULT_TIMEOUT_SECONDS, 5);
     // Live-view defaults ride in each live_view_start message rather than in
-    // _workerConfig(), so changing them never restarts the worker. Default is
-    // LAN-reachable (0.0.0.0 + guessed private IP in the URL). Persistent
-    // settings from <home>/config.json (expose preset, password hash, …) sit
-    // between the built-ins and explicit constructor options.
-    const lanDefaults = defaultLiveViewListen();
-    this.liveView = {
-      host: lanDefaults.host,
+    // _workerConfig(), so changing them never restarts the worker. The safe
+    // no-config default is loopback. Persistent mode settings and the separate
+    // owner-only account credential file sit between built-ins and explicit
+    // constructor options.
+    const localDefaults = defaultLiveViewListen();
+    const account = loadAccountConfig(this.home);
+    this._liveViewBuiltinDefaults = {
+      transport: "direct",
+      expose: "local",
+      host: localDefaults.host,
       port: 0,
-      publicHost: lanDefaults.publicHost,
+      publicHost: localDefaults.publicHost,
       interactive: true,
       quality: 60,
       maxWidth: 1440,
-      ...loadLiveViewConfig(this.home),
-      ...(options.liveView && typeof options.liveView === "object"
-        ? options.liveView
-        : {}),
+      clientVersion: JSON.parse(
+        fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ).version,
     };
+    this._liveViewExplicit =
+      options.liveView && typeof options.liveView === "object"
+        ? { ...options.liveView }
+        : {};
+    this._liveViewMutable = {};
+    this._liveViewState = {
+      ...this._liveViewBuiltinDefaults,
+      ...loadLiveViewConfig(this.home),
+      ...(account.apiKey ? { apiKey: account.apiKey } : {}),
+      relayUrl: account.relayUrl,
+      ...this._liveViewExplicit,
+    };
+    // Preserve the documented mutable browser.liveView compatibility surface
+    // while still rebuilding file-backed settings on every start. Only caller
+    // mutations are recorded as explicit overrides; internal refreshes update
+    // the raw target below and therefore do not make deleted file values sticky.
+    this.liveView = new Proxy(this._liveViewState, {
+      set: (target, property, value) => {
+        this._liveViewMutable[property] = value;
+        return Reflect.set(target, property, value);
+      },
+      deleteProperty: (target, property) => {
+        delete this._liveViewMutable[property];
+        return Reflect.deleteProperty(target, property);
+      },
+    });
 
     this._process = null;
     this._pending = new Map();
@@ -371,6 +400,15 @@ export class BetterWright {
     // stopLiveView and by a non-restart close.
     this._liveViewRestore = null;
     this._workerGeneration = 0;
+  }
+
+  _handleLiveViewEnded(message, child) {
+    if (this._process !== child || !this._liveViewRestore) return false;
+    const bound = String(this._liveViewRestore.options?.session || "default");
+    const ended = String(message?.session || "default");
+    if (bound !== ended) return false;
+    this._liveViewRestore = null;
+    return true;
   }
 
   _workerConfig() {
@@ -493,6 +531,9 @@ export class BetterWright {
           () => rpcTasks.delete(task),
           () => rpcTasks.delete(task),
         );
+      }
+      else if (message.type === "live_view_ended") {
+        this._handleLiveViewEnded(message, child);
       }
       else if (message.type === "result") {
         const pending = this._pending.get(String(message.id));
@@ -993,35 +1034,103 @@ export class BetterWright {
    * token-gated local web page that streams the live browser and, when
    * interactive, relays the viewer's mouse and keyboard into it.
    *
-   * Resolves with `{ok, url, host, port, token, interactive, viewers}`. The
-   * `url` embeds a per-start capability token; anyone holding it can watch
-   * (and drive, when interactive) the session — treat it like a password.
+   * Resolves with `{ok, url, transport, interactive, viewers}` plus direct
+   * listener fields (`host`, `port`, `token`) or managed relay fields
+   * (`sessionId`, `quota`). The URL embeds a capability; anyone holding it can
+   * watch and, when interactive, drive the bound session, so treat it like a
+   * password.
    *
    * @param {object} [options] overrides for the constructor's `liveView`
-   *   defaults: { expose, password, host, port, interactive, quality,
-   *   maxWidth, publicHost, session } — `expose` is a one-word hosting preset
-   *   ("lan" | "local" | "tailscale") that overrides host/publicHost,
-   *   `password` adds a login gate on top of the URL token, and `session`
-   *   picks which session's current tab streams first.
+   *   defaults: { transport, expose, password, host, port, interactive,
+   *   quality, maxWidth, publicHost, session }. `transport` is `direct` or
+   *   `relay`; `expose` is `lan`, `local`, or `tailscale` for direct mode.
+   *   Direct-view passwords do not apply to managed relay links, which use a
+   *   private URL-fragment capability and endpoint encryption.
    */
   startLiveView(options = {}) {
     return this._enqueue(async () => {
       const config = await this._prepare();
-      const merged = { ...this.liveView, ...options };
+      // Re-read files on every start so setup/account changes apply to an
+      // already-running daemon without requiring a restart.
+      const persisted = loadLiveViewConfig(this.home);
+      const account = loadAccountConfig(this.home);
+      // Precedence is explicit call > explicit constructor > environment/
+      // account and config files > safe built-ins. Rebuilding from those
+      // sources (instead of the previous merged object) also makes deletions
+      // and credential revocation take effect immediately.
+      const callerDefaults = {
+        ...this._liveViewExplicit,
+        ...this._liveViewMutable,
+      };
+      const explicit = { ...callerDefaults, ...options };
+      const activeDefaults = this._liveViewRestore?.options || {};
+      const merged = {
+        ...this._liveViewBuiltinDefaults,
+        ...persisted,
+        ...(account.apiKey ? { apiKey: account.apiKey } : {}),
+        relayUrl: account.relayUrl,
+        ...callerDefaults,
+        ...activeDefaults,
+        ...options,
+      };
+      // A caller choosing a concrete bind/exposure expects a direct listener;
+      // do not let a persisted relay transport silently override it.
+      const hasExplicitHost =
+        Object.hasOwn(explicit, "host") ||
+        Object.hasOwn(explicit, "publicHost");
+      if (
+        !Object.hasOwn(explicit, "transport") &&
+        (hasExplicitHost || Object.hasOwn(explicit, "expose"))
+      ) {
+        merged.transport = "direct";
+      }
+      // A concrete host is itself the exposure choice. A lower-precedence
+      // preset such as persisted expose:"local" must not silently rewrite it
+      // back to loopback inside createLiveViewServer().
+      if (hasExplicitHost && !Object.hasOwn(explicit, "expose")) {
+        delete merged.expose;
+      }
+      for (const key of Reflect.ownKeys(this._liveViewState)) {
+        delete this._liveViewState[key];
+      }
+      Object.assign(this._liveViewState, merged);
       const result = await this._dispatch(
         { type: "live_view_start", config, options: merged },
         30,
       );
+      const relayRestore = result?._restore;
+      if (result && Object.hasOwn(result, "_restore")) delete result._restore;
       if (result?.ok && result.url) {
-        // Pin the bound port and token so a worker restart revives the view
-        // on the same URL (see _prepare); viewers reconnect seamlessly.
+        // Direct views pin port/token. Managed views pin only opaque relay
+        // restore state; neither the account API key nor local loopback token
+        // is exposed in the public result.
         this._liveViewRestore = {
-          options: { ...merged, port: result.port, token: result.token },
+          options:
+            result.transport === "relay"
+              ? {
+                  ...merged,
+                  transport: "relay",
+                  session: result.session || merged.session || "default",
+                  relayRestore,
+                }
+              : {
+                  ...merged,
+                  transport: "direct",
+                  session: result.session || merged.session || "default",
+                  port: result.port,
+                  token: result.token,
+                },
           generation: this._workerGeneration,
         };
       }
       return result;
     });
+  }
+
+  _resolvedLiveViewSession(value) {
+    return String(
+      value || this._liveViewRestore?.options?.session || "default",
+    );
   }
 
   /** Stop the live-view server (no-op when it is not running). */
@@ -1072,7 +1181,7 @@ export class BetterWright {
     return this._dispatch(
       {
         type: "handoff_wait",
-        sessionId: String(options.session || "default"),
+        sessionId: this._resolvedLiveViewSession(options.session),
         prompt: String(options.prompt || ""),
         // Resolve inside the worker a beat before the client's restart timer.
         timeoutMs: timeoutSeconds * 1000,
@@ -1085,7 +1194,7 @@ export class BetterWright {
    * Post a line into the live-view chat (agent steps, system notices). No-op
    * friendly when the viewer is not running.
    *
-   * @param {object} [options] { role?: "agent"|"system"|"you", text, kind? }
+   * @param {object} [options] { session?, role?: "agent"|"system"|"you", text, kind? }
    */
   async liveViewPostChat(options = {}) {
     if (this._closed) throw new BrowserError("This browser has been closed.");
@@ -1095,6 +1204,7 @@ export class BetterWright {
     return this._dispatch(
       {
         type: "live_view_chat_post",
+        sessionId: this._resolvedLiveViewSession(options.session),
         role: String(options.role || "agent"),
         text: String(options.text || ""),
         kind: options.kind != null ? String(options.kind) : undefined,
@@ -1108,12 +1218,18 @@ export class BetterWright {
    * drain. Returns `{ok, messages: [{text, at}]}`. Used by the agent harness
    * between turns so guidance arrives at a safe turn boundary.
    */
-  async liveViewDrainChat() {
+  async liveViewDrainChat(options = {}) {
     if (this._closed) throw new BrowserError("This browser has been closed.");
     if (!this._process || this._process.exitCode !== null) {
       return { ok: true, messages: [] };
     }
-    return this._dispatch({ type: "live_view_chat_drain" }, 10);
+    return this._dispatch(
+      {
+        type: "live_view_chat_drain",
+        sessionId: this._resolvedLiveViewSession(options.session),
+      },
+      10,
+    );
   }
 
   /**
@@ -1137,7 +1253,7 @@ export class BetterWright {
     return this._dispatch(
       {
         type: "ask_wait",
-        sessionId: String(options.session || "default"),
+        sessionId: this._resolvedLiveViewSession(options.session),
         question: String(options.question || ""),
         options: choices,
         timeoutMs: timeoutSeconds * 1000,
@@ -1283,7 +1399,7 @@ export class BetterWright {
     const killer = setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null)
         child.kill("SIGKILL");
-    }, 5_000);
+    }, 20_000);
     try {
       await closed;
     } finally {

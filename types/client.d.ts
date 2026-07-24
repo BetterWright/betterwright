@@ -67,6 +67,7 @@ export class BetterWright {
   waitForHandoff(options?: WaitForHandoffOptions): Promise<HandoffResult>;
   /** Post a line into the live-view chat (agent steps / system notices). */
   liveViewPostChat(options?: {
+    session?: string;
     role?: "agent" | "you" | "system";
     text?: string;
     kind?: string;
@@ -75,7 +76,7 @@ export class BetterWright {
    * Drain freeform human messages typed in the live-view chat since the last
    * drain (agent harness uses this between turns).
    */
-  liveViewDrainChat(): Promise<LiveViewDrainChatResult>;
+  liveViewDrainChat(options?: { session?: string }): Promise<LiveViewDrainChatResult>;
   /** Block until a human answers a question in the live-view chat. */
   waitForAsk(options?: WaitForAskOptions): Promise<AskResult>;
   fillCredential(options?: FillCredentialOptions): Promise<CredentialFillResult>;
