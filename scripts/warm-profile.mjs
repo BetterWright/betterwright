@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Organic profile warmer for BetterWright's persistent Cloak profile.
 //
-// Aside's anti-bot strength comes for free: it drives a real user's aged,
-// signed-in daily-driver browser. BetterWright deliberately cannot attach to
-// a real Chrome (connectOverCdp is rejected), but its managed profile persists
+// Tools that attach to a real user's daily-driver Chrome get anti-bot strength
+// for free, from an aged, signed-in profile. BetterWright deliberately cannot
+// attach to a real Chrome (connectOverCdp is rejected), but its profile persists
 // history, cookies, storage, and logins across runs — so the equivalent is to
 // *age that profile on purpose* with organic, human-shaped browsing before and
 // alongside real tasking.

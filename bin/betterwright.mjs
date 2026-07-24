@@ -49,12 +49,13 @@ import {
   makeLineReader,
   readExecTaskFromStdin,
 } from "../src/cli-io.mjs";
-import { defaultDaemonHome, sessionName } from "../src/daemon.mjs";
+import { daemonLogPath, defaultDaemonHome, sessionName } from "../src/daemon.mjs";
 import {
   connectSessionDaemon,
   createDaemonBrowser,
   daemonDisabled,
   execTask,
+  interruptSession,
 } from "../src/daemon-client.mjs";
 import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
 import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
@@ -1123,7 +1124,21 @@ async function cmdExec(flags) {
       config: daemonConfigFromFlags(flags),
     });
     if (outcome.ok) {
-      const { channel } = outcome;
+      let channel = outcome.channel;
+      // Ctrl-C stops the agent instead of orphaning it: the run lives in the
+      // daemon, so abandoning the CLI would leave it working (and spending)
+      // with nobody watching. The second Ctrl-C gives up waiting.
+      let interrupting = false;
+      const onSigint = () => {
+        if (interrupting) {
+          process.stderr.write("\n  ! giving up on the interrupt; the run may still be stopping\n");
+          process.exit(130);
+        }
+        interrupting = true;
+        process.stderr.write("\n  ! stopping the run — the transcript is kept, so you can resume it\n");
+        void interruptSession(channel, session, { wait: false });
+      };
+      process.on("SIGINT", onSigint);
       try {
         // The agent loop runs in the daemon, so the conversation and the
         // browser session both persist for the next exec in this session.
@@ -1139,7 +1154,23 @@ async function cmdExec(flags) {
             // watched; without it the handoff tool still starts one on demand.
             liveView: liveViewCliOptions(argv),
           },
-          { onStep },
+          {
+            onStep,
+            onNotice: (note) => process.stderr.write(`  ! ${note}\n`),
+            // The run belongs to the daemon, not to this socket. If the pipe
+            // breaks mid-task, get back to the same run rather than losing it.
+            reconnect: async () => {
+              const again = await connectSessionDaemon({
+                cliPath: CLI_PATH,
+                config: daemonConfigFromFlags(flags),
+                spawnIfNeeded: false,
+                ignoreMismatch: true,
+              });
+              if (!again.ok) return null;
+              channel = again.channel;
+              return channel;
+            },
+          },
         );
         if (flags.has("--close")) {
           await channel
@@ -1150,8 +1181,12 @@ async function cmdExec(flags) {
         // Config problems (missing credentials, missing SDK) read better as a
         // plain line than a stack trace.
         console.error(error?.message || String(error));
+        if (/connection closed|did not answer/i.test(String(error?.message || ""))) {
+          console.error(`  the daemon's log may say why: ${daemonLogPath(home)}`);
+        }
         return 1;
       } finally {
+        process.off("SIGINT", onSigint);
         channel.end();
       }
     } else {
@@ -1275,7 +1310,9 @@ async function cmdSessions() {
   const { dim } = styler();
   console.log(
     dim(
-      `daemon pid ${hello.pid} · v${hello.version} · sessions idle out after ${formatDuration(hello.ttlMs || 0)}`,
+      `daemon pid ${hello.pid} · v${hello.version} · up ${formatDuration(hello.uptimeMs || 0)} · ` +
+        `${hello.runs?.active || 0} run(s) active of ${hello.runs?.started || 0} started · ` +
+        `sessions idle out after ${formatDuration(hello.ttlMs || 0)}`,
     ),
   );
   if (!hello.sessions?.length) {
@@ -1283,8 +1320,12 @@ async function cmdSessions() {
     return 0;
   }
   for (const entry of hello.sessions) {
+    const marks = [
+      entry.running ? `running (${entry.watchers} watcher${entry.watchers === 1 ? "" : "s"})` : "",
+      entry.inflight ? `${entry.inflight} call(s) in flight` : "",
+    ].filter(Boolean);
     console.log(
-      `${entry.name.padEnd(20)} idle ${formatDuration(entry.idleMs)}${entry.inflight ? ` · ${entry.inflight} call(s) in flight` : ""}`,
+      `${entry.name.padEnd(20)} idle ${formatDuration(entry.idleMs)}${marks.length ? ` · ${marks.join(" · ")}` : ""}`,
     );
   }
   return 0;

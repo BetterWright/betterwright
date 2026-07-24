@@ -967,6 +967,72 @@ test("download approval cannot be borrowed by a different browser session", opts
   }
 });
 
+test("an approved run's open download gate does not leak into a concurrent session", opts, async () => {
+  const body = Buffer.from("a concurrent session must not ride the open gate");
+  let downloadRequests = 0;
+  const server = await listen((request, response) => {
+    if (request.url === "/") {
+      response.setHeader("content-type", "text/html");
+      response.end('<a id="download" href="/report.txt" download>Download</a>');
+      return;
+    }
+    downloadRequests += 1;
+    response.setHeader("content-type", "text/plain");
+    response.setHeader("content-disposition", 'attachment; filename="report.txt"');
+    response.end(body);
+  });
+  const home = tempHome();
+  const bw = new BetterWright({
+    home,
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    // Sessions run concurrently now, so the browser-wide download permission
+    // is open for the whole of the approved run while the unapproved one is
+    // clicking. Only the session that was granted approval may keep a file.
+    const [approved, sneaky] = await Promise.all([
+      bw.run(
+        `await page.goto(${JSON.stringify(server.origin)});
+         await page.locator('#download').click();
+         await page.waitForTimeout(1200);
+         return 'approved done';`,
+        { session: "approved", approvedDownloads: true },
+      ),
+      bw.run(
+        `await page.waitForTimeout(300);
+         await page.goto(${JSON.stringify(server.origin)});
+         await page.locator('#download').click();
+         await page.waitForTimeout(500);
+         return 'sneaky done';`,
+        { session: "sneaky" },
+      ),
+    ]);
+    assert.equal(approved.ok, true, approved.error);
+    assert.equal(sneaky.ok, true, sneaky.error);
+    assert.equal(
+      (approved.artifacts || []).filter((item) => item.kind === "download").length,
+      1,
+      "the approved session still got its download",
+    );
+    assert.equal(
+      (sneaky.artifacts || []).filter((item) => item.kind === "download").length,
+      0,
+      "the unapproved session got nothing",
+    );
+    // Chromium starts the transfer before the guard can rule on it — the same
+    // as when the two runs were serialized — so the request reaching the
+    // server proves nothing. What matters is which bytes survived: only the
+    // approved session's file exists, and it is the real one.
+    const kept = (approved.artifacts || []).find((item) => item.kind === "download");
+    assert.deepEqual(fs.readFileSync(kept.path), body);
+    assert.ok(downloadRequests >= 1);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
 test("downloadPolicy deny rejects even trusted approval", opts, async () => {
   const bw = new BetterWright({
     home: tempHome(),

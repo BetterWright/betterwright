@@ -51,7 +51,7 @@ test("frame detection tolerates origin lookup failure after a frame detaches", a
     { id: "ready", isDetached: () => false },
     { id: "detached", isDetached: () => true },
   ];
-  const detections = await collectCredentialFrameDetections({
+  const { detections, unresponsive } = await collectCredentialFrameDetections({
     frames,
     requestedAction: "fill",
     originForFrame: async (frame) => {
@@ -66,8 +66,74 @@ test("frame detection tolerates origin lookup failure after a frame detaches", a
   });
   assert.equal(detections.length, 1);
   assert.equal(detections[0].origin, "https://ready.example");
+  assert.deepEqual(unresponsive, []);
   await disposeCredentialFrameDetections(detections);
   assert.deepEqual(disposed, ["ready"]);
+});
+
+test("a wedged frame is skipped instead of stalling the whole scan", async () => {
+  const disposed = [];
+  const frames = [
+    { id: "wedged", url: () => "https://wedged.example/widget", isDetached: () => false },
+    { id: "form", url: () => "https://form.example/login", isDetached: () => false },
+  ];
+  let releaseWedged;
+  const wedged = new Promise((resolve) => {
+    releaseWedged = resolve;
+  });
+  const started = Date.now();
+  const { detections, unresponsive } = await collectCredentialFrameDetections({
+    frames,
+    requestedAction: "fill",
+    originForFrame: async (frame) => `https://${frame.id}.example`,
+    detectInFrame: async (frame) => {
+      // The wedged frame's evaluate never settles on its own, exactly as a
+      // frame with a blocked execution context behaves.
+      if (frame.id === "wedged") return wedged;
+      return {
+        id: frame.id,
+        async dispose() {
+          disposed.push(frame.id);
+        },
+      };
+    },
+    probeMs: 40,
+    budgetMs: 400,
+  });
+  assert.ok(Date.now() - started < 300, "the scan gave up on the wedged frame");
+  assert.deepEqual(unresponsive, ["https://wedged.example/widget"]);
+  assert.equal(detections.length, 1);
+  assert.equal(detections[0].id, "form");
+
+  // The abandoned probe must still clean up after itself when it finally lands.
+  releaseWedged({
+    async dispose() {
+      disposed.push("wedged");
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(disposed, ["wedged"]);
+});
+
+test("the scan budget bounds a page full of wedged frames", async () => {
+  const frames = Array.from({ length: 12 }, (_, index) => ({
+    id: `f${index}`,
+    url: () => `https://f${index}.example/`,
+    isDetached: () => false,
+  }));
+  const started = Date.now();
+  const { detections, unresponsive } = await collectCredentialFrameDetections({
+    frames,
+    requestedAction: "fill",
+    originForFrame: async (frame) => `https://${frame.id}.example`,
+    detectInFrame: () => new Promise(() => {}),
+    probeMs: 40,
+    budgetMs: 120,
+  });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 400, `the scan honoured its budget (took ${elapsed}ms)`);
+  assert.equal(detections.length, 0);
+  assert.equal(unresponsive.length, frames.length);
 });
 
 async function fixtureServer() {

@@ -15,11 +15,11 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
-import path from "node:path";
 import readline from "node:readline";
 
 import {
   daemonConfigSignature,
+  daemonLogPath,
   daemonPackageVersion,
   daemonSocketPath,
   defaultDaemonHome,
@@ -29,6 +29,13 @@ import {
 const CONNECT_TIMEOUT_MS = 1_000;
 const SPAWN_WAIT_MS = 8_000;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
+// The daemon's stderr log is append-only across restarts; roll it over once it
+// gets large so a long-lived install cannot fill a disk with it.
+const LOG_ROTATE_BYTES = 4 * 1024 * 1024;
+// How long `execTask` keeps trying to get back to a run whose connection
+// dropped, and how long it waits between attempts.
+const REATTACH_WINDOW_MS = 30_000;
+const REATTACH_INTERVAL_MS = 500;
 
 export function daemonDisabled(flags = new Set()) {
   if (flags.has("--no-daemon")) return true;
@@ -79,11 +86,13 @@ function createChannel(socket) {
       }
       const entry = pending.get(message?.id);
       if (!entry) return;
-      // Streamed interim events (exec step notes) keep the request pending;
-      // the final message — the one without `event` — settles it.
-      if (message.event === "step") {
+      // Streamed interim events (the run id, step notes, a replay gap) keep
+      // the request pending; the final message — the one without `event` —
+      // settles it. The whole frame goes to the listener, because the run id
+      // and sequence number on it are what make a reattach possible.
+      if (message.event) {
         try {
-          entry.onEvent?.(message.step);
+          entry.onEvent?.(message);
         } catch {
           /* a broken step renderer must not kill the request */
         }
@@ -140,12 +149,23 @@ function createChannel(socket) {
   };
 }
 
+/** Keep one previous generation of the daemon log, drop anything older. */
+function rotateDaemonLog(file) {
+  try {
+    if (fs.statSync(file).size < LOG_ROTATE_BYTES) return;
+    fs.renameSync(file, `${file}.1`);
+  } catch {
+    /* no log yet, or a rename we are not allowed to do — either is fine */
+  }
+}
+
 function spawnDaemon({ home, cliPath, config }) {
   const payload = Buffer.from(JSON.stringify(config), "utf8").toString("base64url");
   let logFd;
   try {
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-    logFd = fs.openSync(path.join(home, "daemon.log"), "a", 0o600);
+    rotateDaemonLog(daemonLogPath(home));
+    logFd = fs.openSync(daemonLogPath(home), "a", 0o600);
   } catch {
     logFd = "ignore";
   }
@@ -316,18 +336,91 @@ export function createDaemonBrowser(channel, { session = "default" } = {}) {
   };
 }
 
+/** Ask the daemon to stop a session's run at the next safe point. */
+export async function interruptSession(channel, session, { wait = true } = {}) {
+  try {
+    const reply = await channel.request(
+      { op: "interrupt", session: sessionName(session), wait },
+      wait ? 0 : 10_000,
+    );
+    return Boolean(reply?.interrupted);
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Run one agent task inside the daemon (the Aside shape: the LLM loop lives
- * in the daemon, so its transcript and browser session persist across CLI
- * invocations). Step events stream to `onStep` as they happen; resolves with
- * the run summary (no transcript — that stays with the daemon).
+ * Run one agent task inside the daemon: the LLM loop lives there, so its
+ * transcript and browser session persist across CLI invocations. Step events
+ * stream to `onStep` as they happen; resolves with the run summary (no
+ * transcript — that stays with the daemon).
+ *
+ * The run belongs to the daemon, not to this connection. If the connection
+ * drops mid-run and `reconnect` is supplied, this reattaches to the same run
+ * and replays the steps it missed, so a flaky pipe costs a moment rather than
+ * the whole task. `onNotice` hears about those recoveries.
  */
-export async function execTask(channel, payload, { onStep } = {}) {
-  const reply = await channel.request(
-    { op: "exec", ...payload },
-    0,
-    typeof onStep === "function" ? onStep : undefined,
-  );
+export async function execTask(channel, payload, { onStep, onNotice, reconnect } = {}) {
+  const session = sessionName(payload.session ?? "default");
+  const step = typeof onStep === "function" ? onStep : () => {};
+  const notice = typeof onNotice === "function" ? onNotice : () => {};
+  let runId = null;
+  let cursor = null;
+
+  // One listener for both the original exec and any reattach: it keeps the
+  // cursor current, which is the only state a reattach needs.
+  const onEvent = (frame) => {
+    if (frame.event === "run") {
+      runId = frame.runId || runId;
+      return;
+    }
+    if (frame.event === "gap") {
+      notice(
+        `reconnected mid-run, but ${frame.firstSeq - (cursor?.seq ?? 0) - 1} step note(s) had already scrolled out of the daemon's buffer`,
+      );
+      return;
+    }
+    if (frame.event !== "step") return;
+    if (frame.runId) runId = frame.runId;
+    if (Number.isFinite(frame.seq)) cursor = { runId: frame.runId, seq: frame.seq };
+    step(frame.step);
+  };
+
+  let reply;
+  try {
+    reply = await channel.request({ op: "exec", ...payload }, 0, onEvent);
+  } catch (error) {
+    if (typeof reconnect !== "function") throw error;
+    reply = await reattach({ session, runId, cursor, onEvent, reconnect, notice, cause: error });
+  }
   if (!reply?.ok) throw new Error(reply?.error || "the session daemon exec failed");
   return reply.result;
+}
+
+/**
+ * Get back to a run whose connection died. Retries for a bounded window
+ * because the usual cause — the daemon restarting a wedged worker, a pipe
+ * hiccup — resolves in under a second.
+ */
+async function reattach({ session, runId, cursor, onEvent, reconnect, notice, cause }) {
+  const deadline = Date.now() + REATTACH_WINDOW_MS;
+  let last = cause;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, REATTACH_INTERVAL_MS));
+    let channel;
+    try {
+      channel = await reconnect();
+    } catch (error) {
+      last = error;
+      continue;
+    }
+    if (!channel) continue;
+    notice("lost the connection to the session daemon; reattaching to the run");
+    try {
+      return await channel.request({ op: "attach", session, runId, cursor }, 0, onEvent);
+    } catch (error) {
+      last = error;
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last));
 }
