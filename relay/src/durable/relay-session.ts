@@ -419,6 +419,9 @@ export class RelaySession implements DurableObject {
     session: StoredSessionConfig,
     retryAtMs = Date.now() + 60_000,
   ): Promise<void> {
+    // Arm the retry before either deletion. If the process dies or deleteAll
+    // fails after D1 is gone, the tombstone still has a near-term cleanup owner.
+    await this.state.storage.setAlarm(retryAtMs);
     try {
       await this.env.DB
         .prepare("DELETE FROM sessions WHERE id = ?1 AND user_id = ?2")
@@ -427,11 +430,12 @@ export class RelaySession implements DurableObject {
     } catch (error) {
       // Keep only the minimal config/tombstone and retry. Never delete the
       // object's last cleanup owner while its D1 row may still exist.
-      await this.state.storage.setAlarm(retryAtMs);
       throw error;
     }
-    await this.state.storage.deleteAlarm();
+    // Delete key/value state before the alarm. A crash between these awaits
+    // leaves at most a one-shot empty-object alarm, never permanent config.
     await this.state.storage.deleteAll();
+    await this.state.storage.deleteAlarm();
   }
 
   private async terminate(request: Request): Promise<Response> {

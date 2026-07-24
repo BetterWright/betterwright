@@ -153,6 +153,42 @@ describe("RelaySession Durable Object persistence", () => {
     expect(state.storageImpl.alarm).toBeNull();
   });
 
+  it("keeps a retry alarm when Durable Object deleteAll fails", async () => {
+    const db = new FakeD1();
+    const env = makeBaseEnv({ DB: db.asDatabase() });
+    const state = new MemoryDurableState();
+    const relay = new RelaySession(state.asState(), env);
+    const config = sessionConfig();
+    await insertSession(env, {
+      id: config.sessionId,
+      user_id: config.userId,
+      api_key_id: "key_test",
+      host_cap_hash: config.hostCapHash,
+      viewer_cap_hash: config.viewerCapHash,
+      created_at_ms: config.createdAtMs,
+      expires_at_ms: config.expiresAtMs,
+      ended_at_ms: null,
+      ended_reason: null,
+    });
+    await relay.fetch(request(env, "/init", config));
+    state.storageImpl.deleteAllFailures = 1;
+
+    const first = await relay.fetch(
+      request(env, "/terminate", { reason: "deleted" }),
+    );
+    expect(first.status).toBe(500);
+    expect(db.sessions).toHaveLength(0);
+    expect(state.storageImpl.alarm).not.toBeNull();
+    expect(state.storageImpl.values.get("config")).toMatchObject({
+      sessionId: config.sessionId,
+      terminatedAtMs: expect.any(Number),
+    });
+
+    await relay.alarm();
+    expect(state.storageImpl.values.size).toBe(0);
+    expect(state.storageImpl.alarm).toBeNull();
+  });
+
   it("denies all internal endpoints when the service token is wrong", async () => {
     const env = makeBaseEnv();
     const relay = new RelaySession(new MemoryDurableState().asState(), env);
