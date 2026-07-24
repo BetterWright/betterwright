@@ -142,6 +142,6 @@
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
-    "patchright-core": "^1.61.1"
+    "patchright-core": "1.61.1"
   }
 }

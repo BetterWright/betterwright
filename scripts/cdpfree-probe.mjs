@@ -337,6 +337,9 @@ try {
   }
   if (!verdict) {
     console.log(JSON.stringify({ score: null, verdict: "TIMEOUT" }, null, 2));
+    // Every other exit path cleans up; without this the timeout leaks the
+    // spawned browser and its temp profile.
+    cleanup();
     process.exit(1);
   }
   let score = null;

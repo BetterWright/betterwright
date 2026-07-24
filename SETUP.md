@@ -180,9 +180,10 @@ keep download approval and network policy under trusted host control. Then do
 ## §3 — MCP client
 
 If the host is an MCP client and you prefer a first-class tool over the CLI,
-BetterWright ships an MCP server that exposes `browser`, `browser_download`, and
-`browser_doctor`. `browser_download` uses MCP elicitation to ask the user before
-any download-capable code runs.
+BetterWright ships an MCP server that exposes `browser`, `browser_download`,
+`browser_handoff`, and `browser_doctor`, plus `browser_login` when the
+credential vault is enabled. `browser_download` uses MCP elicitation to ask the
+user before any download-capable code runs.
 
 The MCP server is the Node package plus the `@modelcontextprotocol/sdk` peer
 dependency (`npm install betterwright @modelcontextprotocol/sdk`).

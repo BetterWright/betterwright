@@ -9,7 +9,7 @@ import {
   piPrimaryImageArtifact,
 } from "./pi.mjs";
 import { agentSystemPrompt } from "./prompt.mjs";
-import { VAULT_MATCH_MODES } from "./vault.mjs";
+import { piBrowserToolParameters, piLoginToolParameters } from "./tool-schemas.mjs";
 
 const BROWSER_TOOL_NAMES = new Set([
   "browser",
@@ -21,77 +21,12 @@ const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const WEB_PROTOCOLS = new Set(["http:", "https:"]);
 
-export const PI_BROWSER_PARAMETERS = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    code: {
-      type: "string",
-      minLength: 1,
-      description: "Async Playwright JavaScript to run in the persistent browser.",
-    },
-    note: {
-      type: "string",
-      description: "Short present-tense status line describing this browser step.",
-    },
-  },
-  required: ["code"],
-};
+// Parameter schemas shared with the agent harness and MCP server; the shared
+// module is the single source of truth (see src/tool-schemas.mjs). Pi layers
+// in strict validation (additionalProperties: false, minLength) there.
+export const PI_BROWSER_PARAMETERS = piBrowserToolParameters();
 
-export const PI_LOGIN_PARAMETERS = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    passwordSelector: {
-      type: "string",
-      minLength: 1,
-      description: "Optional CSS or current aria-ref=eN target for the password field.",
-    },
-    currentPasswordSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target for the current password field.",
-    },
-    usernameSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target for the username/email field.",
-    },
-    confirmPasswordSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target for confirmation (signup).",
-    },
-    submitSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target clicked to submit.",
-    },
-    submit: {
-      type: "boolean",
-      description: "Detect and submit the matching form after filling (default false).",
-    },
-    id: {
-      type: "string",
-      description: "Select a saved record, or rotate it when generate=true.",
-    },
-    username: {
-      type: "string",
-      description: "Select the saved record by username, or set it on signup.",
-    },
-    generate: {
-      type: "boolean",
-      description: "Generate, stage, and fill a new strong password (signup/rotation).",
-    },
-    length: { type: "integer", description: "Generated password length (default 24)." },
-    includeSymbols: {
-      type: "boolean",
-      description: "Include symbols in a generated password (default true).",
-    },
-    label: { type: "string", description: "Human label for a newly saved record." },
-    matchMode: {
-      type: "string",
-      enum: [...VAULT_MATCH_MODES],
-      description: "URL scope for the generated credential (default base-domain).",
-    },
-  },
-};
+export const PI_LOGIN_PARAMETERS = piLoginToolParameters();
 
 export const PI_EVIDENCE_PARAMETERS = {
   type: "object",

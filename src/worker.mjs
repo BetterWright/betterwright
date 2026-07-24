@@ -48,8 +48,9 @@ import {
 } from "./cloak.mjs";
 import { buildV2LaunchPlan, resolveGeoIdentity } from "./cloak-v2.mjs";
 import {
+  assertRotationPreservesMatchMode,
   MAX_PENDING_CREDENTIAL_ORIGINS,
-  VAULT_MATCH_MODES,
+  pendingCredentialRecovery,
   validateCredentialMatchMode,
 } from "./credential-constants.mjs";
 import {
@@ -114,7 +115,6 @@ const DEFAULT_SCREENSHOT_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_PIXEL_LIMIT = 40_000_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const MAX_ACTIVE_SECRETS = 200;
-const CREDENTIAL_MATCH_MODE_SET = new Set(VAULT_MATCH_MODES);
 
 /**
  * @deprecated Retained for source compatibility. BetterWright no longer passes
@@ -1531,9 +1531,17 @@ async function ensureBrowser(config) {
     return await launchPromise;
   } catch (error) {
     await closeDownloadGuard();
+    // A context can already be live when a later launch step fails (e.g. the
+    // download guard install). Close it before the profile lock is released so
+    // the Chromium process is never orphaned holding a released profile. The
+    // module reference is nulled first so the context's own "close" handler
+    // (and any concurrent caller) never observes the half-torn-down context;
+    // the close itself is best-effort so teardown cannot mask the launch error.
+    const launched = browserContext;
+    browserContext = null;
+    await launched?.close().catch(() => {});
     disposeVaultCapture();
     releaseProfileLock();
-    browserContext = null;
     throw error;
   } finally {
     launchPromise = null;
@@ -2017,41 +2025,6 @@ async function finalizePendingCredential(
   return response;
 }
 
-function pendingCredentialRecovery(record, generateSpec, origin) {
-  const pendingId = String(record?.pendingId ?? "").trim();
-  if (!pendingId) return null;
-  const recordMatchMode = String(record?.matchMode ?? "").trim();
-  const requestedMatchMode = String(generateSpec?.matchMode ?? "").trim();
-  const matchMode = CREDENTIAL_MATCH_MODE_SET.has(recordMatchMode)
-    ? recordMatchMode
-    : CREDENTIAL_MATCH_MODE_SET.has(requestedMatchMode)
-      ? requestedMatchMode
-      : "base-domain";
-  const recordObject = record && typeof record === "object" ? record : {};
-  const generateObject =
-    generateSpec && typeof generateSpec === "object" ? generateSpec : {};
-  const username = Object.hasOwn(recordObject, "username")
-    ? recordObject.username
-    : Object.hasOwn(generateObject, "username")
-      ? generateObject.username
-      : null;
-  const label = Object.hasOwn(recordObject, "label")
-    ? recordObject.label
-    : Object.hasOwn(generateObject, "label")
-      ? generateObject.label
-      : null;
-  return {
-    pendingId,
-    // This is where the form was filled, not an existing record's saved scope.
-    origin: String(origin),
-    matchMode,
-    username: username == null ? null : String(username),
-    label: label == null ? null : String(label),
-    expiresAt:
-      record?.expiresAt == null ? null : String(record.expiresAt),
-  };
-}
-
 function recoveryFromError(error) {
   const recovery = error?.pendingCredential || activePendingCredentialRecovery;
   if (!recovery?.pendingId) return null;
@@ -2182,12 +2155,7 @@ function buildCredentials(session, realm, execution) {
     );
   });
   credentials.generateAndFill = safeCredentialFunction(async (options) => {
-    if (options?.id != null && options?.matchMode !== undefined) {
-      throw new TypeError(
-        "matchMode cannot be changed when rotating an existing credential; " +
-          "omit matchMode to preserve the saved record scope.",
-      );
-    }
+    assertRotationPreservesMatchMode(options);
     const generate = {};
     if (options?.id != null) generate.id = String(options.id);
     if (options?.username != null) generate.username = String(options.username);
@@ -3009,12 +2977,7 @@ async function performCredentialFill(
     if (action === "generate") {
       generateSpec =
         spec.generate && typeof spec.generate === "object" ? spec.generate : {};
-      if (generateSpec.id != null && generateSpec.matchMode !== undefined) {
-        throw new TypeError(
-          "matchMode cannot be changed when rotating an existing credential; " +
-            "omit matchMode to preserve the saved record scope.",
-        );
-      }
+      assertRotationPreservesMatchMode(generateSpec);
       vaultPayload = {
         length: Number(generateSpec.length) || 24,
         include_symbols: generateSpec.includeSymbols !== false,

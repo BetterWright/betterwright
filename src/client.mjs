@@ -15,8 +15,9 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertRotationPreservesMatchMode,
   MAX_PENDING_CREDENTIAL_ORIGINS,
-  VAULT_MATCH_MODES,
+  pendingCredentialRecovery,
   validateCredentialMatchMode,
 } from "./credential-constants.mjs";
 import { normalizeDownloadPolicy } from "./downloads.mjs";
@@ -30,7 +31,6 @@ const WORKER_PATH = fileURLToPath(new URL("./worker.mjs", import.meta.url));
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const WORKER_START_TIMEOUT_MS = 15_000;
 const WORKER_RPC_DRAIN_TIMEOUT_MS = 250;
-const VAULT_MATCH_MODE_SET = new Set(VAULT_MATCH_MODES);
 const PENDING_CREDENTIAL_FINALIZE_ACTIONS = new Set(["commit", "discard"]);
 const DEFINITIVE_GENERATE_FAILURE_CODES = new Set([
   "BAD_ACTION",
@@ -131,12 +131,7 @@ function buildFillSpec(options) {
   }
   if (options.submit === true) fields.submit = true;
   if (options.generate) {
-    if (options.id != null && options.matchMode !== undefined) {
-      throw new TypeError(
-        "matchMode cannot be changed when rotating an existing credential; " +
-          "omit matchMode to preserve the saved record scope.",
-      );
-    }
+    assertRotationPreservesMatchMode(options);
     const generate = {};
     if (options.id != null) generate.id = options.id;
     if (options.username != null) generate.username = options.username;
@@ -156,41 +151,6 @@ function buildFillSpec(options) {
     action: "fill",
     fields,
     record: { id: options.id, username: options.username },
-  };
-}
-
-function pendingCredentialRecovery(result, requestPayload, origin) {
-  const pendingId = String(result?.pendingId ?? "").trim();
-  if (!pendingId) return null;
-  const resultMatchMode = String(result?.matchMode ?? "").trim();
-  const requestedMatchMode = String(requestPayload?.matchMode ?? "").trim();
-  const matchMode = VAULT_MATCH_MODE_SET.has(resultMatchMode)
-    ? resultMatchMode
-    : VAULT_MATCH_MODE_SET.has(requestedMatchMode)
-      ? requestedMatchMode
-      : "base-domain";
-  const resultObject = result && typeof result === "object" ? result : {};
-  const payloadObject =
-    requestPayload && typeof requestPayload === "object" ? requestPayload : {};
-  const username = Object.hasOwn(resultObject, "username")
-    ? resultObject.username
-    : Object.hasOwn(payloadObject, "username")
-      ? payloadObject.username
-      : null;
-  const label = Object.hasOwn(resultObject, "label")
-    ? resultObject.label
-    : Object.hasOwn(payloadObject, "label")
-      ? payloadObject.label
-      : null;
-  return {
-    pendingId,
-    // This is where the form was filled, not an existing record's saved scope.
-    origin: String(origin),
-    matchMode,
-    username: username == null ? null : String(username),
-    label: label == null ? null : String(label),
-    expiresAt:
-      result?.expiresAt == null ? null : String(result.expiresAt),
   };
 }
 
