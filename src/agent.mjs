@@ -461,12 +461,11 @@ export async function runAgentTask(options = {}) {
   async function postLiveChat({ text, kind, role = "agent" } = {}) {
     if (!withHandoff || typeof browser.liveViewPostChat !== "function") return;
     const body = String(text || "").trim();
-    // Progress mirroring is passive. It must never create a local listener or
-    // managed relay session; only explicit liveView/live_view, ask, or handoff
-    // paths are allowed to start one.
-    if (!body || !liveViewReady) return;
+    if (!body) return;
     try {
-      await browser.liveViewPostChat({ session, role, text: body, kind });
+      if (!liveViewReady) await ensureAgentLiveView();
+      if (!liveViewReady) return;
+      await browser.liveViewPostChat({ role, text: body, kind });
     } catch {
       /* chat mirror must never break the agent loop */
     }
@@ -482,7 +481,7 @@ export async function runAgentTask(options = {}) {
     if (!withHandoff || typeof browser.liveViewDrainChat !== "function") return [];
     if (!liveViewReady) return [];
     try {
-      const drained = await browser.liveViewDrainChat({ session });
+      const drained = await browser.liveViewDrainChat();
       const items = Array.isArray(drained?.messages) ? drained.messages : [];
       return normalizeGuidanceLines(items.map((item) => item?.text));
     } catch {
