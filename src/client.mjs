@@ -28,6 +28,9 @@ import { listSkills, skillHintsForPages } from "./skills.mjs";
 import { createLocalCredentialVault } from "./vault.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./worker.mjs", import.meta.url));
+// The lane host-wide calls (live view, worker revival) queue on. A session can
+// never collide with it: session names are trimmed strings, and this is not.
+const HOST_LANE = Symbol("betterwright-host-lane");
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const WORKER_START_TIMEOUT_MS = 15_000;
 const WORKER_RPC_DRAIN_TIMEOUT_MS = 250;
@@ -322,7 +325,14 @@ export class BetterWright {
     this._vaultRedactionOwner = null;
     this._ready = null;
     this._lastConfig = null;
-    this._queue = Promise.resolve();
+    // One FIFO lane per session, so two sessions genuinely work at the same
+    // time (the daemon's whole premise) while calls within a session stay
+    // strictly ordered — a snippet must never observe a page another snippet
+    // in the same session is halfway through changing. Host-wide operations
+    // (live view) share the lane below, matching the worker, which also runs
+    // them outside its per-session execute queues.
+    this._queues = new Map();
+    this._preparing = null;
     this._stderrTail = [];
     this._closed = false;
     // Live-view survival across worker restarts: once startLiveView succeeds,
@@ -768,16 +778,29 @@ export class BetterWright {
    * @param {object} [options] { session, note, timeout, approvedDownloads }
    */
   run(code, options = {}) {
-    return this._enqueue(() => this._runNow(code, options));
+    return this._enqueue(options?.session, () => this._runNow(code, options));
   }
 
-  _enqueue(job) {
-    const task = this._queue.then(job);
-    // Keep the chain alive even if one run rejects.
-    this._queue = task.then(
+  /** The lane a call belongs to; `HOST_LANE` for browser-wide operations. */
+  _lane(session) {
+    return session === HOST_LANE ? HOST_LANE : String(session || "default");
+  }
+
+  _enqueue(session, job) {
+    const lane = this._lane(session);
+    const tail = this._queues.get(lane) || Promise.resolve();
+    const task = tail.then(job);
+    // Keep the chain alive even if one run rejects, and drop the lane once it
+    // drains so a long-lived browser does not accumulate one dead promise per
+    // session name it has ever seen.
+    const chained = task.then(
       () => {},
       () => {},
     );
+    this._queues.set(lane, chained);
+    void chained.then(() => {
+      if (this._queues.get(lane) === chained) this._queues.delete(lane);
+    });
     return task;
   }
 
@@ -810,12 +833,7 @@ export class BetterWright {
    * @param {number} [options.timeout] seconds
    */
   fillCredential(options = {}) {
-    const task = this._queue.then(() => this._fillNow(options));
-    this._queue = task.then(
-      () => {},
-      () => {},
-    );
-    return task;
+    return this._enqueue(options?.session, () => this._fillNow(options));
   }
 
   /**
@@ -844,7 +862,7 @@ export class BetterWright {
   }
 
   _pendingCredential(action, options) {
-    const task = this._queue.then(async () => {
+    return this._enqueue(options?.session, async () => {
       if (!options || typeof options !== "object" || Array.isArray(options))
         return { ok: false, error: "pending credential options must be an object." };
       const pendingId = String(options.pendingId ?? "").trim();
@@ -878,11 +896,6 @@ export class BetterWright {
         timeoutSeconds,
       );
     });
-    this._queue = task.then(
-      () => {},
-      () => {},
-    );
-    return task;
   }
 
   async _fillNow(options) {
@@ -934,7 +947,9 @@ export class BetterWright {
    * @param {string} [session="default"] session name
    */
   closeSession(session) {
-    return this._enqueue(async () => {
+    // The session's own lane, so teardown lands behind that session's
+    // in-flight work and cannot race a snippet still touching its pages.
+    return this._enqueue(session, async () => {
       if (
         !this._process ||
         this._process.exitCode !== null ||
@@ -965,7 +980,7 @@ export class BetterWright {
    *   picks which session's current tab streams first.
    */
   startLiveView(options = {}) {
-    return this._enqueue(async () => {
+    return this._enqueue(HOST_LANE, async () => {
       const config = await this._prepare();
       const merged = { ...this.liveView, ...options };
       const result = await this._dispatch(
@@ -986,7 +1001,7 @@ export class BetterWright {
 
   /** Stop the live-view server (no-op when it is not running). */
   stopLiveView() {
-    return this._enqueue(async () => {
+    return this._enqueue(HOST_LANE, async () => {
       this._liveViewRestore = null;
       if (!this._process || this._process.exitCode !== null)
         return { ok: true, running: false };
@@ -996,7 +1011,7 @@ export class BetterWright {
 
   /** Report the live-view server state: `{ok, running, url?, viewers?, handoff?}`. */
   liveViewStatus() {
-    return this._enqueue(async () => {
+    return this._enqueue(HOST_LANE, async () => {
       if (!this._process || this._process.exitCode !== null)
         return { ok: true, running: false };
       return this._dispatch({ type: "live_view_status" }, 30);
@@ -1107,7 +1122,26 @@ export class BetterWright {
   }
 
   /** Restart the worker on a config change and return the current config. */
-  async _prepare() {
+  /**
+   * Ensure the worker is up and matches the current config.
+   *
+   * Single-flight: with per-session lanes several sessions can arrive here at
+   * once, and `_prepareNow` is not re-entrant — two concurrent callers would
+   * race to spawn two workers. Concurrent callers share one preparation and
+   * get the same config back.
+   */
+  _prepare() {
+    if (this._preparing) return this._preparing;
+    const preparing = this._prepareNow();
+    this._preparing = preparing;
+    const release = () => {
+      if (this._preparing === preparing) this._preparing = null;
+    };
+    preparing.then(release, release);
+    return preparing;
+  }
+
+  async _prepareNow() {
     const config = this._workerConfig();
     if (
       this._process &&
@@ -1207,7 +1241,7 @@ export class BetterWright {
    * waiting for the host's next browser call. Best-effort by design. */
   _scheduleLiveViewRevival() {
     if (!this._liveViewRestore) return;
-    void this._enqueue(() => this._prepare()).catch(() => {});
+    void this._enqueue(HOST_LANE, () => this._prepare()).catch(() => {});
   }
 
   async close({ child: requestedChild = null, preservePending = false, restart = false } = {}) {
