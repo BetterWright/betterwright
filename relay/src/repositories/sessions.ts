@@ -104,6 +104,19 @@ export async function endSession(
   return Number(result.meta.changes ?? 0) === 1;
 }
 
+export async function removeSession(
+  db: D1Database,
+  sessionId: string,
+  userId: string,
+): Promise<boolean> {
+  if (!isSessionId(sessionId)) return false;
+  const result = await db
+    .prepare("DELETE FROM sessions WHERE id = ?1 AND user_id = ?2")
+    .bind(sessionId, userId)
+    .run();
+  return Number(result.meta.changes ?? 0) === 1;
+}
+
 export async function countActiveSessions(db: D1Database, userId: string, nowMs = Date.now()): Promise<number> {
   const row = await db
     .prepare(

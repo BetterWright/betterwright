@@ -15,6 +15,7 @@ import {
   insertSession,
   listActiveSessionIds,
   publicSession,
+  removeSession,
 } from "../src/repositories/sessions";
 import { getConfig } from "../src/config";
 import { generateSessionId } from "../src/crypto";
@@ -140,6 +141,8 @@ describe("session repository", () => {
       status: "ended",
       endedAt: new Date(60_000).toISOString(),
     });
+    expect(await removeSession(env.DB, id, userId)).toBe(true);
+    expect(await findSessionForOwner(env.DB, id, userId)).toBeNull();
   });
 
   it("marks a non-ended session expired from its absolute timestamp", () => {

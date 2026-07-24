@@ -153,7 +153,7 @@ describe("Worker routes", () => {
     expect(statusText).not.toContain(body.host.subprotocols[1]);
   });
 
-  it("ends an owned session and makes the Durable Object termination durable", async () => {
+  it("ends an owned session and purges D1 plus Durable Object state", async () => {
     const h = workerHarness();
     const keyResponse = await h.fetch(apiRequest("/v1/keys", "POST", { name: "CLI" }));
     const apiKey = ((await keyResponse.json()) as any).secret as string;
@@ -173,14 +173,17 @@ describe("Worker routes", () => {
       }),
     );
     expect(deleted.status).toBe(204);
-    expect(h.db.sessions[0].ended_at_ms).toBe(h.now);
+    expect(h.db.sessions).toHaveLength(0);
     const relay = h.relays.instances.get(`session:${sessionId}`) as RelaySession;
     const internalStatus = await relay.fetch(
       new Request("https://internal/status", {
         headers: { "X-Relay-Internal": h.env.INTERNAL_DO_SECRET },
       }),
     );
-    expect((await internalStatus.json()) as any).toMatchObject({ terminated: true });
+    expect((await internalStatus.json()) as any).toMatchObject({
+      initialized: false,
+      terminated: false,
+    });
   });
 
   it("returns a zeroed Monday-UTC usage view for an account with no viewer", async () => {

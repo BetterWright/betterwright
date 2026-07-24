@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { internalHeaders } from "../src/auth";
 import { bytesToBase64Url, generateSessionId } from "../src/crypto";
 import { RelaySession } from "../src/durable/relay-session";
-import { makeBaseEnv, MemoryDurableState } from "./helpers";
+import { insertSession } from "../src/repositories/sessions";
+import { FakeD1, makeBaseEnv, MemoryDurableState } from "./helpers";
 
 function request(env: ReturnType<typeof makeBaseEnv>, path: string, body?: unknown, token = env.INTERNAL_DO_SECRET) {
   const headers = new Headers(internalHeaders(env));
@@ -76,7 +77,7 @@ describe("RelaySession Durable Object persistence", () => {
     expect(text).not.toMatch(/CapHash|capability|root/i);
   });
 
-  it("persists termination and makes it idempotent", async () => {
+  it("purges termination state and remains idempotent", async () => {
     const env = makeBaseEnv();
     const state = new MemoryDurableState();
     const relay = new RelaySession(state.asState(), env);
@@ -84,8 +85,35 @@ describe("RelaySession Durable Object persistence", () => {
     const first = await relay.fetch(request(env, "/terminate", { reason: "deleted" }));
     expect((await first.json()) as any).toEqual({ ok: true, idempotent: false });
     expect(state.storageImpl.alarm).toBeNull();
+    expect(state.storageImpl.values.size).toBe(0);
     const second = await relay.fetch(request(env, "/terminate", { reason: "again" }));
     expect((await second.json()) as any).toEqual({ ok: true, idempotent: true });
+  });
+
+  it("purges expired Durable Object and D1 session state", async () => {
+    const db = new FakeD1();
+    const env = makeBaseEnv({ DB: db.asDatabase() });
+    const state = new MemoryDurableState();
+    const relay = new RelaySession(state.asState(), env);
+    const config = sessionConfig();
+    await insertSession(env, {
+      id: config.sessionId,
+      user_id: config.userId,
+      api_key_id: "key_test",
+      host_cap_hash: config.hostCapHash,
+      viewer_cap_hash: config.viewerCapHash,
+      created_at_ms: config.createdAtMs,
+      expires_at_ms: config.expiresAtMs,
+      ended_at_ms: null,
+      ended_reason: null,
+    });
+    await relay.fetch(request(env, "/init", config));
+
+    await relay.alarm();
+
+    expect(db.sessions).toHaveLength(0);
+    expect(state.storageImpl.values.size).toBe(0);
+    expect(state.storageImpl.alarm).toBeNull();
   });
 
   it("denies all internal endpoints when the service token is wrong", async () => {

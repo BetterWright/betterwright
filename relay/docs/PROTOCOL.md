@@ -60,10 +60,14 @@ socket has been accepted. The preceding reservation phase is not charged.
 
 ## Key derivation
 
-Decode the root to 32 bytes. Compute:
+Decode the root to 32 bytes. Each sender generates a fresh random 16-byte
+`senderEpoch` when its WebSocket connection is created. Compute:
 
 ```text
-salt = SHA-256(UTF8("BetterWright relay HKDF salt v1" || NUL || sessionId))
+salt = SHA-256(
+  UTF8("BetterWright relay HKDF salt v1" || NUL || sessionId || NUL) ||
+  senderEpoch
+)
 ```
 
 Use HKDF-SHA-256 with that salt and one of these exact info strings to derive a
@@ -74,21 +78,33 @@ BetterWright relay host-to-viewer AES-GCM v1
 BetterWright relay viewer-to-host AES-GCM v1
 ```
 
-Keys are directional. Decrypting with the opposite key or direction AAD must
-fail.
+Keys are directional and epoch-specific. Decrypting with the opposite key,
+direction, session, or epoch must fail.
 
 ## Binary envelope
 
-Every peer message is a binary WebSocket message:
+Every peer message is a binary WebSocket message. Integer sequences are
+unsigned, big-endian, begin at zero, and increase by exactly one per sender:
 
 ```text
 Offset  Length  Meaning
 0       1       version = 0x01
-1       12      random AES-GCM nonce
-13      rest    AES-GCM ciphertext and 16-byte tag
+1       1       direction: 0x01 host-to-viewer, 0x02 viewer-to-host
+2       16      senderEpoch
+18      8       sequence
+26      rest    AES-GCM ciphertext and 16-byte tag
 ```
 
-The authenticated additional data is:
+The 12-byte AES-GCM nonce is derived, not transmitted separately:
+
+```text
+byte 0      0x01 (version)
+byte 1      direction byte
+bytes 2-3   0x00 0x00
+bytes 4-11  sequence, unsigned big-endian
+```
+
+The authenticated additional data is the complete 26-byte header followed by:
 
 ```text
 UTF8("BetterWright relay envelope v1" || NUL || sessionId || NUL || direction)
@@ -100,47 +116,50 @@ The decrypted AES-GCM plaintext begins with one protected kind byte followed by
 the existing protocol bytes:
 
 ```text
-0x01  BetterWright JSON text message, UTF-8
-0x02  BetterWright binary payload, currently a JPEG screencast frame
-0x03  relay root-key challenge JSON, UTF-8
+0x00  BetterWright JSON text message, UTF-8
+0x01  BetterWright binary payload, currently a JPEG screencast frame
+0x02  relay root-key challenge JSON, UTF-8
 ```
 
 The kind is encrypted. The relay does not inspect it and therefore cannot tell
 a frame from input, chat, or protocol control. It forwards the complete envelope
-unchanged. Nonces are fresh random 96-bit values for each message. A connection
-must be closed if nonce generation fails.
+unchanged. A receiver latches the first authenticated sender epoch, rejects a
+changed epoch until reconnect, and rejects every non-increasing sequence as a
+replay. Sequence exhaustion is terminal; reconnecting creates a fresh epoch and
+new keys.
 
-The complete envelope, including version, nonce, ciphertext, and tag, must not
-exceed 2 MiB under the reviewed default.
+The complete envelope, including the 26-byte header, protected kind,
+ciphertext, and tag, must not exceed 2 MiB under the reviewed default.
 
 ## Root-key challenge
 
-A fresh viewer connection generates a random 16-byte unpadded-base64url nonce
-and sends encrypted kind `0x03` in the viewer-to-host direction:
+After the relay announces `viewer_connected`, the host generates 32 random
+bytes as a 43-character unpadded-base64url challenge and sends encrypted kind
+`0x02` in the host-to-viewer direction:
 
 ```json
 {
-  "t": "relay_challenge",
-  "nonce": "<22-character-base64url>",
-  "protocol": "betterwright-live-view-v1"
+  "t": "bw_e2e_challenge",
+  "challenge": "<43-character-base64url>"
 }
 ```
 
-The host decrypts and validates it, then sends encrypted kind `0x03` in the
-host-to-viewer direction:
+The viewer decrypts it and echoes the exact value in encrypted kind `0x02` in
+the viewer-to-host direction:
 
 ```json
 {
-  "t": "relay_challenge_response",
-  "nonce": "<same value>"
+  "t": "bw_e2e_ready",
+  "challenge": "<same value>"
 }
 ```
 
 The viewer disables mouse, keyboard, paste, chat, tab switching, and handoff
-actions until this exact response decrypts. The host's `HostRelayCodec` also
-refuses to release any viewer kind `0x01` or `0x02` message to BetterWright until
-it has validated a challenge. Create a new codec for every WebSocket connection;
-do not carry challenge state across reconnects.
+actions until it has successfully decrypted the host challenge and sent the
+echo. The host refuses to release any viewer text or binary message to
+BetterWright until that echo decrypts and matches in constant time. Create fresh
+senders, receivers, epochs, and challenge state for every viewer connection; do
+not carry them across reconnects.
 
 ## Existing BetterWright protocol
 
@@ -153,8 +172,8 @@ live viewer:
 - viewer JSON text: `refresh`, `view`, `vis`, `tab`, `input`, `chat`, `answer`,
   `done`, and `cancel`.
 
-The host adapter encrypts each existing text message as kind `0x01` and each
-existing binary frame as kind `0x02`. It decrypts viewer kind `0x01` and passes
+The host adapter encrypts each existing text message as kind `0x00` and each
+existing binary frame as kind `0x01`. It decrypts viewer kind `0x00` and passes
 the resulting UTF-8 string to the existing JSON handler. No JSON is parsed by
 the Cloudflare relay.
 
@@ -196,3 +215,9 @@ Viewer time starts when the viewer socket is accepted after admission and ends
 at its close event, clamped to the lease expiry. A 15-minute lease never crosses
 an ISO-week or billing-window boundary. The viewer reconnects for a new lease;
 the root challenge runs again.
+
+Explicit termination first closes peers and settles any viewer lease, then
+removes the session's Durable Object storage and D1 row. At absolute expiry the
+Durable Object performs the same peer/lease close, deletes its D1 row, and calls
+`deleteAll()`; a transient D1 failure keeps only the minimal session config and
+re-arms cleanup instead of orphaning permanent state.
