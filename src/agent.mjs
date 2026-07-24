@@ -378,6 +378,14 @@ function retryAfterMsFromError(error) {
 
 // A sleep that ends immediately when the surrounding deadline aborts, so a
 // backoff pause can never hold the loop past the wall-clock budget.
+//
+// This timer is deliberately NOT unref'd, unlike the deadline watchdog above.
+// During a backoff the pause *is* the pending work: the failed model call is
+// settled and the browser is idle, so an unref'd timer is often the only handle
+// left and Node drains the loop, exits, and the retry silently never happens —
+// `runAgentTask` just never settles. The deadline is already enforced here by
+// the abort listener and by the caller's `Date.now() + delay >= deadline`
+// check, so holding the loop for the pause costs nothing.
 function sleepWithSignal(ms, signal) {
   return new Promise((resolve, reject) => {
     const fail = () => {
@@ -396,7 +404,6 @@ function sleepWithSignal(ms, signal) {
       cleanup();
       resolve();
     }, ms);
-    timer.unref?.();
     signal?.addEventListener?.("abort", fail, { once: true });
   });
 }
