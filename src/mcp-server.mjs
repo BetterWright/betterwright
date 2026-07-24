@@ -31,7 +31,8 @@
 //     BETTERWRIGHT_LIVE_VIEW_HOST=...      live-view bind host (default 127.0.0.1)
 //     BETTERWRIGHT_LIVE_VIEW_PORT=...      live-view port (default ephemeral)
 //     BETTERWRIGHT_LIVE_VIEW=1             allow a non-loopback live-view host
-//     BETTERWRIGHT_LIVE_VIEW_EXPOSE=...    lan | local | tailscale hosting preset
+//     BETTERWRIGHT_LIVE_VIEW_EXPOSE=...    lan | local | tailscale direct preset
+//     BETTERWRIGHT_LIVE_VIEW_TRANSPORT=... direct | relay
 //     BETTERWRIGHT_LIVE_VIEW_PASSWORD=...  require a password to open the live view
 //     (live-view settings persist in <home>/config.json too — see docs/live-view.md;
 //     `betterwright view --set-password` stores a hashed password there)
@@ -100,16 +101,23 @@ export function headlessFromEnv(env = process.env) {
 }
 
 export function liveViewFromEnv(env = process.env, fileConfig = loadLiveViewConfig()) {
-  // Default bind is LAN-reachable (0.0.0.0). Non-loopback still requires the
-  // deployer opt-in BETTERWRIGHT_LIVE_VIEW=1 for MCP exposure. Persistent
-  // settings from <home>/config.json apply beneath the env overrides, so
-  // `betterwright view --set-password` also protects MCP-started views.
+  // Default bind is loopback. A saved or environment-selected relay transport
+  // is itself an explicit MCP authorization; non-loopback direct exposure
+  // still requires BETTERWRIGHT_LIVE_VIEW=1.
   const host =
     String(env.BETTERWRIGHT_LIVE_VIEW_HOST || "").trim() ||
     (typeof fileConfig.host === "string" && fileConfig.host) ||
-    "0.0.0.0";
+    "127.0.0.1";
+  const environmentTransport = String(
+    env.BETTERWRIGHT_LIVE_VIEW_TRANSPORT || "",
+  ).trim().toLowerCase();
+  const transport = environmentTransport || fileConfig.transport || "direct";
+  const relayAuthorized =
+    transport === "relay" &&
+    (environmentTransport === "relay" || fileConfig.transport === "relay");
   return {
-    enabled: boolEnv(env, "BETTERWRIGHT_LIVE_VIEW"),
+    enabled: boolEnv(env, "BETTERWRIGHT_LIVE_VIEW") || relayAuthorized,
+    transport,
     host,
     port:
       Number(env.BETTERWRIGHT_LIVE_VIEW_PORT) || Number(fileConfig.port) || 0,
@@ -451,10 +459,11 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
   // over MCP the host's loop is opaque, so the boundary is each tool call:
   // notes go viewer-ward before a run, typed guidance rides back on results.
   let liveViewActive = false;
-  const drainViewerChat = async () => {
-    if (!liveViewActive) return [];
+  let liveViewSession = "default";
+  const drainViewerChat = async (requestedSession = liveViewSession) => {
+    if (!liveViewActive || String(requestedSession || "default") !== liveViewSession) return [];
     try {
-      const drained = await browser.liveViewDrainChat();
+      const drained = await browser.liveViewDrainChat({ session: liveViewSession });
       return Array.isArray(drained?.messages) ? drained.messages : [];
     } catch {
       return [];
@@ -472,11 +481,13 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
     if (action === "stop") {
       const stopped = await browser.stopLiveView();
       liveViewActive = false;
+      liveViewSession = "default";
       return { content: [{ type: "text", text: JSON.stringify(stopped) }] };
     }
     if (action === "status") {
       const status = await browser.liveViewStatus();
       liveViewActive = Boolean(status?.running);
+      if (status?.session) liveViewSession = String(status.session);
       const userChat = (await drainViewerChat()).map((item) => String(item.text || ""));
       // Never echo the token back on status; start already returned the URL.
       const { token: _token, url: _url, ...safe } = status;
@@ -489,9 +500,9 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
     if (action !== "start") throw new Error(`Unknown browser_handoff action: ${action}`);
     // "local" (loopback) never needs the opt-in; lan/tailscale — like any
     // non-loopback bind host — require the deployer to set the env flag.
-    const reachesBeyondThisMachine = liveView.expose
-      ? liveView.expose !== "local"
-      : !isLoopbackHost(liveView.host);
+    const reachesBeyondThisMachine =
+      liveView.transport === "relay" ||
+      (liveView.expose ? liveView.expose !== "local" : !isLoopbackHost(liveView.host));
     if (reachesBeyondThisMachine && !liveView.enabled) {
       throw new Error(
         "The live view would be reachable beyond this machine; the deployer must " +
@@ -499,25 +510,33 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
           "BETTERWRIGHT_LIVE_VIEW_EXPOSE=local for loopback-only).",
       );
     }
+    const requestedSession = String(args.session || "default");
     const view = await browser.startLiveView({
       host: liveView.host,
       port: liveView.port,
       ...(liveView.publicHost ? { publicHost: liveView.publicHost } : {}),
       ...(liveView.expose ? { expose: liveView.expose } : {}),
+      ...(liveView.transport ? { transport: liveView.transport } : {}),
       ...(liveView.password ? { password: liveView.password } : {}),
       ...(liveView.passwordHash ? { passwordHash: liveView.passwordHash } : {}),
       interactive: args.interactive !== false,
-      session: String(args.session || "default"),
+      session: requestedSession,
     });
     if (!view.ok || !view.url) throw new Error(view.error || "The live view failed to start.");
     liveViewActive = true;
+    liveViewSession = String(view.session || requestedSession);
+    const remoteAccess =
+      view.transport === "relay"
+        ? "The managed link connects outbound through BetterWright; no SSH tunnel or port forwarding is needed. "
+        : view.url.includes("127.0.0.1")
+          ? `If they are remote, tunnel it with \`ssh -L ${view.port}:127.0.0.1:${view.port} <host>\`. `
+          : "";
     const text =
       `Live view started: ${view.url}\n\n` +
-      "Relay that URL to the user verbatim (it embeds a one-time capability " +
-      "token) and tell them exactly what to do in the page" +
+      "Relay that URL to the user verbatim (it embeds a private capability) " +
+      "and tell them exactly what to do in the page" +
       (args.reason ? ` — reason: ${args.reason}` : "") +
-      ". If the URL is on 127.0.0.1 and they are remote, they can tunnel with " +
-      `\`ssh -L ${view.port}:127.0.0.1:${view.port} <host>\`. ` +
+      `. ${remoteAccess}` +
       "Poll browser_handoff {action: \"status\"} to see when they are done, " +
       "then re-observe the page with a snapshot before continuing.";
     return { content: [{ type: "text", text }] };
@@ -534,7 +553,7 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
         }
         if (name === "browser_login" && withLogin) {
           const result = await browser.fillCredential(loginOptionsFromArgs(args));
-          const chat = await drainViewerChat();
+          const chat = await drainViewerChat(String(args.session || "default"));
           const content = await contentForResult(result);
           if (chat.length) content.push(viewerChatBlock(chat));
           return { content };
@@ -558,13 +577,18 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
           if (downloadPolicy === "ask") await approveDownload(server, options.note);
           options.approvedDownloads = true;
         }
-        if (liveViewActive && options.note) {
+        if (liveViewActive && options.session === liveViewSession && options.note) {
           await browser
-            .liveViewPostChat({ role: "agent", text: options.note, kind: "step" })
+            .liveViewPostChat({
+              session: liveViewSession,
+              role: "agent",
+              text: options.note,
+              kind: "step",
+            })
             .catch(() => {});
         }
         const result = await browser.run(String(args.code || ""), options);
-        const chat = await drainViewerChat();
+        const chat = await drainViewerChat(options.session);
         const content = await contentForResult(result);
         if (chat.length) content.push(viewerChatBlock(chat));
         return { content };
@@ -586,6 +610,14 @@ export async function runMcpServer(env = process.env, options = {}) {
     await loadSdk();
 
   const downloadPolicy = downloadPolicyFromEnv(env);
+  const liveView = liveViewFromEnv(env);
+  const apiKey = String(env.BETTERWRIGHT_API_KEY || "").trim();
+  const relayUrl = String(env.BETTERWRIGHT_RELAY_URL || "").trim();
+  const browserLiveView = {
+    ...liveView,
+    ...(apiKey ? { apiKey } : {}),
+    ...(relayUrl ? { relayUrl } : {}),
+  };
   // One persistent browser for the life of the server, so pages and logins
   // survive across tool calls the way an agent expects. The built-in encrypted
   // vault enables `browser_login`; an embedding may override or disable it.
@@ -593,6 +625,7 @@ export async function runMcpServer(env = process.env, options = {}) {
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
+    liveView: browserLiveView,
     // Identity must match egress geography (see docs/getting-started.md):
     // a headless server whose exit IP sits in another country needs these
     // pinned or geo-sensitive sites challenge every run.
@@ -610,7 +643,7 @@ export async function runMcpServer(env = process.env, options = {}) {
     { capabilities: { tools: {} } },
   );
 
-  const handlers = createMcpHandlers({ browser, server, downloadPolicy });
+  const handlers = createMcpHandlers({ browser, server, downloadPolicy, liveView: browserLiveView });
   server.setRequestHandler(ListToolsRequestSchema, handlers.listTools);
   server.setRequestHandler(CallToolRequestSchema, handlers.callTool);
 

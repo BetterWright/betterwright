@@ -948,11 +948,42 @@ test("a stored sha256 passwordHash gates exactly like a plaintext password", asy
   );
 });
 
+test("a stored salted scrypt passwordHash unlocks the direct viewer", async () => {
+  const { hashLiveViewPassword } = await import("../../src/live-view-config.mjs");
+  const { server } = makeServer();
+  try {
+    const info = await server.start({
+      host: "127.0.0.1",
+      port: 0,
+      passwordHash: hashLiveViewPassword("hunter22"),
+    });
+    const base = new URL(info.url);
+    const wrong = await fetch(`http://${base.host}/login?t=${info.token}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "password=incorrect",
+      redirect: "manual",
+    });
+    assert.equal(wrong.status, 303);
+    assert.match(wrong.headers.get("location"), /auth=failed/);
+    const right = await fetch(`http://${base.host}/login?t=${info.token}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "password=hunter22",
+      redirect: "manual",
+    });
+    assert.equal(right.status, 303);
+    assert.match(String(right.headers.get("set-cookie")), /bw_lv_sess=/);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("live-view config file round-trips a hashed password and sanitizes input", async (t) => {
   const fs = await import("node:fs");
   const os = await import("node:os");
   const path = await import("node:path");
-  const { loadLiveViewConfig, saveLiveViewPassword, hashLiveViewPassword } = await import(
+  const { loadLiveViewConfig, saveLiveViewPassword, isLiveViewPasswordHash } = await import(
     "../../src/live-view-config.mjs"
   );
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-cfg-"));
@@ -970,13 +1001,15 @@ test("live-view config file round-trips a hashed password and sanitizes input", 
   assert.equal(written.other.keep, true);
   assert.equal(written.liveView.expose, "tailscale");
   assert.equal(written.liveView.password, undefined);
-  assert.equal(written.liveView.passwordHash, hashLiveViewPassword("hunter22"));
+  assert.equal(isLiveViewPasswordHash(written.liveView.passwordHash), true);
+  assert.match(written.liveView.passwordHash, /^scrypt:/);
+  assert.equal(JSON.stringify(written).includes("hunter22"), false);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 
   const loaded = loadLiveViewConfig(home);
   assert.deepEqual(loaded, {
     expose: "tailscale",
-    passwordHash: hashLiveViewPassword("hunter22"),
+    passwordHash: written.liveView.passwordHash,
   });
 
   // Clearing removes the hash but keeps the rest.
@@ -995,7 +1028,7 @@ test("password gate rate-limits repeated failures and rejects short passwords", 
   const { server } = makeServer();
   await assert.rejects(
     () => server.start({ host: "127.0.0.1", port: 0, password: "abc" }),
-    /at least 4 characters/,
+    /at least 8 characters/,
   );
   const { server: gated } = makeServer();
   try {
