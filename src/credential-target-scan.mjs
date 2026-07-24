@@ -41,6 +41,39 @@ export function withProbeDeadline(work, ms, disposeLate) {
   return Promise.race([probe, expiry]).finally(() => clearTimeout(timer));
 }
 
+/** Validate already-resolved explicit credential targets without letting any
+ * renderer round-trip outlive the scan budget. Callbacks are thunks so a spent
+ * budget never starts more Playwright work. */
+export async function probePinnedCredentialOrigin({
+  inspectDocument,
+  originForFrame,
+  probeMs = CREDENTIAL_FRAME_PROBE_MS,
+  budgetMs = CREDENTIAL_SCAN_BUDGET_MS,
+}) {
+  const deadline = Date.now() + Math.max(1, Number(budgetMs) || 1);
+  const probe = async (phase, work) => {
+    const allowance = Math.min(probeMs, deadline - Date.now());
+    if (allowance <= 0) return { timedOut: true, phase };
+    const value = await withProbeDeadline(work(), allowance);
+    return credentialProbeTimedOut(value)
+      ? { timedOut: true, phase }
+      : { timedOut: false, value };
+  };
+
+  const before = await probe("initial document validation", inspectDocument);
+  if (before.timedOut) return before;
+  const origin = await probe("origin validation", originForFrame);
+  if (origin.timedOut) return origin;
+  const after = await probe("final document validation", inspectDocument);
+  if (after.timedOut) return after;
+  return {
+    timedOut: false,
+    documentUrlBefore: before.value,
+    origin: origin.value,
+    documentUrlAfter: after.value,
+  };
+}
+
 function frameLabel(frame) {
   try {
     return String(frame.url() || "") || "about:blank";
