@@ -18,9 +18,6 @@ it with a `NetworkPolicy`.
   can never be allowlisted or disabled; see below.
 - **Blocks non-web schemes** — only `http`, `https`, `ws`, and `wss` are
   routable (`about:blank`, `data:`, and `blob:` are allowed).
-- **Blocks URLs that appear to carry a secret** — a query string or path holding
-  something shaped like an API key or JWT is refused, so a compromised page
-  cannot exfiltrate a token through a URL.
 - **Allows the public internet, private networks, and loopback** — RFC 1918
   ranges, `127.0.0.0/8`, `localhost`, IPv6 loopback/unique-local, link-local,
   carrier-grade NAT, and `*.internal`/`*.local`/`*.lan` hosts are reachable, so
@@ -59,7 +56,6 @@ new BetterWright({ policy });
 | `allowPrivateNetwork` | Permit RFC 1918, link-local, and `*.internal`/`*.local` hosts. Implies loopback. Default `true`; set `false` to block. |
 | `allowHosts` | Always allow these hosts. An entry matches a host exactly or as a parent domain (`example.com` also matches `sub.example.com`); add `:port` to pin a port. |
 | `blockHosts` | Always block these hosts, evaluated before allowlists. |
-| `blockSecretBearingUrls` | Refuse URLs that look like they carry a key/token. Default `true`. |
 | `custom` | A hook, `custom(url, details)`, returning a decision or `null`, evaluated last. |
 
 Evaluation order is: scheme check → `blockHosts` → `allowHosts` → metadata

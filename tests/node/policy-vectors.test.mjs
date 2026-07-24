@@ -23,7 +23,6 @@ function policyFromSnakeCase(options) {
     allowLoopback: options.allow_loopback,
     allowHosts: options.allow_hosts,
     blockHosts: options.block_hosts,
-    blockSecretBearingUrls: options.block_secret_bearing_urls,
   });
 }
 

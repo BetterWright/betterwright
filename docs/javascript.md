@@ -156,7 +156,6 @@ new NetworkPolicy({
   allowLoopback: false,
   allowHosts: [],
   blockHosts: [],
-  blockSecretBearingUrls: true,
   custom,                    // (url, details) => decision | null
 });
 ```
