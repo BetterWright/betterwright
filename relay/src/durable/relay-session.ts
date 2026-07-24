@@ -415,6 +415,25 @@ export class RelaySession implements DurableObject {
     });
   }
 
+  private async purgeSessionState(
+    session: StoredSessionConfig,
+    retryAtMs = Date.now() + 60_000,
+  ): Promise<void> {
+    try {
+      await this.env.DB
+        .prepare("DELETE FROM sessions WHERE id = ?1 AND user_id = ?2")
+        .bind(session.sessionId, session.userId)
+        .run();
+    } catch (error) {
+      // Keep only the minimal config/tombstone and retry. Never delete the
+      // object's last cleanup owner while its D1 row may still exist.
+      await this.state.storage.setAlarm(retryAtMs);
+      throw error;
+    }
+    await this.state.storage.deleteAlarm();
+    await this.state.storage.deleteAll();
+  }
+
   private async terminate(request: Request): Promise<Response> {
     const body = await readJsonObject(request, 2_048);
     const reason = typeof body.reason === "string" ? body.reason.slice(0, 80) : "session closed";
@@ -426,8 +445,7 @@ export class RelaySession implements DurableObject {
       await this.state.storage.put("config", session);
     }
     await this.closeAll(CLOSE_CODE.SESSION_CLOSED, reason, "session_closed");
-    await this.state.storage.deleteAlarm();
-    await this.state.storage.deleteAll();
+    await this.purgeSessionState(session);
     return jsonResponse({ ok: true, idempotent });
   }
 
@@ -474,23 +492,15 @@ export class RelaySession implements DurableObject {
   async alarm(): Promise<void> {
     await this.gate.run(async () => {
       const session = await this.state.storage.get<StoredSessionConfig>("config");
-      if (!session || session.terminatedAtMs) return;
+      if (!session) return;
       const nowMs = Date.now();
+      if (session.terminatedAtMs) {
+        await this.purgeSessionState(session, nowMs + 60_000);
+        return;
+      }
       if (nowMs >= session.expiresAtMs) {
         await this.closeAll(CLOSE_CODE.SESSION_EXPIRED, "session expired", "session_expired");
-        try {
-          await this.env.DB
-            .prepare("DELETE FROM sessions WHERE id = ?1 AND user_id = ?2")
-            .bind(session.sessionId, session.userId)
-            .run();
-        } catch (error) {
-          // Keep the minimal config and retry cleanup rather than orphaning a
-          // permanent D1 row after a transient database failure.
-          await this.state.storage.setAlarm(nowMs + 60_000);
-          throw error;
-        }
-        await this.state.storage.deleteAlarm();
-        await this.state.storage.deleteAll();
+        await this.purgeSessionState(session, nowMs + 60_000);
         return;
       }
       const viewer = this.state.getWebSockets("viewer")[0];

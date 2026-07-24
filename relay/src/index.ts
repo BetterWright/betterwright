@@ -153,32 +153,40 @@ async function createSession(
     ended_at_ms: null,
     ended_reason: null,
   };
+  // Initialize the Durable Object first. Its absolute-expiry alarm bounds any
+  // crash between the two persistence steps; inserting D1 first could leave a
+  // row forever with no object or alarm to own cleanup.
+  const stub = doStub(env, env.RELAY_SESSION, `session:${sessionId}`);
+  let initialized: Response;
+  try {
+    initialized = await internalFetch(stub, env, "/init", "POST", {
+      sessionId,
+      userId: principal.userId,
+      createdAtMs: row.created_at_ms,
+      expiresAtMs: row.expires_at_ms,
+      hostCapHash,
+      viewerCapHash,
+    });
+  } catch {
+    throw new HttpError(503, "session_unavailable", "The relay session could not be initialized");
+  }
+  if (!initialized.ok) {
+    throw new HttpError(503, "session_unavailable", "The relay session could not be initialized");
+  }
+
   try {
     await insertSession(env, row);
   } catch (error) {
+    // The initialized object now owns a cleanup alarm. Ask it to purge early;
+    // if this call or its D1 deletion fails, its tombstone alarm retries.
+    await internalFetch(stub, env, "/terminate", "POST", {
+      reason: "session metadata insertion failed",
+    }).catch(() => null);
     const message = error instanceof Error ? error.message : "";
     if (/unique|primary key/i.test(message)) {
       throw new HttpError(409, "session_id_conflict", "Generate fresh client session material and retry");
     }
     throw error;
-  }
-
-  const stub = doStub(env, env.RELAY_SESSION, `session:${sessionId}`);
-  const initialized = await internalFetch(stub, env, "/init", "POST", {
-    sessionId,
-    userId: principal.userId,
-    createdAtMs: row.created_at_ms,
-    expiresAtMs: row.expires_at_ms,
-    hostCapHash,
-    viewerCapHash,
-  });
-  if (!initialized.ok) {
-    await endSession(env.DB, sessionId, principal.userId, "initialization failed", nowMs);
-    await internalFetch(stub, env, "/terminate", "POST", {
-      reason: "initialization failed",
-    }).catch(() => null);
-    await removeSession(env.DB, sessionId, principal.userId);
-    throw new HttpError(503, "session_unavailable", "The relay session could not be initialized");
   }
 
   const websocketUrl = new URL(`/v1/sessions/${sessionId}/ws`, config.publicOrigin);
@@ -264,10 +272,9 @@ async function deleteSession(
     { reason: "session deleted" },
   );
   if (!response.ok) throw new HttpError(503, "session_close_pending", "Session was marked ended but peers may still be closing");
-  const removed = await removeSession(env.DB, sessionId, principal.userId);
-  if (!removed) {
-    throw new HttpError(503, "session_cleanup_pending", "Session peers closed but metadata cleanup is still pending");
-  }
+  // RelaySession normally removes its own row before acknowledging. This
+  // idempotent fallback handles legacy/orphan rows whose object had no config.
+  await removeSession(env.DB, sessionId, principal.userId);
   return emptyResponse();
 }
 

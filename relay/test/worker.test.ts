@@ -153,6 +153,72 @@ describe("Worker routes", () => {
     expect(statusText).not.toContain(body.host.subprotocols[1]);
   });
 
+  it("does not insert D1 metadata when Durable Object initialization rejects", async () => {
+    const h = workerHarness();
+    const keyResponse = await h.fetch(apiRequest("/v1/keys", "POST", { name: "CLI" }));
+    const apiKey = ((await keyResponse.json()) as any).secret as string;
+    h.env.RELAY_SESSION = {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async () => {
+          throw new Error("simulated Durable Object transport failure");
+        },
+      }),
+    } as unknown as DurableObjectNamespace;
+    const prepared = await prepareRelaySession();
+
+    const response = await h.fetch(
+      apiRequest(
+        "/v1/sessions",
+        "POST",
+        { sessionId: prepared.sessionId, viewerProof: prepared.viewerProof },
+        { Authorization: `Bearer ${apiKey}` },
+      ),
+    );
+
+    expect(response.status).toBe(503);
+    expect(h.db.sessions).toHaveLength(0);
+  });
+
+  it("purges an initialized object when D1 rejects the session insert", async () => {
+    const h = workerHarness();
+    const keyResponse = await h.fetch(apiRequest("/v1/keys", "POST", { name: "CLI" }));
+    const keyBody = (await keyResponse.json()) as any;
+    const prepared = await prepareRelaySession();
+    h.db.sessions.push({
+      id: prepared.sessionId,
+      user_id: "user_WorkerTest",
+      api_key_id: keyBody.key.id,
+      host_cap_hash: "h".repeat(43),
+      viewer_cap_hash: "v".repeat(43),
+      created_at_ms: h.now - 1,
+      expires_at_ms: h.now + 60_000,
+      ended_at_ms: null,
+      ended_reason: null,
+    });
+
+    const response = await h.fetch(
+      apiRequest(
+        "/v1/sessions",
+        "POST",
+        { sessionId: prepared.sessionId, viewerProof: prepared.viewerProof },
+        { Authorization: `Bearer ${keyBody.secret}` },
+      ),
+    );
+
+    expect(response.status).toBe(409);
+    expect(h.db.sessions).toHaveLength(0);
+    const relay = h.relays.instances.get(
+      `session:${prepared.sessionId}`,
+    ) as RelaySession;
+    const status = await relay.fetch(
+      new Request("https://internal/status", {
+        headers: { "X-Relay-Internal": h.env.INTERNAL_DO_SECRET },
+      }),
+    );
+    expect((await status.json()) as any).toMatchObject({ initialized: false });
+  });
+
   it("ends an owned session and purges D1 plus Durable Object state", async () => {
     const h = workerHarness();
     const keyResponse = await h.fetch(apiRequest("/v1/keys", "POST", { name: "CLI" }));

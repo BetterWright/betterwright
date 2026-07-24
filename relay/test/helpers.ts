@@ -83,6 +83,7 @@ interface SessionRow {
 export class FakeD1 {
   readonly apiKeys: ApiKeyRow[] = [];
   readonly sessions: SessionRow[] = [];
+  sessionDeleteFailures = 0;
   control = { kill_switch_enabled: 0, reason: "", updated_at_ms: 0 };
 
   prepare(sql: string): D1PreparedStatement {
@@ -154,6 +155,9 @@ class FakeStatement {
         number,
         number,
       ];
+      if (this.db.sessions.some((row) => row.id === id)) {
+        throw new Error("SQLITE_CONSTRAINT: UNIQUE constraint failed: sessions.id");
+      }
       this.db.sessions.push({
         id,
         user_id: userId,
@@ -175,6 +179,10 @@ class FakeStatement {
         changes = 1;
       }
     } else if (sql.startsWith("delete from sessions where id = ?1 and user_id = ?2")) {
+      if (this.db.sessionDeleteFailures > 0) {
+        this.db.sessionDeleteFailures -= 1;
+        throw new Error("transient D1 session delete failure");
+      }
       const [id, userId] = this.parameters as [string, string];
       const index = this.db.sessions.findIndex(
         (entry) => entry.id === id && entry.user_id === userId,
