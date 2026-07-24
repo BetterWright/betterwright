@@ -23,6 +23,26 @@ function run(command, args, options = {}) {
   return result.stdout || "";
 }
 
+// True only for addresses that reach the public internet. Anything reserved for
+// local, private, documentation, or cloud-metadata use is expected in our docs.
+function isRoutableIpv4(literal) {
+  const octets = literal.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part > 255))
+    return false;
+  const [a, b] = octets;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;
+  if (a === 198 && (b === 18 || b === 19)) return false;
+  // RFC 5737 documentation ranges.
+  if (a === 192 && b === 0 && octets[2] === 2) return false;
+  if (a === 198 && b === 51 && octets[2] === 100) return false;
+  if (a === 203 && b === 0 && octets[2] === 113) return false;
+  return true;
+}
+
 function npm(args, options = {}) {
   if (process.env.npm_execpath) {
     return run(process.execPath, [process.env.npm_execpath, ...args], options);
@@ -54,14 +74,41 @@ try {
     "types/pi.d.ts",
     "types/pi-extension.d.ts",
     "types/worker.d.ts",
+    "types/agent.d.ts",
+    "types/auth.d.ts",
+    "types/client.d.ts",
+    "types/common.d.ts",
+    "types/mcp-server.d.ts",
+    "types/public.d.ts",
+    "types/skills.d.ts",
   ];
   const missing = required.filter((name) => !paths.has(name));
   if (missing.length) throw new Error(`npm tarball is missing: ${missing.join(", ")}`);
 
+  // `internal/` and handoff/research notes are written for us, not for users:
+  // they carry session context, competitor research, and operator IPs. Keeping
+  // them out of the tarball is enforced here because `files` uses a docs glob.
   const forbidden = [...paths].filter((name) =>
-    /(^|\/)(node_modules|tests|artifacts|\.betterwright)(\/|$)/.test(name),
+    /(^|\/)(node_modules|tests|artifacts|internal|\.betterwright)(\/|$)/.test(name) ||
+    /(^|\/)(HANDOFF-|.*-handoff\.md$)/.test(name),
   );
   if (forbidden.length) throw new Error(`npm tarball contains private/dev files: ${forbidden.join(", ")}`);
+
+  // v1.1.4 shipped an internal handoff note carrying an operator's residential
+  // egress IP. Prose is where that kind of thing leaks, so every shipped .md is
+  // scanned for routable IPv4 literals; loopback, private, CGNAT, link-local,
+  // and the documented cloud-metadata addresses are all legitimate in our docs.
+  const leaks = [];
+  for (const name of paths) {
+    if (!name.endsWith(".md")) continue;
+    const text = fs.readFileSync(path.join(root, name), "utf8");
+    for (const [literal] of text.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) {
+      if (isRoutableIpv4(literal)) leaks.push(`${name}: ${literal}`);
+    }
+  }
+  if (leaks.length)
+    throw new Error(`npm tarball leaks routable IP addresses:\n- ${leaks.join("\n- ")}`);
+
   if (packed.size > 1_000_000) throw new Error(`npm tarball is unexpectedly large: ${packed.size} bytes`);
 
   const tarball = path.join(temp, packed.filename);

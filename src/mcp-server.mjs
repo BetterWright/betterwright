@@ -48,13 +48,11 @@ import {
 import { normalizeCredentialToolOptions } from "./credential-tool-options.mjs";
 import { doctorReport } from "./doctor.mjs";
 import { loadLiveViewConfig } from "./live-view-config.mjs";
+import { importOptionalPeer } from "./optional-peer.mjs";
 import { piImageArtifacts, piImageContent } from "./pi.mjs";
-import { VAULT_MATCH_MODES } from "./vault.mjs";
+import { mcpLoginInputSchema, mcpRunInputSchema } from "./tool-schemas.mjs";
 
 const require = createRequire(import.meta.url);
-
-const MCP_SDK_HINT =
-  "The MCP SDK is required. Install it with `npm install @modelcontextprotocol/sdk`.";
 
 function boolEnv(env, name) {
   return ["1", "true", "yes", "on"].includes(
@@ -176,118 +174,20 @@ export async function contentForResult(result) {
 }
 
 const BROWSER_DESCRIPTION = `Run async Playwright JavaScript in a persistent, policy-guarded browser.
+Globals: page, pages, context, state, openPage, usePage, closePage, snapshot, screenshot, artifactPath, dialogs, credentials, captcha, human. Trailing expressions auto-return; statement blocks must return.
+snapshot({interactive: true}) reads; page.locator('aria-ref=eN') acts on [ref=eN]; snapshot({ref}) scopes; snapshot({diff: true}) verifies; screenshot({annotate: true}) boxes refs. Snapshots span iframes and off-screen content — never scroll to read or guess refs/URLs. screenshot({kind: 'proof'}) (inline) before claiming visible work done.
+On challenges keep the page; captcha.solve() first (local); if 'processing', use the vision artifact/tile bounds, solve again. Fallbacks: captcha.detect, captcha.inspect, captcha.click, captcha.drag, captcha.readText, human.click. Max three distinct stages; a rejected action = stop, use an alternate source or human handoff. After clearing verify state; replay only if idempotent or provably incomplete. Never duplicate a submission, purchase, or message.`;
 
-Globals available to \`code\`: page, pages, context, state, openPage, usePage,
-closePage, snapshot, screenshot, artifactPath, dialogs, credentials, captcha,
-human. A single trailing expression is returned automatically; a statement
-block must return.
-Read pages with \`snapshot({interactive: true})\` and act on \`[ref=eN]\` via
-\`page.locator('aria-ref=eN')\`. \`snapshot({ref})\` scopes to a subtree,
-\`snapshot({diff: true})\` verifies an action, \`screenshot({annotate: true})\`
-draws each ref's box on the image. Snapshots include iframe contents and
-off-screen elements — do not scroll to read, and never guess refs or URLs.
-Capture \`screenshot({kind: 'proof'})\` before claiming a visible task is done —
-the image is returned inline; you do not need to open any file path.
-When \`challenges\` is returned, preserve the page and call \`captcha.solve()\`
-first (local automatic solver — no external APIs). If status is \`processing\`,
-use the attached vision artifact / tile bounds, then solve again. Fall back to
-\`captcha.detect\`, \`captcha.inspect\`, \`captcha.click\`, \`captcha.drag\`,
-\`captcha.readText\`, and \`human.click\`. Work through at most three distinct
-challenge stages. If the same stage rejects an action, stop native challenge
-attempts immediately and use an alternate source or human handoff. When the
-challenge clears, verify current application state; replay the original action
-only if it is idempotent or state proves it did not already complete. Never
-duplicate a submission, purchase, or message.`;
+const BROWSER_DOWNLOAD_DESCRIPTION = `Variant of browser for code that clicks a download link or saves a remote file — user approval first: 'ask' (default) confirms via the MCP client. BETTERWRIGHT_DOWNLOAD_POLICY=allow skips the prompt, deny disables downloads.`;
 
-const BROWSER_DOWNLOAD_DESCRIPTION = `Run browser code that may download a file, with user approval first.
+const LOGIN_DESCRIPTION = `Fill a saved or freshly generated credential; the secret never enters the conversation.
+The password fills auto-detected visible login/signup controls inside the browser worker — submitted only with submit=true or submitSelector; never returned; password fields snapshot as '[redacted]'. Selector params (CSS or current aria-ref=eN) only when detection reports ambiguity. Typing passwords in browser code is blocked.
+Signup/rotation: generate=true stages and fills a new strong password (new-password + confirmation fields), never revealed. Commit only after a browser run visibly verifies success: credentials.commitGenerated({pendingId}) in browser code; on failure credentials.discardGenerated({pendingId}); pending never becomes active. After a restart credentials.listPending() lists secret-free pending metadata for the site.`;
 
-Use this instead of \`browser\` whenever the Playwright code will click a
-download link or otherwise save a remote file. In the default \`ask\` mode, the
-MCP client presents a confirmation before any browser code runs. Set
-BETTERWRIGHT_DOWNLOAD_POLICY=allow to remove that prompt, or deny to disable
-all downloads.`;
-
-const LOGIN_DESCRIPTION = `Fill a saved or freshly generated credential without the secret ever entering the conversation.
-
-BetterWright detects the visible enabled login/signup controls from autocomplete,
-labels, names, types, and form relationships. The password is fetched, typed,
-and (only with submit=true or submitSelector) submitted
-entirely inside the browser worker — it is never returned to you and never
-appears in a snapshot (password fields read as "[redacted]"). Use explicit CSS
-or current aria-ref=eN targets only when detection reports ambiguity. Use this
-instead of typing a password in browser code, which is blocked for exactly this
-reason.
-
-- Log in with a saved record: optionally pass id or username to pick the record.
-- Sign up with a new strong password: set generate=true; it is generated,
-  staged, filled into new-password and confirmation fields, and never revealed.
-  After a later browser run visibly verifies signup/rotation success, call
-  credentials.commitGenerated({pendingId}) in browser code. On failure call
-  credentials.discardGenerated({pendingId}); pending credentials are not saved
-  as active records. After a complete host restart, credentials.listPending()
-  recovers secret-free pending metadata for the current site.
-
-The built-in encrypted vault is enabled by default; an embedding can replace or disable it.`;
-
-export const LOGIN_INPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    passwordSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target for the password or new-password field.",
-    },
-    currentPasswordSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target for the current-password field during rotation.",
-    },
-    usernameSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target for the username/email field.",
-    },
-    confirmPasswordSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target for confirmation (signup).",
-    },
-    submitSelector: {
-      type: "string",
-      description: "Optional CSS or current aria-ref=eN target clicked to submit.",
-    },
-    submit: {
-      type: "boolean",
-      description: "Detect and submit the matching form after filling (default false).",
-      default: false,
-    },
-    id: {
-      type: "string",
-      description: "Select a saved record, or rotate it when generate=true.",
-    },
-    username: {
-      type: "string",
-      description: "Select the saved record by username, or set the new one on signup.",
-    },
-    generate: {
-      type: "boolean",
-      description: "Generate, stage, and fill a new strong password (signup/rotation).",
-      default: false,
-    },
-    length: { type: "integer", description: "Generated password length (default 24)." },
-    includeSymbols: {
-      type: "boolean",
-      description: "Include symbols in a generated password (default true).",
-    },
-    label: { type: "string", description: "Human label for a newly saved record." },
-    matchMode: {
-      type: "string",
-      enum: [...VAULT_MATCH_MODES],
-      description: "URL scope for the generated credential (default base-domain).",
-    },
-    session: {
-      type: "string",
-      description: "Independent set of pages/state; reuse a name across calls.",
-      default: "default",
-    },
-  },
-};
+// Parameter schema shared with the agent harness and Pi extension; the shared
+// module is the single source of truth (see src/tool-schemas.mjs). MCP layers
+// in the per-call `session` argument and JSON-Schema `default` hints there.
+export const LOGIN_INPUT_SCHEMA = mcpLoginInputSchema();
 
 /**
  * Translate `browser_login` tool arguments into fillCredential options,
@@ -297,53 +197,12 @@ export function loginOptionsFromArgs(args = {}) {
   return normalizeCredentialToolOptions(args);
 }
 
-const RUN_INPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    code: { type: "string", description: "The Playwright JavaScript to execute." },
-    session: {
-      type: "string",
-      description: "Independent set of pages/state; reuse a name across calls.",
-      default: "default",
-    },
-    note: {
-      type: "string",
-      description: "Optional present-tense status line (not run in the browser).",
-      default: "",
-    },
-  },
-  required: ["code"],
-};
+const RUN_INPUT_SCHEMA = mcpRunInputSchema();
 
-const HANDOFF_DESCRIPTION = `Give the user a live web view of this browser — to watch you work, or to take over (human handoff). Call this anytime mid-session, not only at the start.
-
-Start it in two situations:
-- The user asks to watch: "live view", "show me", "watch you", "share the
-  browser", "open the live view". Start it FIRST (even mid-task), relay the
-  URL, then keep working while they watch. Never claim a live view is running
-  unless this tool returned its URL.
-- Human hands are needed in the real session — an MFA prompt or passkey, a
-  CAPTCHA that resisted captcha.solve(), a login the vault cannot fill, a
-  consequential step they should perform, or they explicitly ask to take over /
-  hand off. Cookies and page state carry over both ways.
-
-action "start" returns a URL: relay it to the user VERBATIM (it embeds a
-capability token — never log or share it elsewhere) and tell them what to do
-in the page. For a handoff, call action "status" to see when they are done
-(viewers count, current handoff state) before resuming browser calls, and
-re-read the page with a snapshot afterwards. When they are only watching,
-just keep working — the view follows your session. action "stop" ends the
-view; do not stop a view the user asked for while they may still be watching.
-While a view is running, anything the user types in its chat box is delivered
-to you appended to browser tool results (and under "userChat" in action
-"status") — treat those lines as fresh user instructions. Your "note" on each
-browser call is mirrored into that chat so the user can follow along; write
-notes for them. While they watch, prefer opening comparison pages via
-openPage() — every open tab appears in the viewer's tab strip and they can
-click between live thumbnails, whereas reusing one tab makes the view jump.
-The server binds 127.0.0.1 unless the deployer set
-BETTERWRIGHT_LIVE_VIEW_HOST / BETTERWRIGHT_LIVE_VIEW_EXPOSE (non-loopback
-hosts also require BETTERWRIGHT_LIVE_VIEW=1).`;
+const HANDOFF_DESCRIPTION = `Live view of this browser — the user watches or takes over (human handoff); call anytime mid-session.
+Start FIRST when the user asks to watch ('live view', 'show me', 'share the browser') and keep working; also when human hands are needed — MFA/passkey, a captcha.solve()-resistant CAPTCHA, a login the vault cannot fill, a consequential step, explicit takeover. Cookies and page state carry both ways; never claim a live view is running without this tool's URL.
+action 'start' returns the URL — relay it VERBATIM, never log or share it elsewhere; for a handoff poll 'status' until done, then re-snapshot. Only watching: keep working — the view follows your session. 'stop' ends the view — never one the user asked for while they may still watch.
+Viewer chat is appended to browser tool results (userChat in 'status') — fresh user instructions. Browser-call notes mirror there — write them for the user. Open comparison pages via openPage() — each is a live thumbnail tab in the viewer.`;
 
 const HANDOFF_INPUT_SCHEMA = {
   type: "object",
@@ -351,13 +210,9 @@ const HANDOFF_INPUT_SCHEMA = {
     action: {
       type: "string",
       enum: ["start", "status", "stop"],
-      description: "start the live view (default), check it, or stop it.",
       default: "start",
     },
-    reason: {
-      type: "string",
-      description: "Why the user is needed — include it in your message to them.",
-    },
+    reason: { type: "string", description: "Why the user is needed." },
     session: {
       type: "string",
       description: "Which session's current tab streams first.",
@@ -365,28 +220,23 @@ const HANDOFF_INPUT_SCHEMA = {
     },
     interactive: {
       type: "boolean",
-      description: "Allow the viewer to control the browser (default true).",
+      description: "Let the viewer control the browser (default true).",
       default: true,
     },
   },
 };
 
 async function loadSdk() {
-  try {
-    const [
-      { Server },
-      { StdioServerTransport },
-      { ListToolsRequestSchema, CallToolRequestSchema },
-    ] = await Promise.all([
-      import("@modelcontextprotocol/sdk/server/index.js"),
-      import("@modelcontextprotocol/sdk/server/stdio.js"),
-      import("@modelcontextprotocol/sdk/types.js"),
-    ]);
-    return { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema };
-  } catch (error) {
-    if (error?.code === "ERR_MODULE_NOT_FOUND") throw new Error(MCP_SDK_HINT);
-    throw error;
-  }
+  const [
+    { Server },
+    { StdioServerTransport },
+    { ListToolsRequestSchema, CallToolRequestSchema },
+  ] = await Promise.all([
+    importOptionalPeer("@modelcontextprotocol/sdk/server/index.js", "The MCP server"),
+    importOptionalPeer("@modelcontextprotocol/sdk/server/stdio.js", "The MCP server"),
+    importOptionalPeer("@modelcontextprotocol/sdk/types.js", "The MCP server"),
+  ]);
+  return { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema };
 }
 
 async function approveDownload(server, note) {
@@ -438,7 +288,7 @@ function mcpTools(withLogin) {
   });
   tools.push({
     name: "browser_doctor",
-    description: "Report whether the BetterWright browser runtime is installed and ready.",
+    description: "Whether the browser runtime is installed and ready.",
     inputSchema: { type: "object", properties: {} },
   });
   return tools;

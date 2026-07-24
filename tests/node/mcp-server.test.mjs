@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -15,6 +14,7 @@ import {
   loginOptionsFromArgs,
   policyFromEnv,
 } from "../../src/mcp-server.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 test("MCP omits and rejects browser_login when the vault is disabled", async () => {
   let fillCalls = 0;
@@ -131,6 +131,73 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
   );
 });
 
+// The MCP tool list is re-sent on every request, so its size is permanent
+// context overhead for every user of the server. This pins both halves of the
+// bargain struck when the descriptions were compressed on 2026-07-25 (8,670 →
+// 5,521 collapsed characters, ~1,945 → ~1,150 tokens): the budget stops the
+// prose creeping back, and the directive assertions stop a future pass from
+// buying room by dropping a rule instead of a redundant word.
+test("the advertised MCP tool list stays inside its context budget", async () => {
+  const handlers = _createMcpHandlersForTest({
+    browser: { vault: {} },
+    server: {},
+    downloadPolicy: "ask",
+  });
+  const { tools } = await handlers.listTools();
+
+  // Collapse runs of whitespace: line wrapping is nearly free in characters but
+  // costs a token per line, so raw length would understate a rewrap regression.
+  const size = JSON.stringify(tools).replace(/\s+/g, " ").length;
+  assert.ok(size < 6_000, `MCP tool list grew to ${size} collapsed characters`);
+
+  const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
+  const text = (name) => byName[name].description.replace(/\s+/g, " ");
+
+  // Reading and acting: the ref protocol is unusable if any of these literals
+  // is paraphrased away.
+  for (const literal of [
+    "snapshot({interactive: true})",
+    "page.locator('aria-ref=eN')",
+    "snapshot({diff: true})",
+    "screenshot({kind: 'proof'})",
+  ]) {
+    assert.ok(text("browser").includes(literal), `browser lost ${literal}`);
+  }
+  // Challenge limits are safety rules, not advice.
+  assert.match(text("browser"), /three distinct stages/);
+  assert.match(text("browser"), /Never duplicate a submission, purchase, or message/);
+
+  // Downloads are gated; both escape hatches must stay discoverable.
+  assert.match(text("browser_download"), /approval first/);
+  assert.match(text("browser_download"), /BETTERWRIGHT_DOWNLOAD_POLICY=allow/);
+  assert.match(text("browser_download"), /deny/);
+
+  // The whole point of browser_login is that the secret stays out of the
+  // transcript, and that a generated password is not saved until verified.
+  assert.match(text("browser_login"), /never enters the conversation/);
+  assert.match(text("browser_login"), /\[redacted\]/);
+  assert.match(text("browser_login"), /credentials\.commitGenerated\(\{pendingId\}\)/);
+  assert.match(text("browser_login"), /credentials\.discardGenerated\(\{pendingId\}\)/);
+  assert.match(text("browser_login"), /Typing passwords in browser code is blocked/);
+
+  // The live-view URL is a bearer capability, and agents have historically
+  // claimed a view was running without ever starting one.
+  assert.match(text("browser_handoff"), /VERBATIM/);
+  assert.match(text("browser_handoff"), /never log or share it/);
+  assert.match(text("browser_handoff"), /never claim a live view is running without this tool's URL/i);
+  assert.match(text("browser_handoff"), /userChat/);
+
+  // Selector fields went bare to save room; this one cannot be inferred from
+  // its name, so it keeps its description.
+  assert.match(
+    byName.browser_login.inputSchema.properties.currentPasswordSelector.description,
+    /rotation/,
+  );
+  // A viewer that can drive the browser is a different security posture than
+  // one that can only watch.
+  assert.match(byName.browser_handoff.inputSchema.properties.interactive.description, /control/);
+});
+
 test("policyFromEnv is open by default and hardens via BLOCK_* vars", () => {
   const open = policyFromEnv({});
   assert.equal(open.allowLoopback, true);
@@ -164,7 +231,7 @@ test("headlessFromEnv defaults to auto and honors explicit values", () => {
 });
 
 test("contentForResult separates screenshots from file paths", async () => {
-  const shot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "bw-mcp-")), "proof.png");
+  const shot = path.join(makeTempDir("bw-mcp-"), "proof.png");
   fs.writeFileSync(shot, Buffer.from("89504e470d0a1a0a", "hex"));
   const content = await contentForResult({
     ok: true,

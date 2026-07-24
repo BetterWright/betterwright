@@ -175,7 +175,7 @@ comes from.
 
 ### How selection works
 
-1. **Source-qualified** (`ollama/qwen3:8b`, `openrouter/anthropic/claude-sonnet-4`,
+1. **Source-qualified** (`ollama/qwen3:8b`, `openrouter/anthropic/claude-sonnet-5`,
    `codex/gpt-5.6-sol`) — used immediately; no discovery.
 2. **Custom base URL** (`--base-url` / `--endpoint`) — pins the source to that
    URL; the bare id is the model name on that server.
@@ -235,9 +235,9 @@ betterwright exec "inspect example.com" --model vllm/<served-model-id>
 
 # OpenRouter — canonical author/model id; pin only on collisions
 OPENROUTER_API_KEY=… betterwright exec "inspect example.com" \
-  --model anthropic/claude-sonnet-4
+  --model anthropic/claude-sonnet-5
 OPENROUTER_API_KEY=… betterwright exec "inspect example.com" \
-  --model openrouter/anthropic/claude-sonnet-4
+  --model openrouter/anthropic/claude-sonnet-5
 
 # Any other OpenAI-compatible /v1 base URL
 BETTERWRIGHT_MODEL_API_KEY=… betterwright exec "inspect example.com" \

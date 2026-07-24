@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -14,6 +13,7 @@ import {
   chromiumForkAssetForHost,
   installChromiumFork,
 } from "../../src/chromium-fork-install.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 test("public fork assets are pinned for mac-arm64 and linux-x64", () => {
   assert.equal(CHROMIUM_FORK_RELEASE_TAG, `chromium-${BETTERWRIGHT_CHROMIUM_VERSION}`);
@@ -63,7 +63,7 @@ test("installChromiumFork short-circuits when already installed", async () => {
 });
 
 test("installChromiumFork downloads, verifies SHA-256, and extracts", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-fork-home-"));
+  const home = makeTempDir("bw-fork-home-");
   const payload = Buffer.from("betterwright-chromium-test-zip");
   const sha256 = createHash("sha256").update(payload).digest("hex");
   const assets = {
@@ -107,7 +107,7 @@ test("installChromiumFork downloads, verifies SHA-256, and extracts", async () =
 });
 
 test("installChromiumFork rejects a SHA-256 mismatch", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-fork-bad-"));
+  const home = makeTempDir("bw-fork-bad-");
   const assets = {
     "linux-x64": {
       name: "bad.zip",

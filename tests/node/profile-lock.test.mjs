@@ -13,9 +13,10 @@ import {
   releaseProfileLockDir,
   touchProfileLock,
 } from "../../src/profile-lock.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function makeRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bw-profile-lock-"));
+  const root = makeTempDir("bw-profile-lock-");
   return {
     root,
     profileDir: path.join(root, "profile"),

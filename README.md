@@ -129,7 +129,7 @@ betterwright exec "check example.com" --model ollama/qwen3:8b
 
 # OpenRouter — bare author/model id when unambiguous
 OPENROUTER_API_KEY=… betterwright exec "check example.com" \
-  --model anthropic/claude-sonnet-4
+  --model anthropic/claude-sonnet-5
 
 # Custom OpenAI-compatible endpoint
 BETTERWRIGHT_MODEL_API_KEY=… betterwright exec "check example.com" \

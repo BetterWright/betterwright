@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 
 import { BetterWright } from "../../src/client.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function tempHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-client-lifecycle-"));
+  return makeTempDir("betterwright-client-lifecycle-");
 }
 
 async function within(promise, timeoutMs, message) {

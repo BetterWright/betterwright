@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { BetterWright } from "../../src/client.mjs";
 import { installVaultCapture } from "../../src/vault-capture.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const ORIGIN = "https://app.example.com";
 const LOGIN_URL = `${ORIGIN}/login`;
@@ -332,7 +332,7 @@ test("existing username switches the prompt to update mode", async () => {
 
 test("Never for this site persists and suppresses later prompts", async () => {
   const prefsPath = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), "bw-capture-")),
+    makeTempDir("bw-capture-"),
     "save-prompt.json",
   );
   const first = makeHarness({ headed: true, modelAt: 0, prefsPath });
@@ -400,7 +400,7 @@ test("dispose detaches sessions and ignores later events", async () => {
 });
 
 test("credentialCapture option defaults on, forced off without a vault", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-home-"));
+  const home = makeTempDir("bw-home-");
   assert.equal(
     new BetterWright({ home: path.join(home, "a") })._workerConfig()
       .credentialCapture,
