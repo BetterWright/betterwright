@@ -97,8 +97,8 @@ const HARNESS_AUTONOMY_INTERACTIVE = `You are operating in an interactive sessio
 
 const HARNESS_PREAMBLE_TAIL = `When finished, end the task: either return \`{ finalAnswer }\` from the final \`browser\` call (preferred — saves a round-trip) or call the \`done\` tool with a clear answer for the user. On any task with a visible result, capture \`screenshot({kind: 'proof'})\` of the end state first — in the same \`browser\` call as your final action when you can. Finish exactly once.`;
 
-// Extra guidance when the live-view surface is available: chat, ask, and handoff.
-const HARNESS_HANDOFF_NOTE = `A live view is available for the human: they can watch the browser and send you freeform guidance in the chat (delivered between your turns — incorporate it and continue). An \`ask\` tool puts a question in that same chat and waits for their answer. A \`handoff\` tool gives them live interactive control of this same browser and pauses you until they click Done. Use \`handoff\` when human HANDS are needed in the browser (MFA/passkey, a resistant CAPTCHA, a login the vault cannot fill, a step they should perform personally); use \`ask\` when a typed answer suffices. After a handoff, re-observe before acting.`;
+// Extra guidance when the live-view surface is available: chat, ask, live_view, handoff.
+const HARNESS_HANDOFF_NOTE = `A live view is available for the human: they can watch the browser and send you freeform guidance in the chat (delivered between your turns — incorporate it and continue). Call the \`live_view\` tool (action "start") at any time — including mid-task — when they ask to watch; relay the returned URL verbatim and keep working. An \`ask\` tool puts a question in that same chat and waits for their answer. A \`handoff\` tool gives them live interactive control of this same browser and pauses you until they click Done. Use \`handoff\` when human HANDS are needed in the browser (MFA/passkey, a resistant CAPTCHA, a login the vault cannot fill, a step they should perform personally); use \`ask\` when a typed answer suffices; use \`live_view\` when they only need to watch or coach without pausing you. After a handoff, re-observe before acting.`;
 
 // Assemble the harness preamble, choosing the autonomy paragraph by whether an
 // `ask` tool is available (interactive) or not (headless `exec`).
@@ -141,7 +141,7 @@ const ASK_TOOL_PARAMETERS = {
   required: ["question"],
 };
 
-const HANDOFF_TOOL_DESCRIPTION = `Hand the live browser to the user and pause until they finish. Their view is the REAL session — cookies, logins, and page state carry over both ways. Use ONLY when human hands are genuinely needed in the browser itself: an MFA prompt or passkey, a CAPTCHA that resisted captcha.solve(), a login the vault cannot fill, or a consequential step the user should perform personally. Do not use it for typed answers (use ask) or for steps you can do yourself. The user is shown your reason and a live, interactive view of the browser; when they click Done (or Cancel), you resume — re-observe with snapshot({diff:true}) before acting, because the page state may have changed under their hands.`;
+const HANDOFF_TOOL_DESCRIPTION = `Hand the live browser to the user and pause until they finish. Their view is the REAL session — cookies, logins, and page state carry over both ways. Use ONLY when human hands are genuinely needed in the browser itself: an MFA prompt or passkey, a CAPTCHA that resisted captcha.solve(), a login the vault cannot fill, or a consequential step the user should perform personally. Do not use it for typed answers (use ask), for watch-only (use live_view), or for steps you can do yourself. The user is shown your reason and a live, interactive view of the browser; when they click Done (or Cancel), you resume — re-observe with snapshot({diff:true}) before acting, because the page state may have changed under their hands.`;
 
 const HANDOFF_TOOL_PARAMETERS = {
   type: "object",
@@ -156,6 +156,19 @@ const HANDOFF_TOOL_PARAMETERS = {
     },
   },
   required: ["reason"],
+};
+
+const LIVE_VIEW_TOOL_DESCRIPTION = `Open (or report) a live web view of this browser so the user can watch and coach you without pausing the task. Call when they ask to watch, share a screen, or open a live view — at any time, including mid-task. action "start" (default) returns the watch URL (relay it verbatim); "status" reports whether it is running; "stop" tears it down. Prefer this over handoff when they only need to see the browser; use handoff when they need to drive it themselves.`;
+
+const LIVE_VIEW_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {
+    action: {
+      type: "string",
+      enum: ["start", "status", "stop"],
+      description: 'start the live view (default), check it, or stop it.',
+    },
+  },
 };
 
 const LOGIN_TOOL_PARAMETERS = {
@@ -243,8 +256,10 @@ function toolsForHarness({ withLogin, withAsk, withHandoff }) {
     tools.push({ name: "login", description: LOGIN_TOOL_DESCRIPTION, parameters: LOGIN_TOOL_PARAMETERS });
   if (withAsk)
     tools.push({ name: "ask", description: ASK_TOOL_DESCRIPTION, parameters: ASK_TOOL_PARAMETERS });
-  if (withHandoff)
+  if (withHandoff) {
+    tools.push({ name: "live_view", description: LIVE_VIEW_TOOL_DESCRIPTION, parameters: LIVE_VIEW_TOOL_PARAMETERS });
     tools.push({ name: "handoff", description: HANDOFF_TOOL_DESCRIPTION, parameters: HANDOFF_TOOL_PARAMETERS });
+  }
   return tools;
 }
 
@@ -683,6 +698,81 @@ export async function runAgentTask(options = {}) {
           } catch (error) {
             if (error === AGENT_TIMEOUT) throw error;
             results.push({ id: call.id, name: call.name, content: `ask error: ${error?.message || error}` });
+          }
+          continue;
+        }
+        if (call.name === "live_view") {
+          if (!withHandoff) {
+            results.push({
+              id: call.id,
+              name: call.name,
+              content: "Live view is not available in this run.",
+            });
+            continue;
+          }
+          const action = String(call.input?.action || "start").trim().toLowerCase() || "start";
+          try {
+            if (action === "stop") {
+              if (typeof browser.stopLiveView === "function") await browser.stopLiveView();
+              liveViewReady = false;
+              agentStartedLiveView = false;
+              results.push({
+                id: call.id,
+                name: call.name,
+                content: "Live view stopped.",
+              });
+              continue;
+            }
+            if (action === "status") {
+              const status =
+                typeof browser.liveViewStatus === "function"
+                  ? await browser.liveViewStatus()
+                  : null;
+              const running = Boolean(status?.running || liveViewReady);
+              liveViewReady = running;
+              results.push({
+                id: call.id,
+                name: call.name,
+                content: running
+                  ? `Live view is running${status?.url ? `: ${status.url}` : ""}. Relay any URL to the user verbatim.`
+                  : "Live view is not running. Call live_view with action \"start\" to open it.",
+              });
+              continue;
+            }
+            if (action !== "start") {
+              results.push({
+                id: call.id,
+                name: call.name,
+                content: `Unknown live_view action "${action}". Use start, status, or stop.`,
+              });
+              continue;
+            }
+            const view = await withinDeadline(() => ensureAgentLiveView(), deadline);
+            if (!view?.ok || !view.url) {
+              throw new Error(view?.error || "the live view failed to start");
+            }
+            reportStep({
+              step: steps,
+              tool: "liveView",
+              note: view.alreadyRunning
+                ? `live view already running: ${view.url}`
+                : `watch live: ${view.url}`,
+              url: view.url,
+            });
+            results.push({
+              id: call.id,
+              name: call.name,
+              content:
+                `Live view is open for the user. Relay this URL to them verbatim (it embeds the access token): ${view.url}. ` +
+                "Keep working — they can watch and type guidance in the chat. Use handoff only if they need to drive the browser themselves.",
+            });
+          } catch (error) {
+            if (error === AGENT_TIMEOUT) throw error;
+            results.push({
+              id: call.id,
+              name: call.name,
+              content: `live_view error: ${error?.message || error}`,
+            });
           }
           continue;
         }
