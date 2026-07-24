@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   collectCredentialFrameDetections,
   disposeCredentialFrameDetections,
+  probePinnedCredentialOrigin,
 } from "../../src/credential-target-scan.mjs";
 import { cloakRuntime } from "../../src/doctor.mjs";
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
@@ -134,6 +135,42 @@ test("the scan budget bounds a page full of wedged frames", async () => {
   assert.ok(elapsed < 400, `the scan honoured its budget (took ${elapsed}ms)`);
   assert.equal(detections.length, 0);
   assert.equal(unresponsive.length, frames.length);
+});
+
+test("explicit target origin validation is bounded when its frame stops responding", async () => {
+  let originProbed = false;
+  const started = Date.now();
+  const result = await probePinnedCredentialOrigin({
+    inspectDocument: () => new Promise(() => {}),
+    originForFrame: async () => {
+      originProbed = true;
+      return "https://form.example";
+    },
+    probeMs: 40,
+    budgetMs: 120,
+  });
+  assert.ok(Date.now() - started < 300, "explicit validation honoured its deadline");
+  assert.deepEqual(result, {
+    timedOut: true,
+    phase: "initial document validation",
+  });
+  assert.equal(originProbed, false, "a timed-out document probe stops later validation work");
+});
+
+test("explicit target origin validation preserves both document checks", async () => {
+  const documents = ["https://form.example/signup", "https://form.example/signup"];
+  const result = await probePinnedCredentialOrigin({
+    inspectDocument: async () => documents.shift(),
+    originForFrame: async () => "https://form.example",
+    probeMs: 40,
+    budgetMs: 120,
+  });
+  assert.deepEqual(result, {
+    timedOut: false,
+    documentUrlBefore: "https://form.example/signup",
+    origin: "https://form.example",
+    documentUrlAfter: "https://form.example/signup",
+  });
 });
 
 async function fixtureServer() {
@@ -784,6 +821,14 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
     `<!doctype html><form onsubmit="event.preventDefault(); window.explicitSubmitted=true">
       <label>User <input id="explicit-user"></label><label>Password <input id="explicit-password" type="password"></label><button id="explicit-submit">Go</button>
     </form>`,
+  );
+  server.pages.set(
+    "/never-settling-blur",
+    `<!doctype html><form>
+      <label>User <input id="blur-user"></label><label>Password <input id="blur-password" type="password"></label>
+    </form><script>
+      document.querySelector('#blur-password').blur = () => new Promise(() => {});
+    </script>`,
   );
   server.pages.set(
     "/explicit-race-source",
@@ -1628,6 +1673,31 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       assert.equal(byRef.ok, true, byRef.error);
       assert.equal(byRef.result.submitted, true);
     });
+
+    await t.test(
+      "a page-defined never-settling blur cannot restart the worker after a credential fill",
+      { timeout: 10_000 },
+      async () => {
+        await visit("/never-settling-blur");
+        const started = Date.now();
+        const result = await bw.fillCredential({
+          usernameSelector: "#blur-user",
+          passwordSelector: "#blur-password",
+        });
+        assert.equal(result.ok, true, result.error);
+        assert.deepEqual(result.result.filled, ["username", "password"]);
+        assert.ok(Date.now() - started < 5_000, "credential blur used bounded browser input");
+        const state = await bw.run(`return page.evaluate(() => ({
+          username: document.querySelector('#blur-user').value,
+          passwordLength: document.querySelector('#blur-password').value.length,
+        }));`);
+        assert.equal(state.ok, true, state.error);
+        assert.deepEqual(state.result, {
+          username: "alice@example.com",
+          passwordLength: loginSecret.length,
+        });
+      },
+    );
 
     await t.test(
       "pins explicit targets and origin before a delayed vault lookup",
