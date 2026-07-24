@@ -14,11 +14,12 @@
 //   betterwright sessions         list live sessions in the background daemon
 //   betterwright close [name]     close a session (--all: everything + daemon)
 //   betterwright models           list models from OpenAI-compatible endpoints
-//   betterwright view             live web view of the browser (watch/take over)
+//   betterwright view             live web view (attaches to the session daemon
+//                                 mid-session when one is running; anytime)
 //   betterwright auth --login <p> OAuth sign-in for a model backend (codex|grok)
 //   betterwright skill            print paste-ready agent instructions
 //                                 (--claude: SKILL.md to stdout; --install:
-//                                 write ~/.claude/skills/browser/SKILL.md)
+//                                 write Claude + Agent Skills dirs; --all: +Cursor)
 //   betterwright skills [list|show]  read on-demand site/provider knowledge packs
 //   betterwright mcp              serve the MCP stdio server (needs the MCP SDK)
 //
@@ -36,7 +37,6 @@
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -64,6 +64,14 @@ import {
   loadTranscript,
   saveTranscript,
 } from "../src/session-store.mjs";
+import {
+  installAgentSkills,
+  packageVersion,
+  refreshInstalledAgentSkills,
+  staleAgentSkillReport,
+  staleAgentSkillTip,
+  wrapClaudeSkillMarkdown,
+} from "../src/skill-install.mjs";
 
 const require = createRequire(import.meta.url);
 const CLI_PATH = fileURLToPath(import.meta.url);
@@ -206,7 +214,39 @@ async function cmdDoctor() {
   const report = await doctorReport();
   for (const [key, value] of Object.entries(report)) console.log(`${key.padEnd(20)} ${value}`);
   console.log(report.ready ? "\nBetterWright is ready." : "\nNot ready. Run `betterwright setup`.");
+  const tip = staleAgentSkillTip(staleAgentSkillReport());
+  if (tip) console.log(`\n${tip}`);
   return report.ready ? 0 : 1;
+}
+
+/** Generated agent-skill body (preamble + operator guidance), no frontmatter. */
+function agentSkillBody() {
+  return `${SKILL_PREAMBLE}\n\n${agentSystemPrompt()}`;
+}
+
+/** Full Claude-form SKILL.md (frontmatter + stamp + body). */
+function agentSkillMarkdown() {
+  return wrapClaudeSkillMarkdown(agentSkillBody(), { version: packageVersion() });
+}
+
+/** After setup/update: rewrite only skill files already installed. */
+function refreshAgentSkillsQuietly() {
+  try {
+    const { refreshed } = refreshInstalledAgentSkills({
+      markdown: agentSkillMarkdown(),
+      targets: "all",
+    });
+    if (refreshed.length) {
+      console.log(
+        `Refreshed ${refreshed.length} agent skill file(s) to betterwright@${packageVersion()}.`,
+      );
+      for (const file of refreshed) console.log(`  ${file}`);
+    }
+  } catch (error) {
+    console.log(
+      `Could not refresh agent skill files: ${error?.message || error}`,
+    );
+  }
 }
 
 async function installCloakBrowser() {
@@ -254,6 +294,7 @@ async function cmdUpdate(flags) {
   console.log(
     "fork and Cloak share the default profile and are not interchangeable.",
   );
+  refreshAgentSkillsQuietly();
   return 0;
 }
 
@@ -288,6 +329,7 @@ async function cmdSetup(flags) {
       "On macOS arm64 / Linux x64, doctor should report browser: chromium-fork after update/setup.",
     );
   }
+  refreshAgentSkillsQuietly();
   return 0;
 }
 
@@ -427,19 +469,25 @@ open pages — read the named pack with \`betterwright skills show <name>\` befo
 improvising on that site. \`betterwright skills list\` shows what is available;
 read the \`credential-manager\` pack before any login, signup, or checkout.
 
-The user can watch the browser live (and take over for MFA or tough steps). If
-your host exposes a handoff or live-view tool (MCP \`browser_handoff\`, Pi), use
-that — start it first, relay its URL to the user verbatim (it embeds the access
-token), then keep working. From the plain CLI, snippets cannot start the viewer
-(sealed by design); when the user asks for a live view:
-- delegate the whole task to \`betterwright exec "<task>" --live-view\`, which
-  prints the watch URL as it starts (repeated execs continue the same session
-  and conversation; \`--fresh\` starts over); or
-- have the user run \`betterwright view\` themselves for a hands-on session with
-  the same logged-in profile — after \`betterwright close\`: the profile has a
-  single holder (the session daemon), and a second holder gets a blank
-  ephemeral profile.
-Never claim a live view is running unless one of these actually produced a URL.
+Live view and handoff work anytime mid-session — not only at the start. When
+the user asks to watch, share the browser, open a live view, take over, or
+hand off (MFA, resistant CAPTCHA, a step they must do themselves), do it now
+with the surface you are on; do not restart the session or claim you cannot:
+
+1. MCP integrated mode — call \`browser_handoff\` with action "start", relay the
+   URL verbatim, keep working (watch) or wait on action "status" (takeover).
+2. Standalone \`betterwright exec\` / interactive console — use the \`live_view\`
+   tool to open a watch URL without pausing, or \`handoff\` to pause until they
+   click Done. Interactive also accepts \`/live\` anytime.
+3. Integrated CLI+skill (\`betterwright run\` / \`repl\`) — snippets cannot start
+   the viewer (sealed). Run \`betterwright view\` (or have the user run it): it
+   attaches to the same session daemon, prints a URL for the open tabs, and
+   does not close them. Relay that URL; for takeover, tell them to use Take
+   control / the dock, then wait for their "done" in chat before more \`run\`s.
+
+Optional: \`exec "<task>" --live-view\` opens the viewer at step 0. Never claim
+a live view is running unless a tool or \`betterwright view\` actually returned
+its URL.
 
 Network access is policy-guarded. Loopback and the private network are reachable
 by default; add \`--block-private-network\` / \`--block-loopback\` to lock down, or
@@ -450,32 +498,26 @@ Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet", and t
 "approval-gated download tool" is \`betterwright run --approve-downloads\`: one
 bounded download-enabled run, used only after the user explicitly approves.`;
 
-// YAML frontmatter for `skill --claude`, so the output is a complete Claude
-// Code SKILL.md.
-const CLAUDE_SKILL_FRONTMATTER = `---
-name: browser
-description: Drive a persistent, policy-guarded real web browser via the betterwright CLI. Use for any task that needs the live web — logging in, filling forms, booking, buying, or reading a page an API will not give you.
----`;
-
 function cmdSkill(flags) {
-  const body = `${SKILL_PREAMBLE}\n\n${agentSystemPrompt()}`;
+  const body = agentSkillBody();
   if (flags.has("--install")) {
-    // Claude Code personal skill: ~/.claude/skills/browser/SKILL.md. The file
-    // is generated (not vendored) so it always matches this CLI's version —
-    // rerun after `betterwright update` or an npm upgrade.
-    const dir = path.join(os.homedir(), ".claude", "skills", "browser");
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, "SKILL.md");
-    fs.writeFileSync(file, `${CLAUDE_SKILL_FRONTMATTER}\n\n${body}\n`);
-    console.log(`Installed ${file}`);
+    // Generated (not vendored) so it always matches this CLI version. Writes
+    // Claude Code + Agent Skills dirs by default; --all also writes Cursor.
+    // setup/update refresh any of these that already exist — no npm postinstall.
+    const targets = flags.has("--all") ? "all" : "default";
+    const markdown = agentSkillMarkdown();
+    const { written } = installAgentSkills({ markdown, targets });
+    for (const file of written) console.log(`Installed ${file}`);
     console.log(
-      "Claude Code picks it up automatically. Rerun this after upgrading " +
-        "betterwright; for other agents, `betterwright skill` prints the same " +
-        "instructions to paste anywhere.",
+      `Stamped betterwright@${packageVersion()}. ` +
+        "Hosts that load ~/.claude/skills or ~/.agents/skills pick it up " +
+        "automatically. After npm upgrades, re-run this (or `betterwright setup` / " +
+        "`update`, which refresh already-installed skill files). " +
+        "For paste-anywhere agents: `betterwright skill`.",
     );
     return 0;
   }
-  console.log(flags.has("--claude") ? `${CLAUDE_SKILL_FRONTMATTER}\n\n${body}` : body);
+  console.log(flags.has("--claude") ? agentSkillMarkdown().trimEnd() : body);
   return 0;
 }
 
@@ -685,6 +727,7 @@ const INTERACTIVE_HELP = `Commands:
   /models [source]    list available models (optionally one source)
   /model <id>         switch model; use source/id only to disambiguate
   /reasoning <level>  set reasoning effort (low | medium | high | xhigh | max)
+  /live [stop]        open a live view now (anytime), or /live stop to close it
   /headed             show the browser window (/headless to hide it again)
   /new                start a fresh session (clear memory + close open tabs)
   /clear              clear the screen
@@ -746,24 +789,34 @@ async function cmdInteractive(flags) {
       headless,
       ...cloakingFromFlags(flags),
     });
-  const interactiveLiveView = liveViewCliOptions(argv);
+  // Mutable: process --live-view starts a viewer at boot; `/live` enables the
+  // same path mid-session so /new /headed /headless re-open it after replace.
+  let interactiveLiveView = liveViewCliOptions(argv);
+  const startInteractiveLiveView = async (browser, { quiet = false } = {}) => {
+    const opts = interactiveLiveView || liveViewCliOptions(process.argv, { required: true });
+    try {
+      const view = await browser.startLiveView({
+        session,
+        ...opts,
+      });
+      if (view?.ok && view.url) {
+        if (!quiet || !view.alreadyRunning) {
+          console.log(`\n  ${bold("▶ Watch live:")} ${view.url}\n`);
+        }
+        interactiveLiveView = opts;
+        return view;
+      }
+      console.log(dim(`  ! live view failed to start: ${view?.error || "no URL returned"}`));
+    } catch (error) {
+      console.log(dim(`  ! live view failed to start: ${error?.message || error}`));
+    }
+    return null;
+  };
   const browsers = createInteractiveBrowserLifecycle({
     createBrowser: newBrowser,
     startBrowser: async (browser) => {
       if (!interactiveLiveView) return;
-      try {
-        const view = await browser.startLiveView({
-          session,
-          ...interactiveLiveView,
-        });
-        if (view?.ok && view.url) {
-          console.log(`\n  ${bold("▶ Watch live:")} ${view.url}\n`);
-          return;
-        }
-        console.log(dim(`  ! live view failed to start: ${view?.error || "no URL returned"}`));
-      } catch (error) {
-        console.log(dim(`  ! live view failed to start: ${error?.message || error}`));
-      }
+      await startInteractiveLiveView(browser);
     },
   });
   // The running transcript, so a follow-up task remembers earlier ones. `/new`
@@ -906,6 +959,21 @@ async function cmdInteractive(flags) {
         if (cmd === "effort" || cmd === "reasoning") {
           if (arg) modelOptions.effort = arg;
           console.log(dim(`reasoning effort is ${modelOptions.effort || "low"}`));
+          continue;
+        }
+        if (cmd === "live" || cmd === "view") {
+          const sub = (arg || "").trim().toLowerCase();
+          if (sub === "stop" || sub === "off" || sub === "close") {
+            try {
+              await browsers.browser.stopLiveView?.();
+              interactiveLiveView = undefined;
+              console.log(dim("live view stopped"));
+            } catch (error) {
+              console.log(dim(`could not stop live view: ${error?.message || error}`));
+            }
+            continue;
+          }
+          await startInteractiveLiveView(browsers.browser);
           continue;
         }
         if (cmd === "headed" || cmd === "headless") {
@@ -1339,13 +1407,47 @@ async function cmdModels(flags) {
   }
 }
 
-// `view`: open a live, token-gated web view of this BetterWright browser and
-// hold it until Ctrl-C. This launches (or reuses) this process's own managed
-// browser — it is the remote-desktop shape: warm up logins by hand, drive a
-// headless VPS browser from your laptop, or watch what a later `exec` in the
-// same process would do. To watch an agent run live, prefer
-// `betterwright exec --live-view` / the interactive console, which stream the
-// agent's own browser.
+/**
+ * Print live-view reachability / security lines shared by daemon-attach and
+ * private-browser view paths.
+ */
+function printLiveViewBanner(view, { dim, bold, attached = false } = {}) {
+  console.log(`${bold("Live view:")} ${view.url}`);
+  if (attached) {
+    console.log(dim("attached to the session daemon (same tabs as run/exec)"));
+  }
+  const reach =
+    view.expose === "tailscale"
+      ? "devices on your tailnet (Tailscale)"
+      : view.expose === "local"
+        ? "only this machine (bring your own tunnel)"
+        : "devices on your local network";
+  console.log(
+    dim(
+      `who can open it: ${reach} · ${view.interactive ? "interactive" : "watch-only"} · ` +
+        (view.passwordProtected
+          ? "password required"
+          : "no password (set one with `betterwright view --set-password`)"),
+    ),
+  );
+  if (view.expose === "local" || ["127.0.0.1", "localhost", "::1"].includes(view.host)) {
+    console.log(dim(`tunnel it:  ssh -L ${view.port}:127.0.0.1:${view.port} <this-host>`));
+    console.log(dim(`       or:  cloudflared tunnel --url http://127.0.0.1:${view.port}`));
+  }
+  console.log(
+    dim(
+      attached
+        ? "The URL embeds a capability token — treat it like a password. Ctrl-C detaches (session stays up)."
+        : "The URL embeds a capability token — treat it like a password. Ctrl-C to stop.",
+    ),
+  );
+}
+
+// `view`: open a live, token-gated web view and hold it until Ctrl-C.
+// Prefer attaching to the session daemon when one is (or can be) running so
+// mid-session `view` shows the same tabs as `run`/`exec`/`skill` agents —
+// without reclaiming the profile or starting a blank ephemeral browser.
+// Fallback: private in-process browser (remote-desktop warm-up shape).
 async function cmdView(flags) {
   if (flags.has("--set-password") || flags.has("--clear-password")) {
     return cmdViewPassword(flags);
@@ -1354,6 +1456,54 @@ async function cmdView(flags) {
   const { dim, bold } = styler();
   // Same host resolution as `exec --live-view` so view/exec behave alike.
   const liveOpts = liveViewCliOptions(argv, { required: true });
+  const session = flagValue(argv, "--session", "default");
+
+  // Daemon attach first (unless --no-daemon): works while a session is mid-task.
+  if (!daemonDisabled(flags)) {
+    const outcome = await connectSessionDaemon({
+      cliPath: CLI_PATH,
+      config: daemonConfigFromFlags(flags),
+      spawnIfNeeded: true,
+    });
+    if (outcome.ok) {
+      const browser = createDaemonBrowser(outcome.channel, { session });
+      let startedHere = false;
+      try {
+        const view = await browser.startLiveView({
+          ...liveOpts,
+          session,
+        });
+        if (!view?.ok || !view.url) {
+          console.error(view?.error || "The live view failed to start.");
+          return 1;
+        }
+        startedHere = !view.alreadyRunning;
+        // Nudge a blank tab so the canvas is not empty on first open.
+        await browser.run(
+          "if (page.url() === 'about:blank') await page.goto('about:blank'); 'ready'",
+        );
+        printLiveViewBanner(view, { dim, bold, attached: true });
+        await new Promise((resolve) => {
+          process.once("SIGINT", resolve);
+          process.once("SIGTERM", resolve);
+        });
+        return 0;
+      } finally {
+        // Leave a pre-existing viewer alone; stop only one we opened so Ctrl-C
+        // does not yank a URL the agent already handed the human mid-task.
+        if (startedHere) {
+          try {
+            await browser.stopLiveView();
+          } catch {
+            /* best effort */
+          }
+        }
+        await browser.close();
+      }
+    }
+  }
+
+  // Private browser fallback: reclaim idle daemon profile when possible.
   const reclaim = await reclaimDaemonProfile();
   if (reclaim.busy) {
     console.log(
@@ -1368,34 +1518,14 @@ async function cmdView(flags) {
   try {
     const view = await browser.startLiveView({
       ...liveOpts,
-      session: flagValue(argv, "--session", "default"),
+      session,
     });
     if (!view.ok || !view.url) {
       console.error(view.error || "The live view failed to start.");
       return 1;
     }
-    // Give the viewer something to show before the first human navigation.
     await browser.run("if (page.url() === 'about:blank') await page.goto('about:blank'); 'ready'");
-    console.log(`${bold("Live view:")} ${view.url}`);
-    const reach =
-      view.expose === "tailscale"
-        ? "devices on your tailnet (Tailscale)"
-        : view.expose === "local"
-          ? "only this machine (bring your own tunnel)"
-          : "devices on your local network";
-    console.log(
-      dim(
-        `who can open it: ${reach} · ${view.interactive ? "interactive" : "watch-only"} · ` +
-          (view.passwordProtected
-            ? "password required"
-            : "no password (set one with `betterwright view --set-password`)"),
-      ),
-    );
-    if (view.expose === "local" || ["127.0.0.1", "localhost", "::1"].includes(view.host)) {
-      console.log(dim(`tunnel it:  ssh -L ${view.port}:127.0.0.1:${view.port} <this-host>`));
-      console.log(dim(`       or:  cloudflared tunnel --url http://127.0.0.1:${view.port}`));
-    }
-    console.log(dim("The URL embeds a capability token — treat it like a password. Ctrl-C to stop."));
+    printLiveViewBanner(view, { dim, bold, attached: false });
     await new Promise((resolve) => {
       process.once("SIGINT", resolve);
       process.once("SIGTERM", resolve);

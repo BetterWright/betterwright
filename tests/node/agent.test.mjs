@@ -1437,9 +1437,37 @@ test("liveView: true starts the viewer before step 1 and stops it at task end", 
   assert.equal(browser.calls.stops, 1);
   // The system prompt tells the model when to reach for handoff vs ask.
   assert.match(model.seen[0].system, /`handoff` tool/);
+  // Mid-session watch without pause is a dedicated tool.
+  assert.ok(model.seen[0].tools.some((tool) => tool.name === "live_view"));
   // Live view also offers ask (chat-backed) and freeform guidance.
   assert.ok(model.seen[0].tools.some((tool) => tool.name === "ask"));
   assert.ok(browser.calls.chatPosts.some((line) => /Message the agent/i.test(line.text) || /guidance/i.test(line.text)));
+});
+
+test("live_view tool starts mid-task and returns the watch URL without handoff", async () => {
+  const browser = liveViewBrowser();
+  const steps = [];
+  const model = scriptedModel([
+    {
+      text: "",
+      toolCalls: [{ id: "lv1", name: "live_view", input: { action: "start" } }],
+    },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "watching" } }] },
+  ]);
+  const result = await runAgentTask({
+    task: "show me",
+    model,
+    browser,
+    onStep: (event) => steps.push(event),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(browser.calls.liveView.length, 1);
+  assert.equal(browser.calls.handoffs.length, 0);
+  const liveStep = steps.find((event) => event.tool === "liveView");
+  assert.equal(liveStep.url, "http://127.0.0.1:4242/?t=secret");
+  const toolTurn = result.transcript.find((m) => m.role === "tool");
+  assert.match(toolTurn.results[0].content, /127\.0\.0\.1:4242/);
+  assert.equal(browser.calls.stops, 1);
 });
 
 test("liveView reuses a host-owned viewer without re-announcing or stopping it", async () => {

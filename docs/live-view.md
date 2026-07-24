@@ -12,14 +12,20 @@ Three surfaces, one server:
 | Surface | What it does |
 | --- | --- |
 | `betterwright exec "<task>" --live-view` | starts the viewer at step 0 and prints the URL, so you watch the whole run while the agent works |
-| interactive console `--live-view` | starts one viewer before the first prompt and keeps its URL across follow-up tasks; `/new`, `/headed`, and `/headless` replace the browser and print a new viewer URL without restarting the CLI |
+| interactive console `--live-view` or `/live` | `--live-view` starts a viewer before the first prompt; **`/live` opens one anytime mid-session**; `/live stop` closes it; `/new`, `/headed`, and `/headless` re-open the viewer when live is enabled |
 | the session dock (chat / ask / handoff) | always-on chat to guide the agent; `ask` questions appear as chips + a reply box; `handoff` elevates the dock with **Done** / **Cancel** and force-enables browser control |
-| `betterwright view` | standalone: opens this machine's BetterWright browser with a live view held open until Ctrl-C — warm up logins by hand, or drive a headless VPS browser from your laptop |
+| agent `live_view` tool | mid-task watch without pausing: the model can open the viewer whenever the user asks, relay the URL, and keep working (`handoff` still pauses for human hands) |
+| MCP `browser_handoff` | `action: "start"` anytime during an MCP session (watch or handoff) |
+| `betterwright view` | attaches to the **session daemon** when one is running (same tabs as `run`/`exec`/`skill` agents) and holds the viewer until Ctrl-C; if no daemon, starts a private browser for warm-up / remote-desktop |
 
 Library equivalents: `browser.startLiveView()`, `browser.stopLiveView()`,
 `browser.liveViewStatus()`, `browser.waitForHandoff()`, `browser.waitForAsk()`,
 `browser.liveViewPostChat()`, `browser.liveViewDrainChat()`, and
-`runAgentTask({liveView: true})`. MCP clients get a `browser_handoff` tool.
+`runAgentTask({liveView: true})` (or omit the flag and call the agent
+`live_view` / `handoff` tools mid-task). MCP clients get a `browser_handoff` tool.
+
+**Live view is invocable anytime** — not only at process or task start. The
+code sandbox still cannot start it (sealed); host surfaces above can.
 
 ## How it works
 

@@ -315,16 +315,17 @@ const RUN_INPUT_SCHEMA = {
   required: ["code"],
 };
 
-const HANDOFF_DESCRIPTION = `Give the user a live web view of this browser — to watch you work, or to take over (human handoff).
+const HANDOFF_DESCRIPTION = `Give the user a live web view of this browser — to watch you work, or to take over (human handoff). Call this anytime mid-session, not only at the start.
 
 Start it in two situations:
 - The user asks to watch: "live view", "show me", "watch you", "share the
-  browser". Start it FIRST, relay the URL, then do the task while they watch.
-  Never claim a live view is running unless this tool returned its URL.
+  browser", "open the live view". Start it FIRST (even mid-task), relay the
+  URL, then keep working while they watch. Never claim a live view is running
+  unless this tool returned its URL.
 - Human hands are needed in the real session — an MFA prompt or passkey, a
-  CAPTCHA that resisted captcha.solve(), a login the vault cannot fill, or a
-  consequential step the user should perform personally. Cookies and page
-  state carry over both ways.
+  CAPTCHA that resisted captcha.solve(), a login the vault cannot fill, a
+  consequential step they should perform, or they explicitly ask to take over /
+  hand off. Cookies and page state carry over both ways.
 
 action "start" returns a URL: relay it to the user VERBATIM (it embeds a
 capability token — never log or share it elsewhere) and tell them what to do

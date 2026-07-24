@@ -280,23 +280,37 @@ export async function connectSessionDaemon({
  */
 export function createDaemonBrowser(channel, { session = "default" } = {}) {
   const pinned = sessionName(session);
+  const call = async (method, args = [], timeoutMs = 60_000) => {
+    let reply;
+    try {
+      reply = await channel.request(
+        {
+          op: "call",
+          method,
+          args,
+          session: pinned,
+        },
+        timeoutMs,
+      );
+    } catch (error) {
+      return { ok: false, error: `session daemon: ${error?.message || error}` };
+    }
+    if (!reply?.ok) return { ok: false, error: reply?.error || "session daemon call failed" };
+    return reply.result;
+  };
   return {
     session: pinned,
-    run: async (code, options) => {
-      let reply;
-      try {
-        reply = await channel.request({
-          op: "call",
-          method: "run",
-          args: [code, options],
-          session: pinned,
-        });
-      } catch (error) {
-        return { ok: false, error: `session daemon: ${error?.message || error}` };
-      }
-      if (!reply?.ok) return { ok: false, error: reply?.error || "session daemon call failed" };
-      return reply.result;
-    },
+    run: (code, options) => call("run", [code, options]),
+    // Live view is host-side only (sealed from run snippets). Exposing these
+    // on the daemon proxy lets `betterwright view` attach mid-session to the
+    // same browser tabs that `run`/`exec` already use.
+    startLiveView: (options) => call("startLiveView", [options], 30_000),
+    stopLiveView: () => call("stopLiveView", [], 30_000),
+    liveViewStatus: () => call("liveViewStatus", [], 30_000),
+    liveViewPostChat: (options) => call("liveViewPostChat", [options], 30_000),
+    liveViewDrainChat: () => call("liveViewDrainChat", [], 30_000),
+    waitForHandoff: (options) => call("waitForHandoff", [options], 0),
+    waitForAsk: (options) => call("waitForAsk", [options], 0),
     closeSession: () => channel.request({ op: "close_session", session: pinned }, 60_000),
     close: async () => channel.end(),
   };
