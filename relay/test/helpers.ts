@@ -3,6 +3,7 @@ import type { Env } from "../src/env";
 export class MemoryStorage {
   readonly values = new Map<string, unknown>();
   alarm: number | null = null;
+  deleteAllFailures = 0;
 
   async get<T>(key: string): Promise<T | undefined> {
     return this.values.get(key) as T | undefined;
@@ -18,8 +19,11 @@ export class MemoryStorage {
   }
 
   async deleteAll(): Promise<void> {
+    if (this.deleteAllFailures > 0) {
+      this.deleteAllFailures -= 1;
+      throw new Error("transient Durable Object deleteAll failure");
+    }
     this.values.clear();
-    this.alarm = null;
   }
 
   async setAlarm(time: number | Date): Promise<void> {
