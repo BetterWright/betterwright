@@ -20,19 +20,6 @@ export const METADATA_ADDRESSES = new Set([
   "fd00:ec2::254",
 ]);
 
-const SECRET_PATTERN =
-  /(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,})/;
-
-function looksLikeSecret(url) {
-  let decoded = url;
-  try {
-    decoded = decodeURIComponent(url);
-  } catch {
-    /* keep the raw URL */
-  }
-  return SECRET_PATTERN.test(url) || SECRET_PATTERN.test(decoded);
-}
-
 function ipv4ToInt(host) {
   const parts = host.split(".");
   if (parts.length !== 4) return null;
@@ -146,7 +133,6 @@ export class NetworkPolicy {
     this.allowLoopback = options.allowLoopback !== false;
     this.allowHosts = options.allowHosts || [];
     this.blockHosts = options.blockHosts || [];
-    this.blockSecretBearingUrls = options.blockSecretBearingUrls !== false;
     this.custom = typeof options.custom === "function" ? options.custom : null;
   }
 
@@ -196,13 +182,6 @@ export class NetworkPolicy {
     const hostname = parsed.hostname.toLowerCase();
     if (!hostname) return { allowed: false, reason: "URL has no hostname" };
     const port = parsed.port ? Number(parsed.port) : null;
-
-    if (this.blockSecretBearingUrls && looksLikeSecret(url)) {
-      return {
-        allowed: false,
-        reason: "URL contains what appears to be an API key or token",
-      };
-    }
 
     const decision = this.checkHost(hostname, port);
     if (this.custom) {

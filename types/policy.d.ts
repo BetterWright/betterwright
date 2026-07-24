@@ -17,7 +17,6 @@ export interface NetworkPolicyOptions {
   allowLoopback?: boolean;
   allowHosts?: string[];
   blockHosts?: string[];
-  blockSecretBearingUrls?: boolean;
   custom?: NetworkPolicyCustom;
 }
 
@@ -31,7 +30,6 @@ export class NetworkPolicy {
   allowLoopback: boolean;
   allowHosts: string[];
   blockHosts: string[];
-  blockSecretBearingUrls: boolean;
   custom: NetworkPolicyCustom | null;
 
   hostMatches(entry: unknown, hostname: string, port: number | null): boolean;

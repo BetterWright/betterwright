@@ -312,10 +312,10 @@ using an alternate source or requesting human help.
 
 ## §6 — Safeguards (configure to taste)
 
-By default BetterWright blocks only cloud-metadata endpoints and secret-bearing
-URLs; the public internet, private networks, and loopback are all reachable so
-an agent can drive local dev servers and intranet hosts out of the box. Tighten
-it deliberately. Two independent layers:
+By default BetterWright blocks only cloud-metadata endpoints; the public
+internet, private networks, and loopback are all reachable so an agent can
+drive local dev servers and intranet hosts out of the box. Tighten it
+deliberately. Two independent layers:
 
 **Network — what the browser can reach** (CLI flags, `NetworkPolicy` options,
 or the MCP env vars):
