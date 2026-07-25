@@ -33,3 +33,4 @@ artifacts/
 logs/
 captcha-probe/
 tests/manual/
+internal/

@@ -40,9 +40,16 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
+// index.mjs (below) already loads agent.mjs at startup, so importing these
+// shared model-source helpers directly costs nothing extra.
+import {
+  discoveryTimeoutMs,
+  endpointDiscoverySources,
+  endpointSourceName,
+} from "../src/agent.mjs";
 import { formatAgentUsage } from "../src/agent-usage.mjs";
 import { installChromiumFork } from "../src/chromium-fork-install.mjs";
+import { collectValues, firstPositional, flagValue } from "../src/cli-flags.mjs";
 import {
   createInteractiveBrowserLifecycle,
   formatHangingText,
@@ -185,24 +192,6 @@ function policyFromFlags(flags) {
     allowHosts: collectValues(process.argv, "--allow-host"),
     blockHosts: collectValues(process.argv, "--block-host"),
   });
-}
-
-// Every value given for a repeatable flag, in argv order, accepting both
-// `--flag value` and `--flag=value`. Single source of truth for value-flag
-// parsing (flagValue builds on it). A trailing `--flag` with no value is
-// ignored; `--flag=` yields an empty string, which NetworkPolicy treats as
-// matching nothing, so it can never widen an allow list or mute a block list.
-function collectValues(argv, flag) {
-  const assigned = `${flag}=`;
-  const values = [];
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === flag) {
-      if (i + 1 < argv.length) values.push(argv[i + 1]);
-    } else if (argv[i].startsWith(assigned)) {
-      values.push(argv[i].slice(assigned.length));
-    }
-  }
-  return values;
 }
 
 // Cloaking V2 flags shared by run/repl/agent. On by default; --no-cloak-v2
@@ -515,47 +504,6 @@ async function cmdRepl(flags) {
   return 0;
 }
 
-// First value for a flag: `--flag value` wins when present (historical
-// precedence), then the first `--flag=value`; `fallback` when neither form
-// carries a value. `--flag=` is an explicit empty value, not the fallback.
-function flagValue(argv, flag, fallback) {
-  const index = argv.indexOf(flag);
-  if (index !== -1 && index + 1 < argv.length) return argv[index + 1];
-  return collectValues(argv, flag)[0] ?? fallback;
-}
-
-const VALUE_FLAGS = new Set([
-  "--allow-host",
-  "--api-key-env",
-  "--base-url",
-  "--block-host",
-  "--effort",
-  "--endpoint",
-  "--expose",
-  "--host",
-  "--locale",
-  "--model",
-  "--model-id",
-  "--platform",
-  "--port",
-  "--protocol",
-  "--provider",
-  "--public-host",
-  "--reasoning",
-  "--session",
-  "--timezone",
-  "--upstream-proxy",
-]);
-
-function firstPositional(tokens) {
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (!token.startsWith("-")) return token;
-    if (!token.includes("=") && VALUE_FLAGS.has(token)) index += 1;
-  }
-  return undefined;
-}
-
 function modelEndpointOptions(argv) {
   const baseURL =
     flagValue(argv, "--base-url") ||
@@ -598,22 +546,13 @@ function removedModelFlagMessage(argv) {
   return "";
 }
 
-const MODEL_ENDPOINT_SOURCES = new Set([
-  "openrouter",
-  "ollama",
-  "vllm",
-  "custom",
-]);
-
+// Blank means "no source requested" (list everything); any other value must
+// be a name agent.mjs itself recognizes, so the accepted spellings and the
+// error wording cannot drift from `--model source/id` parsing.
 function modelSource(value) {
-  const source = String(value || "")
-    .trim()
-    .toLowerCase();
+  const source = String(value || "").trim();
   if (!source) return "";
-  if (MODEL_ENDPOINT_SOURCES.has(source)) return source;
-  throw new Error(
-    `Unknown model source "${value}". Use openrouter, ollama, vllm, or a custom --base-url.`,
-  );
+  return endpointSourceName(source);
 }
 
 async function loadModelCatalog(
@@ -626,11 +565,7 @@ async function loadModelCatalog(
     ? [requested]
     : options.modelOptions?.baseURL
       ? ["custom"]
-      : [
-          "ollama",
-          "vllm",
-          ...(process.env.OPENROUTER_API_KEY ? ["openrouter"] : []),
-        ];
+      : endpointDiscoverySources();
   const settled = await Promise.all(
     sources.map(async (source) => {
       try {
@@ -642,11 +577,7 @@ async function loadModelCatalog(
               options.modelOptions?.allowInsecureEndpoint,
           }),
           ...(options.quick
-            ? {
-                signal: AbortSignal.timeout(
-                  source === "openrouter" ? 3_000 : 750,
-                ),
-              }
+            ? { signal: AbortSignal.timeout(discoveryTimeoutMs(source)) }
             : {}),
         });
         return {
@@ -1685,10 +1616,6 @@ async function main() {
       return 1;
   }
 }
-
-// For tests only (tests/node/cli-flags.test.mjs); the CLI has no library
-// consumers. Importing this module still runs main() below.
-export { collectValues, flagValue };
 
 main().then(
   (code) => process.exit(code),

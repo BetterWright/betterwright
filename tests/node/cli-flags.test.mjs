@@ -1,49 +1,21 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import path from "node:path";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+  collectValues,
+  firstPositional,
+  flagValue,
+} from "../../src/cli-flags.mjs";
 import { NetworkPolicy } from "../../src/policy.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const cli = path.join(root, "bin", "betterwright.mjs");
-
-// bin/betterwright.mjs runs main() on import (it is the CLI entrypoint), so
-// the exported flag helpers are exercised in a subprocess: import the CLI with
-// a benign argv (`--version`, synchronous and side-effect free), neuter
-// process.exit and console.log, then call the helpers with the argv under
-// test and print the results as JSON.
-function callHelpers(calls) {
-  const script = [
-    `process.argv = [process.argv[0], ${JSON.stringify(cli)}, "--version"];`,
-    "const write = process.stdout.write.bind(process.stdout);",
-    "console.log = () => {};",
-    "process.exit = () => {};",
-    `const mod = await import(${JSON.stringify(pathToFileURL(cli).href)});`,
-    `const calls = ${JSON.stringify(calls)};`,
-    "const results = calls.map(({ fn, argv, flag, fallback }) => mod[fn](argv, flag, fallback));",
-    "write(JSON.stringify(results));",
-  ].join("\n");
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 0, `helper subprocess failed:\n${result.stderr}`);
-  return JSON.parse(result.stdout);
-}
-
 // A realistic argv prefix: node, script path, subcommand.
-const argvFor = (...tokens) => ["node", cli, "run", ...tokens];
+const argvFor = (...tokens) => ["node", "bin/betterwright.mjs", "run", ...tokens];
 
 test("regression: --block-host=evil.com produces a non-empty block list that blocks the host", () => {
-  const [blockHosts] = callHelpers([
-    {
-      fn: "collectValues",
-      argv: argvFor("--block-host=evil.com", "https://example.com"),
-      flag: "--block-host",
-    },
-  ]);
+  const blockHosts = collectValues(
+    argvFor("--block-host=evil.com", "https://example.com"),
+    "--block-host",
+  );
   assert.deepEqual(blockHosts, ["evil.com"]);
 
   // End-to-end contract: the parsed list actually blocks the host instead of
@@ -55,35 +27,27 @@ test("regression: --block-host=evil.com produces a non-empty block list that blo
 });
 
 test("mixed space and assigned forms are all collected, in argv order", () => {
-  const [blocked, allowed] = callHelpers([
-    {
-      fn: "collectValues",
-      argv: argvFor("--block-host", "a.com", "--block-host=b.com", "--block-host", "c.com"),
-      flag: "--block-host",
-    },
-    {
-      fn: "collectValues",
-      argv: argvFor("--allow-host=x.com", "--allow-host", "y.com"),
-      flag: "--allow-host",
-    },
-  ]);
+  const blocked = collectValues(
+    argvFor("--block-host", "a.com", "--block-host=b.com", "--block-host", "c.com"),
+    "--block-host",
+  );
+  const allowed = collectValues(
+    argvFor("--allow-host=x.com", "--allow-host", "y.com"),
+    "--allow-host",
+  );
   assert.deepEqual(blocked, ["a.com", "b.com", "c.com"]);
   assert.deepEqual(allowed, ["x.com", "y.com"]);
 });
 
 test("a trailing value flag with no value is ignored and does not crash", () => {
-  const [hosts, session] = callHelpers([
-    { fn: "collectValues", argv: argvFor("--block-host"), flag: "--block-host" },
-    { fn: "flagValue", argv: argvFor("--session"), flag: "--session", fallback: "default" },
-  ]);
+  const hosts = collectValues(argvFor("--block-host"), "--block-host");
+  const session = flagValue(argvFor("--session"), "--session", "default");
   assert.deepEqual(hosts, []);
   assert.equal(session, "default");
 });
 
 test("--block-host= collects an explicit empty entry, which the policy treats as inert", () => {
-  const [hosts] = callHelpers([
-    { fn: "collectValues", argv: argvFor("--block-host="), flag: "--block-host" },
-  ]);
+  const hosts = collectValues(argvFor("--block-host="), "--block-host");
   assert.deepEqual(hosts, [""]);
 
   // An empty entry matches nothing, so it can never fail open: it does not
@@ -101,44 +65,35 @@ test("--block-host= collects an explicit empty entry, which the policy treats as
 });
 
 test("values containing = or a port survive intact", () => {
-  const [hosts, proxy] = callHelpers([
-    { fn: "collectValues", argv: argvFor("--block-host=a.com:8080"), flag: "--block-host" },
-    {
-      fn: "flagValue",
-      argv: argvFor("--upstream-proxy=http://user:pass@proxy.example:3128/?opt=1"),
-      flag: "--upstream-proxy",
-    },
-  ]);
+  const hosts = collectValues(argvFor("--block-host=a.com:8080"), "--block-host");
+  const proxy = flagValue(
+    argvFor("--upstream-proxy=http://user:pass@proxy.example:3128/?opt=1"),
+    "--upstream-proxy",
+  );
   assert.deepEqual(hosts, ["a.com:8080"]);
   assert.equal(proxy, "http://user:pass@proxy.example:3128/?opt=1");
 });
 
 test("a longer flag sharing the prefix never matches (--block-hostile vs --block-host)", () => {
-  const [hosts, single] = callHelpers([
-    {
-      fn: "collectValues",
-      argv: argvFor("--block-hostile=evil.com", "--block-hostile", "evil.com"),
-      flag: "--block-host",
-    },
-    {
-      fn: "flagValue",
-      argv: argvFor("--block-hostile=evil.com"),
-      flag: "--block-host",
-      fallback: "unmatched",
-    },
-  ]);
+  const hosts = collectValues(
+    argvFor("--block-hostile=evil.com", "--block-hostile", "evil.com"),
+    "--block-host",
+  );
+  const single = flagValue(
+    argvFor("--block-hostile=evil.com"),
+    "--block-host",
+    "unmatched",
+  );
   assert.deepEqual(hosts, []);
   assert.equal(single, "unmatched");
 });
 
 test("flagValue keeps space-form precedence and supports both syntaxes", () => {
-  const [assigned, spaceWins, firstSpace, explicitEmpty, missing] = callHelpers([
-    { fn: "flagValue", argv: argvFor("--model=openrouter/vendor/model"), flag: "--model" },
-    { fn: "flagValue", argv: argvFor("--model=a", "--model", "b"), flag: "--model" },
-    { fn: "flagValue", argv: argvFor("--model", "a", "--model=b"), flag: "--model" },
-    { fn: "flagValue", argv: argvFor("--session="), flag: "--session", fallback: "default" },
-    { fn: "flagValue", argv: argvFor(), flag: "--model", fallback: "fallback" },
-  ]);
+  const assigned = flagValue(argvFor("--model=openrouter/vendor/model"), "--model");
+  const spaceWins = flagValue(argvFor("--model=a", "--model", "b"), "--model");
+  const firstSpace = flagValue(argvFor("--model", "a", "--model=b"), "--model");
+  const explicitEmpty = flagValue(argvFor("--session="), "--session", "default");
+  const missing = flagValue(argvFor(), "--model", "fallback");
   assert.equal(assigned, "openrouter/vendor/model");
   // The `--flag value` form wins over `--flag=value` regardless of order,
   // matching the CLI's historical precedence.
@@ -147,4 +102,16 @@ test("flagValue keeps space-form precedence and supports both syntaxes", () => {
   // `--flag=` is an explicit empty value, not the fallback.
   assert.equal(explicitEmpty, "");
   assert.equal(missing, "fallback");
+});
+
+test("firstPositional skips value-flag arguments but not assigned or boolean flags", () => {
+  // `--session default` consumes its value, so the task is the positional.
+  assert.equal(firstPositional(["--session", "default", "the task"]), "the task");
+  // The assigned form carries its value inline; nothing extra is consumed.
+  assert.equal(firstPositional(["--session=default", "the task"]), "the task");
+  // Boolean flags consume nothing, so the next token is positional.
+  assert.equal(firstPositional(["--headed", "the task"]), "the task");
+  // A value flag's argument must never be mistaken for a positional.
+  assert.equal(firstPositional(["--model", "gpt-5.6-sol"]), undefined);
+  assert.equal(firstPositional([]), undefined);
 });

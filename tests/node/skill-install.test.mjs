@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
@@ -15,9 +14,10 @@ import {
   staleAgentSkillTip,
   wrapClaudeSkillMarkdown,
 } from "../../src/skill-install.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function tempHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "bw-skill-"));
+  return makeTempDir("bw-skill-");
 }
 
 test("claudeSkillFrontmatter stamps generated_by with the package version", () => {

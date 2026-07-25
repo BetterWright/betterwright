@@ -37,7 +37,7 @@ export interface AgentModel {
     system: string;
     messages: AgentMessage[];
     tools: AgentTool[];
-    /** Aborted when the run's wall-clock budget expires. */
+    /** Aborted when the run's wall-clock budget expires or the caller's `signal` stops the run. */
     signal: AbortSignal;
   }): Promise<{ text: string; toolCalls: AgentToolCall[]; stopReason?: string; usage?: AgentUsage | null }>;
 }
@@ -79,6 +79,12 @@ export interface RunAgentTaskOptions {
   maxTranscriptChars?: number;
   /** Override or disable the built-in vault. Ignored when an external browser is passed. */
   vault?: CredentialVault | false | null;
+  /**
+   * Stop the run early: the in-flight model call or browser step is aborted,
+   * the loop returns a partial result with `reason: "interrupted"`, and the
+   * transcript is preserved so the session can pick up where it left off.
+   */
+  signal?: AbortSignal;
   onStep?: (event: AgentStepEvent) => void;
   /**
    * When provided, the loop exposes an `ask` tool so the model can put a
@@ -123,18 +129,22 @@ export interface AgentResult {
   /**
    * How the run ended. Success reasons: "answered" (prose answer), "done"
    * (done tool or finalAnswer). Failure reasons: "stopped" (no answer),
-   * "timeout" (wall-clock budget), "context_limit" (transcript budget),
-   * "max_tokens" (the provider truncated the final response at the
-   * output-token limit — `answer` holds the fragment), "refusal" (the model
-   * declined the task), "model_error" (a transient provider failure survived
-   * the bounded retries — the transcript is preserved).
+   * "interrupted" (the caller's `signal` stopped the run — the transcript is
+   * preserved), "timeout" (wall-clock budget), "context_limit" (transcript
+   * budget), "no_progress" (the same browser step failed identically five
+   * times in a row), "max_tokens" (the provider truncated the final response
+   * at the output-token limit — `answer` holds the fragment), "refusal" (the
+   * model declined the task), "model_error" (a transient provider failure
+   * survived the bounded retries — the transcript is preserved).
    */
   reason:
     | "answered"
     | "stopped"
     | "done"
+    | "interrupted"
     | "timeout"
     | "context_limit"
+    | "no_progress"
     | "max_tokens"
     | "refusal"
     | "model_error";
@@ -163,6 +173,15 @@ export interface AgentResult {
 }
 
 export function runAgentTask(options: RunAgentTaskOptions): Promise<AgentResult>;
+
+/**
+ * Close an unfinished turn so a saved transcript stays a valid conversation:
+ * when the last message is an assistant turn with unanswered tool calls, a
+ * stub result is appended for each so providers accept the transcript on the
+ * next request. Mutates `messages` in place and returns it; a no-op on a
+ * transcript that already ends cleanly.
+ */
+export function sealTranscript(messages: AgentMessage[], reason?: string): AgentMessage[];
 
 export function resolveModel(model: string | AgentModel, modelOptions?: Record<string, unknown>): AgentModel;
 export function resolveModelSelection(
@@ -211,6 +230,22 @@ export interface ModelEndpointPreset {
 export const MODEL_ENDPOINT_PRESETS: Readonly<
   Record<ModelEndpointSource, ModelEndpointPreset>
 >;
+
+/**
+ * Canonical endpoint-source parsing: case-, dash-, and underscore-insensitive,
+ * falling back to `"custom"`. Shared with the CLI so `betterwright models` and
+ * `--model source/id` accept exactly the same names.
+ */
+export function endpointSourceName(value: string): ModelEndpointSource;
+
+/**
+ * Sources probed during bare-id model discovery: the loopback runtimes always,
+ * OpenRouter only when `OPENROUTER_API_KEY` is set (its probe is a remote call).
+ */
+export function endpointDiscoverySources(): ModelEndpointSource[];
+
+/** Per-source quick-probe budget, in milliseconds. */
+export function discoveryTimeoutMs(source: ModelEndpointSource): number;
 
 export interface EndpointModelOptions {
   /** Omit when `baseURL` identifies a custom endpoint. */

@@ -251,3 +251,49 @@ test("a rejected asynchronous redaction reset cannot reject worker shutdown", as
   await browser.close();
   assert.equal(resets, 2);
 });
+
+test("a throwing redact() withholds the envelope instead of leaking it", async (t) => {
+  const home = tempHome();
+  const vault = {
+    async handleRequest() {
+      return {};
+    },
+    resetRedactionSecrets() {},
+    redact() {
+      throw new Error("redaction exploded");
+    },
+  };
+  const browser = new BetterWright({ home, headless: true, vault });
+  t.after(async () => {
+    await browser.close().catch(() => {});
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  await browser._start();
+  const child = browser._process;
+  const dispatched = browser._dispatch({ type: "test_noop" }, 30);
+  const executionId = [...browser._pending.entries()].find(
+    ([, pending]) => pending.child === child,
+  )?.[0];
+  assert.ok(executionId);
+  emitWorkerMessage(child, {
+    type: "result",
+    id: executionId,
+    ok: true,
+    result: "leaked-secret-material",
+    events: [{ note: "also-secret-material" }],
+    pendingCredential: { pendingId: "p-1", origin: "https://signup.example.test" },
+  });
+
+  const result = await within(dispatched, 2_000, "dispatch did not settle");
+  // Fail closed: none of the unredacted worker fields may survive; only the
+  // documented secret-free pendingCredential is preserved so a staged
+  // generated credential can still be committed or discarded.
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "Result withheld: secret redaction failed.");
+  assert.deepEqual(result.pendingCredential, {
+    pendingId: "p-1",
+    origin: "https://signup.example.test",
+  });
+  assert.ok(!JSON.stringify(result).includes("secret-material"));
+});

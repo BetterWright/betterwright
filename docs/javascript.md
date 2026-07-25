@@ -14,7 +14,7 @@ new BetterWright({
   home,             // state dir; default $BETTERWRIGHT_HOME or ~/.betterwright
   policy,           // a NetworkPolicy; default: safe policy
   vault,            // optional { handleRequest(action, payload, origin), redact? }
-  browser: "cloak", // the only backend; may be omitted
+  browser: "cloak", // backend selector; "cloak" is the only accepted value
   headless: "auto", // visible with a display, headless on servers/CI
   publicSearchPolicy: "allow", // default; set "block" to force host-tool search
   searchMinIntervalMs: 0,
@@ -24,9 +24,11 @@ new BetterWright({
 });
 ```
 
-The managed Cloak backend is the only browser backend. Headed and headless modes
-keep BetterWright's persistent profile and policy while reducing common
-stock-browser automation signals; they do not guarantee undetectability.
+The `browser` option is not how you choose a browser: when the [Chromium
+fork](chromium-fork.md) artifact is installed (macOS arm64 / Linux x64), it is
+used automatically, with managed CloakBrowser as the fallback. Headed and
+headless modes keep BetterWright's persistent profile and policy while reducing
+common stock-browser automation signals; they do not guarantee undetectability.
 
 Public Google, Bing, and DuckDuckGo result UIs are permitted by default; prefer
 routing broad discovery through the host's search tool anyway, and set

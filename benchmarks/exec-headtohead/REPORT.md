@@ -2,12 +2,20 @@
 
 **Date:** 2026-07-19 (15-scenario battery, three full rounds)
 **Model (both sides):** `gpt-5.6-sol` — **reasoning effort `low`**
-**BetterWright:** `betterwright exec "<task>" --model codex` (codex OAuth → ChatGPT
-backend Responses API, direct)
+**BetterWright:** `betterwright exec "<task>" --model gpt-5.6-sol` (codex OAuth →
+ChatGPT backend Responses API, direct). The runs predate the current model
+selector and were invoked as `--model codex`, a shortcut today's CLI rejects in
+favor of real model ids — the command above is the equivalent current
+invocation.
 **Reference:** the reference agent's own CLI, `exec -m openai-codex/gpt-5.6-sol
 --effort low "<task>"`, with an explicit **no-subagents instruction** appended to
 every task (BetterWright has no subagents, so the reference's child-session
 machinery is prompt-disabled for fairness; it has no CLI flag for it).
+
+The comparison agent is intentionally unnamed. Reproducing its column requires
+setting `REFERENCE_CLI` to a CLI installed on your own machine (the runner's
+`reference-agent` default is a placeholder that exists nowhere); only the
+BetterWright column is independently reproducible as published.
 
 Both harnesses drive the **same model at the same effort**, so this isolates the
 **agent scaffold** — the loop shape, how work is batched, and how a task ends —

@@ -34,6 +34,11 @@ import {
   PUBLIC_SEARCH_BLOCK_ADVICE,
 } from "./challenges.mjs";
 import {
+  chromiumArgsWarning,
+  mergeChromiumArgs,
+  normalizeChromiumArgs,
+} from "./chromium-args.mjs";
+import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   chromiumForkContextOptions,
   resolveChromiumForkBinary,
@@ -51,6 +56,7 @@ import {
   assertRotationPreservesMatchMode,
   MAX_PENDING_CREDENTIAL_ORIGINS,
   pendingCredentialRecovery,
+  redactSecretsDeep,
   validateCredentialMatchMode,
 } from "./credential-constants.mjs";
 import {
@@ -101,7 +107,12 @@ import {
   filterInteractive,
   parseAnnotationBoxes,
 } from "./snapshot.mjs";
-import { installVaultCapture } from "./vault-capture.mjs";
+import { httpOrigin, installVaultCapture } from "./vault-capture.mjs";
+
+// Re-exported for source compatibility: the `betterwright/worker` subpath now
+// resolves to worker-constants.mjs, but direct imports of this file keep the
+// constant they had before the extraction.
+export { METADATA_RESOLVER_RULES } from "./worker-constants.mjs";
 
 const WORKER_VERSION = 1;
 const MAX_EVENTS = 40;
@@ -120,19 +131,6 @@ const DEFAULT_SCREENSHOT_PIXEL_LIMIT = 40_000_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const MAX_ACTIVE_SECRETS = 200;
 
-/**
- * @deprecated Retained for source compatibility. BetterWright no longer passes
- * `--host-resolver-rules` because Chromium displays a persistent unsupported
- * command-line warning whenever that flag is present.
- */
-export const METADATA_RESOLVER_RULES = [
-  "MAP metadata.google.internal ^NOTFOUND",
-  "MAP metadata.goog ^NOTFOUND",
-  "MAP 169.254.* ^NOTFOUND",
-  "MAP 100.100.100.200 ^NOTFOUND",
-  "MAP fd00:ec2::* ^NOTFOUND",
-].join(", ");
-
 let browserContext = null;
 let launchPromise = null;
 let launchConfig = null;
@@ -140,6 +138,10 @@ let profileLock = null;
 let profileLockHeartbeat = null;
 let profileMode = "persistent";
 let profileWarning = "";
+// Non-empty when caller-supplied Chromium switches were dropped as duplicates
+// of BetterWright's own, so the caller is told rather than left wondering why
+// a switch had no effect.
+let chromiumArgsNote = "";
 // Set by the client via `--import` when stealthRuntimeFix is on: the driver is
 // patchright-core and every page.evaluate runs in an isolated world.
 const stealthActive = process.env.BETTERWRIGHT_STEALTH_ACTIVE === "1";
@@ -431,15 +433,6 @@ function rpc(method, payload, executeId) {
   });
 }
 
-function urlOrigin(url) {
-  try {
-    const parsed = new URL(url);
-    return ["http:", "https:"].includes(parsed.protocol) ? parsed.origin : "";
-  } catch {
-    return "";
-  }
-}
-
 async function guardUrl(url, details, executeId) {
   let scheme = "";
   try {
@@ -563,29 +556,15 @@ async function closeDownloadGuard() {
   }
 }
 
+// Thin wrappers over the shared algorithm in credential-constants.mjs, bound
+// to this worker's module-level secret set. redactText additionally coerces
+// null/undefined to "" because worker call sites pass raw error messages.
 function redactText(value) {
-  let text = String(value ?? "");
-  const secrets = [...activeSecrets].sort(
-    (left, right) => right.length - left.length,
-  );
-  for (const secret of secrets) {
-    if (!secret) continue;
-    text = text.split(secret).join("[REDACTED_PASSWORD]");
-  }
-  return text;
+  return redactSecretsDeep(String(value ?? ""), activeSecrets);
 }
 
-function redactDeep(value, seen = new WeakSet()) {
-  if (typeof value === "string") return redactText(value);
-  if (!value || typeof value !== "object") return value;
-  if (seen.has(value)) return "[Circular]";
-  seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => redactDeep(item, seen));
-  const output = {};
-  for (const [key, item] of Object.entries(value)) {
-    output[redactText(key)] = redactDeep(item, seen);
-  }
-  return output;
+function redactDeep(value) {
+  return redactSecretsDeep(value, activeSecrets);
 }
 
 function sessionFor(id) {
@@ -625,7 +604,7 @@ function stampModelActivity(session) {
   for (const page of session.pages.values()) {
     if (page.isClosed()) continue;
     modelActivityPages.set(page, now);
-    const origin = urlOrigin(page.url());
+    const origin = httpOrigin(page.url());
     if (!origin) continue;
     modelActivityOrigins.delete(origin);
     modelActivityOrigins.set(origin, now);
@@ -1503,6 +1482,23 @@ async function ensureBrowser(config) {
       });
       if (fonts) forkEnv = { ...process.env, FONTCONFIG_FILE: fonts.confPath };
     }
+    // Caller-supplied switches go last, after every argument BetterWright
+    // derives, so a host can tune things the managed list has no opinion on
+    // (`--disable-gpu` on a GPU-less server being the motivating case).
+    // Switches that collide with a managed one are dropped rather than
+    // appended: Chromium resolves duplicates last-wins, so appending would
+    // override BetterWright's value instead of losing to it. See
+    // src/chromium-args.mjs.
+    // The client already resolved the option and the environment into one
+    // list; re-validating here keeps the IPC boundary from being a way to
+    // smuggle a reserved switch past the client's checks.
+    const mergedArgs = mergeChromiumArgs(
+      args,
+      normalizeChromiumArgs(launchConfig.chromiumArgs, "chromiumArgs"),
+    );
+    const launchArgs = mergedArgs.args;
+    chromiumArgsNote = chromiumArgsWarning(mergedArgs.ignored);
+
     const proxy = {
       server: `socks5://127.0.0.1:${transportProxyPort}`,
       // Chromium otherwise bypasses the proxy for localhost/link-local
@@ -1527,7 +1523,7 @@ async function ensureBrowser(config) {
           headless,
           ...chromiumForkContextOptions(),
           proxy,
-          args,
+          args: launchArgs,
           // Context-level UA baseline: correct User-Agent from the very first
           // navigation, before per-page CDP emulation attaches.
           ...(forkIdentity ? { userAgent: forkIdentity.userAgent } : {}),
@@ -1562,7 +1558,7 @@ async function ensureBrowser(config) {
         humanize: false,
         ...(viewport ? { viewport } : {}),
         proxy,
-        args,
+        args: launchArgs,
         contextOptions: {
           acceptDownloads: true,
           serviceWorkers: "block",
@@ -1607,7 +1603,15 @@ async function ensureBrowser(config) {
           prefsPath: path.join(prefsRoot, "save-prompt.json"),
         });
       } catch {
+        // Launching with a browser that cannot offer to save passwords beats
+        // not launching at all, so the failure is absorbed — but the launching
+        // session is told, because the degradation is otherwise invisible
+        // until a typed password silently never reaches the vault.
         vaultCapture = null;
+        sessionFor(soleExecutingSession() || "default").warnings.push(
+          "Credential capture could not be attached; passwords typed in the " +
+            "browser will not be offered for vault save.",
+        );
       }
     }
     launchedContext.on("page", (page) => {
@@ -2054,7 +2058,7 @@ function wrap(value, realm) {
 
 async function currentOrigin(session) {
   const page = await ensureSessionPage(session);
-  const origin = urlOrigin(page.url());
+  const origin = httpOrigin(page.url());
   if (!origin)
     throw new Error(
       "Credentials require the current page to have an http(s) origin.",
@@ -2084,7 +2088,7 @@ async function finalizePendingCredential(
   trustedOrigin = "",
 ) {
   const trackedOrigin = session.pendingCredentialOrigins.get(pendingId) || "";
-  const suppliedOrigin = trustedOrigin ? urlOrigin(trustedOrigin) : "";
+  const suppliedOrigin = trustedOrigin ? httpOrigin(trustedOrigin) : "";
   if (trustedOrigin && !suppliedOrigin) {
     const error = new Error(
       "The trusted pending credential origin is not a valid http(s) origin.",
@@ -2707,7 +2711,7 @@ async function credentialOriginForFrame(frame) {
 
   let current = frame;
   while (current) {
-    const origin = urlOrigin(current.url());
+    const origin = httpOrigin(current.url());
     if (origin) return origin;
     const url = String(current.url() || "");
     if (!["about:blank", "about:srcdoc"].includes(url)) return "";
@@ -2921,8 +2925,8 @@ async function pinnedCredentialOrigin(frame, handles) {
       "The explicit credential targets became detached or their document changed before vault access.",
     );
   }
-  const documentOriginBefore = urlOrigin(documentUrlBefore);
-  const documentOriginAfter = urlOrigin(documentUrlAfter);
+  const documentOriginBefore = httpOrigin(documentUrlBefore);
+  const documentOriginAfter = httpOrigin(documentUrlAfter);
   if (
     documentUrlAfter == null ||
     !origin ||
@@ -3070,6 +3074,7 @@ async function buildEnvelope(
     artifacts: redactDeep(artifacts),
     warnings: [
       ...(profileWarning ? [profileWarning] : []),
+      ...(chromiumArgsNote ? [chromiumArgsNote] : []),
       ...(stealthActive ? [STEALTH_WARNING] : []),
       ...(challenges.length ? [challenges[0].advice] : []),
       ...(drainSessionWarnings ? session.warnings.splice(0) : []),

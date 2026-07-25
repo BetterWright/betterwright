@@ -21,7 +21,9 @@ const BINDING_NAME = "__bwVaultEvent";
 const WORLD_NAME = "betterwright-vault";
 const MAX_NEVER_ORIGINS = 500;
 
-function httpOrigin(url) {
+/** The http(s) origin of a URL, or "" for anything unparseable or non-web.
+ * Exported because the worker shares this exact rule for origin attribution. */
+export function httpOrigin(url) {
   try {
     const parsed = new URL(String(url || ""));
     return ["http:", "https:"].includes(parsed.protocol) ? parsed.origin : "";

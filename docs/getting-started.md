@@ -106,6 +106,34 @@ Force the managed path even with an artifact installed:
 export BETTERWRIGHT_CHROMIUM_ROOT=off
 ```
 
+### Extra Chromium switches
+
+BetterWright builds its own launch arguments, but a host can append switches the
+managed list has no opinion on. The common case is a server with no GPU, where
+Chromium otherwise runs a SwiftShader `gpu-process` that burns a fraction of a
+core for the life of the browser, compositing frames nothing will display:
+
+```bash
+export BETTERWRIGHT_CHROMIUM_ARGS="--disable-gpu --disable-software-rasterizer"
+```
+
+Whitespace-separated; quote a value that contains spaces
+(`--host-rules="MAP * 127.0.0.1"`). The same list is settable in code as
+`chromiumArgs: ["--disable-gpu"]`, and both sources apply together.
+
+Two rules keep this from undermining the managed browser:
+
+- **Reserved switches are rejected** with a `TypeError` naming the supported
+  alternative — proxy selection (`--proxy-server`, `--no-proxy-server`, …),
+  remote debugging, `--user-data-dir` / `--profile-directory`, and the identity
+  family (`--fingerprint*`, `--lang`, `--bw-timezone`, `--headless`). These are
+  the switches that decide where traffic goes, who can drive the browser, which
+  profile is opened, and what identity is presented.
+- **Duplicates are dropped, not appended.** Chromium resolves a repeated switch
+  last-wins, so appending one that BetterWright already sets would override its
+  value rather than lose to it. A dropped switch is reported in the next
+  result's `warnings` so it never fails silently.
+
 **Timezone / locale must match egress.** The fork does not hard-code any
 country. Pin `timezone` and `locale` to the geography of the IP sites see
 (constructor options, `--timezone` / `--locale`, or `geoip: true` with

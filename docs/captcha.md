@@ -26,8 +26,12 @@ state, and continue on the next turn.
 local:
 
 ```js
-return await captcha.solve({ timeout: 45_000, maxStages: 3 });
+return await captcha.solve({ timeoutMs: 45_000, maxStages: 3 });
 ```
+
+`timeoutMs` is in **milliseconds** (clamped to 3000–180000) — unlike the host
+`run()` timeout, which is in seconds. `timeout` is accepted as an alias with
+the same millisecond unit; prefer `timeoutMs` so the unit stays visible.
 
 | Field | Meaning |
 | --- | --- |

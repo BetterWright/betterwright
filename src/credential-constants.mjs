@@ -3,6 +3,49 @@
 // both sides must agree on; it stays dependency-free so either side can
 // import it without pulling in the vault or browser runtime.
 
+export const REDACTED_PASSWORD_PLACEHOLDER = "[REDACTED_PASSWORD]";
+
+/**
+ * Deep-scrub every occurrence of the given secret strings from a value,
+ * returning a redacted copy without mutating the input. This is the one
+ * redaction algorithm: the worker's envelope redaction and the host vault's
+ * `redact()` both delegate here so the two defense layers can never drift.
+ * The rules are deliberate and security-relevant:
+ * - secrets are replaced longest-first, so a secret that contains another
+ *   secret is scrubbed whole instead of leaving a recognizable remainder;
+ * - replacement uses split/join, so secrets are matched literally rather
+ *   than as regular expressions;
+ * - object keys are redacted as well as values, because a secret can leak
+ *   through either position;
+ * - cycles collapse to "[Circular]" so redaction terminates on any input.
+ */
+export function redactSecretsDeep(value, secrets) {
+  const ordered = [...secrets]
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  const redactText = (input) => {
+    let output = String(input);
+    for (const secret of ordered) {
+      output = output.split(secret).join(REDACTED_PASSWORD_PLACEHOLDER);
+    }
+    return output;
+  };
+  const seen = new WeakSet();
+  const redactValue = (input) => {
+    if (typeof input === "string") return redactText(input);
+    if (!input || typeof input !== "object") return input;
+    if (seen.has(input)) return "[Circular]";
+    seen.add(input);
+    if (Array.isArray(input)) return input.map(redactValue);
+    const output = {};
+    for (const [key, item] of Object.entries(input)) {
+      output[redactText(key)] = redactValue(item);
+    }
+    return output;
+  };
+  return redactValue(value);
+}
+
 export const VAULT_MATCH_MODES = Object.freeze([
   "base-domain",
   "host",
