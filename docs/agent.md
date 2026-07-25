@@ -94,7 +94,7 @@ Flags:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--model <id>` | `claude-opus-4-8` (or `BETTERWRIGHT_MODEL`) | Real model id. Bare ids auto-select a source when unique; use `source/id` only to pin a collision. See [Choosing a model](#choosing-a-model) |
+| `--model <id>` | whatever backend you have configured (or `BETTERWRIGHT_MODEL`) | Real model id. Bare ids auto-select a source when unique; use `source/id` only to pin a collision. See [Choosing a model](#choosing-a-model) |
 | `--base-url <url>` | none | Pin `--model` to a custom OpenAI-compatible `/v1` base URL (`--endpoint` is an alias) |
 | `--api-key-env <name>` | source default | Read the API key from a named environment variable; raw keys are never accepted as CLI values |
 | `--protocol <name>` | `chat` | `chat` for Chat Completions (widest compatibility), or `responses` when the server implements it |
@@ -183,6 +183,18 @@ tool and never stalls on a question.
 are no adapter nicknames: `claude`, `codex`, and `grok` by themselves are
 rejected. Pick the id you want to run; BetterWright figures out *where* it
 comes from.
+
+### When you name none
+
+Omitting `--model` uses whichever backend you have actually configured, in this
+order: `ANTHROPIC_API_KEY` (with the `@anthropic-ai/sdk` peer installed) →
+`claude-opus-4-8`; a `betterwright auth --login codex` session → `gpt-5.6-sol`;
+a `betterwright auth --login grok` session → `grok-4.3`. `BETTERWRIGHT_MODEL`
+overrides all of it, and `--model` overrides that.
+
+With nothing configured, `exec` and the console say so before doing any work
+and print the ways to fix it, rather than failing inside a model adapter.
+`betterwright doctor` reports the same thing under **Built-in agent**.
 
 ### How selection works
 

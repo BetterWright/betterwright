@@ -119,6 +119,24 @@ export function installVaultCapture(context, deps = {}) {
     return "";
   };
 
+  /**
+   * Hand the observed submission to the vault.
+   *
+   * `generateAndFill` types its secret into the page, so the sensor sees a
+   * perfectly ordinary accepted submission and used to save it a second time —
+   * leaving two records per agent signup. Worse, the capture's own
+   * `base-domain` default silently widened a credential the caller had asked
+   * to scope to `host` or `exact-origin`: the same password ended up offered
+   * across the whole registrable domain.
+   *
+   * `deferToPending` lets the vault suppress exactly that case and nothing
+   * else. The decision has to happen inside the vault because it turns on
+   * whether this password *is* the pending secret, and the pending secret is
+   * never returned out here. Deciding by account name instead would drop a
+   * different password typed at the same site during the pending window — a
+   * failed fill retried by hand, or a headed user's own "Save password?" —
+   * and that one is unrecoverable.
+   */
   async function saveCapture(capture) {
     try {
       const session = deps.sessionForPage(capture.page);
@@ -127,6 +145,7 @@ export function installVaultCapture(context, deps = {}) {
         password: capture.password,
         label: hostLabel(capture.origin),
         matchMode: "base-domain",
+        deferToPending: true,
       });
     } catch (error) {
       fail(error);

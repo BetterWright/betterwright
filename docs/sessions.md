@@ -79,7 +79,15 @@ silently resuming mid-story.
 ## Security model
 
 The socket is `0600` inside the `0700` home — the ssh-agent shape, same-user
-processes only. On Windows it is a named pipe under the same account. Sessions
+processes only. On Windows it is a named pipe under the same account.
+
+A unix socket path is capped by `sockaddr_un.sun_path` (104 bytes on macOS, 108
+on Linux). If `$BETTERWRIGHT_HOME` is deep enough that `<home>/daemon.sock`
+would exceed that, the daemon binds a short socket derived from the home inside
+a `0700` directory in the system temp dir, whose ownership is verified before
+use — same `0600` socket, same same-user-only rule. Without this the daemon
+died on `listen` and every command silently fell back to a private,
+non-persistent browser. Sessions
 are **collaboration scopes, not a security boundary**: any client that can open
 the socket can drive any session. What *is* a boundary is the worker process —
 model-authored snippets run there, not in the daemon, and never see Node's
@@ -92,3 +100,8 @@ network policy. See [architecture.md](architecture.md).
 count, and per-session idle time, watchers, and in-flight calls. The daemon's
 own stderr goes to `<BETTERWRIGHT_HOME>/daemon.log` (rotated once past 4 MB);
 if a run ends with a connection error, that file is where the reason is.
+
+A result carrying the warning `session persistence unavailable (…)` means the
+command ran in a private browser that closed when it exited — tabs and page
+state did not survive. The parenthesised reason says why; `daemon.log` says the
+rest.

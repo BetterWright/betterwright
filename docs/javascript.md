@@ -211,6 +211,31 @@ selectors only when detection reports ambiguity. Rotation forms can pin
 `currentPasswordSelector`, `passwordSelector`, and `confirmPasswordSelector`
 together. Set `vault: false` (or `null`) to disable credential helpers entirely.
 
+### Reading secrets back (trusted hosts only)
+
+Everything above is deliberately incapable of returning a secret. When your
+host needs to act for the *person* who owns the vault — the same job
+[`betterwright vault`](credentials.md#getting-a-password-back-betterwright-vault)
+does — the local vault object exposes an owner-only API:
+
+```js
+import { createLocalCredentialVault } from "betterwright/vault";
+
+const vault = createLocalCredentialVault({ home: process.env.BETTERWRIGHT_HOME });
+
+const { credentials, pendingCredentials } = await vault.ownerList({ query: "github" });
+const { secret } = await vault.ownerReveal(credentials[0].id);   // audited
+await vault.ownerRemove(credentials[0].id);
+const { entries } = await vault.ownerAudit({ limit: 50 });
+```
+
+These are **not** part of `handleRequest`, so the browser worker — and
+therefore model-authored snippet code — cannot reach them however a snippet is
+written. Never surface them as a model-callable tool, and never put a revealed
+value into a prompt, a log, or a tool result. `ownerReveal` writes an
+`owner-reveal` entry to the metadata-only audit log; a custom vault adapter
+does not need to implement any of this.
+
 ## Sessions
 
 Pass `{ session: "name" }` to `run()`. Each session is an isolated set of pages

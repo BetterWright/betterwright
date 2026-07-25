@@ -7,6 +7,8 @@ import {
   daemonConfigSignature,
   daemonPackageVersion,
   daemonSocketPath,
+  ensureSocketDirectory,
+  fallbackSocketDir,
   normalizeDaemonConfig,
   startSessionDaemon,
 } from "../../src/daemon.mjs";
@@ -379,4 +381,124 @@ test("normalizeDaemonConfig is order-insensitive and default-stable", () => {
     normalizeDaemonConfig({}).cloak.stealthRuntimeFix,
     false,
   );
+});
+
+// A unix socket path longer than sockaddr_un.sun_path (104 bytes on macOS,
+// 108 on Linux) fails `listen` with EINVAL. Before the fallback, a deep
+// BETTERWRIGHT_HOME therefore lost session persistence silently: the daemon
+// died, and every run fell back to a private browser.
+test("an over-long home falls back to a bindable socket path", { skip: process.platform === "win32" }, () => {
+  const shallow = "/tmp/bw";
+  assert.equal(daemonSocketPath(shallow), "/tmp/bw/daemon.sock");
+
+  const deep = `/tmp/${"nested/".repeat(20)}home`;
+  const fallback = daemonSocketPath(deep);
+  assert.notEqual(fallback, `${deep}/daemon.sock`);
+  assert.ok(
+    Buffer.byteLength(fallback) <= 104,
+    `fallback socket path is still ${Buffer.byteLength(fallback)} bytes`,
+  );
+  assert.ok(fallback.startsWith(fallbackSocketDir()));
+
+  // Different homes must not collide onto one socket.
+  assert.notEqual(fallback, daemonSocketPath(`${deep}-other`));
+  // And resolution is stable, so a client and the daemon agree.
+  assert.equal(fallback, daemonSocketPath(deep));
+});
+
+test("an over-long symlinked home hashes the same before and after it exists", { skip: process.platform === "win32" }, () => {
+  // The client computes the socket path before spawnDaemon creates the home;
+  // the daemon computes it after. For an over-long home under a symlinked
+  // ancestor those two moments must agree, or the client polls a socket the
+  // daemon never binds and silently loses session persistence — which is
+  // exactly what a naive realpath (resolvable only once the path exists) did.
+  const root = makeTempDir("betterwright-symhome-");
+  const real = `${root}/real`;
+  fs.mkdirSync(real);
+  const link = `${root}/link`;
+  fs.symlinkSync(real, link);
+  const tail = `${"d".repeat(40)}/${"e".repeat(40)}/${"f".repeat(40)}`;
+  const deep = `${link}/${tail}`;
+  assert.ok(Buffer.byteLength(`${deep}/daemon.sock`) > 100, "fixture must be over-long");
+
+  const beforeExists = daemonSocketPath(deep); // client, home not yet created
+  fs.mkdirSync(deep, { recursive: true });
+  const afterExists = daemonSocketPath(deep); // daemon, home now created
+  assert.equal(beforeExists, afterExists);
+
+  // The symlinked spelling and its real target still converge onto one socket.
+  assert.equal(daemonSocketPath(`${real}/${tail}`), afterExists);
+});
+
+test("the shared-tmpdir fallback directory is created owner-only", { skip: process.platform === "win32" }, () => {
+  // Only the fallback lives under a shared os.tmpdir(), so only it is
+  // hardened to 0700.
+  const socketPath = `${fallbackSocketDir()}/test-${process.pid}.sock`;
+
+  ensureSocketDirectory(socketPath);
+
+  const stats = fs.statSync(fallbackSocketDir());
+  assert.equal(stats.mode & 0o777, 0o700);
+  // Idempotent: a second call on an existing directory must not throw.
+  ensureSocketDirectory(socketPath);
+});
+
+test("a socket in the user's own home is not hardened or rejected", { skip: process.platform === "win32" }, () => {
+  // The natural path puts the socket directly in BETTERWRIGHT_HOME. That is
+  // the user's directory: a previous version rejected a symlinked home and
+  // silently chmod-ed it to 0700, breaking setups that worked. It must now be
+  // left as the user set it.
+  const realHome = makeTempDir("betterwright-real-home-");
+  fs.chmodSync(realHome, 0o755); // a home the user deliberately left group-readable
+  ensureSocketDirectory(`${realHome}/daemon.sock`);
+  assert.equal(fs.statSync(realHome).mode & 0o777, 0o755, "permissions left untouched");
+
+  // A symlinked home is tolerated rather than throwing.
+  const linkParent = makeTempDir("betterwright-link-parent-");
+  const link = `${linkParent}/home`;
+  fs.symlinkSync(realHome, link);
+  assert.doesNotThrow(() => ensureSocketDirectory(`${link}/daemon.sock`));
+});
+
+test("a daemon on an over-long home actually accepts connections", { skip: process.platform === "win32" }, async () => {
+  const root = makeTempDir("betterwright-deep-");
+  const home = `${root}/${"d".repeat(40)}/${"e".repeat(40)}/${"f".repeat(40)}`;
+  fs.mkdirSync(home, { recursive: true });
+  assert.ok(
+    Buffer.byteLength(`${home}/daemon.sock`) > 104,
+    "the fixture home must actually exceed the socket limit",
+  );
+
+  // onExit matters: without it the daemon's shutdown path calls process.exit,
+  // which would take the test runner down with it.
+  const exits = [];
+  const daemon = await startSessionDaemon({
+    home,
+    createBrowser: () => stubBrowser(),
+    onExit: (code) => exits.push(code),
+    emptyGraceMs: 60_000,
+    log: () => {},
+  });
+  try {
+    const channel = await rawChannel(daemonSocketPath(home));
+    const hello = await channel.request({
+      op: "hello",
+      version: daemonPackageVersion(),
+      configSig: daemonConfigSignature(normalizeDaemonConfig({})),
+    });
+    assert.equal(hello.ok, true, `handshake failed: ${JSON.stringify(hello)}`);
+    // A run over the fallback socket proves the daemon is genuinely usable,
+    // not merely bound.
+    const ran = await channel.request({
+      op: "call",
+      method: "run",
+      args: ["1 + 1"],
+      session: "deep",
+    });
+    assert.equal(ran.ok, true);
+    channel.end();
+  } finally {
+    await daemon.close().catch(() => {});
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

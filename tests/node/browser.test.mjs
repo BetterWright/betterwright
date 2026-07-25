@@ -378,6 +378,7 @@ test("browser capture saves an accepted model login through real Cloak", opts, a
       password: secret,
       label: "127.0.0.1",
       matchMode: "base-domain",
+      deferToPending: true,
     });
     assert.ok(!JSON.stringify(result).includes(secret));
 

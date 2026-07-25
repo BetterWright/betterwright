@@ -140,6 +140,7 @@ try {
         "const pi = await import('betterwright/pi');",
         "const piExtension = await import('betterwright/pi-extension');",
         "const mcp = await import('betterwright/mcp-server');",
+        "const vault = await import('betterwright/vault');",
         "if (typeof root.BetterWright !== 'function') throw new Error('missing BetterWright');",
         "if (typeof root.LocalCredentialVault !== 'function') throw new Error('missing LocalCredentialVault');",
         "if (typeof mcp.runMcpServer !== 'function') throw new Error('missing MCP server export');",
@@ -147,6 +148,13 @@ try {
         "if (typeof prompt.agentSystemPrompt !== 'function') throw new Error('missing prompt export');",
         "if (typeof pi.piImageContent !== 'function') throw new Error('missing Pi export');",
         "if (typeof piExtension.default !== 'function') throw new Error('missing Pi extension');",
+        "if (typeof vault.createLocalCredentialVault !== 'function') throw new Error('missing vault export');",
+        // The owner-only reads are a supported surface now; a missing method
+        // means `betterwright vault` would be broken in the published package.
+        "const v = vault.createLocalCredentialVault({ home: '/tmp/betterwright-package-vault' });",
+        "for (const m of ['ownerList', 'ownerReveal', 'ownerRemove', 'ownerAudit']) {",
+        "  if (typeof v[m] !== 'function') throw new Error('missing vault.' + m);",
+        "}",
       ].join("\n"),
     ],
     { cwd: installRoot },
@@ -162,9 +170,12 @@ try {
       "import type { Guardrails } from 'betterwright/prompt';",
       "import { METADATA_RESOLVER_RULES } from 'betterwright/worker';",
       "import { runMcpServer } from 'betterwright/mcp-server';",
+      "import { createLocalCredentialVault, type VaultRevealedRecord } from 'betterwright/vault';",
       "const policy = new NetworkPolicy();",
       "const browser = new BetterWright({ policy, browser: 'cloak' });",
       "const vault = new LocalCredentialVault({ home: '/tmp/betterwright-package-types' });",
+      "const owned = createLocalCredentialVault({ home: '/tmp/betterwright-package-types' });",
+      "const revealed: Promise<VaultRevealedRecord> = owned.ownerReveal('cred_1');",
       "const noVault = new BetterWright({ vault: false });",
       "const result: Promise<RunResult<string>> = browser.run<string>('return page.title()');",
       "const decision: NetworkDecision = policy.check('https://example.com');",
@@ -202,16 +213,57 @@ try {
     throw new Error(`CLI reported ${versionOutput}, package is ${installed.version}`);
   }
 
-  const doctor = spawnSync(bin, ["doctor"], {
+  // The raw field names live in `--json`; the default output is prose for a
+  // person. Assert against the machine shape so wording can change freely.
+  const doctor = spawnSync(bin, ["doctor", "--json"], {
     cwd: installRoot,
     encoding: "utf8",
     stdio: "pipe",
     env: process.env,
   });
   if (![0, 1].includes(doctor.status)) throw new Error("doctor exited unexpectedly");
-  const doctorOutput = `${doctor.stdout || ""}${doctor.stderr || ""}`;
+  let report;
+  try {
+    report = JSON.parse(doctor.stdout);
+  } catch {
+    throw new Error(`doctor --json did not emit JSON:\n${doctor.stdout}${doctor.stderr}`);
+  }
   for (const field of ["cloakbrowser_binary_version", "cloakbrowser_binary_tier"]) {
-    if (!doctorOutput.includes(field)) throw new Error(`doctor did not report ${field}`);
+    if (!(field in report)) throw new Error(`doctor did not report ${field}`);
+  }
+  if (!Array.isArray(report.checks) || !report.checks.length) {
+    throw new Error("doctor --json did not include its readiness checks");
+  }
+
+  // The human path must still work, and must still name the fix when it fails.
+  const doctorText = spawnSync(bin, ["doctor"], {
+    cwd: installRoot,
+    encoding: "utf8",
+    stdio: "pipe",
+    env: process.env,
+  });
+  if (![0, 1].includes(doctorText.status)) throw new Error("doctor exited unexpectedly");
+  if (!/BetterWright is ready\.|Not ready/.test(doctorText.stdout)) {
+    throw new Error(`doctor gave no verdict:\n${doctorText.stdout}`);
+  }
+
+  // `--help` must never be the thing that does the thing: `setup --help` used
+  // to download a browser and `run --help` blocked on stdin forever.
+  for (const command of ["setup", "update", "run", "close", "view", "skill", "vault"]) {
+    const help = spawnSync(bin, [command, "--help"], {
+      cwd: installRoot,
+      encoding: "utf8",
+      stdio: "pipe",
+      timeout: 20_000,
+      input: "",
+      env: process.env,
+    });
+    if (help.status !== 0 || help.signal) {
+      throw new Error(`\`${command} --help\` exited ${help.status}/${help.signal}`);
+    }
+    if (!help.stdout.includes("Usage: betterwright")) {
+      throw new Error(`\`${command} --help\` printed no usage`);
+    }
   }
 
   console.log(

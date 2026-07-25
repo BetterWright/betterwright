@@ -37,19 +37,14 @@
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-// index.mjs (below) already loads agent.mjs at startup, so importing these
-// shared model-source helpers directly costs nothing extra.
-import {
-  discoveryTimeoutMs,
-  endpointDiscoverySources,
-  endpointSourceName,
-} from "../src/agent.mjs";
 import { formatAgentUsage } from "../src/agent-usage.mjs";
 import { installChromiumFork } from "../src/chromium-fork-install.mjs";
 import { collectValues, firstPositional, flagValue } from "../src/cli-flags.mjs";
+import { helpFor, MAIN_USAGE, wantsHelp } from "../src/cli-help.mjs";
 import {
   createInteractiveBrowserLifecycle,
   formatHangingText,
@@ -64,9 +59,19 @@ import {
   execTask,
   interruptSession,
 } from "../src/daemon-client.mjs";
-import { doctorReport, resolveCloakDir, resolveCoreDir } from "../src/doctor.mjs";
-import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
+import {
+  doctorChecks,
+  doctorReport,
+  formatDoctorChecks,
+  modelSetupHint,
+  preferredModelId,
+  resolveCloakDir,
+  resolveCoreDir,
+} from "../src/doctor.mjs";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.mjs";
+// `agentSystemPrompt` comes from the light prompt module, not index.mjs, which
+// would drag the whole browser/worker/vault graph in just to print a skill.
+import { agentSystemPrompt } from "../src/prompt.mjs";
 import {
   clearTranscript,
   loadTranscript,
@@ -75,9 +80,9 @@ import {
 import {
   installAgentSkills,
   packageVersion,
+  parseGeneratedBy,
   refreshInstalledAgentSkills,
-  staleAgentSkillReport,
-  staleAgentSkillTip,
+  resolveSkillInstallPaths,
   wrapClaudeSkillMarkdown,
 } from "../src/skill-install.mjs";
 
@@ -183,14 +188,39 @@ async function cmdViewPassword(flags) {
   return 0;
 }
 
-function policyFromFlags(flags) {
+// The browser stack (BetterWright, NetworkPolicy, and everything client.mjs
+// pulls) is loaded on first use, not at startup. Memoized so repeated
+// constructions in one process (e.g. the interactive console's /new) import
+// once.
+let browserModulePromise = null;
+function browserModule() {
+  browserModulePromise ??= import("../src/index.mjs");
+  return browserModulePromise;
+}
+
+function policyOptionsFromFlags(flags) {
   // Private networks and loopback are open by default; --block-private-network
   // / --block-loopback re-harden. The --allow-* flags are accepted no-ops.
-  return new NetworkPolicy({
+  return {
     allowLoopback: !flags.has("--block-loopback"),
     allowPrivateNetwork: !flags.has("--block-private-network"),
     allowHosts: collectValues(process.argv, "--allow-host"),
     blockHosts: collectValues(process.argv, "--block-host"),
+  };
+}
+
+async function policyFromFlags(flags) {
+  const { NetworkPolicy } = await browserModule();
+  return new NetworkPolicy(policyOptionsFromFlags(flags));
+}
+
+/** Construct a local (non-daemon) BetterWright, loading the stack on demand. */
+async function makeBrowser(flags, { headless } = {}) {
+  const { BetterWright, NetworkPolicy } = await browserModule();
+  return new BetterWright({
+    policy: new NetworkPolicy(policyOptionsFromFlags(flags)),
+    headless: headless ?? !flags.has("--headed"),
+    ...cloakingFromFlags(flags),
   });
 }
 
@@ -211,13 +241,77 @@ function cloakingFromFlags(flags) {
   };
 }
 
-async function cmdDoctor() {
+async function cmdDoctor(flags) {
   const report = await doctorReport();
-  for (const [key, value] of Object.entries(report)) console.log(`${key.padEnd(20)} ${value}`);
-  console.log(report.ready ? "\nBetterWright is ready." : "\nNot ready. Run `betterwright setup`.");
-  const tip = staleAgentSkillTip(staleAgentSkillReport());
-  if (tip) console.log(`\n${tip}`);
-  return report.ready ? 0 : 1;
+  if (flags.has("--json")) {
+    console.log(JSON.stringify({ ...report, checks: doctorChecks(report) }, null, 2));
+    return report.ready ? 0 : 1;
+  }
+  const checks = doctorChecks(report);
+  const quiet = flags.has("--quiet");
+  const text = formatDoctorChecks(checks, { quiet });
+  if (text) console.log(text);
+  const problems = checks.filter((check) => check.status === "fail");
+  const warnings = checks.filter((check) => check.status === "warn");
+  console.log("");
+  if (report.ready && !problems.length) {
+    console.log(
+      warnings.length
+        ? `BetterWright is ready. ${warnings.length} optional thing${warnings.length === 1 ? "" : "s"} above ${warnings.length === 1 ? "is" : "are"} not set up.`
+        : "BetterWright is ready.",
+    );
+  } else {
+    console.log("Not ready — fix the ✗ lines above, then run `betterwright doctor` again.");
+  }
+  return report.ready && !problems.length ? 0 : 1;
+}
+
+// `init`: the guided path from nothing to a working browser.
+async function cmdInit(flags) {
+  const { runInit } = await import("../src/onboard.mjs");
+  // `flags` only carries `--`-prefixed tokens; accept `-y` as an alias for
+  // `--yes` so it is not silently ignored on a TTY.
+  const initFlags = new Set(flags);
+  if (process.argv.includes("-y")) initFlags.add("--yes");
+  return runInit({
+    flags: initFlags,
+    version: packageVersion(),
+    doctorReport,
+    installAgentSkills,
+    skillMarkdown: agentSkillMarkdown,
+    skillBody: agentSkillBody,
+    installBrowser: () => cmdSetup(flags, { quiet: true }),
+    // A real navigation through the real worker: the step that distinguishes
+    // "the files are on disk" from "this actually works". Separate a browser
+    // that would not launch (a real install failure) from a page that would
+    // not load (offline), so init fails only on the former.
+    verify: async () => {
+      const bw = await makeBrowser(flags, { headless: true });
+      let launched = false;
+      try {
+        const probe = await bw.run("return 1 + 1");
+        launched = probe.ok && probe.result === 2;
+        if (!launched) {
+          return { ok: false, launched: false, detail: probe.error || "worker did not start" };
+        }
+        const result = await bw.run(
+          "await page.goto('https://example.com'); return page.title()",
+        );
+        return result.ok && result.result === "Example Domain"
+          ? { ok: true, launched: true, detail: `example.com → "${result.result}"`, warnings: result.warnings }
+          : {
+              ok: false,
+              launched: true,
+              detail: result.error || `unexpected title ${JSON.stringify(result.result)}`,
+              warnings: result.warnings,
+            };
+      } catch (error) {
+        return { ok: false, launched, detail: error?.message || String(error) };
+      } finally {
+        await bw.close().catch(() => {});
+      }
+    },
+  });
 }
 
 /** Generated agent-skill body (preamble + operator guidance), no frontmatter. */
@@ -299,7 +393,7 @@ async function cmdUpdate(flags) {
   return 0;
 }
 
-async function cmdSetup(flags) {
+async function cmdSetup(flags, { quiet = false } = {}) {
   if (flags.has("--chromium")) {
     console.error(
       "The stock Chromium fallback was removed. Use `betterwright update` for the Chromium fork, or `betterwright setup` for managed CloakBrowser.",
@@ -324,11 +418,16 @@ async function cmdSetup(flags) {
   const cloakCode = await installCloakBrowser();
   if (cloakCode !== 0) return cloakCode;
 
-  console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
-  if (!cloakOnly) {
-    console.log(
-      "On macOS arm64 / Linux x64, doctor should report browser: chromium-fork after update/setup.",
-    );
+  // `init` reports its own progress and next steps, so it suppresses ours
+  // rather than telling the user to run doctor in the middle of a flow that
+  // is about to verify the browser itself.
+  if (!quiet) {
+    console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
+    if (!cloakOnly) {
+      console.log(
+        "On macOS arm64 / Linux x64, doctor should report browser: chromium-fork after update/setup.",
+      );
+    }
   }
   refreshAgentSkillsQuietly();
   return 0;
@@ -387,11 +486,7 @@ async function acquireRunBrowser(flags) {
         },
       };
     }
-    const bw = new BetterWright({
-      policy: policyFromFlags(flags),
-      headless: !flags.has("--headed"),
-      ...cloakingFromFlags(flags),
-    });
+    const bw = await makeBrowser(flags);
     return {
       session,
       viaDaemon: false,
@@ -400,11 +495,7 @@ async function acquireRunBrowser(flags) {
       cleanup: async () => bw.close(),
     };
   }
-  const bw = new BetterWright({
-    policy: policyFromFlags(flags),
-    headless: !flags.has("--headed"),
-    ...cloakingFromFlags(flags),
-  });
+  const bw = await makeBrowser(flags);
   return {
     session,
     viaDaemon: false,
@@ -449,10 +540,55 @@ Invocations share one persistent session (background daemon): open tabs, page st
 
 Surface details for "Live view and handoff" below: \`browser_handoff\` action "start" opens it, "status" waits for takeover Done; \`live_view\` watches without pausing, \`handoff\` pauses until they click Done; interactive accepts \`/live\`; \`exec "<task>" --live-view\` opens the viewer at step 0; \`betterwright view\` prints a URL for the open tabs without closing them (takeover: Take control / the dock).
 
-Network access is policy-guarded: loopback and the private network are reachable by default; \`--block-private-network\` / \`--block-loopback\` lock down; \`--allow-host <host>\` / \`--block-host <host>\` adjust. Cloud-metadata endpoints are always blocked. Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet"; the "approval-gated download tool" is \`betterwright run --approve-downloads\`: one bounded download-enabled run, used only after the user explicitly approves.`;
+Network access is policy-guarded: loopback and the private network are reachable by default; \`--block-private-network\` / \`--block-loopback\` lock down; \`--allow-host <host>\` / \`--block-host <host>\` adjust. Cloud-metadata endpoints are always blocked. Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet"; the "approval-gated download tool" is \`betterwright run --approve-downloads\`: one bounded download-enabled run, used only after the user explicitly approves.
+
+\`betterwright vault\` is the user's own command for reading their saved passwords, not a tool for you. Never run \`vault show --reveal\` (or its \`vault get\` alias), \`vault copy\`, or \`vault rm\`: a stored password must not enter your context or be deleted on your initiative, and fill happens inside the browser without one. \`betterwright vault list\` is metadata-only and fine when the user asks what is saved. When they want a password themselves, tell them to run \`betterwright vault copy <id>\` — it reaches their clipboard without either of us seeing it.`;
 
 function cmdSkill(flags) {
   const body = agentSkillBody();
+  if (flags.has("--status")) {
+    // "Did the install actually land, and is it current?" was previously only
+    // answerable by finding the file yourself and reading its frontmatter.
+    const current = packageVersion();
+    let any = false;
+    for (const dest of resolveSkillInstallPaths({ targets: "all" })) {
+      if (!fs.existsSync(dest.file)) {
+        console.log(`  —  ${dest.label.padEnd(14)} not installed  ${dest.file}`);
+        continue;
+      }
+      any = true;
+      const installed = parseGeneratedBy(fs.readFileSync(dest.file, "utf8"));
+      const stale = installed !== current;
+      console.log(
+        `  ${stale ? "!" : "✓"}  ${dest.label.padEnd(14)} ${installed ? `v${installed}` : "unstamped"}${stale ? ` (this package is v${current})` : ""}  ${dest.file}`,
+      );
+    }
+    // Codex is wired through a marker block in ~/.codex/AGENTS.md, not a skill
+    // file, so it is reported the same way but read from its own stamp. init
+    // writes it; it belongs in the same status view as the skill hosts.
+    const codexFile = path.join(os.homedir(), ".codex", "AGENTS.md");
+    if (fs.existsSync(codexFile)) {
+      const text = fs.readFileSync(codexFile, "utf8");
+      const marker = text.match(/<!-- betterwright:begin(?: v([0-9][^ ]*))? -->/);
+      if (marker) {
+        any = true;
+        const installed = marker[1] || null;
+        const stale = installed !== current;
+        console.log(
+          `  ${stale ? "!" : "✓"}  ${"Codex".padEnd(14)} ${installed ? `v${installed}` : "unstamped"}${stale ? ` (this package is v${current})` : ""}  ${codexFile}`,
+        );
+      } else {
+        console.log(`  —  ${"Codex".padEnd(14)} not installed  ${codexFile}`);
+      }
+    }
+    console.log("");
+    console.log(
+      any
+        ? "Refresh with `betterwright skill --install`."
+        : "Install with `betterwright init` (recommended) or `betterwright skill --install`.",
+    );
+    return 0;
+  }
   if (flags.has("--install")) {
     // Generated (not vendored) so it always matches this CLI version. Writes
     // Claude Code + Agent Skills dirs by default; --all also writes Cursor.
@@ -528,7 +664,7 @@ function modelCliSelection(argv) {
     flagValue(
       argv,
       "--model",
-      process.env.BETTERWRIGHT_MODEL || "claude-opus-4-8",
+      process.env.BETTERWRIGHT_MODEL || preferredModelId().model,
     ) || "";
   const modelOptions = modelEndpointOptions(argv);
   const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
@@ -546,21 +682,21 @@ function removedModelFlagMessage(argv) {
   return "";
 }
 
-// Blank means "no source requested" (list everything); any other value must
-// be a name agent.mjs itself recognizes, so the accepted spellings and the
-// error wording cannot drift from `--model source/id` parsing.
-function modelSource(value) {
-  const source = String(value || "").trim();
-  if (!source) return "";
-  return endpointSourceName(source);
-}
-
 async function loadModelCatalog(
   listEndpointModels,
   nativeModelCatalog,
   options = {},
 ) {
-  const requested = modelSource(options.source);
+  // Loaded here rather than at module top so a plain `betterwright run` never
+  // pulls the model-source layer. `models`/`exec` — the only callers — already
+  // import agent.mjs, so this hits its module cache.
+  const { discoveryTimeoutMs, endpointDiscoverySources, endpointSourceName } =
+    await import("../src/agent.mjs");
+  // Blank means "no source requested" (list everything); any other value must
+  // be a name agent.mjs itself recognizes, so the accepted spellings and the
+  // error wording cannot drift from `--model source/id` parsing.
+  const raw = String(options.source || "").trim();
+  const requested = raw ? endpointSourceName(raw) : "";
   const sources = requested
     ? [requested]
     : options.modelOptions?.baseURL
@@ -649,8 +785,6 @@ Options: --stdin --model <id|source/id> --base-url <url> --api-key-env <name>
 Repeated execs continue the same session: the browser (tabs, logins) stays
 live in a background daemon and the agent remembers the prior conversation.
 --fresh starts the session over; --close ends it after this task.`;
-const MODELS_USAGE =
-  "Usage: betterwright models [openrouter|ollama|vllm] [--base-url <url>] [--api-key-env <name>] [--json]";
 
 // Bare `betterwright` (no subcommand): an interactive agent console. You type
 // natural-language tasks; BetterWright's own agent loop drives the browser,
@@ -680,12 +814,7 @@ async function cmdInteractive(flags) {
   // browser, since headless is fixed at construction).
   let headless = !flags.has("--headed");
 
-  const newBrowser = () =>
-    new BetterWright({
-      policy: policyFromFlags(flags),
-      headless,
-      ...cloakingFromFlags(flags),
-    });
+  const newBrowser = () => makeBrowser(flags, { headless });
   // Mutable: process --live-view starts a viewer at boot; `/live` enables the
   // same path mid-session so /new /headed /headless re-open it after replace.
   let interactiveLiveView = liveViewCliOptions(argv);
@@ -771,6 +900,13 @@ async function cmdInteractive(flags) {
   console.log(dim("Type a task and press Enter. Follow-ups keep the session; /new starts fresh."));
   console.log(dim("While it works, type a message and press Enter to steer its next turn."));
   console.log(dim("/help for commands, /exit or Ctrl-D to quit.\n"));
+  // The console is the most inviting entry point, so it is the worst place to
+  // discover only after typing a task that no model is reachable. Say so up
+  // front; the user can still get in and fix it with /model or /endpoint.
+  if (!flagValue(argv, "--model") && !process.env.BETTERWRIGHT_MODEL && !modelOptions.baseURL) {
+    const hint = modelSetupHint();
+    if (hint) console.log(`${hint}\n`);
+  }
 
   try {
     // The console needs the persistent profile itself: take it back from an
@@ -1010,7 +1146,7 @@ async function cmdInteractive(flags) {
 // usage, proof} goes to stdout.
 async function cmdExec(flags) {
   const argv = process.argv;
-  if (flags.has("--help")) {
+  if (wantsHelp(argv.slice(3))) {
     console.log(EXEC_USAGE);
     return 0;
   }
@@ -1032,6 +1168,19 @@ async function cmdExec(flags) {
     return 1;
   }
   const { model, modelOptions } = modelCliSelection(argv);
+  // Fail here, with the four ways to fix it, rather than several seconds later
+  // inside the model adapter with "@anthropic-ai/sdk is not installed".
+  const explicitModel =
+    flagValue(argv, "--model") !== undefined ||
+    Boolean(process.env.BETTERWRIGHT_MODEL) ||
+    Boolean(modelOptions.baseURL);
+  if (!explicitModel) {
+    const hint = modelSetupHint();
+    if (hint) {
+      console.error(hint);
+      return 1;
+    }
+  }
   const session = sessionName(flagValue(argv, "--session", "default"));
   const fresh = flags.has("--fresh");
   const home = defaultDaemonHome();
@@ -1133,6 +1282,7 @@ async function cmdExec(flags) {
     const { runAgentTask } = await import("../src/agent.mjs");
     if (fresh) clearTranscript(home, session);
     const history = fresh ? [] : loadTranscript(home, session);
+    const policy = await policyFromFlags(flags);
     try {
       const full = await runAgentTask({
         task,
@@ -1140,7 +1290,7 @@ async function cmdExec(flags) {
         modelOptions,
         session,
         history,
-        policy: policyFromFlags(flags),
+        policy,
         headless: !flags.has("--headed"),
         liveView: liveViewCliOptions(argv),
         onStep,
@@ -1301,10 +1451,6 @@ async function cmdModels(flags) {
     modelSelectionChoices,
     nativeModelCatalog,
   } = await import("../src/agent.mjs");
-  if (flags.has("--help")) {
-    console.log(MODELS_USAGE);
-    return 0;
-  }
   const removedFlag = removedModelFlagMessage(process.argv);
   if (removedFlag) {
     console.error(removedFlag);
@@ -1447,11 +1593,7 @@ async function cmdView(flags) {
       dim("a background session is mid-task; this view gets a temporary profile (betterwright close --all to reclaim)"),
     );
   }
-  const browser = new BetterWright({
-    policy: policyFromFlags(flags),
-    headless: !flags.has("--headed"),
-    ...cloakingFromFlags(flags),
-  });
+  const browser = await makeBrowser(flags);
   try {
     const view = await browser.startLiveView({
       ...liveOpts,
@@ -1556,29 +1698,57 @@ async function main() {
   // No subcommand (nothing, or only flags like `betterwright --headed`): launch
   // the interactive agent console. `--version`/`--help` are still honored.
   if (!first || first.startsWith("-")) {
-    if (flags.has("--version")) {
+    if (flags.has("--version") || tokens.includes("-v")) {
       console.log(require("../package.json").version);
       return 0;
     }
-    if (flags.has("--help") || tokens.includes("-h")) {
-      console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|sessions|close|models|view|auth|skill|skills|mcp> [options]\n" +
-          "Run `betterwright` with no arguments for the interactive agent console.",
-      );
+    if (wantsHelp(tokens)) {
+      console.log(MAIN_USAGE);
       return 0;
     }
     return cmdInteractive(flags);
   }
   const command = first;
   const rest = tokens.slice(1);
-  const positional = rest.find((token) => !token.startsWith("-"));
+  const positional = firstPositional(rest);
+  // Asking a command what it does must never be the thing that does it:
+  // `setup --help` used to download a browser and `run --help` blocked on
+  // stdin forever. Help is resolved before any command runs.
+  //
+  // `exec` and `vault` are excluded because they own their own help text —
+  // exec's lives beside its flag parsing, vault's beside its subcommands.
+  if (wantsHelp(rest) && !["exec", "vault"].includes(command)) {
+    console.log(helpFor(command));
+    return 0;
+  }
+  if (command === "help") {
+    // `exec` and `vault` keep their help beside their own argument parsing, so
+    // route to them rather than duplicating the text in the help table.
+    if (positional === "vault") {
+      const { VAULT_USAGE } = await import("../src/vault-cli.mjs");
+      console.log(VAULT_USAGE);
+      return 0;
+    }
+    if (positional === "exec") {
+      console.log(EXEC_USAGE);
+      return 0;
+    }
+    console.log(positional ? helpFor(positional) : MAIN_USAGE);
+    return 0;
+  }
   switch (command) {
+    case "init":
+      return cmdInit(flags);
     case "setup":
       return cmdSetup(flags);
     case "update":
       return cmdUpdate(flags);
     case "doctor":
-      return cmdDoctor();
+      return cmdDoctor(flags);
+    case "vault": {
+      const { runVaultCommand } = await import("../src/vault-cli.mjs");
+      return runVaultCommand(rest);
+    }
     case "run":
       return cmdRun(positional, flags);
     case "repl":
@@ -1600,6 +1770,28 @@ async function main() {
     case "sessions":
       return cmdSessions();
     case "mcp": {
+      // `--check` answers "why does my MCP client show no BetterWright tools?"
+      // without needing the client: the two things that actually fail are a
+      // missing SDK and a missing browser, and both are checkable here.
+      if (flags.has("--check")) {
+        const { mcpSdkAvailable } = await import("../src/onboard.mjs");
+        const sdk = await mcpSdkAvailable();
+        console.log(sdk.ok ? "  ✓ MCP SDK available" : `  ✗ ${sdk.error}`);
+        const report = await doctorReport();
+        console.log(
+          report.ready
+            ? `  ✓ Browser ready (${report.browser})`
+            : "  ✗ Browser not installed — run `betterwright setup`",
+        );
+        const ok = sdk.ok && report.ready;
+        console.log("");
+        console.log(
+          ok
+            ? "The MCP server can start. Register it with:\n  claude mcp add betterwright -- npx betterwright mcp"
+            : "Fix the ✗ lines above, then re-run `betterwright mcp --check`.",
+        );
+        return ok ? 0 : 1;
+      }
       const { runMcpServer } = await import("../src/mcp-server.mjs");
       await runMcpServer();
       return 0;
@@ -1609,10 +1801,7 @@ async function main() {
       return runSessionDaemon(process.argv);
     }
     default:
-      console.error(
-        "Usage: betterwright [interactive] | <setup|update|doctor|run|repl|exec|sessions|close|models|view|auth|skill|skills|mcp> [options]\n" +
-          "Run `betterwright` with no arguments for the interactive agent console.",
-      );
+      console.error(`Unknown command "${command}".\n\n${MAIN_USAGE}`);
       return 1;
   }
 }

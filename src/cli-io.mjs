@@ -26,29 +26,34 @@ export function readExecTaskFromStdin(read = () => fs.readFileSync(0, "utf8")) {
  * once before the input loop, reused by every task, and atomically replaced by
  * commands such as `/new` that require a fresh browser + live-view session.
  *
- * @param {{createBrowser: () => object, startBrowser?: (browser: object) => Promise<void>}} options
+ * `createBrowser` may be sync or async; it is awaited. The browser is created
+ * by `start()` (not at construction), so `browser` is null until then — the
+ * console starts the lifecycle before reading it.
+ *
+ * @param {{createBrowser: () => object | Promise<object>, startBrowser?: (browser: object) => Promise<void>}} options
  */
 export function createInteractiveBrowserLifecycle({
   createBrowser,
   startBrowser = async () => {},
 }) {
-  let browser = createBrowser();
+  let browser = null;
   return {
     get browser() {
       return browser;
     },
     async start() {
+      browser = await createBrowser();
       await startBrowser(browser);
       return browser;
     },
     async replace() {
-      await browser.close();
-      browser = createBrowser();
+      if (browser) await browser.close();
+      browser = await createBrowser();
       await startBrowser(browser);
       return browser;
     },
     async close() {
-      await browser.close();
+      if (browser) await browser.close();
     },
   };
 }

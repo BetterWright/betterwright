@@ -122,6 +122,12 @@ function makeHarness(overrides = {}) {
     vaultCallAtOrigin: async (_session, origin, action, payload) => {
       calls.push({ kind: "vault", origin, action, payload });
       if (action === "list") return { credentials: overrides.listRecords || [] };
+      if (action === "list-pending") {
+        if (overrides.pendingFails) throw new Error("vault unavailable");
+        return overrides.pendingRecords
+          ? { pendingCredentials: overrides.pendingRecords }
+          : {};
+      }
       return {};
     },
     sessionForPage: () => ({ id: "default" }),
@@ -212,6 +218,7 @@ test("model-driven capture is saved silently after navigation", async () => {
     password: "s3cret!",
     label: "app.example.com",
     matchMode: "base-domain",
+    deferToPending: true,
   });
   // The secret enters the redaction net before any vault write.
   assert.deepEqual(harness.calls[0], { kind: "secret", value: "s3cret!" });
@@ -427,4 +434,39 @@ test("httpOrigin accepts only parseable http(s) URLs (shared with the worker)", 
   assert.equal(httpOrigin(""), "");
   assert.equal(httpOrigin(null), "");
   assert.equal(httpOrigin(undefined), "");
+});
+
+// `generateAndFill` types its generated secret into the page, so the sensor
+// sees an ordinary accepted submission. Saving it again left two records per
+// agent signup — and the capture's `base-domain` default silently widened a
+// credential the caller had scoped to `host` or `exact-origin`.
+// Whether an observed submission duplicates an in-flight generated credential
+// turns on comparing it to the pending *secret*, which never leaves the vault.
+// So the sensor no longer decides: it always saves, and marks the save so the
+// vault can suppress exactly the duplicate. The suppression rule itself is
+// tested against a real vault in vault-generated-credentials.test.mjs.
+test("every capture save asks the vault to defer to a matching generation", async () => {
+  const harness = makeHarness({ headed: false, modelAt: () => Date.now() });
+  const session = await attached(harness);
+  emitCapture(session);
+  emitNavigation(session, `${ORIGIN}/home`);
+
+  assert.equal(await waitFor(() => vaultSaves(harness.calls).length === 1), true);
+  const [save] = vaultSaves(harness.calls);
+  assert.equal(save.payload.deferToPending, true);
+  assert.equal(save.payload.password, "s3cret!");
+  harness.handle.dispose();
+});
+
+test("a headed user's own Save also defers rather than bypassing the check", async () => {
+  const harness = makeHarness({ headed: true, modelAt: 0 });
+  const session = await attached(harness);
+  emitCapture(session);
+  emitNavigation(session, `${ORIGIN}/home`);
+  assert.equal(await waitFor(() => session.promptCalls().length === 1), true);
+  emitPromptResponse(session, session.promptCalls()[0].promptId, "save");
+
+  assert.equal(await waitFor(() => vaultSaves(harness.calls).length === 1), true);
+  assert.equal(vaultSaves(harness.calls)[0].payload.deferToPending, true);
+  harness.handle.dispose();
 });

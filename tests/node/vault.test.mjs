@@ -1785,3 +1785,87 @@ test("redaction saturation fails closed without evicting older secrets", async (
     await context.cleanup();
   }
 });
+
+test("deferToPending suppresses a capture that duplicates the generated secret", async () => {
+  const context = await fixture();
+  try {
+    // The two-phase flow: generate types this secret into the page, and the
+    // capture sensor then observes the same accepted submission.
+    const generated = await context.vault.handleRequest(
+      "generate",
+      { username: "signup@example.com" },
+      EXAMPLE,
+    );
+
+    const result = await context.vault.handleRequest(
+      "save",
+      {
+        username: "signup@example.com",
+        password: generated.secret,
+        deferToPending: true,
+        matchMode: "base-domain",
+      },
+      EXAMPLE,
+    );
+    assert.equal(result.deferred, true, "the in-flight generation owns this value");
+    assert.equal(result.pendingId, generated.pendingId);
+
+    // No duplicate record was written: only the pending exists.
+    const listed = await context.vault.handleRequest("list", {}, EXAMPLE);
+    assert.equal(listed.credentials.length, 0);
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("deferToPending still saves a DIFFERENT password typed during the pending window", async () => {
+  const context = await fixture();
+  try {
+    // A generated fill that failed and was retried by hand: the submitted
+    // password is not the generated secret, so it must be saved, not dropped.
+    await context.vault.handleRequest("generate", { username: "user@example.com" }, EXAMPLE);
+
+    const result = await context.vault.handleRequest(
+      "save",
+      {
+        username: "user@example.com",
+        password: "a-different-password-typed-by-hand",
+        deferToPending: true,
+        matchMode: "base-domain",
+      },
+      EXAMPLE,
+    );
+    assert.notEqual(result.deferred, true, "a different password is not the generation's");
+
+    const listed = await context.vault.handleRequest("list", {}, EXAMPLE);
+    assert.equal(listed.credentials.length, 1);
+
+    // And it is retrievable to its owner — the loss this fix prevents.
+    const owned = createLocalCredentialVault(context.dir);
+    const revealed = await owned.ownerReveal(listed.credentials[0].id);
+    assert.equal(revealed.secret, "a-different-password-typed-by-hand");
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("deferToPending saves normally when no generation is in flight", async () => {
+  const context = await fixture();
+  try {
+    const result = await context.vault.handleRequest(
+      "save",
+      {
+        username: "plain@example.com",
+        password: "ordinary-login",
+        deferToPending: true,
+        matchMode: "base-domain",
+      },
+      EXAMPLE,
+    );
+    assert.notEqual(result.deferred, true);
+    const listed = await context.vault.handleRequest("list", {}, EXAMPLE);
+    assert.equal(listed.credentials.length, 1);
+  } finally {
+    await context.cleanup();
+  }
+});

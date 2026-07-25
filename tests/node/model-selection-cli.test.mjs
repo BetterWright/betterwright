@@ -43,7 +43,8 @@ test("model command help is specific and successful", () => {
   const exec = runCli(["exec", "--help"]);
 
   assert.equal(models.status, 0);
-  assert.match(models.stdout, /betterwright models.*openrouter\|ollama\|vllm/s);
+  assert.match(models.stdout, /betterwright models/);
+  assert.match(models.stdout, /openrouter \| ollama \| vllm/);
   assert.doesNotMatch(models.stdout, /--provider/);
   assert.equal(exec.status, 0);
   assert.match(exec.stdout, /betterwright exec.*--base-url/s);

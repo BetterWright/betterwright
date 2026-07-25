@@ -33,14 +33,20 @@ export function flagValue(argv, flag, fallback) {
 // Flags that consume the next token as their value in the space-separated
 // form, so firstPositional can tell a flag's argument from a positional.
 export const VALUE_FLAGS = new Set([
+  // `run -c "<code>"`: without this the snippet reads as a positional, i.e. a
+  // filename. readSnippet checks -c first so nothing is broken today, but the
+  // two parsers should agree rather than depend on that ordering.
+  "-c",
   "--allow-host",
   "--api-key-env",
   "--base-url",
   "--block-host",
+  "--category",
   "--effort",
   "--endpoint",
   "--expose",
   "--host",
+  "--limit",
   "--locale",
   "--model",
   "--model-id",
@@ -49,17 +55,29 @@ export const VALUE_FLAGS = new Set([
   "--protocol",
   "--provider",
   "--public-host",
+  "--query",
   "--reasoning",
   "--session",
   "--timezone",
   "--upstream-proxy",
 ]);
 
-export function firstPositional(tokens) {
+// Every positional, with value-flag arguments skipped so `--query github list`
+// cannot be mistaken for a subcommand. `firstPositional` is this, bounded to
+// one result.
+export function positionalArgs(tokens) {
+  const values = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (!token.startsWith("-")) return token;
+    if (!token.startsWith("-")) {
+      values.push(token);
+      continue;
+    }
     if (!token.includes("=") && VALUE_FLAGS.has(token)) index += 1;
   }
-  return undefined;
+  return values;
+}
+
+export function firstPositional(tokens) {
+  return positionalArgs(tokens)[0];
 }

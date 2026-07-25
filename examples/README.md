@@ -1,6 +1,7 @@
 # Examples
 
-Runnable scripts. Each needs the runtime installed first (`betterwright setup`).
+Runnable scripts. Each needs the runtime installed first (`betterwright init`,
+or `betterwright setup` for just the browser).
 
 ```bash
 npm install betterwright

@@ -26,19 +26,33 @@ install once and use either — or both.
 ## Install and set up
 
 BetterWright drives a managed browser through Playwright, so it needs
-**Node.js 22+** on your `PATH`. The browser itself is downloaded once by
-`setup` / `update`.
+**Node.js 22+** on your `PATH`. The browser itself is downloaded once.
 
 ```bash
-npm install betterwright
-npx betterwright setup     # Chromium fork on mac/linux; Cloak everywhere
-npx betterwright update    # download/refresh the fork (switches off Cloak default)
-npx betterwright doctor    # prints what resolved; should end with "BetterWright is ready."
+npm install -g betterwright
+betterwright init
 ```
 
-If `doctor` reports Node missing, install it from <https://nodejs.org> and rerun
-`setup`. If `doctor` reports the browser missing, rerun
-`npx betterwright setup` (or `update` for the fork only).
+`init` is the whole of setup: it checks Node, downloads the browser, installs
+the agent skill into whichever hosts it finds on this machine, and then loads a
+real page to confirm the path works end to end. It is safe to re-run — it
+reports what is already done and changes only what is not. Add `--yes` to skip
+the prompts (CI, scripts), or `--skip-agents` to leave your agent configuration
+alone.
+
+The individual steps remain available when you want them:
+
+```bash
+npx betterwright setup     # Chromium fork on mac/linux; Cloak everywhere
+npx betterwright update    # download/refresh the fork (switches off Cloak default)
+npx betterwright doctor    # grouped readiness report; every ✗ names its fix
+```
+
+`doctor` groups its output by what the check is about — runtime, browser, agent
+integration, model backends, credentials. A `✗` is a real problem and carries
+the command that fixes it; a `!` is something optional you have not set up.
+`doctor --json` prints the raw report for scripts, and `--quiet` prints only
+the lines that need attention.
 
 Upgrade the npm package with `npm update betterwright` or
 `npm install betterwright@latest`, then run `betterwright update` so the

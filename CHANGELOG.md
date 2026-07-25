@@ -9,8 +9,46 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-25
+
+Getting started is one command, and the vault is no longer a one-way door.
+
 ### Added
 
+- **`betterwright init`** — guided first-time setup. Checks Node, downloads the
+  managed browser if it is missing, installs the agent skill into whichever
+  hosts it detects (`~/.claude`, `~/.agents`, `~/.cursor`, and `~/.codex`'s
+  `AGENTS.md` between managed markers), offers MCP registration when the Claude
+  CLI is present, and finishes by loading a real page — because "installed" and
+  "working" are different claims. Idempotent; `--yes` for scripts, plus
+  `--skip-browser` / `--skip-agents`.
+- **`betterwright vault`** — the human-facing view of the credential vault:
+  `list`, `show`, `copy`, `rm`, `audit`, `path`. A password the agent generated
+  during a signup or captured from a login you typed was previously
+  unreachable, because every existing vault path is site-scoped and
+  metadata-only by design.
+  - `--reveal` is required to print a secret, and refuses any destination that
+    is not a terminal so a redirect, a pipe, or a captured stdout cannot
+    collect one by accident (`--force` /
+    `BETTERWRIGHT_VAULT_ALLOW_NON_INTERACTIVE=1` overrides).
+  - `vault copy` sends the password to the system clipboard, so it never
+    enters terminal scrollback or shell history.
+  - Every reveal is written to the metadata-only audit log.
+- `LocalCredentialVault` owner-only methods behind those commands: `ownerList`,
+  `ownerReveal`, `ownerRemove`, `ownerAudit`. They are deliberately **not**
+  routable through `handleRequest`, the only surface the browser worker — and
+  therefore model-authored snippet code — can address, so the model-facing
+  boundary is unchanged. Declared in `types/vault.d.ts`.
+- `betterwright/vault` subpath export, so a trusted JS host can use those
+  owner-only methods (and the `VaultOwnerListResult` / `VaultRevealedRecord` /
+  `VaultAuditEntry` types) without reaching into `src/`.
+- `betterwright skill --status` reports where the agent skill is installed and
+  whether each copy matches this package version.
+- `betterwright mcp --check` verifies the MCP server can start (SDK peer plus
+  browser) without going through a client that swallows the error.
+- `betterwright doctor --json` and `--quiet`; the report now also covers which
+  agent hosts are wired, whether the MCP SDK is present, which model backends
+  are usable, and where the vault lives.
 - `chromiumArgs` client option and `BETTERWRIGHT_CHROMIUM_ARGS` for appending
   Chromium switches to the managed launch — `--disable-gpu` on a GPU-less host
   being the motivating case ([#56]). Switches BetterWright owns (proxy
@@ -24,8 +62,41 @@ Releases before 1.1.3 predate this file; their notes live on the
   `endpointDiscoverySources` / `discoveryTimeoutMs` helpers, all of which the
   runtime already exported.
 
+### Performance
+
+- **The CLI no longer loads the browser/worker/agent stack to talk to a running
+  daemon.** `daemon.mjs` constructed a `BetterWright` at import, so any client
+  that imported it for a socket path or config signature pulled the whole
+  browser graph (~20 ms) with it; the CLI entrypoint compounded this by
+  importing the agent and browser modules statically. The browser stack is now
+  loaded on first construction and the daemon builds its browser lazily, so the
+  hot `run` / `close` / `vault` / `sessions` / `view` paths — which only send an
+  RPC to an already-running daemon — skip it. Cold CLI start dropped from
+  ~46 ms to ~39 ms, a saving paid on every invocation, and the daemon-client
+  import graph shrank from ~16 ms to ~5 ms.
+
 ### Changed
 
+- **`--help` no longer runs the command.** `setup --help` downloaded a 200 MB
+  browser, `update --help` downloaded the Chromium fork, `run --help` blocked
+  forever reading stdin, `close --help` closed your session, `view --help`
+  started a live-view server, and `skill --help` printed nine kilobytes of
+  agent instructions. Every subcommand now has real help, resolved before
+  dispatch, and `-h` works wherever `--help` does. `betterwright help <command>`
+  is equivalent.
+- `betterwright doctor` prints a grouped report — runtime, browser, agent
+  integration, built-in agent, credentials — where each line carries `✓`/`!`/`✗`
+  and every failure names the command that fixes it. The previous flat
+  key/value dump is still available verbatim under `--json`.
+- The default model for `exec` and the interactive console follows what is
+  actually configured rather than always being `claude-opus-4-8`. A user who
+  had signed in with `auth --login codex` — the sign-in the README recommends
+  first — previously hit "@anthropic-ai/sdk is not installed" on their first
+  task with a working backend already available. When no backend is configured
+  at all, both paths now say so up front, with the four ways to fix it, instead
+  of failing inside the model adapter.
+- The agent skill tells agents that `betterwright vault` is the user's command,
+  not theirs: `vault list` is fine, `show --reveal` / `copy` / `rm` are not.
 - `import "betterwright/worker"` no longer starts a worker process. The subpath
   resolves to a side-effect-free constants module; `METADATA_RESOLVER_RULES` is
   unchanged.
@@ -35,6 +106,59 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
+- **`vault get --reveal` no longer bypasses the non-terminal reveal gate.**
+  `get` is an alias of `show`, but the guard keyed on the subcommand name, so
+  `vault get <id> --reveal > file` printed a secret to a pipe with no `--force`
+  — the one spelling with no gate. Every path that puts plaintext on stdout is
+  now gated; only `vault copy` (clipboard, never stdout) is exempt.
+- **Browser capture no longer duplicates — or silently widens the scope of, or
+  drops — a credential during a generated signup.** `generateAndFill` types its
+  secret into the page, so the capture sensor saw an ordinary accepted
+  submission and saved it a second time, leaving two records per agent signup;
+  the duplicate used capture's `base-domain` default, widening a credential
+  scoped to `host` / `exact-origin` across the whole registrable domain. The
+  suppression now happens inside the vault, keyed on whether the submitted
+  password *is* the pending generated secret (a constant-time compare) rather
+  than on a username guess — so a *different* password typed at the same site
+  during the pending window (a failed fill retried by hand, or a headed user's
+  own "Save password?") is still saved instead of being silently lost.
+- **A configured model backend is no longer refused by `exec`.** The default
+  model and `doctor`'s readiness check resolved the optional `@anthropic-ai/sdk`
+  peer only next to the package, missing a project-local copy — so a global
+  install with `ANTHROPIC_API_KEY` and the SDK in the project (which worked
+  before) hit exit 1 with "install a package you already installed". Both now
+  use the same working-directory-aware resolution the model adapter uses.
+  `doctor` and `exec` also agreed to disagree about OpenRouter/Ollama/API-key
+  backends: `exec` refused what `doctor` called ready. `exec` now accepts a
+  plain `OPENAI_API_KEY` / `XAI_API_KEY`, and for a source with no default
+  model id (OpenRouter, Ollama) it prints "name one with `--model source/id`"
+  instead of the false "no backend configured".
+- **`betterwright init` is safe to re-run and survives a bad host.** Editing
+  `~/.codex/AGENTS.md` refused to guess when its markers were not a clean pair
+  (an orphaned marker used to splice out the user's text on the second run) and
+  writes atomically; its block now carries a version stamp so an upgrade
+  replaces it instead of appending. One unwritable agent host no longer aborts
+  the whole run before verification; a network failure at the verify step warns
+  instead of failing after everything installed; a run that verified nothing
+  (`--skip-browser`) no longer claims "ready"; and `-y` works as `--yes`.
+- **A deep or symlinked `BETTERWRIGHT_HOME` no longer costs you session
+  persistence.** Beyond the socket-length fallback below, the fallback
+  directory hardening no longer runs against — or chmods — the user's own home
+  on the natural path (it applies only to the shared-tmpdir fallback), the home
+  hash resolves symlinks so two spellings of one home share one daemon, and a
+  programmatic `connectSessionDaemon({home})` now pins that home into the
+  spawned daemon so client and daemon bind the same socket.
+- `types/vault.d.ts`: `VaultRevealedRecord` and `ownerRemove`'s return no
+  longer require `id`/`updatedAt`, which a revealed or removed *pending* signup
+  does not carry.
+- **A deep `BETTERWRIGHT_HOME` no longer costs you session persistence.** A
+  unix socket path is capped by `sockaddr_un.sun_path` (104 bytes on macOS, 108
+  on Linux) and the kernel rejects a longer one with `EINVAL`, so a home under
+  a long path — a CI workspace, a deep project directory, a container mount —
+  killed the session daemon on `listen`. Every `run`/`exec` then fell back to a
+  private browser, reporting only "the session daemon did not start". Such a
+  home now binds a short owner-only socket derived from it, in a `0700`
+  directory whose ownership is verified before use.
 - A literal NUL in a skill `autoInject` url pattern was translated into `.*`,
   letting a pattern match paths it did not describe. NULs are now stripped
   before glob translation.

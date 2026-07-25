@@ -60,10 +60,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { BetterWright, NetworkPolicy } from "./client.mjs";
+// `client.mjs` pulls the whole browser/worker/vault graph (~20 ms to import).
+// Only the daemon *server* needs it; every client that imports this module for
+// a socket path or config signature would otherwise pay that cost too. Loaded
+// lazily in `createBrowserFromDaemonConfig`, the sole place it is used.
 import { defaultHome as defaultDaemonHome } from "./home.mjs";
 
 const require = createRequire(import.meta.url);
@@ -105,16 +109,95 @@ export function daemonPackageVersion() {
 // the CLI import it as such; the resolution rule itself lives in home.mjs.
 export { defaultDaemonHome };
 
+// A unix socket path is bounded by `sockaddr_un.sun_path` — 104 bytes on
+// macOS/BSD, 108 on Linux — and the kernel rejects anything longer with EINVAL
+// instead of truncating. A BETTERWRIGHT_HOME under a deep path (a CI
+// workspace, a long project directory, a container mount) therefore cost you
+// session persistence silently: the daemon died on listen, and every run/exec
+// fell back to a private browser with only "the session daemon did not start"
+// to go on. Below the limit nothing changes; above it, fall back to a short
+// owner-only path derived from the same home so sessions still persist.
+const MAX_SOCKET_PATH_BYTES = 100;
+
+// Canonicalize a home path so two spellings of the same directory (a symlinked
+// ~, a bind mount, macOS `/tmp`→`/private/tmp`) resolve identically — AND so
+// the answer does not change once the directory is created. The client hashes
+// the home before `spawnDaemon` makes it; the daemon hashes it after. A plain
+// `realpathSync` gives different answers across that boundary (it can only
+// resolve an existing path), which desynced the two onto different sockets.
+// Resolve the deepest ancestor that exists, then re-append the not-yet-created
+// tail — `mkdir` creates real directories, so the daemon's later full realpath
+// equals this.
+function canonicalHome(home) {
+  let head = path.resolve(home);
+  const tail = [];
+  for (;;) {
+    try {
+      head = fs.realpathSync(head);
+      break;
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) break; // reached the filesystem root
+      tail.unshift(path.basename(head));
+      head = parent;
+    }
+  }
+  return tail.length ? path.join(head, ...tail) : head;
+}
+
+function homeHash(home) {
+  return crypto.createHash("sha256").update(canonicalHome(home)).digest("hex").slice(0, 16);
+}
+
+/** Owner-only directory holding fallback sockets for over-long homes. */
+export function fallbackSocketDir() {
+  const uid = typeof process.getuid === "function" ? process.getuid() : "shared";
+  return path.join(os.tmpdir(), `betterwright-${uid}`);
+}
+
 export function daemonSocketPath(home = defaultDaemonHome()) {
   if (process.platform === "win32") {
-    const hash = crypto
-      .createHash("sha256")
-      .update(path.resolve(home))
-      .digest("hex")
-      .slice(0, 16);
-    return `\\\\.\\pipe\\betterwright-${hash}`;
+    // Named pipes live in their own namespace and have no such limit.
+    return `\\\\.\\pipe\\betterwright-${homeHash(home)}`;
   }
-  return path.join(home, "daemon.sock");
+  const natural = path.join(home, "daemon.sock");
+  if (Buffer.byteLength(natural) <= MAX_SOCKET_PATH_BYTES) return natural;
+  return path.join(fallbackSocketDir(), `${homeHash(home)}.sock`);
+}
+
+/**
+ * Make sure the socket's directory exists before binding.
+ *
+ * Two cases, deliberately handled differently:
+ *   - The natural path puts the socket directly in BETTERWRIGHT_HOME, which the
+ *     user owns and manages. It may legitimately be a symlink (a dotfiles
+ *     manager, a home relocated to another volume) and may carry permissions
+ *     the user chose. Ensure it exists and otherwise leave it untouched —
+ *     rejecting a symlinked home or silently chmod-ing it would break setups
+ *     that worked, which is the exact silent degradation the fallback exists
+ *     to prevent.
+ *   - The fallback path puts the socket in a per-uid directory under the
+ *     shared `os.tmpdir()`, which on Linux other users can reach. Harden that
+ *     one: refuse a symlink or a directory another user owns, and tighten it
+ *     to 0700.
+ */
+export function ensureSocketDirectory(socketPath) {
+  const directory = path.dirname(socketPath);
+  if (directory !== fallbackSocketDir()) {
+    fs.mkdirSync(directory, { recursive: true });
+    return;
+  }
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stats = fs.lstatSync(directory);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error(`Session daemon socket directory is not a real directory: ${directory}`);
+  }
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    throw new Error(
+      `Session daemon socket directory ${directory} is owned by another user; refusing to use it.`,
+    );
+  }
+  fs.chmodSync(directory, 0o700);
 }
 
 export function daemonInfoPath(home = defaultDaemonHome()) {
@@ -177,7 +260,8 @@ export function daemonConfigSignature(config) {
   return JSON.stringify(normalizeDaemonConfig(config));
 }
 
-export function createBrowserFromDaemonConfig(config) {
+export async function createBrowserFromDaemonConfig(config) {
+  const { BetterWright, NetworkPolicy } = await import("./client.mjs");
   const normalized = normalizeDaemonConfig(config);
   return new BetterWright({
     policy: new NetworkPolicy(normalized.policy),
@@ -285,10 +369,9 @@ export async function startSessionDaemon(options = {}) {
   const startedAt = Date.now();
 
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-  const browser =
-    typeof options.createBrowser === "function"
-      ? options.createBrowser(config)
-      : createBrowserFromDaemonConfig(config);
+  const browser = await (typeof options.createBrowser === "function"
+    ? options.createBrowser(config)
+    : createBrowserFromDaemonConfig(config));
 
   /** @type {Map<string, {lastUsed: number, inflight: number, createdAt: number}>} */
   const sessions = new Map();
@@ -795,6 +878,7 @@ export async function startSessionDaemon(options = {}) {
   }
 
   server = net.createServer(handleConnection);
+  if (process.platform !== "win32") ensureSocketDirectory(socketPath);
   await new Promise((resolve, reject) => {
     const tryListen = (retried) => {
       server.once("error", (error) => {

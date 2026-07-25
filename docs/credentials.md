@@ -194,6 +194,58 @@ Capture is on by default whenever a vault is active. Disable it with
 Login forms inside cross-site iframes (OOPIFs) are not captured; SSO flows
 that redirect or open a popup are covered.
 
+## Getting a password back (`betterwright vault`)
+
+Everything above is agent-facing: site-scoped, metadata-only, and deliberately
+incapable of returning a secret. That is the right shape for model-authored
+code, and the wrong shape for you — a password the agent generated during a
+signup, or captured from a login you typed, would otherwise be unreachable.
+
+`betterwright vault` is the human door. It talks to the vault's owner-only API
+rather than the worker RPC, so nothing here widens what agent code can do:
+
+```bash
+betterwright vault list                    # every record, metadata only
+betterwright vault list --query github     # filter by site, username, or label
+betterwright vault show <id>               # one record; password stays hidden
+betterwright vault copy <id>               # password → clipboard
+betterwright vault show <id> --reveal      # print it to the terminal
+betterwright vault rm <id>                 # delete one record
+betterwright vault audit                   # recent activity, metadata only
+betterwright vault path                    # where the encrypted files are
+```
+
+Ids come from `list`; any unambiguous prefix works (`vault copy cred_4c8`).
+
+Three rules govern the one operation that produces plaintext:
+
+- **Nothing prints a secret unless you ask.** `list` and `show` are
+  metadata-only; `--reveal` is the explicit request.
+- **`--reveal` writes only to a terminal.** Redirect it, pipe it, or run it
+  where something captures stdout and it refuses, pointing at `vault copy`
+  instead. `--force` (or `BETTERWRIGHT_VAULT_ALLOW_NON_INTERACTIVE=1`)
+  overrides that when you genuinely mean to redirect. This guards against
+  passwords landing in files and CI logs by accident; it is not a defense
+  against someone who already has your shell — see
+  [SECURITY.md](../SECURITY.md#the-shell-is-a-trusted-channel).
+- **Every reveal is audited.** `owner-reveal` entries carry the timestamp,
+  record id, and site — never the secret — and show up in `vault audit`.
+
+`vault copy` is the recommended path: the password goes to the clipboard
+through the platform's own tool (`pbcopy`, `clip`, `wl-copy`/`xclip`/`xsel`)
+and never enters terminal scrollback or shell history.
+
+Uncommitted signup passwords — a `generateAndFill` that never reached
+`commitGenerated` — are listed separately and can be revealed by their pending
+id, which is how you recover an account whose signup succeeded but whose commit
+did not.
+
+The same operations are on the vault object for trusted JavaScript hosts:
+`ownerList()`, `ownerReveal(id)`, `ownerRemove(id)`, and `ownerAudit()`. They
+are intentionally absent from `handleRequest`, the surface the worker and
+therefore model code addresses; a custom adapter does not need to implement
+them, and `betterwright vault` always talks to the built-in local vault.
+
 ## Site matching
 
 Each login stores the URL where it was accepted and a match mode:
@@ -234,7 +286,9 @@ serialized across clients. Lock ownership combines a heartbeat with an
 immutable OS process identity, so an old PID can be distinguished from a live
 owner after PID reuse without stealing an active lock. The audit log keeps
 timestamp, action, matched site, and opaque record id, never usernames or
-secrets. A mutation is persisted before its audit append; if that append fails,
+secrets. Owner-only operations append there too (`owner-reveal`,
+`owner-remove`), so a read that exposed plaintext leaves the same trail a write
+does. A mutation is persisted before its audit append; if that append fails,
 the successful result contains the bounded, secret-free
 `auditWarning.code === "AUDIT_WRITE_FAILED"`. Treat the mutation as committed
 and repair audit storage instead of retrying it blindly.
@@ -291,7 +345,11 @@ An unlocked extension can still autofill in a headed persistent profile.
 
 ## Boundary
 
-Vault APIs never return stored or generated secrets to the model. Snapshots,
+Vault APIs never return stored or generated secrets to the model. The
+owner-only methods that do (`ownerReveal`, and `betterwright vault
+show --reveal` / `copy` on top of them) are not routed by `handleRequest`, so
+the browser worker cannot reach them however a snippet is written; they are for
+a trusted host acting for the person who owns the files. Snapshots,
 control inspection, console output, serialized results, and direct password
 field read-back are scrubbed as a final net. Like every browser password
 manager, the filled value necessarily exists in the live page DOM and is

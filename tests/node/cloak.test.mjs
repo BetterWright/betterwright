@@ -78,6 +78,16 @@ test("assertProfileNotNewer rejects a profile upgraded by a newer Chromium", () 
       () => assertProfileNotNewer(dir, "145.0.7632.109"),
       /upgraded by a newer Chromium \(149\.0\.7827\.55\)/,
     );
+    // Switching backends is the common cause, so the message has to name the
+    // cause and the exact recovery — this is the one error a first-time user
+    // most often hits, and "reset the profile" is useless without the path.
+    assert.throws(
+      () => assertProfileNotNewer(dir, "145.0.7632.109"),
+      (error) =>
+        error.message.includes(`rm -rf ${dir}`) &&
+        /Chromium fork and CloakBrowser/.test(error.message) &&
+        /BETTERWRIGHT_HOME/.test(error.message),
+    );
     // Same or newer binary is fine.
     assert.doesNotThrow(() => assertProfileNotNewer(dir, "149.0.7827.55"));
     assert.doesNotThrow(() => assertProfileNotNewer(dir, "150.0.0.0"));
