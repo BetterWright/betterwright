@@ -6,6 +6,7 @@ import {
   randomBytes,
   randomInt,
   randomUUID,
+  timingSafeEqual,
 } from "node:crypto";
 import { constants as FS_CONSTANTS } from "node:fs";
 import {
@@ -232,6 +233,18 @@ function managementScopeMatches(scope, target) {
 function pendingScopeMatches(pending, target) {
   if (pending.matchMode !== "never") return scopeMatches(pending, target);
   return pending.creationOrigin === target.origin;
+}
+
+/**
+ * Constant-time secret comparison. Both operands are local plaintext the
+ * process already holds, so this is defence in depth rather than a fix for a
+ * known oracle — but a length-independent compare costs nothing here.
+ */
+function secretsEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  const a = createHash("sha256").update(left, "utf8").digest();
+  const b = createHash("sha256").update(right, "utf8").digest();
+  return timingSafeEqual(a, b);
 }
 
 function upgradedScopeOrigin(record, target) {
@@ -1403,6 +1416,30 @@ export class LocalCredentialVault {
   async #save(snapshot, key, payload, target) {
     const now = new Date().toISOString();
     const category = normalizeCategory(payload?.category);
+
+    // `deferToPending` is the browser capture sensor saying "save this unless
+    // an in-flight generation already owns this exact value". `generateAndFill`
+    // types its secret into the page, so the sensor sees an ordinary accepted
+    // submission and would store a second, base-domain-scoped copy of a
+    // credential the caller may have deliberately scoped to one host.
+    //
+    // The comparison is against the stored secret, not the username: deciding
+    // by account name would suppress a *different* password typed at the same
+    // site during the pending window — a fill that failed and was retried by
+    // hand — and that password would be lost for good. Only the vault can
+    // compare, because the pending secret never leaves it.
+    if (payload?.deferToPending) {
+      const offered = optionalString(payload?.password, "Credential password", 4096, "");
+      const owner = offered
+        ? snapshot.pending.find(
+            (pending) =>
+              Date.now() < Date.parse(pending.expiresAt) &&
+              pendingScopeMatches(pending, target) &&
+              secretsEqual(pending.secret, offered),
+          )
+        : null;
+      if (owner) return { deferred: true, pendingId: owner.pendingId };
+    }
     const explicitId = idFromPayload(payload);
     let record = null;
     let action = "save-created";
@@ -1576,7 +1613,11 @@ export class LocalCredentialVault {
     }
     if (snapshot.pending.length >= MAX_PENDING_SECRETS) {
       throw vaultError(
-        "Credential vault has reached its pending generated-secret limit; commit or discard an existing pending secret before generating another.",
+        // Addressed to the caller that hit the cap, which is model-authored
+        // code: name its own remedy. The human's route out is `vault list`,
+        // which already shows every uncommitted signup; deliberately not
+        // advertising `vault rm` to a model that can reach a shell.
+        `Credential vault has reached its pending generated-secret limit (${MAX_PENDING_SECRETS}); commit the signup you just completed with commitGenerated, or release an abandoned attempt with discardGenerated, before generating another. listPending reports the ones still open.`,
         "VAULT_TOO_LARGE",
       );
     }
@@ -1832,7 +1873,13 @@ export class LocalCredentialVault {
   // an action there would hand the sandbox a secret-read primitive; adding a
   // method here does not. Keep it that way.
 
-  /** Open the vault read-only, without creating one that does not exist yet. */
+  /**
+   * Open the vault read-only. Returns null when no vault exists, so the owner
+   * read paths report an empty vault rather than materializing one. (If the
+   * ciphertext is deleted in the narrow window after the existence check,
+   * loadKeyAndSnapshot will create a fresh empty vault — an accepted race, not
+   * a supported way to create a vault.)
+   */
   async #readSnapshot() {
     if (!(await pathExists(this.paths.data))) return null;
     const { key, snapshot } = await loadKeyAndSnapshot(this.paths);
@@ -1857,9 +1904,29 @@ export class LocalCredentialVault {
         .filter((record) => metadataSearch(record, text))
         .sort((left, right) => recordTimestamp(right) - recordTimestamp(left))
         .map((record) => publicRecord(record));
-      const pendingCredentials = snapshot.pending
-        .sort((left, right) => recordTimestamp(right) - recordTimestamp(left))
-        .map((pending) => publicPendingRecord(pending));
+      // `category` is not a pending concept — a pending is always an
+      // in-flight login — so a category filter hides them all rather than
+      // leaving unrelated entries under a filtered list. `query` applies to
+      // the public pending shape, whose id field is `pendingId`.
+      const pendingCredentials =
+        wanted != null && wanted !== "login"
+          ? []
+          : snapshot.pending
+              .map((pending) => publicPendingRecord(pending))
+              .filter(
+                (pending) =>
+                  !text ||
+                  [
+                    pending.pendingId,
+                    pending.id, // present when the pending rotates an existing record
+                    pending.origin,
+                    pending.username,
+                    pending.label,
+                  ]
+                    .filter((value) => typeof value === "string")
+                    .some((value) => value.toLocaleLowerCase().includes(text)),
+              )
+              .sort((left, right) => recordTimestamp(right) - recordTimestamp(left));
       return { credentials, pendingCredentials };
     });
   }

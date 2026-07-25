@@ -30,6 +30,7 @@ export const VAULT_USAGE = `Usage: betterwright vault <command>
 
   list [--query <text>] [--category <c>]   saved credentials (metadata only)
   show <id> [--reveal]                     one credential; --reveal prints the password
+  get <id>                                 alias for show
   copy <id>                                copy the password to the clipboard
   rm <id> [--yes]                          delete one credential
   audit [--limit <n>]                      recent vault activity (metadata only)
@@ -43,8 +44,16 @@ Categories: login (default), credit-card, identity, api-credential,
 
 Ids come from \`betterwright vault list\`; a prefix is enough when unambiguous.`;
 
-/** Copy text to the system clipboard without it ever reaching stdout. */
-export async function copyToClipboard(text, { platform = process.platform } = {}) {
+/**
+ * Copy text to the system clipboard without it ever reaching stdout.
+ * `spawn` is injectable so the no-tool failure path is testable without a
+ * clipboard tool actually running (and writing a test secret to a real
+ * clipboard) on whatever machine the tests happen to run on.
+ */
+export async function copyToClipboard(
+  text,
+  { platform = process.platform, spawn: spawnFn = spawn } = {},
+) {
   const candidates =
     platform === "darwin"
       ? [["pbcopy", []]]
@@ -59,7 +68,7 @@ export async function copyToClipboard(text, { platform = process.platform } = {}
   for (const [command, args] of candidates) {
     try {
       await new Promise((resolve, reject) => {
-        const child = spawn(command, args, { stdio: ["pipe", "ignore", "ignore"] });
+        const child = spawnFn(command, args, { stdio: ["pipe", "ignore", "ignore"] });
         child.once("error", reject);
         child.once("close", (code) =>
           code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`)),
@@ -265,7 +274,7 @@ async function dispatchVaultCommand(rest, io) {
       );
     }
     if (pendingCredentials.length) {
-      log("");
+      if (credentials.length) log(""); // only a separator; nothing to separate from otherwise
       log(`${pendingCredentials.length} uncommitted signup password(s) — a signup that never confirmed:`);
       log(
         column(
@@ -302,6 +311,18 @@ async function dispatchVaultCommand(rest, io) {
         credentials.find((candidate) => candidate.id === id) ||
         pendingCredentials.find((candidate) => candidate.pendingId === id);
       if (!flags.has("--yes")) {
+        // Separate "said no" from "could not be asked": without a terminal the
+        // prompt never appears, and a bare "Nothing was deleted." reads like a
+        // failure with no cause. Deleting a credential is not recoverable, so
+        // the answer is still no — but say which no it is.
+        if (!process.stdin.isTTY) {
+          fail(
+            `Refusing to delete the ${site(entry?.origin)} credential for ` +
+              `${entry?.username || "(no username)"} without confirmation, and ` +
+              "there is no terminal here to ask. Re-run with --yes if you are sure.",
+          );
+          return 1;
+        }
         const ok = await confirm(
           `Delete the ${site(entry?.origin)} credential for ${entry?.username || "(no username)"}?`,
         );
@@ -350,7 +371,12 @@ async function dispatchVaultCommand(rest, io) {
       return 0;
     }
 
-    if (subcommand === "show") {
+    // Gate every path that puts plaintext on stdout. Keying this on the
+    // subcommand name once let the `get` alias through: `vault get <id>
+    // --reveal > creds.txt` printed the secret with no terminal and no
+    // --force. `copy` is the sole exemption, and only because the secret
+    // reaches the clipboard instead of stdout.
+    if (subcommand !== "copy") {
       const gate = revealAllowed({ force: flags.has("--force") });
       if (!gate.ok) {
         fail(gate.error);

@@ -57,8 +57,9 @@ browser:
 - `betterwright setup --chromium`
 
 To select an already installed official CloakBrowser build, use
-`CLOAKBROWSER_BINARY_PATH`. `betterwright doctor` reports the exact wrapper,
-binary version, tier, and path that will launch.
+`CLOAKBROWSER_BINARY_PATH`. `betterwright doctor` reports the binary version,
+tier, and path that will launch on the CloakBrowser line (and the full wrapper
+directory under `doctor --json`).
 
 ## Troubleshooting headed launch
 
@@ -71,7 +72,11 @@ binary version, tier, and path that will launch.
 4. If BetterWright reports that the profile was upgraded by a newer browser,
    move or remove `$BETTERWRIGHT_HOME/browser/profile` and sign in again. The
    guard deliberately stops before an older browser build can crash while
-   opening an incompatible profile.
+   opening an incompatible profile. The usual cause is switching backends: the
+   Chromium fork and CloakBrowser ship different Chromium versions, so they
+   cannot share one profile. Vault credentials live outside the profile and
+   survive the reset; browser-saved logins do not. To keep both backends,
+   give each its own `BETTERWRIGHT_HOME`.
 
 The managed browser reduces common automation false positives; it cannot
 guarantee that a site will accept a session or never present a challenge.

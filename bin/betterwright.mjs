@@ -37,6 +37,7 @@
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -84,6 +85,7 @@ import {
 import {
   installAgentSkills,
   packageVersion,
+  parseGeneratedBy,
   refreshInstalledAgentSkills,
   resolveSkillInstallPaths,
   wrapClaudeSkillMarkdown,
@@ -247,26 +249,44 @@ async function cmdDoctor(flags) {
 // `init`: the guided path from nothing to a working browser.
 async function cmdInit(flags) {
   const { runInit } = await import("../src/onboard.mjs");
+  // `flags` only carries `--`-prefixed tokens; accept `-y` as an alias for
+  // `--yes` so it is not silently ignored on a TTY.
+  const initFlags = new Set(flags);
+  if (process.argv.includes("-y")) initFlags.add("--yes");
   return runInit({
-    flags,
+    flags: initFlags,
+    version: packageVersion(),
     doctorReport,
     installAgentSkills,
     skillMarkdown: agentSkillMarkdown,
     skillBody: agentSkillBody,
     installBrowser: () => cmdSetup(flags, { quiet: true }),
     // A real navigation through the real worker: the step that distinguishes
-    // "the files are on disk" from "this actually works".
+    // "the files are on disk" from "this actually works". Separate a browser
+    // that would not launch (a real install failure) from a page that would
+    // not load (offline), so init fails only on the former.
     verify: async () => {
       const bw = new BetterWright({ policy: policyFromFlags(flags), headless: true });
+      let launched = false;
       try {
+        const probe = await bw.run("return 1 + 1");
+        launched = probe.ok && probe.result === 2;
+        if (!launched) {
+          return { ok: false, launched: false, detail: probe.error || "worker did not start" };
+        }
         const result = await bw.run(
           "await page.goto('https://example.com'); return page.title()",
         );
         return result.ok && result.result === "Example Domain"
-          ? { ok: true, detail: `example.com → "${result.result}"` }
-          : { ok: false, detail: result.error || `unexpected title ${JSON.stringify(result.result)}` };
+          ? { ok: true, launched: true, detail: `example.com → "${result.result}"`, warnings: result.warnings }
+          : {
+              ok: false,
+              launched: true,
+              detail: result.error || `unexpected title ${JSON.stringify(result.result)}`,
+              warnings: result.warnings,
+            };
       } catch (error) {
-        return { ok: false, detail: error?.message || String(error) };
+        return { ok: false, launched, detail: error?.message || String(error) };
       } finally {
         await bw.close().catch(() => {});
       }
@@ -510,14 +530,13 @@ Surface details for "Live view and handoff" below: \`browser_handoff\` action "s
 
 Network access is policy-guarded: loopback and the private network are reachable by default; \`--block-private-network\` / \`--block-loopback\` lock down; \`--allow-host <host>\` / \`--block-host <host>\` adjust. Cloud-metadata endpoints are always blocked. Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet"; the "approval-gated download tool" is \`betterwright run --approve-downloads\`: one bounded download-enabled run, used only after the user explicitly approves.
 
-\`betterwright vault\` is the user's own command for reading their saved passwords, not a tool for you. Never run \`vault show --reveal\`, \`vault copy\`, or \`vault rm\`: a stored password must not enter your context or be deleted on your initiative, and fill happens inside the browser without one. \`betterwright vault list\` is metadata-only and fine when the user asks what is saved. When they want a password themselves, tell them to run \`betterwright vault copy <id>\` — it reaches their clipboard without either of us seeing it.`;
+\`betterwright vault\` is the user's own command for reading their saved passwords, not a tool for you. Never run \`vault show --reveal\` (or its \`vault get\` alias), \`vault copy\`, or \`vault rm\`: a stored password must not enter your context or be deleted on your initiative, and fill happens inside the browser without one. \`betterwright vault list\` is metadata-only and fine when the user asks what is saved. When they want a password themselves, tell them to run \`betterwright vault copy <id>\` — it reaches their clipboard without either of us seeing it.`;
 
 function cmdSkill(flags) {
   const body = agentSkillBody();
   if (flags.has("--status")) {
     // "Did the install actually land, and is it current?" was previously only
     // answerable by finding the file yourself and reading its frontmatter.
-    const { parseGeneratedBy } = require("../src/skill-install.mjs");
     const current = packageVersion();
     let any = false;
     for (const dest of resolveSkillInstallPaths({ targets: "all" })) {
@@ -531,6 +550,24 @@ function cmdSkill(flags) {
       console.log(
         `  ${stale ? "!" : "✓"}  ${dest.label.padEnd(14)} ${installed ? `v${installed}` : "unstamped"}${stale ? ` (this package is v${current})` : ""}  ${dest.file}`,
       );
+    }
+    // Codex is wired through a marker block in ~/.codex/AGENTS.md, not a skill
+    // file, so it is reported the same way but read from its own stamp. init
+    // writes it; it belongs in the same status view as the skill hosts.
+    const codexFile = path.join(os.homedir(), ".codex", "AGENTS.md");
+    if (fs.existsSync(codexFile)) {
+      const text = fs.readFileSync(codexFile, "utf8");
+      const marker = text.match(/<!-- betterwright:begin(?: v([0-9][^ ]*))? -->/);
+      if (marker) {
+        any = true;
+        const installed = marker[1] || null;
+        const stale = installed !== current;
+        console.log(
+          `  ${stale ? "!" : "✓"}  ${"Codex".padEnd(14)} ${installed ? `v${installed}` : "unstamped"}${stale ? ` (this package is v${current})` : ""}  ${codexFile}`,
+        );
+      } else {
+        console.log(`  —  ${"Codex".padEnd(14)} not installed  ${codexFile}`);
+      }
     }
     console.log("");
     console.log(

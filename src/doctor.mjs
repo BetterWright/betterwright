@@ -17,6 +17,7 @@ import {
 } from "./chromium-fork.mjs";
 import { forkFontsDir } from "./fork-identity.mjs";
 import { defaultHome } from "./home.mjs";
+import { optionalPeerAvailable } from "./optional-peer.mjs";
 import { staleAgentSkillReport } from "./skill-install.mjs";
 
 const require = createRequire(import.meta.url);
@@ -152,20 +153,27 @@ export async function doctorReport() {
 // integration state doctorReport() has no reason to carry, into a grouped
 // report where every failure names its fix.
 
-function moduleAvailable(specifier) {
-  try {
-    require.resolve(specifier);
-    return true;
-  } catch {
-    return false;
-  }
-}
+// Deliberately `optionalPeerAvailable` and not a bare `require.resolve`: the
+// latter only looks next to this file, so a global BetterWright never sees a
+// project-local @anthropic-ai/sdk. The model adapter loads that peer via
+// `importOptionalPeer`, which does look, and a report that disagrees with the
+// loader tells the user to install a package they already installed — and,
+// once `exec` started gating on this answer, refused to run a configuration
+// that worked.
+const moduleAvailable = optionalPeerAvailable;
 
-/** Which model backends could serve `betterwright exec` without more setup. */
-export function modelReadiness({ env = process.env } = {}) {
+/**
+ * Which model backends could serve `betterwright exec` without more setup.
+ *
+ * `auth` is injectable so this is testable without the developer's own
+ * ~/.codex and ~/.grok sign-ins deciding the answer.
+ */
+export function modelReadiness({ env = process.env, auth = null } = {}) {
+  const codex = auth ? Boolean(auth.codex) : Boolean(loadCodexAuth());
+  const grok = auth ? Boolean(auth.grok) : Boolean(loadGrokAuth());
   const sources = [];
-  if (loadCodexAuth()) sources.push("codex (signed in)");
-  if (loadGrokAuth()) sources.push("grok (signed in)");
+  if (codex) sources.push("codex (signed in)");
+  if (grok) sources.push("grok (signed in)");
   if (env.ANTHROPIC_API_KEY && moduleAvailable("@anthropic-ai/sdk")) {
     sources.push("claude (ANTHROPIC_API_KEY)");
   }
@@ -190,30 +198,62 @@ export function modelReadiness({ env = process.env } = {}) {
  *
  * @returns {{model: string, reason: string, configured: boolean}}
  */
-export function preferredModelId({ env = process.env } = {}) {
+export function preferredModelId({ env = process.env, auth = null } = {}) {
+  const codex = auth ? Boolean(auth.codex) : Boolean(loadCodexAuth());
+  const grok = auth ? Boolean(auth.grok) : Boolean(loadGrokAuth());
   if (env.ANTHROPIC_API_KEY && moduleAvailable("@anthropic-ai/sdk")) {
     return { model: "claude-opus-4-8", reason: "ANTHROPIC_API_KEY", configured: true };
   }
-  if (loadCodexAuth()) {
+  if (codex) {
     return {
       model: env.BETTERWRIGHT_CODEX_MODEL || "gpt-5.6-sol",
       reason: "signed in with `auth --login codex`",
       configured: true,
     };
   }
-  if (loadGrokAuth()) {
+  if (grok) {
     return {
       model: env.BETTERWRIGHT_GROK_MODEL || env.XAI_MODEL || "grok-4.3",
       reason: "signed in with `auth --login grok`",
       configured: true,
     };
   }
+  // A bare `gpt-…`/`grok-…` id resolves to the native codex/grok adapter, and
+  // those adapters accept a plain API key as readily as an OAuth sign-in. Not
+  // honouring the key here is what made `exec` refuse a setup that worked.
+  if (env.OPENAI_API_KEY) {
+    return {
+      model: env.BETTERWRIGHT_CODEX_MODEL || "gpt-5.6-sol",
+      reason: "OPENAI_API_KEY",
+      configured: true,
+    };
+  }
+  if (env.XAI_API_KEY || env.GROK_API_KEY) {
+    return {
+      model: env.BETTERWRIGHT_GROK_MODEL || env.XAI_MODEL || "grok-4.3",
+      reason: "XAI_API_KEY",
+      configured: true,
+    };
+  }
+  // OpenRouter, Ollama, and vLLM have no bare-id default — a model there has
+  // to be named `source/id` — so they are usable but cannot supply a default.
   return { model: "claude-opus-4-8", reason: "default", configured: false };
 }
 
 /** One line telling the user how to get a usable model, or null when fine. */
-export function modelSetupHint({ env = process.env } = {}) {
-  if (preferredModelId({ env }).configured) return null;
+export function modelSetupHint({ env = process.env, auth = null } = {}) {
+  if (preferredModelId({ env, auth }).configured) return null;
+  const { sources } = modelReadiness({ env, auth });
+  if (sources.length) {
+    // doctor just told this user their backends are fine, and they are — the
+    // gap is only that these sources have no default id. Saying "no model
+    // backend is configured" here would be false and would leave them stuck.
+    return (
+      `A model backend is available (${sources.join(", ")}), but those sources have no default model id.\n` +
+      "  Name one:  --model openrouter/<id>   (or ollama/<id>, vllm/<id>)\n" +
+      "  List them: betterwright models"
+    );
+  }
   return (
     "No model backend is configured yet, so a task cannot run.\n" +
     "  Sign in:  betterwright auth --login codex     (a ChatGPT/Codex subscription)\n" +
@@ -269,11 +309,24 @@ export function doctorChecks(report, { home = defaultHome(), env = process.env }
     "CloakBrowser",
     report.cloakbrowser_ok ? "ok" : report.chromium_fork ? "warn" : "fail",
     report.cloakbrowser_ok
-      ? `${report.cloakbrowser_binary_version} (${report.cloakbrowser_binary_tier})`
+      ? `${report.cloakbrowser_binary_version} (${report.cloakbrowser_binary_tier})` +
+        (report.cloakbrowser_binary ? ` — ${report.cloakbrowser_binary}` : "")
       : "binary not installed",
     report.cloakbrowser_ok ? null : "Run `betterwright setup` to download it.",
   );
   add("Browser", "In use", report.ready ? "ok" : "fail", report.browser, report.ready ? null : "Run `betterwright setup`.");
+  // Optional isolated-world stealth driver. Reported here (not only in --json)
+  // because the docs point users at `doctor` to check it before turning on
+  // `stealthRuntimeFix`.
+  add(
+    "Browser",
+    "Stealth driver",
+    report.stealth_available ? "ok" : "warn",
+    report.stealth_available
+      ? `patchright-core ${report.stealth_driver} (enable with --stealth)`
+      : "not installed — --stealth / stealthRuntimeFix unavailable",
+    report.stealth_available ? null : "Optional: npm install patchright-core",
+  );
 
   const stale = staleAgentSkillReport({ home: os.homedir() });
   const installed = [];
@@ -287,7 +340,11 @@ export function doctorChecks(report, { home = defaultHome(), env = process.env }
   const codexFile = path.join(os.homedir(), ".codex", "AGENTS.md");
   if (fs.existsSync(codexFile)) {
     try {
-      if (fs.readFileSync(codexFile, "utf8").includes("betterwright")) installed.push("Codex");
+      // Match the managed marker, not the bare word: a file that says
+      // "don't use betterwright" is not an install.
+      if (/<!-- betterwright:begin/.test(fs.readFileSync(codexFile, "utf8"))) {
+        installed.push("Codex");
+      }
     } catch {
       /* unreadable is not a failure of ours */
     }

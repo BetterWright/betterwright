@@ -175,7 +175,12 @@ function spawnDaemon({ home, cliPath, config }) {
     {
       detached: true,
       stdio: ["ignore", "ignore", logFd],
-      env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      // Pin the daemon's home to the one the client resolved. The daemon
+      // otherwise reads BETTERWRIGHT_HOME itself, so a programmatic
+      // `connectSessionDaemon({home})` that did not also set the env var would
+      // spawn a daemon on the *default* socket while the client waits on the
+      // custom one — they must agree on which home, hence which socket.
+      env: { ...process.env, BETTERWRIGHT_HOME: home, NODE_NO_WARNINGS: "1" },
     },
   );
   child.unref();

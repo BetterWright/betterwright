@@ -93,16 +93,51 @@ Getting started is one command, and the vault is no longer a one-way door.
 
 ### Fixed
 
-- **Browser capture no longer duplicates — or silently widens the scope of — a
-  generated credential.** `generateAndFill` types its secret into the page, so
-  the capture sensor saw an ordinary accepted submission and saved it a second
-  time, leaving two records for every agent signup. The duplicate used
-  capture's `base-domain` default, so a credential the caller had deliberately
-  scoped to `host` or `exact-origin` also became offerable across the whole
-  registrable domain. Capture now defers to an in-flight generation for the
-  same account and lets `commitGenerated` / `discardGenerated` decide. A vault
-  that cannot report pending entries still saves, because losing a password is
-  worse than storing a duplicate.
+- **`vault get --reveal` no longer bypasses the non-terminal reveal gate.**
+  `get` is an alias of `show`, but the guard keyed on the subcommand name, so
+  `vault get <id> --reveal > file` printed a secret to a pipe with no `--force`
+  — the one spelling with no gate. Every path that puts plaintext on stdout is
+  now gated; only `vault copy` (clipboard, never stdout) is exempt.
+- **Browser capture no longer duplicates — or silently widens the scope of, or
+  drops — a credential during a generated signup.** `generateAndFill` types its
+  secret into the page, so the capture sensor saw an ordinary accepted
+  submission and saved it a second time, leaving two records per agent signup;
+  the duplicate used capture's `base-domain` default, widening a credential
+  scoped to `host` / `exact-origin` across the whole registrable domain. The
+  suppression now happens inside the vault, keyed on whether the submitted
+  password *is* the pending generated secret (a constant-time compare) rather
+  than on a username guess — so a *different* password typed at the same site
+  during the pending window (a failed fill retried by hand, or a headed user's
+  own "Save password?") is still saved instead of being silently lost.
+- **A configured model backend is no longer refused by `exec`.** The default
+  model and `doctor`'s readiness check resolved the optional `@anthropic-ai/sdk`
+  peer only next to the package, missing a project-local copy — so a global
+  install with `ANTHROPIC_API_KEY` and the SDK in the project (which worked
+  before) hit exit 1 with "install a package you already installed". Both now
+  use the same working-directory-aware resolution the model adapter uses.
+  `doctor` and `exec` also agreed to disagree about OpenRouter/Ollama/API-key
+  backends: `exec` refused what `doctor` called ready. `exec` now accepts a
+  plain `OPENAI_API_KEY` / `XAI_API_KEY`, and for a source with no default
+  model id (OpenRouter, Ollama) it prints "name one with `--model source/id`"
+  instead of the false "no backend configured".
+- **`betterwright init` is safe to re-run and survives a bad host.** Editing
+  `~/.codex/AGENTS.md` refused to guess when its markers were not a clean pair
+  (an orphaned marker used to splice out the user's text on the second run) and
+  writes atomically; its block now carries a version stamp so an upgrade
+  replaces it instead of appending. One unwritable agent host no longer aborts
+  the whole run before verification; a network failure at the verify step warns
+  instead of failing after everything installed; a run that verified nothing
+  (`--skip-browser`) no longer claims "ready"; and `-y` works as `--yes`.
+- **A deep or symlinked `BETTERWRIGHT_HOME` no longer costs you session
+  persistence.** Beyond the socket-length fallback below, the fallback
+  directory hardening no longer runs against — or chmods — the user's own home
+  on the natural path (it applies only to the shared-tmpdir fallback), the home
+  hash resolves symlinks so two spellings of one home share one daemon, and a
+  programmatic `connectSessionDaemon({home})` now pins that home into the
+  spawned daemon so client and daemon bind the same socket.
+- `types/vault.d.ts`: `VaultRevealedRecord` and `ownerRemove`'s return no
+  longer require `id`/`updatedAt`, which a revealed or removed *pending* signup
+  does not carry.
 - **A deep `BETTERWRIGHT_HOME` no longer costs you session persistence.** A
   unix socket path is capped by `sockaddr_un.sun_path` (104 bytes on macOS, 108
   on Linux) and the kernel rejects a longer one with `EINVAL`, so a home under

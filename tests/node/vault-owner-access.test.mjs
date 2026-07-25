@@ -5,6 +5,7 @@
 // RPC — and therefore model-authored browser code — can address.
 
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -82,6 +83,28 @@ test("owner list filters by query and category", async () => {
   assert.equal((await vault.ownerList({ query: "nothing-here" })).credentials.length, 0);
   assert.equal((await vault.ownerList({ category: "login" })).credentials.length, 2);
   assert.equal((await vault.ownerList({ category: "ssh-key" })).credentials.length, 0);
+});
+
+test("owner list filters uncommitted signups too, not just committed records", async () => {
+  const home = tempHome();
+  const { vault } = await seed(home);
+  await vault.handleRequest("generate", { username: "ada@example.com" }, "https://reddit.com/");
+
+  // A filtered list that still shows every pending is a lie about its own
+  // filter: the reader takes the pending as a match for what they searched.
+  const alpha = await vault.ownerList({ query: "github" });
+  assert.equal(alpha.credentials.length, 1);
+  assert.deepEqual(alpha.pendingCredentials, []);
+
+  const reddit = await vault.ownerList({ query: "reddit" });
+  assert.equal(reddit.credentials.length, 0);
+  assert.equal(reddit.pendingCredentials.length, 1);
+  assert.match(reddit.pendingCredentials[0].origin, /reddit\.com/);
+  assert.ok(!("secret" in reddit.pendingCredentials[0]));
+
+  // A pending is always an in-flight login, so any other category excludes it.
+  assert.equal((await vault.ownerList({ category: "login" })).pendingCredentials.length, 1);
+  assert.equal((await vault.ownerList({ category: "ssh-key" })).pendingCredentials.length, 0);
 });
 
 test("owner reveal returns the stored secret and audits the read", async () => {
@@ -172,14 +195,30 @@ test("id prefixes resolve, and an exact id beats a longer neighbour", () => {
   assert.throws(() => resolveCredentialId(entries, "cred_ab"), /ambiguous/);
   assert.throws(() => resolveCredentialId(entries, "nope"), /No credential id/);
   assert.throws(() => resolveCredentialId(entries, ""), /An id is required/);
+
+  // Production always passes `[...credentials, ...pendingCredentials]`, where a
+  // pending entry has `pendingId` and no `id`. That branch must resolve too —
+  // it is what `vault show pending_…` runs.
+  const mixed = [{ id: "cred_abc" }, { pendingId: "pending_9f2a" }];
+  assert.equal(resolveCredentialId(mixed, "pending_9f2a"), "pending_9f2a");
+  assert.equal(resolveCredentialId(mixed, "pending_"), "pending_9f2a");
+  assert.equal(resolveCredentialId(mixed, "cred_abc"), "cred_abc");
 });
 
 test("clipboard copy reports a usable error when no tool exists", async () => {
-  const result = await copyToClipboard("secret", { platform: "linux" });
-  if (!result.ok) {
-    assert.match(result.error, /wl-copy|xclip|xsel/);
-    assert.match(result.error, /vault show/);
-  }
+  // Inject a spawn that always fails, so the failure path is exercised
+  // deterministically and no real clipboard tool runs (which would both make
+  // the assertions conditional and leave a test secret on the CI clipboard).
+  const failingSpawn = () => {
+    const child = new EventEmitter();
+    child.stdin = { end() {} };
+    queueMicrotask(() => child.emit("error", new Error("ENOENT")));
+    return child;
+  };
+  const result = await copyToClipboard("secret", { platform: "linux", spawn: failingSpawn });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /wl-copy|xclip|xsel/);
+  assert.match(result.error, /vault show/);
 });
 
 test("vault list prints metadata and never a stored secret", async () => {
@@ -217,13 +256,49 @@ test("vault show hides the password until --reveal", async () => {
   assert.match(forced.stdout, /gh-secret-value/);
 });
 
+test("the `get` alias is gated exactly like `show --reveal`", async () => {
+  const home = tempHome();
+  const { github } = await seed(home);
+
+  // `get` used to skip the non-terminal reveal gate entirely, so
+  // `vault get <id> --reveal > file` printed the secret. It must fail closed.
+  const piped = capture();
+  assert.equal(await runVaultCommand(["get", github.id, "--reveal"], { home, ...piped }), 1);
+  assert.equal(piped.stdout.includes("gh-secret-value"), false);
+  assert.match(piped.stderr, /not a terminal/);
+
+  // Including the --json spelling, which is the one a script would reach for.
+  const jsonPiped = capture();
+  assert.equal(
+    await runVaultCommand(["get", github.id, "--reveal", "--json"], { home, ...jsonPiped }),
+    1,
+  );
+  assert.equal(jsonPiped.stdout.includes("gh-secret-value"), false);
+});
+
+test("show --json without --reveal omits the secret", async () => {
+  const home = tempHome();
+  const { github } = await seed(home);
+  const io = capture();
+
+  assert.equal(await runVaultCommand(["show", github.id, "--json"], { home, ...io }), 0);
+  const parsed = JSON.parse(io.stdout);
+  assert.equal(parsed.id, github.id);
+  assert.equal("secret" in parsed, false, "metadata-only JSON must not carry the secret");
+  assert.equal(io.stdout.includes("gh-secret-value"), false);
+});
+
 test("vault rm needs confirmation it cannot get without a terminal", async () => {
   const home = tempHome();
   const { github, vault } = await seed(home);
   const refused = capture();
 
   assert.equal(await runVaultCommand(["rm", github.id], { home, ...refused }), 1);
-  assert.match(refused.stderr, /Nothing was deleted/);
+  // "could not ask" and "you said no" are different failures; a caller with no
+  // terminal must be told which one it hit, and how to proceed.
+  assert.match(refused.stderr, /no terminal here to ask/);
+  assert.match(refused.stderr, /--yes/);
+  assert.match(refused.stderr, /github\.com/);
   assert.equal((await vault.ownerList()).credentials.length, 2);
 
   const confirmed = capture();

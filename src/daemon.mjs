@@ -117,7 +117,17 @@ export { defaultDaemonHome };
 const MAX_SOCKET_PATH_BYTES = 100;
 
 function homeHash(home) {
-  return crypto.createHash("sha256").update(path.resolve(home)).digest("hex").slice(0, 16);
+  // Resolve symlinks so two spellings of the same home (a symlinked ~, a
+  // bind mount) hash to one socket and share one daemon rather than spawning
+  // a second over the same profile. realpath needs the path to exist; before
+  // it does, fall back to a lexical resolve.
+  let canonical;
+  try {
+    canonical = fs.realpathSync(home);
+  } catch {
+    canonical = path.resolve(home);
+  }
+  return crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
 }
 
 /** Owner-only directory holding fallback sockets for over-long homes. */
@@ -137,13 +147,27 @@ export function daemonSocketPath(home = defaultDaemonHome()) {
 }
 
 /**
- * Make sure the socket's directory exists and is owner-only before binding.
- * The home directory is already private; the tmpdir fallback is not
- * necessarily, and on Linux `os.tmpdir()` is shared between users, so refuse
- * a directory somebody else owns rather than binding a socket inside it.
+ * Make sure the socket's directory exists before binding.
+ *
+ * Two cases, deliberately handled differently:
+ *   - The natural path puts the socket directly in BETTERWRIGHT_HOME, which the
+ *     user owns and manages. It may legitimately be a symlink (a dotfiles
+ *     manager, a home relocated to another volume) and may carry permissions
+ *     the user chose. Ensure it exists and otherwise leave it untouched —
+ *     rejecting a symlinked home or silently chmod-ing it would break setups
+ *     that worked, which is the exact silent degradation the fallback exists
+ *     to prevent.
+ *   - The fallback path puts the socket in a per-uid directory under the
+ *     shared `os.tmpdir()`, which on Linux other users can reach. Harden that
+ *     one: refuse a symlink or a directory another user owns, and tighten it
+ *     to 0700.
  */
 export function ensureSocketDirectory(socketPath) {
   const directory = path.dirname(socketPath);
+  if (directory !== fallbackSocketDir()) {
+    fs.mkdirSync(directory, { recursive: true });
+    return;
+  }
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stats = fs.lstatSync(directory);
   if (stats.isSymbolicLink() || !stats.isDirectory()) {

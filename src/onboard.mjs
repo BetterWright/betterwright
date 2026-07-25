@@ -23,8 +23,14 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-const CODEX_BEGIN = "<!-- betterwright:begin -->";
+const CODEX_BEGIN_PREFIX = "<!-- betterwright:begin";
 const CODEX_END = "<!-- betterwright:end -->";
+function codexBeginMarker(version) {
+  // Stamping the version into the marker lets `skill --status` and the
+  // staleness check see whether the Codex block is current, the way the
+  // skill-file frontmatter does for the other hosts.
+  return version ? `${CODEX_BEGIN_PREFIX} v${version} -->` : `${CODEX_BEGIN_PREFIX} -->`;
+}
 
 /**
  * Agent hosts init knows how to wire, most-likely-first.
@@ -73,31 +79,78 @@ export function detectAgentHosts(home = os.homedir()) {
 /**
  * Write the skill between markers in an instructions file Codex reads, so
  * re-running init updates the block instead of stacking copies of it.
+ *
+ * This edits a file the user owns — their *global* Codex instructions — so it
+ * fails loud rather than guessing when the markers are not a single clean
+ * pair. A previous version matched the first begin against the first end; an
+ * orphaned begin marker (or a second run over an appended block) then spliced
+ * out everything between, destroying user text. The rules here:
+ *   - exactly one begin and one end, end after begin → replace that span;
+ *   - no markers at all → append a fresh block;
+ *   - anything else (orphan, reversed, duplicated) → throw, touch nothing.
+ * The write is atomic (temp + rename) so a crash mid-write cannot truncate the
+ * file to nothing.
+ *
  * @returns {"created"|"updated"|"unchanged"}
  */
-export function upsertCodexInstructions(file, body) {
-  const block = `${CODEX_BEGIN}\n${String(body).trim()}\n${CODEX_END}\n`;
+export function upsertCodexInstructions(file, body, { version = null } = {}) {
+  const begin = codexBeginMarker(version);
+  const block = `${begin}\n${String(body).trim()}\n${CODEX_END}\n`;
   let existing = "";
   try {
     existing = fs.readFileSync(file, "utf8");
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, block);
+    atomicWriteFileSync(file, block);
     return "created";
   }
-  const start = existing.indexOf(CODEX_BEGIN);
-  const end = existing.indexOf(CODEX_END);
-  if (start !== -1 && end > start) {
-    const replaced =
-      existing.slice(0, start) + block.trimEnd() + existing.slice(end + CODEX_END.length);
-    if (replaced === existing) return "unchanged";
-    fs.writeFileSync(file, replaced);
+
+  // Match a begin marker regardless of the version it carries, so an upgrade
+  // replaces last release's block instead of appending beside it.
+  const beginMatches = [...existing.matchAll(/<!-- betterwright:begin[^\n]*-->/g)];
+  const endMatches = [...existing.matchAll(/<!-- betterwright:end -->/g)];
+
+  if (beginMatches.length === 0 && endMatches.length === 0) {
+    const separator = existing.endsWith("\n") ? "\n" : "\n\n";
+    atomicWriteFileSync(file, `${existing}${separator}${block}`);
     return "updated";
   }
-  const separator = existing.endsWith("\n") ? "\n" : "\n\n";
-  fs.writeFileSync(file, `${existing}${separator}${block}`);
+
+  const start = beginMatches[0]?.index;
+  const endMatch = endMatches[0];
+  const balanced =
+    beginMatches.length === 1 &&
+    endMatches.length === 1 &&
+    start != null &&
+    endMatch.index > start;
+  if (!balanced) {
+    throw new Error(
+      `${file} has BetterWright markers that are not a single clean pair ` +
+        `(${beginMatches.length} begin, ${endMatches.length} end). Refusing to ` +
+        "edit it automatically so nothing between them is lost. Remove the stray " +
+        `\`${CODEX_BEGIN_PREFIX} …-->\` / \`${CODEX_END}\` lines and re-run.`,
+    );
+  }
+
+  const endAt = endMatch.index + endMatch[0].length;
+  const replaced = existing.slice(0, start) + block.trimEnd() + existing.slice(endAt);
+  if (replaced === existing) return "unchanged";
+  atomicWriteFileSync(file, replaced);
   return "updated";
+}
+
+/** Write via a sibling temp file and rename, so a crash never truncates. */
+function atomicWriteFileSync(file, contents) {
+  const dir = path.dirname(file);
+  const temp = path.join(dir, `.${path.basename(file)}.betterwright-${process.pid}.tmp`);
+  fs.writeFileSync(temp, contents);
+  try {
+    fs.renameSync(temp, file);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 /** Is the MCP peer dependency importable from here or the working directory? */
@@ -171,10 +224,11 @@ export async function runInit({
   skillMarkdown,
   skillBody,
   verify,
+  version = null,
   home = os.homedir(),
   log = (line) => console.log(line),
 } = {}) {
-  const assumeYes = flags.has("--yes") || flags.has("-y");
+  const assumeYes = flags.has("--yes");
   const interactive = !assumeYes && Boolean(process.stdin.isTTY);
   const prompt = createPrompter({ interactive, log });
   const done = [];
@@ -235,28 +289,52 @@ export async function runInit({
         log("");
         log(`  Found ${present.length} agent host${present.length === 1 ? "" : "s"}:`);
         for (const host of present) log(`    • ${host.label} — ${host.how}`);
-        const wire =
-          interactive
-            ? await prompt.confirm("  Wire BetterWright into them?", true)
-            : true;
+        // Writing into ~/.claude, ~/.cursor, ~/.agents, and the user's global
+        // ~/.codex/AGENTS.md is consent-worthy. On a TTY we ask; without one we
+        // proceed only when the user said `--yes`, rather than silently
+        // editing config a piped/CI caller had no chance to decline.
+        const wire = interactive
+          ? await prompt.confirm("  Wire BetterWright into them?", true)
+          : assumeYes;
         if (!wire) {
-          notes.push("Skipped agent wiring. Run `betterwright skill --install` when you want it.");
+          notes.push(
+            interactive
+              ? "Skipped agent wiring. Run `betterwright skill --install` when you want it."
+              : "Skipped agent wiring (no terminal to confirm at). Re-run with --yes, " +
+                  "or run `betterwright skill --install`.",
+          );
         } else {
+          // One unwritable host must not abort the others or skip verification.
+          // A read-only ~/.claude used to throw EACCES straight out of init,
+          // leaving Codex unwired and the browser unverified.
           const skillTargets = present.filter((host) => host.skillTarget).map((h) => h.skillTarget);
           if (skillTargets.length) {
-            const { written } = installAgentSkills({ markdown: skillMarkdown(), targets: skillTargets });
-            for (const file of written) log(`  ✓ ${file}`);
-            done.push(`${written.length} skill file(s)`);
+            try {
+              const { written } = installAgentSkills({
+                markdown: skillMarkdown(),
+                targets: skillTargets,
+              });
+              for (const file of written) log(`  ✓ ${file}`);
+              if (written.length) done.push(`${written.length} skill file(s)`);
+            } catch (error) {
+              log(`  ! Could not write one or more skill files: ${error?.message || error}`);
+              notes.push("Some agent skill files could not be written. Fix the permissions and re-run.");
+            }
           }
           const codex = present.find((host) => host.codexFile);
           if (codex) {
-            const outcome = upsertCodexInstructions(codex.codexFile, skillBody());
-            log(
-              outcome === "unchanged"
-                ? `  ✓ ${codex.codexFile} (already current)`
-                : `  ✓ ${codex.codexFile} (${outcome})`,
-            );
-            done.push("Codex instructions");
+            try {
+              const outcome = upsertCodexInstructions(codex.codexFile, skillBody(), { version });
+              log(
+                outcome === "unchanged"
+                  ? `  ✓ ${codex.codexFile} (already current)`
+                  : `  ✓ ${codex.codexFile} (${outcome})`,
+              );
+              done.push("Codex instructions");
+            } catch (error) {
+              log(`  ! Could not update ${codex.codexFile}: ${error?.message || error}`);
+              notes.push(`Update Codex manually: append \`betterwright skill\` output to ${codex.codexFile}.`);
+            }
           }
         }
       }
@@ -295,23 +373,40 @@ export async function runInit({
     }
 
     // 4. Verify. "Installed" and "working" are different claims.
+    let verified = false;
     if (flags.has("--skip-browser")) {
       log("  · Verification: skipped (--skip-browser)");
     } else {
       log("");
       log("  · Checking that the browser actually loads a page…");
       const result = await verify();
+      for (const warning of result.warnings || []) log(`    ! ${warning}`);
       if (result.ok) {
         log(`  ✓ Loaded a real page (${result.detail})`);
+        verified = true;
+      } else if (result.launched) {
+        // The browser started but the page did not load — offline, a proxy, a
+        // blocked example.com. The install is fine; do not fail the whole run
+        // over the network, but say plainly what could not be confirmed.
+        log(`  ! The browser launched but could not load a test page: ${result.detail}`);
+        notes.push(
+          "Could not confirm a live page load (offline or network-restricted?). " +
+            "The install looks fine; re-run `betterwright doctor` once you have network.",
+        );
       } else {
-        log(`  ✗ The browser could not load a page: ${result.detail}`);
+        log(`  ✗ The browser could not start: ${result.detail}`);
         log("    Run `betterwright doctor` for the full picture.");
         return 1;
       }
     }
 
     log("");
-    log("BetterWright is ready.");
+    // Don't claim "ready" for a run that verified nothing. With the browser
+    // and verification skipped, init only wired agents; say that instead.
+    log(verified ? "BetterWright is ready." : "BetterWright setup steps completed.");
+    if (!verified && flags.has("--skip-browser")) {
+      log("  (Browser install and verification were skipped — run `betterwright doctor` to confirm.)");
+    }
     log("");
     if (done.length) {
       log("  Ask your agent to browse something — it knows how now.");

@@ -406,16 +406,34 @@ test("an over-long home falls back to a bindable socket path", { skip: process.p
   assert.equal(fallback, daemonSocketPath(deep));
 });
 
-test("the socket directory is created owner-only", { skip: process.platform === "win32" }, () => {
-  const home = makeTempDir("betterwright-socket-dir-");
-  const socketPath = `${home}/nested/daemon.sock`;
+test("the shared-tmpdir fallback directory is created owner-only", { skip: process.platform === "win32" }, () => {
+  // Only the fallback lives under a shared os.tmpdir(), so only it is
+  // hardened to 0700.
+  const socketPath = `${fallbackSocketDir()}/test-${process.pid}.sock`;
 
   ensureSocketDirectory(socketPath);
 
-  const stats = fs.statSync(`${home}/nested`);
+  const stats = fs.statSync(fallbackSocketDir());
   assert.equal(stats.mode & 0o777, 0o700);
   // Idempotent: a second call on an existing directory must not throw.
   ensureSocketDirectory(socketPath);
+});
+
+test("a socket in the user's own home is not hardened or rejected", { skip: process.platform === "win32" }, () => {
+  // The natural path puts the socket directly in BETTERWRIGHT_HOME. That is
+  // the user's directory: a previous version rejected a symlinked home and
+  // silently chmod-ed it to 0700, breaking setups that worked. It must now be
+  // left as the user set it.
+  const realHome = makeTempDir("betterwright-real-home-");
+  fs.chmodSync(realHome, 0o755); // a home the user deliberately left group-readable
+  ensureSocketDirectory(`${realHome}/daemon.sock`);
+  assert.equal(fs.statSync(realHome).mode & 0o777, 0o755, "permissions left untouched");
+
+  // A symlinked home is tolerated rather than throwing.
+  const linkParent = makeTempDir("betterwright-link-parent-");
+  const link = `${linkParent}/home`;
+  fs.symlinkSync(realHome, link);
+  assert.doesNotThrow(() => ensureSocketDirectory(`${link}/daemon.sock`));
 });
 
 test("a daemon on an over-long home actually accepts connections", { skip: process.platform === "win32" }, async () => {

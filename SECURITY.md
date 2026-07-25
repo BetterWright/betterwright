@@ -40,8 +40,11 @@ Be clear about what this does and does not change:
   vault adapter whose key material lives somewhere the agent cannot reach.
 
 The `--reveal` gate is about **accidental** exposure, not adversarial access:
-it refuses to write plaintext anywhere but a terminal, so a redirect, a pipe, a
-CI log, or a tool capturing stdout cannot collect a password by mistake. Every
+every command that would put plaintext on stdout refuses to run when stdout is
+not a terminal, so a redirect, a pipe, a CI log, or a tool capturing stdout
+cannot collect a password by mistake. Overriding it takes a deliberate
+`--force` (or `BETTERWRIGHT_VAULT_ALLOW_NON_INTERACTIVE=1`). `vault copy` is
+exempt because the secret goes to the clipboard and never to stdout. Every
 reveal is written to the metadata-only audit log (`betterwright vault audit`).
 
 ## Reporting a vulnerability

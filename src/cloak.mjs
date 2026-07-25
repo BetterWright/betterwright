@@ -29,9 +29,12 @@ export function assertProfileNotNewer(profileDir, runningVersion) {
     throw new Error(
       `Browser profile at ${profileDir} was upgraded by a newer Chromium ` +
         `(${stored}) than the one launching now (${runningVersion}); a newer ` +
-        "profile cannot be opened by an older browser. Reset it by removing " +
-        "that directory (saved logins there are lost), or launch the matching " +
-        "browser version.",
+        "profile cannot be opened by an older browser. This usually means the " +
+        "profile was created by the other managed backend — the Chromium fork " +
+        "and CloakBrowser ship different Chromium versions and cannot share " +
+        `one profile. Fix it with \`rm -rf ${profileDir}\` and sign in again ` +
+        "(logins saved in that profile are lost; vault credentials are not), " +
+        "or point BETTERWRIGHT_HOME at a separate directory per backend.",
     );
   }
 }

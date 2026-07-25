@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   doctorChecks,
   formatDoctorChecks,
+  modelReadiness,
   modelSetupHint,
   preferredModelId,
 } from "../../src/doctor.mjs";
@@ -67,7 +68,7 @@ function initHarness(home, overrides = {}) {
       },
       skillMarkdown: () => "---\nname: browser\n---\n\nbody",
       skillBody: () => "# Browser tool: BetterWright\n\nbody",
-      verify: async () => ({ ok: true, detail: 'example.com → "Example Domain"' }),
+      verify: async () => ({ ok: true, launched: true, detail: 'example.com → "Example Domain"' }),
       ...overrides,
     },
     get output() {
@@ -131,6 +132,41 @@ test("codex instructions preserve whatever the user already wrote", () => {
   assert.match(contents, /browser guidance v2/);
 });
 
+test("a version-stamped block is replaced across an upgrade, not stacked", () => {
+  const home = tempHome();
+  const file = path.join(home, ".codex", "AGENTS.md");
+
+  assert.equal(upsertCodexInstructions(file, "body", { version: "1.4.0" }), "created");
+  assert.match(fs.readFileSync(file, "utf8"), /betterwright:begin v1\.4\.0 -->/);
+
+  // A later version must find last version's block by prefix and replace it.
+  assert.equal(upsertCodexInstructions(file, "body", { version: "1.5.0" }), "updated");
+  const contents = fs.readFileSync(file, "utf8");
+  assert.equal(contents.split("betterwright:begin").length - 1, 1, "one block, not two");
+  assert.match(contents, /betterwright:begin v1\.5\.0 -->/);
+});
+
+test("unbalanced markers make upsert refuse rather than destroy user text", () => {
+  const home = tempHome();
+  const file = path.join(home, ".codex", "AGENTS.md");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+
+  // An orphan begin with the user's own text after it: the old first-begin /
+  // first-end splice ate everything up to a later end. Now it must refuse and
+  // leave the file byte-for-byte intact.
+  const original =
+    "# Mine\n<!-- betterwright:begin -->\nKEEP THIS LINE\nand this one\n";
+  fs.writeFileSync(file, original);
+  assert.throws(() => upsertCodexInstructions(file, "body"), /not a single clean pair/);
+  assert.equal(fs.readFileSync(file, "utf8"), original, "file untouched on refusal");
+
+  // End-before-begin is equally ambiguous and equally refused.
+  const reversed = "<!-- betterwright:end -->\ntext\n<!-- betterwright:begin -->\n";
+  fs.writeFileSync(file, reversed);
+  assert.throws(() => upsertCodexInstructions(file, "body"), /not a single clean pair/);
+  assert.equal(fs.readFileSync(file, "utf8"), reversed);
+});
+
 test("init wires detected hosts, verifies, and reports ready", async () => {
   const home = tempHome();
   fs.mkdirSync(path.join(home, ".claude"));
@@ -146,17 +182,33 @@ test("init wires detected hosts, verifies, and reports ready", async () => {
   assert.match(harness.output, /Loaded a real page/);
 });
 
-test("init fails loudly when the browser cannot load a page", async () => {
+test("init fails loudly when the browser cannot start", async () => {
   const home = tempHome();
   const harness = initHarness(home, {
-    verify: async () => ({ ok: false, detail: "worker exited" }),
+    verify: async () => ({ ok: false, launched: false, detail: "worker exited" }),
   });
 
   const code = await runInit({ flags: new Set(["--yes"]), ...harness.options });
 
   assert.equal(code, 1);
-  assert.match(harness.output, /could not load a page: worker exited/);
+  assert.match(harness.output, /could not start: worker exited/);
   assert.doesNotMatch(harness.output, /BetterWright is ready/);
+});
+
+test("init warns but does not fail when the browser starts yet the page will not load", async () => {
+  const home = tempHome();
+  const harness = initHarness(home, {
+    // The install is fine; the network is not. Failing the whole run over a
+    // dropped page load after everything is on disk misreports what happened.
+    verify: async () => ({ ok: false, launched: true, detail: "net::ERR_INTERNET_DISCONNECTED" }),
+  });
+
+  const code = await runInit({ flags: new Set(["--yes"]), ...harness.options });
+
+  assert.equal(code, 0);
+  assert.match(harness.output, /could not load a test page/);
+  assert.match(harness.output, /network-restricted/);
+  assert.doesNotMatch(harness.output, /could not start/);
 });
 
 test("init stops when the browser install fails rather than claiming success", async () => {
@@ -246,17 +298,59 @@ test("doctor output groups checks and marks each status", () => {
 });
 
 test("the default model follows what is actually configured", () => {
-  const none = preferredModelId({ env: {} });
-  assert.equal(none.configured === false || none.configured === true, true);
+  // `auth` is injected so the developer's own ~/.codex / ~/.grok sign-ins do
+  // not decide the outcome — the old test silently passed or changed answer
+  // depending on who ran it.
+  const noAuth = { codex: false, grok: false };
 
-  // An Anthropic key alone is not enough without the optional SDK peer, which
-  // is exactly the case that used to break the first run.
-  const withKey = preferredModelId({ env: { ANTHROPIC_API_KEY: "sk-test" } });
-  assert.ok(withKey.model, "always resolves to some model id");
+  // Nothing configured: not configured, and the historical default is kept so
+  // an Anthropic-path user is unaffected.
+  const none = preferredModelId({ env: {}, auth: noAuth });
+  assert.equal(none.configured, false);
+  assert.equal(none.model, "claude-opus-4-8");
 
-  const hint = modelSetupHint({ env: {} });
-  if (hint) {
-    assert.match(hint, /auth --login codex/);
-    assert.match(hint, /ANTHROPIC_API_KEY/);
-  }
+  // Codex sign-in — the sign-in the README recommends first — must resolve to
+  // the codex default, not fall through to a claude id that needs an SDK the
+  // user never installed. This is the regression the branch exists to fix.
+  const codex = preferredModelId({ env: {}, auth: { codex: true, grok: false } });
+  assert.equal(codex.configured, true);
+  assert.match(codex.model, /^gpt-/);
+
+  // A plain API key resolves through the same native adapter as a sign-in, so
+  // `exec` must not refuse it.
+  const key = preferredModelId({ env: { OPENAI_API_KEY: "sk-test" }, auth: noAuth });
+  assert.equal(key.configured, true);
+  assert.match(key.model, /^gpt-/);
+
+  const grokKey = preferredModelId({ env: { XAI_API_KEY: "xai-test" }, auth: noAuth });
+  assert.equal(grokKey.configured, true);
+  assert.match(grokKey.model, /^grok-/);
+
+  // An override is honoured.
+  const override = preferredModelId({
+    env: { OPENAI_API_KEY: "sk-test", BETTERWRIGHT_CODEX_MODEL: "gpt-9-custom" },
+    auth: noAuth,
+  });
+  assert.equal(override.model, "gpt-9-custom");
+
+  // Nothing at all → the four-route hint.
+  const hint = modelSetupHint({ env: {}, auth: noAuth });
+  assert.match(hint, /auth --login codex/);
+  assert.match(hint, /ANTHROPIC_API_KEY/);
+});
+
+test("a usable-but-defaultless backend gets a name-one hint, not a false refusal", () => {
+  const noAuth = { codex: false, grok: false };
+  const env = { OPENROUTER_API_KEY: "or-test" };
+
+  // doctor counts OpenRouter as a working backend...
+  assert.ok(modelReadiness({ env, auth: noAuth }).sources.some((s) => /openrouter/.test(s)));
+  // ...but there is no bare-id default for it, so exec still needs a name.
+  assert.equal(preferredModelId({ env, auth: noAuth }).configured, false);
+
+  const hint = modelSetupHint({ env, auth: noAuth });
+  // The hint must not tell a user whose backend doctor just approved that
+  // "no model backend is configured" — that is false and offers no route out.
+  assert.doesNotMatch(hint, /No model backend is configured/);
+  assert.match(hint, /openrouter\/<id>/);
 });

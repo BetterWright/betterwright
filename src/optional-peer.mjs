@@ -33,6 +33,32 @@ export function installHint(specifier, cwd = process.cwd()) {
 }
 
 /**
+ * Is an optional peer resolvable, by the same two-step rule `importOptionalPeer`
+ * uses? Callers that only need to *report* on a peer — doctor, the default-model
+ * choice — must ask this rather than a bare `require.resolve`, which misses the
+ * working-directory copy and so tells a user with a global BetterWright and a
+ * project-local SDK to install a package they already have.
+ *
+ * @param {string} specifier bare specifier, optionally with a subpath
+ * @param {string} [cwd]
+ */
+export function optionalPeerAvailable(specifier, cwd = process.cwd()) {
+  const require_ = createRequire(import.meta.url);
+  try {
+    require_.resolve(specifier);
+    return true;
+  } catch {
+    /* fall through to the working-directory retry */
+  }
+  try {
+    createRequire(path.join(cwd, "noop.js")).resolve(specifier);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Import an optional peer dependency, falling back to the working directory.
  * @param {string} specifier bare specifier, optionally with a subpath
  * @param {string} label human name used in the failure message

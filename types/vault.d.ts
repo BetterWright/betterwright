@@ -59,8 +59,27 @@ export interface VaultOwnerListResult {
   pendingCredentials: VaultPendingRecord[];
 }
 
-/** The only shape in this module that carries a stored secret. */
-export interface VaultRevealedRecord extends VaultPublicRecord {
+/**
+ * The only shape in this module that carries a stored secret.
+ *
+ * `ownerReveal` accepts either a committed record id or a pending id, and the
+ * metadata it echoes back differs accordingly: a committed record carries `id`
+ * and `updatedAt`; an uncommitted signup carries `pendingId` and neither. The
+ * fields that only one case has are therefore optional — `pending` tells them
+ * apart.
+ */
+export interface VaultRevealedRecord {
+  id?: string;
+  pendingId?: string;
+  origin: string;
+  matchMode: VaultMatchMode;
+  username: string;
+  label: string | null;
+  category: VaultCategory;
+  createdAt: string;
+  updatedAt?: string;
+  expiresAt?: string;
+  expired?: boolean;
   pending: boolean;
   secret: string | null;
   notes?: string | null;
@@ -131,8 +150,18 @@ export class LocalCredentialVault {
   /** Resolve one record's stored secret by id. Audited. */
   ownerReveal(id: string): Promise<VaultRevealedRecord>;
 
-  /** Delete one record by id, ignoring site scope. Audited. */
-  ownerRemove(id: string): Promise<VaultPublicRecord & { removed: true }>;
+  /**
+   * Delete one record by id, ignoring site scope. Audited. Accepts a pending
+   * id too, so the echoed metadata is a record or a pending shape.
+   */
+  ownerRemove(
+    id: string,
+  ): Promise<
+    (VaultPublicRecord | VaultPendingRecord) & {
+      removed: true;
+      auditWarning?: VaultAuditWarning;
+    }
+  >;
 
   /** Recent metadata-only audit entries, newest first. */
   ownerAudit(options?: { limit?: number }): Promise<{ entries: VaultAuditEntry[] }>;
