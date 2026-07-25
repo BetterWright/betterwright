@@ -64,7 +64,10 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { BetterWright, NetworkPolicy } from "./client.mjs";
+// `client.mjs` pulls the whole browser/worker/vault graph (~20 ms to import).
+// Only the daemon *server* needs it; every client that imports this module for
+// a socket path or config signature would otherwise pay that cost too. Loaded
+// lazily in `createBrowserFromDaemonConfig`, the sole place it is used.
 import { defaultHome as defaultDaemonHome } from "./home.mjs";
 
 const require = createRequire(import.meta.url);
@@ -241,7 +244,8 @@ export function daemonConfigSignature(config) {
   return JSON.stringify(normalizeDaemonConfig(config));
 }
 
-export function createBrowserFromDaemonConfig(config) {
+export async function createBrowserFromDaemonConfig(config) {
+  const { BetterWright, NetworkPolicy } = await import("./client.mjs");
   const normalized = normalizeDaemonConfig(config);
   return new BetterWright({
     policy: new NetworkPolicy(normalized.policy),
@@ -349,10 +353,9 @@ export async function startSessionDaemon(options = {}) {
   const startedAt = Date.now();
 
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-  const browser =
-    typeof options.createBrowser === "function"
-      ? options.createBrowser(config)
-      : createBrowserFromDaemonConfig(config);
+  const browser = await (typeof options.createBrowser === "function"
+    ? options.createBrowser(config)
+    : createBrowserFromDaemonConfig(config));
 
   /** @type {Map<string, {lastUsed: number, inflight: number, createdAt: number}>} */
   const sessions = new Map();

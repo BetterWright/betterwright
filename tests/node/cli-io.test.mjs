@@ -34,9 +34,12 @@ test("interactive browser lifecycle starts once and rotates browser plus live vi
     startBrowser: async (browser) => events.push(`live:${browser.id}`),
   });
 
-  const first = lifecycle.browser;
+  // The browser is created by start(), not at construction, so createBrowser
+  // can be async (it loads the browser module on demand).
+  assert.equal(lifecycle.browser, null);
+  const first = await lifecycle.start();
   assert.equal(first.id, 1);
-  assert.equal(await lifecycle.start(), first);
+  assert.equal(lifecycle.browser, first);
   assert.deepEqual(events, ["live:1"]);
 
   const second = await lifecycle.replace();

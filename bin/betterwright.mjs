@@ -41,13 +41,6 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-// index.mjs (below) already loads agent.mjs at startup, so importing these
-// shared model-source helpers directly costs nothing extra.
-import {
-  discoveryTimeoutMs,
-  endpointDiscoverySources,
-  endpointSourceName,
-} from "../src/agent.mjs";
 import { formatAgentUsage } from "../src/agent-usage.mjs";
 import { installChromiumFork } from "../src/chromium-fork-install.mjs";
 import { collectValues, firstPositional, flagValue } from "../src/cli-flags.mjs";
@@ -75,8 +68,10 @@ import {
   resolveCloakDir,
   resolveCoreDir,
 } from "../src/doctor.mjs";
-import { agentSystemPrompt, BetterWright, NetworkPolicy } from "../src/index.mjs";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.mjs";
+// `agentSystemPrompt` comes from the light prompt module, not index.mjs, which
+// would drag the whole browser/worker/vault graph in just to print a skill.
+import { agentSystemPrompt } from "../src/prompt.mjs";
 import {
   clearTranscript,
   loadTranscript,
@@ -193,14 +188,39 @@ async function cmdViewPassword(flags) {
   return 0;
 }
 
-function policyFromFlags(flags) {
+// The browser stack (BetterWright, NetworkPolicy, and everything client.mjs
+// pulls) is loaded on first use, not at startup. Memoized so repeated
+// constructions in one process (e.g. the interactive console's /new) import
+// once.
+let browserModulePromise = null;
+function browserModule() {
+  browserModulePromise ??= import("../src/index.mjs");
+  return browserModulePromise;
+}
+
+function policyOptionsFromFlags(flags) {
   // Private networks and loopback are open by default; --block-private-network
   // / --block-loopback re-harden. The --allow-* flags are accepted no-ops.
-  return new NetworkPolicy({
+  return {
     allowLoopback: !flags.has("--block-loopback"),
     allowPrivateNetwork: !flags.has("--block-private-network"),
     allowHosts: collectValues(process.argv, "--allow-host"),
     blockHosts: collectValues(process.argv, "--block-host"),
+  };
+}
+
+async function policyFromFlags(flags) {
+  const { NetworkPolicy } = await browserModule();
+  return new NetworkPolicy(policyOptionsFromFlags(flags));
+}
+
+/** Construct a local (non-daemon) BetterWright, loading the stack on demand. */
+async function makeBrowser(flags, { headless } = {}) {
+  const { BetterWright, NetworkPolicy } = await browserModule();
+  return new BetterWright({
+    policy: new NetworkPolicy(policyOptionsFromFlags(flags)),
+    headless: headless ?? !flags.has("--headed"),
+    ...cloakingFromFlags(flags),
   });
 }
 
@@ -266,7 +286,7 @@ async function cmdInit(flags) {
     // that would not launch (a real install failure) from a page that would
     // not load (offline), so init fails only on the former.
     verify: async () => {
-      const bw = new BetterWright({ policy: policyFromFlags(flags), headless: true });
+      const bw = await makeBrowser(flags, { headless: true });
       let launched = false;
       try {
         const probe = await bw.run("return 1 + 1");
@@ -466,11 +486,7 @@ async function acquireRunBrowser(flags) {
         },
       };
     }
-    const bw = new BetterWright({
-      policy: policyFromFlags(flags),
-      headless: !flags.has("--headed"),
-      ...cloakingFromFlags(flags),
-    });
+    const bw = await makeBrowser(flags);
     return {
       session,
       viaDaemon: false,
@@ -479,11 +495,7 @@ async function acquireRunBrowser(flags) {
       cleanup: async () => bw.close(),
     };
   }
-  const bw = new BetterWright({
-    policy: policyFromFlags(flags),
-    headless: !flags.has("--headed"),
-    ...cloakingFromFlags(flags),
-  });
+  const bw = await makeBrowser(flags);
   return {
     session,
     viaDaemon: false,
@@ -670,21 +682,21 @@ function removedModelFlagMessage(argv) {
   return "";
 }
 
-// Blank means "no source requested" (list everything); any other value must
-// be a name agent.mjs itself recognizes, so the accepted spellings and the
-// error wording cannot drift from `--model source/id` parsing.
-function modelSource(value) {
-  const source = String(value || "").trim();
-  if (!source) return "";
-  return endpointSourceName(source);
-}
-
 async function loadModelCatalog(
   listEndpointModels,
   nativeModelCatalog,
   options = {},
 ) {
-  const requested = modelSource(options.source);
+  // Loaded here rather than at module top so a plain `betterwright run` never
+  // pulls the model-source layer. `models`/`exec` — the only callers — already
+  // import agent.mjs, so this hits its module cache.
+  const { discoveryTimeoutMs, endpointDiscoverySources, endpointSourceName } =
+    await import("../src/agent.mjs");
+  // Blank means "no source requested" (list everything); any other value must
+  // be a name agent.mjs itself recognizes, so the accepted spellings and the
+  // error wording cannot drift from `--model source/id` parsing.
+  const raw = String(options.source || "").trim();
+  const requested = raw ? endpointSourceName(raw) : "";
   const sources = requested
     ? [requested]
     : options.modelOptions?.baseURL
@@ -802,12 +814,7 @@ async function cmdInteractive(flags) {
   // browser, since headless is fixed at construction).
   let headless = !flags.has("--headed");
 
-  const newBrowser = () =>
-    new BetterWright({
-      policy: policyFromFlags(flags),
-      headless,
-      ...cloakingFromFlags(flags),
-    });
+  const newBrowser = () => makeBrowser(flags, { headless });
   // Mutable: process --live-view starts a viewer at boot; `/live` enables the
   // same path mid-session so /new /headed /headless re-open it after replace.
   let interactiveLiveView = liveViewCliOptions(argv);
@@ -1275,6 +1282,7 @@ async function cmdExec(flags) {
     const { runAgentTask } = await import("../src/agent.mjs");
     if (fresh) clearTranscript(home, session);
     const history = fresh ? [] : loadTranscript(home, session);
+    const policy = await policyFromFlags(flags);
     try {
       const full = await runAgentTask({
         task,
@@ -1282,7 +1290,7 @@ async function cmdExec(flags) {
         modelOptions,
         session,
         history,
-        policy: policyFromFlags(flags),
+        policy,
         headless: !flags.has("--headed"),
         liveView: liveViewCliOptions(argv),
         onStep,
@@ -1585,11 +1593,7 @@ async function cmdView(flags) {
       dim("a background session is mid-task; this view gets a temporary profile (betterwright close --all to reclaim)"),
     );
   }
-  const browser = new BetterWright({
-    policy: policyFromFlags(flags),
-    headless: !flags.has("--headed"),
-    ...cloakingFromFlags(flags),
-  });
+  const browser = await makeBrowser(flags);
   try {
     const view = await browser.startLiveView({
       ...liveOpts,

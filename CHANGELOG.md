@@ -62,6 +62,19 @@ Getting started is one command, and the vault is no longer a one-way door.
   `endpointDiscoverySources` / `discoveryTimeoutMs` helpers, all of which the
   runtime already exported.
 
+### Performance
+
+- **The CLI no longer loads the browser/worker/agent stack to talk to a running
+  daemon.** `daemon.mjs` constructed a `BetterWright` at import, so any client
+  that imported it for a socket path or config signature pulled the whole
+  browser graph (~20 ms) with it; the CLI entrypoint compounded this by
+  importing the agent and browser modules statically. The browser stack is now
+  loaded on first construction and the daemon builds its browser lazily, so the
+  hot `run` / `close` / `vault` / `sessions` / `view` paths — which only send an
+  RPC to an already-running daemon — skip it. Cold CLI start dropped from
+  ~46 ms to ~39 ms, a saving paid on every invocation, and the daemon-client
+  import graph shrank from ~16 ms to ~5 ms.
+
 ### Changed
 
 - **`--help` no longer runs the command.** `setup --help` downloaded a 200 MB
