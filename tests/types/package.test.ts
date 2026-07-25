@@ -48,6 +48,12 @@ import createBetterWrightPiExtension, {
 } from "betterwright/pi-extension";
 import type { NetworkDecision } from "betterwright/policy";
 import type { Guardrails as PromptGuardrails } from "betterwright/prompt";
+import {
+  createLocalCredentialVault,
+  type VaultAuditEntry,
+  type VaultOwnerListResult,
+  type VaultRevealedRecord,
+} from "betterwright/vault";
 import { METADATA_RESOLVER_RULES } from "betterwright/worker";
 
 const policy = new NetworkPolicy({
@@ -192,3 +198,20 @@ void [
   localVault,
   browserWithoutVault,
 ];
+
+// The owner-only vault surface behind `betterwright vault`. These must never be
+// reachable from model code; they exist for a trusted host acting for the user.
+const ownedVault = createLocalCredentialVault({ home: "/tmp/betterwright-types" });
+const ownerListed: Promise<VaultOwnerListResult> = ownedVault.ownerList({
+  query: "github",
+  category: "login",
+});
+const ownerRevealed: Promise<VaultRevealedRecord> = ownedVault.ownerReveal("cred_1");
+const ownerAudited: Promise<{ entries: VaultAuditEntry[] }> = ownedVault.ownerAudit({
+  limit: 10,
+});
+const ownerRemoved = ownedVault.ownerRemove("cred_1");
+void ownerListed;
+void ownerRevealed;
+void ownerAudited;
+void ownerRemoved;

@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { flagValue, positionalArgs } from "./cli-flags.mjs";
 import { wantsHelp } from "./cli-help.mjs";
 import { defaultHome } from "./home.mjs";
-import { createLocalCredentialVault } from "./vault.mjs";
+import { createLocalCredentialVault, VAULT_CATEGORIES } from "./vault.mjs";
 
 const REVEAL_ESCAPE_HATCH = "BETTERWRIGHT_VAULT_ALLOW_NON_INTERACTIVE";
 
@@ -102,6 +102,17 @@ export function resolveCredentialId(entries, wanted) {
   throw new Error(`No credential id starts with "${query}". Run \`betterwright vault list\`.`);
 }
 
+/**
+ * Enough of an id to type back, keeping the kind prefix.
+ * A flat slice(0, 8) turned every `pending_<uuid>` into the bare word
+ * "pending_", which identifies nothing.
+ */
+function shortId(id) {
+  const value = String(id || "");
+  const underscore = value.indexOf("_");
+  return underscore === -1 ? value.slice(0, 8) : value.slice(0, underscore + 7);
+}
+
 function site(origin) {
   try {
     return new URL(origin).hostname;
@@ -175,6 +186,28 @@ async function confirm(question) {
  * @param {{home?: string, log?: Function, error?: Function}} [io]
  */
 export async function runVaultCommand(rest = [], io = {}) {
+  const fail = io.error || ((line) => console.error(line));
+  try {
+    return await dispatchVaultCommand(rest, io);
+  } catch (error) {
+    // A mistyped flag should read like a mistyped flag, not like a crash. The
+    // vault's own errors already say what went wrong in a sentence; the codes
+    // that come from bad user input get the valid choices appended.
+    fail(error?.message || String(error));
+    if (error?.code === "BAD_INPUT" && /category/i.test(error.message || "")) {
+      fail(`Valid categories: ${VAULT_CATEGORIES.join(", ")}.`);
+    }
+    if (error?.code === "VAULT_KEY_MISSING") {
+      fail(
+        "vault.key and vault.enc must be kept together — restore the key from your backup, " +
+          "or delete both to start a new vault (the saved passwords are unrecoverable without it).",
+      );
+    }
+    return 1;
+  }
+}
+
+async function dispatchVaultCommand(rest, io) {
   const log = io.log || ((line) => console.log(line));
   const fail = io.error || ((line) => console.error(line));
   const flags = new Set(rest.filter((token) => token.startsWith("--")));
@@ -222,7 +255,7 @@ export async function runVaultCommand(rest = [], io = {}) {
         column([
           ["ID", "SITE", "USERNAME", "CATEGORY", "UPDATED"],
           ...credentials.map((entry) => [
-            entry.id.slice(0, 8),
+            shortId(entry.id),
             site(entry.origin),
             entry.username || "—",
             entry.category,
@@ -237,7 +270,7 @@ export async function runVaultCommand(rest = [], io = {}) {
       log(
         column(
           pendingCredentials.map((entry) => [
-            `  ${entry.pendingId.slice(0, 8)}`,
+            `  ${shortId(entry.pendingId)}`,
             site(entry.origin),
             entry.username || "—",
             entry.expired ? "expired" : "pending",
@@ -247,7 +280,8 @@ export async function runVaultCommand(rest = [], io = {}) {
     }
     log("");
     log(
-      `${credentials.length} credential(s). \`betterwright vault copy <id>\` puts a password on the clipboard; ` +
+      `${credentials.length} credential(s)${pendingCredentials.length ? `, ${pendingCredentials.length} uncommitted` : ""}. ` +
+        "`betterwright vault copy <id>` puts a password on the clipboard; " +
         "`vault show <id> --reveal` prints it.",
     );
     return 0;
@@ -288,23 +322,25 @@ export async function runVaultCommand(rest = [], io = {}) {
 
     const wantsSecret = subcommand === "copy" || flags.has("--reveal");
     if (!wantsSecret) {
+      const record = credentials.find((candidate) => candidate.id === id);
       const entry =
-        credentials.find((candidate) => candidate.id === id) ||
-        pendingCredentials.find((candidate) => candidate.pendingId === id);
+        record || pendingCredentials.find((candidate) => candidate.pendingId === id);
       if (json) {
         log(JSON.stringify(entry, null, 2));
         return 0;
       }
       log(
         column([
-          ["id", entry.id || entry.pendingId],
+          // A rotation's pending entry also carries the `id` of the record it
+          // will replace; echo back the id the user actually typed.
+          ["id", record ? entry.id : entry.pendingId],
           ["site", entry.origin],
           ["username", entry.username || "—"],
           ["label", entry.label || "—"],
           ["category", entry.category],
           ["match", entry.matchMode],
           ["created", entry.createdAt],
-          ["updated", entry.updatedAt || entry.createdAt],
+          ["updated", record ? entry.updatedAt || entry.createdAt : "(uncommitted)"],
           ["password", "(hidden)"],
         ]),
       );
@@ -348,7 +384,7 @@ export async function runVaultCommand(rest = [], io = {}) {
     }
     log(
       column([
-        ["id", revealed.id || revealed.pendingId],
+        ["id", revealed.pending ? revealed.pendingId : revealed.id],
         ["site", revealed.origin],
         ["username", revealed.username || "—"],
         ["password", revealed.secret],
@@ -381,7 +417,7 @@ export async function runVaultCommand(rest = [], io = {}) {
           String(entry.at || "").replace("T", " ").slice(0, 19),
           entry.action || "?",
           entry.origin ? site(entry.origin) : "—",
-          entry.id ? String(entry.id).slice(0, 8) : "—",
+          entry.id ? shortId(entry.id) : "—",
         ]),
       ]),
     );

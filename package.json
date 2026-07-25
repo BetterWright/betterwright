@@ -26,6 +26,11 @@
       "import": "./src/policy.mjs",
       "default": "./src/policy.mjs"
     },
+    "./vault": {
+      "types": "./types/vault.d.ts",
+      "import": "./src/vault.mjs",
+      "default": "./src/vault.mjs"
+    },
     "./prompt": {
       "types": "./types/prompt.d.ts",
       "import": "./src/prompt.mjs",

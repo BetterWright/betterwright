@@ -33,6 +33,10 @@ export function flagValue(argv, flag, fallback) {
 // Flags that consume the next token as their value in the space-separated
 // form, so firstPositional can tell a flag's argument from a positional.
 export const VALUE_FLAGS = new Set([
+  // `run -c "<code>"`: without this the snippet reads as a positional, i.e. a
+  // filename. readSnippet checks -c first so nothing is broken today, but the
+  // two parsers should agree rather than depend on that ordering.
+  "-c",
   "--allow-host",
   "--api-key-env",
   "--base-url",

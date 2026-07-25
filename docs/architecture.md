@@ -111,6 +111,17 @@ browser extension autofills. The vault therefore limits disclosure and
 cross-site selection; it is not a security boundary against JavaScript already
 running in the matched page or an attacker with same-user filesystem access.
 
+The person who owns the files can read their own passwords back with
+[`betterwright vault`](credentials.md#getting-a-password-back-betterwright-vault),
+which is what keeps the vault from being a one-way door for anything the agent
+generated. That command reaches a separate owner-only API on the vault object;
+`handleRequest` — the RPC the worker speaks, and therefore the only surface
+model-authored code can address — cannot route to it, so the sandbox still sees
+metadata only. The gate on that command (plaintext to a terminal only, always
+audited) exists to stop accidental exposure through a redirect or a captured
+stdout, not to defend against a shell that is already yours to run. See
+[SECURITY.md](../SECURITY.md#the-shell-is-a-trusted-channel).
+
 ### Untrusted page content
 
 Text a snippet pulls off a page is data, not instructions. When a large result
@@ -143,7 +154,15 @@ downloads it directly from CloakHQ's release source and verifies the wrapper's
 pinned Ed25519 signature before extraction.
 
 Delete the directory to reset everything; delete `browser/profile/` to sign
-out everywhere, or `vault/` to remove saved credential items.
+out everywhere, or `vault/` to remove saved credential items — `vault.key` and
+`vault.enc` are only useful together, so back them up or discard them as a
+pair. `betterwright vault path` prints these locations.
+
+When `$BETTERWRIGHT_HOME` sits under a path long enough that
+`<home>/daemon.sock` would exceed the platform's unix-socket limit (104 bytes
+on macOS, 108 on Linux), the session daemon binds a short socket derived from
+the home inside an owner-only directory in the system temp dir instead. Nothing
+else moves, and the client resolves the same path.
 
 ## Pinned browser integration
 

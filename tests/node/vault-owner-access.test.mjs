@@ -257,3 +257,44 @@ test("value-flag arguments are not mistaken for positionals", () => {
   assert.deepEqual(positionalArgs(["list", "--query=github"]), ["list"]);
   assert.deepEqual(positionalArgs(["audit", "--limit", "5"]), ["audit"]);
 });
+
+test("a mistyped flag reads as a mistake, not a crash", async () => {
+  const home = tempHome();
+  await seed(home);
+  const io = capture();
+
+  assert.equal(await runVaultCommand(["list", "--category", "nonsense"], { home, ...io }), 1);
+  assert.match(io.stderr, /Unsupported credential category/);
+  assert.match(io.stderr, /Valid categories: login, credit-card/);
+  assert.doesNotMatch(io.stderr, /at LocalCredentialVault/, "no stack trace");
+});
+
+test("a vault missing its key explains the consequence", async () => {
+  const home = tempHome();
+  await seed(home);
+  fs.rmSync(path.join(home, "vault", "vault.key"));
+  const io = capture();
+
+  assert.equal(await runVaultCommand(["list"], { home, ...io }), 1);
+  assert.match(io.stderr, /key is missing/);
+  assert.match(io.stderr, /unrecoverable without it/);
+});
+
+test("corrupted ciphertext fails with a plain sentence", async () => {
+  const home = tempHome();
+  await seed(home);
+  fs.writeFileSync(path.join(home, "vault", "vault.enc"), "garbage");
+  const io = capture();
+
+  assert.equal(await runVaultCommand(["list"], { home, ...io }), 1);
+  assert.match(io.stderr, /corrupted or its key does not match/);
+});
+
+test("`vault path` names the key as the thing to back up", async () => {
+  const home = tempHome();
+  const io = capture();
+
+  assert.equal(await runVaultCommand(["path"], { home, ...io }), 0);
+  assert.match(io.stdout, /vault\.key/);
+  assert.match(io.stdout, /back this up/);
+});

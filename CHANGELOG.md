@@ -39,6 +39,9 @@ Getting started is one command, and the vault is no longer a one-way door.
   routable through `handleRequest`, the only surface the browser worker — and
   therefore model-authored snippet code — can address, so the model-facing
   boundary is unchanged. Declared in `types/vault.d.ts`.
+- `betterwright/vault` subpath export, so a trusted JS host can use those
+  owner-only methods (and the `VaultOwnerListResult` / `VaultRevealedRecord` /
+  `VaultAuditEntry` types) without reaching into `src/`.
 - `betterwright skill --status` reports where the agent skill is installed and
   whether each copy matches this package version.
 - `betterwright mcp --check` verifies the MCP server can start (SDK peer plus

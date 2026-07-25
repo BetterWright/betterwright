@@ -62,9 +62,10 @@ binary version, tier, and path that will launch.
 
 ## Troubleshooting headed launch
 
-1. Run `betterwright doctor` and confirm `ready true`, and note which backend
-   its `browser` field reports (`chromium-fork` or `cloak`) — either is a
-   correct install.
+1. Run `betterwright doctor` and confirm it ends with `BetterWright is ready.`,
+   and note which backend the Browser group's **In use** line reports
+   (`chromium-fork` or `cloak`) — either is a correct install. `doctor --json`
+   gives the same facts as the raw `ready` / `browser` fields.
 2. Run `betterwright setup` if the managed binary is missing.
 3. On Linux, confirm a display is present or use `xvfb-run`.
 4. If BetterWright reports that the profile was upgraded by a newer browser,

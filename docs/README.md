@@ -12,9 +12,13 @@ pick; most pages apply to both.
 
 ## Start here
 
+New here: `npm install -g betterwright && betterwright init`. That one command
+installs the browser, wires up the agent hosts on your machine, and proves the
+whole path works by loading a real page.
+
 | Page | What it covers |
 | --- | --- |
-| [Getting started](getting-started.md) | Install, the two usage shapes, first run, sessions, proof screenshots |
+| [Getting started](getting-started.md) | `init`, the two usage shapes, first run, sessions, proof screenshots |
 | [Integration guide (SETUP.md)](../SETUP.md) | Wiring BetterWright into any host — written to be followed by an AI agent |
 | [The built-in agent](agent.md) | `betterwright exec`, the interactive console, model adapters, `runAgentTask()` |
 | [JavaScript API](javascript.md) | `BetterWright`, `NetworkPolicy`, the result envelope, vault API |
@@ -26,7 +30,7 @@ pick; most pages apply to both.
 
 | Page | What it covers |
 | --- | --- |
-| [Credential vault](credentials.md) | Encrypted storage, site matching, selector-free login, generated-password commits |
+| [Credential vault](credentials.md) | Encrypted storage, site matching, selector-free login, generated-password commits, and `betterwright vault` for reading your own saved passwords back |
 | [Live view & handoff](live-view.md) | Watch/coach/take over in a browser tab; hosting presets, password gate, security model |
 | [CAPTCHA helpers](captcha.md) | Local checkbox/Turnstile/slider solving; vision handoff for image grids |
 | [Network policy](network-policy.md) | What the browser may reach; the unliftable metadata floor |
