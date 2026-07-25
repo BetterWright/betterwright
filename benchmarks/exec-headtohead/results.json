@@ -20,8 +20,8 @@
           "context": 2722
         },
         "answer": "The exact page title is: Example Domain",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480393148-50a57c.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The exact page title is: Example Domain\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 2722,\n    \"outputTokens\": 106,\n    \"cacheReadTokens\": 0,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2722\n  },\n  \"durationMs\": 5673,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480393148-50a57c.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480393148-50a57c.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The exact page title is: Example Domain\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 2722,\n    \"outputTokens\": 106,\n    \"cacheReadTokens\": 0,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2722\n  },\n  \"durationMs\": 5673,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480393148-50a57c.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 6269,
@@ -50,8 +50,8 @@
           "context": 3308
         },
         "answer": "The current #1 story on Hacker News is \u201cQwen 3.8\u201d with 485 points.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480413272-819ec5.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The current #1 story on Hacker News is \u201cQwen 3.8\u201d with 485 points.\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"toolCalls\": 2,\n  \"usage\": {\n    \"inputTokens\": 3478,\n    \"outputTokens\": 491,\n    \"cacheReadTokens\": 2560,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3308\n  },\n  \"durationMs\": 13711,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480413272-819ec5.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480413272-819ec5.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The current #1 story on Hacker News is \u201cQwen 3.8\u201d with 485 points.\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"toolCalls\": 2,\n  \"usage\": {\n    \"inputTokens\": 3478,\n    \"outputTokens\": 491,\n    \"cacheReadTokens\": 2560,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3308\n  },\n  \"durationMs\": 13711,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480413272-819ec5.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 12768,
@@ -80,8 +80,8 @@
           "context": 2725
         },
         "answer": "According to Wikipedia, the Eiffel Tower is **330 metres** tall including antennas.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480432595-07aec5.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"According to Wikipedia, the Eiffel Tower is **330 metres** tall including antennas.\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 2725,\n    \"outputTokens\": 203,\n    \"cacheReadTokens\": 0,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2725\n  },\n  \"durationMs\": 6426,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480432595-07aec5.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480432595-07aec5.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"According to Wikipedia, the Eiffel Tower is **330 metres** tall including antennas.\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 2725,\n    \"outputTokens\": 203,\n    \"cacheReadTokens\": 0,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2725\n  },\n  \"durationMs\": 6426,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480432595-07aec5.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 8751,
@@ -110,8 +110,8 @@
           "context": 2728
         },
         "answer": "The latest release tag for `microsoft/playwright` is **`v1.61.1`**.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480448832-c08f39.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The latest release tag for `microsoft/playwright` is **`v1.61.1`**.\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 168,\n    \"outputTokens\": 229,\n    \"cacheReadTokens\": 2560,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2728\n  },\n  \"durationMs\": 7342,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480448832-c08f39.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480448832-c08f39.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The latest release tag for `microsoft/playwright` is **`v1.61.1`**.\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 168,\n    \"outputTokens\": 229,\n    \"cacheReadTokens\": 2560,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2728\n  },\n  \"durationMs\": 7342,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480448832-c08f39.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 12782,
@@ -140,8 +140,8 @@
           "context": 5687
         },
         "answer": "**The Eiffel Tower is taller.**\n\n- **Eiffel Tower:** 1,083 ft (330 m)\n- **Statue of Liberty, ground to tip of torch:** 305 ft 1 in (93 m)\n\nSo, the Eiffel Tower is about **778 ft (237 m) taller**. Sources: the Eiffel Tower\u2019s official website and the U.S. National Park Service.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480491438-ff0c0d.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"**The Eiffel Tower is taller.**\\n\\n- **Eiffel Tower:** 1,083 ft (330 m)\\n- **Statue of Liberty, ground to tip of torch:** 305 ft 1 in (93 m)\\n\\nSo, the Eiffel Tower is about **778 ft (237 m) taller**. Sources: the Eiffel Tower\u2019s official website and the U.S. National Park Service.\",\n  \"steps\": 3,\n  \"reason\": \"done\",\n  \"toolCalls\": 3,\n  \"usage\": {\n    \"inputTokens\": 3800,\n    \"outputTokens\": 996,\n    \"cacheReadTokens\": 9728,\n    \"cacheWriteTokens\": 0,\n    \"context\": 5687\n  },\n  \"durationMs\": 29686,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480491438-ff0c0d.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480491438-ff0c0d.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"**The Eiffel Tower is taller.**\\n\\n- **Eiffel Tower:** 1,083 ft (330 m)\\n- **Statue of Liberty, ground to tip of torch:** 305 ft 1 in (93 m)\\n\\nSo, the Eiffel Tower is about **778 ft (237 m) taller**. Sources: the Eiffel Tower\u2019s official website and the U.S. National Park Service.\",\n  \"steps\": 3,\n  \"reason\": \"done\",\n  \"toolCalls\": 3,\n  \"usage\": {\n    \"inputTokens\": 3800,\n    \"outputTokens\": 996,\n    \"cacheReadTokens\": 9728,\n    \"cacheWriteTokens\": 0,\n    \"context\": 5687\n  },\n  \"durationMs\": 29686,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480491438-ff0c0d.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 11453,
@@ -170,8 +170,8 @@
           "context": 2730
         },
         "answer": "The top 3 stories on Hacker News are:\n\n1. Qwen 3.8\n2. Minecraft: Java Edition now uses SDL3\n3. What I learned selling 2,500 MIDI recorders: Hardware is not so hard",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480515879-d2757d.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The top 3 stories on Hacker News are:\\n\\n1. Qwen 3.8\\n2. Minecraft: Java Edition now uses SDL3\\n3. What I learned selling 2,500 MIDI recorders: Hardware is not so hard\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 170,\n    \"outputTokens\": 275,\n    \"cacheReadTokens\": 2560,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2730\n  },\n  \"durationMs\": 12837,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480515879-d2757d.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480515879-d2757d.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The top 3 stories on Hacker News are:\\n\\n1. Qwen 3.8\\n2. Minecraft: Java Edition now uses SDL3\\n3. What I learned selling 2,500 MIDI recorders: Hardware is not so hard\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 170,\n    \"outputTokens\": 275,\n    \"cacheReadTokens\": 2560,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2730\n  },\n  \"durationMs\": 12837,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480515879-d2757d.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 7441,
@@ -200,8 +200,8 @@
           "context": 3229
         },
         "answer": "The first sentence is: \u201cPlaywright is an open-source automation library for browser testing and web scraping developed by Microsoft and launched on 31 January 2020, which has since become popular among programmers and web developers.\u201d",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480537138-043a98.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The first sentence is: \u201cPlaywright is an open-source automation library for browser testing and web scraping developed by Microsoft and launched on 31 January 2020, which has since become popular among programmers and web developers.\u201d\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"toolCalls\": 2,\n  \"usage\": {\n    \"inputTokens\": 844,\n    \"outputTokens\": 523,\n    \"cacheReadTokens\": 5120,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3229\n  },\n  \"durationMs\": 13683,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480537138-043a98.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480537138-043a98.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The first sentence is: \u201cPlaywright is an open-source automation library for browser testing and web scraping developed by Microsoft and launched on 31 January 2020, which has since become popular among programmers and web developers.\u201d\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"toolCalls\": 2,\n  \"usage\": {\n    \"inputTokens\": 844,\n    \"outputTokens\": 523,\n    \"cacheReadTokens\": 5120,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3229\n  },\n  \"durationMs\": 13683,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480537138-043a98.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 13688,
@@ -230,8 +230,8 @@
           "context": 3473
         },
         "answer": "The three architectural heights are:\n\n- **Burj Khalifa:** 828 metres\n- **Shanghai Tower:** 632 metres\n- **Merdeka 118:** 678.9 metres\n\n**Tallest: Burj Khalifa, at 828 metres.**",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480574723-732f85.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The three architectural heights are:\\n\\n- **Burj Khalifa:** 828 metres\\n- **Shanghai Tower:** 632 metres\\n- **Merdeka 118:** 678.9 metres\\n\\n**Tallest: Burj Khalifa, at 828 metres.**\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"toolCalls\": 2,\n  \"usage\": {\n    \"inputTokens\": 1093,\n    \"outputTokens\": 981,\n    \"cacheReadTokens\": 5120,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3473\n  },\n  \"durationMs\": 23752,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480574723-732f85.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480574723-732f85.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The three architectural heights are:\\n\\n- **Burj Khalifa:** 828 metres\\n- **Shanghai Tower:** 632 metres\\n- **Merdeka 118:** 678.9 metres\\n\\n**Tallest: Burj Khalifa, at 828 metres.**\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"toolCalls\": 2,\n  \"usage\": {\n    \"inputTokens\": 1093,\n    \"outputTokens\": 981,\n    \"cacheReadTokens\": 5120,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3473\n  },\n  \"durationMs\": 23752,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480574723-732f85.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 14511,
@@ -260,8 +260,8 @@
           "context": 2735
         },
         "answer": "According to Wikipedia's \u201cList of tallest buildings,\u201d the 5th tallest building in the world is Ping An Finance Centre, at China metres.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480596646-f53fcb.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"According to Wikipedia's \u201cList of tallest buildings,\u201d the 5th tallest building in the world is Ping An Finance Centre, at China metres.\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 2735,\n    \"outputTokens\": 277,\n    \"cacheReadTokens\": 0,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2735\n  },\n  \"durationMs\": 7274,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480596646-f53fcb.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480596646-f53fcb.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"According to Wikipedia's \u201cList of tallest buildings,\u201d the 5th tallest building in the world is Ping An Finance Centre, at China metres.\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 2735,\n    \"outputTokens\": 277,\n    \"cacheReadTokens\": 0,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2735\n  },\n  \"durationMs\": 7274,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480596646-f53fcb.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 13257,
@@ -290,8 +290,8 @@
           "context": 2745
         },
         "answer": "The first story on Hacker News\u2019s second page is \u201cMaking Software: How to make a font\u201d (rank 31.).",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480620908-b21557.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The first story on Hacker News\u2019s second page is \u201cMaking Software: How to make a font\u201d (rank 31.).\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 2745,\n    \"outputTokens\": 268,\n    \"cacheReadTokens\": 0,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2745\n  },\n  \"durationMs\": 10873,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480620908-b21557.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480620908-b21557.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The first story on Hacker News\u2019s second page is \u201cMaking Software: How to make a font\u201d (rank 31.).\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 2745,\n    \"outputTokens\": 268,\n    \"cacheReadTokens\": 0,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2745\n  },\n  \"durationMs\": 10873,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480620908-b21557.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 11923,
@@ -350,8 +350,8 @@
           "context": 3734
         },
         "answer": "The response JSON shows `custname` as **Ada Lovelace**.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480716092-5581dc.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The response JSON shows `custname` as **Ada Lovelace**.\",\n  \"steps\": 3,\n  \"reason\": \"done\",\n  \"toolCalls\": 3,\n  \"usage\": {\n    \"inputTokens\": 2128,\n    \"outputTokens\": 499,\n    \"cacheReadTokens\": 7680,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3734\n  },\n  \"durationMs\": 18335,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480716092-5581dc.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480716092-5581dc.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The response JSON shows `custname` as **Ada Lovelace**.\",\n  \"steps\": 3,\n  \"reason\": \"done\",\n  \"toolCalls\": 3,\n  \"usage\": {\n    \"inputTokens\": 2128,\n    \"outputTokens\": 499,\n    \"cacheReadTokens\": 7680,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3734\n  },\n  \"durationMs\": 18335,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480716092-5581dc.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 14879,
@@ -380,8 +380,8 @@
           "context": 3899
         },
         "answer": "The two cheapest products are Sauce Labs Onesie ($7.99) and Sauce Labs Bike Light ($9.99). The checkout overview shows an item total before tax of **$17.98**.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480766369-73d434.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The two cheapest products are Sauce Labs Onesie ($7.99) and Sauce Labs Bike Light ($9.99). The checkout overview shows an item total before tax of **$17.98**.\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"toolCalls\": 2,\n  \"usage\": {\n    \"inputTokens\": 1563,\n    \"outputTokens\": 1471,\n    \"cacheReadTokens\": 5120,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3899\n  },\n  \"durationMs\": 35270,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480766369-73d434.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480766369-73d434.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The two cheapest products are Sauce Labs Onesie ($7.99) and Sauce Labs Bike Light ($9.99). The checkout overview shows an item total before tax of **$17.98**.\",\n  \"steps\": 2,\n  \"reason\": \"done\",\n  \"toolCalls\": 2,\n  \"usage\": {\n    \"inputTokens\": 1563,\n    \"outputTokens\": 1471,\n    \"cacheReadTokens\": 5120,\n    \"cacheWriteTokens\": 0,\n    \"context\": 3899\n  },\n  \"durationMs\": 35270,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480766369-73d434.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 34066,
@@ -410,8 +410,8 @@
           "context": 2753
         },
         "answer": "The current Hacker News top 10 stories have **2,265 total points**.\n\nThe highest-point story is **\u201cTranscribe.cpp\u201d** with **655 points**, representing **28.9%** of the top-10 sum.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480811570-f63ac1.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The current Hacker News top 10 stories have **2,265 total points**.\\n\\nThe highest-point story is **\u201cTranscribe.cpp\u201d** with **655 points**, representing **28.9%** of the top-10 sum.\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 193,\n    \"outputTokens\": 421,\n    \"cacheReadTokens\": 2560,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2753\n  },\n  \"durationMs\": 11041,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480811570-f63ac1.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480811570-f63ac1.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The current Hacker News top 10 stories have **2,265 total points**.\\n\\nThe highest-point story is **\u201cTranscribe.cpp\u201d** with **655 points**, representing **28.9%** of the top-10 sum.\",\n  \"steps\": 1,\n  \"reason\": \"done\",\n  \"toolCalls\": 1,\n  \"usage\": {\n    \"inputTokens\": 193,\n    \"outputTokens\": 421,\n    \"cacheReadTokens\": 2560,\n    \"cacheWriteTokens\": 0,\n    \"context\": 2753\n  },\n  \"durationMs\": 11041,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480811570-f63ac1.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 13311,
@@ -440,8 +440,8 @@
           "context": 4094
         },
         "answer": "The **3rd most populous country is the United States** (341,784,857), and the **4th is Indonesia** (288,315,089).\n\nTheir population difference is **53,469,768 people**, approximately **53.5 million**.",
-        "proof": "/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480848410-6e50bc.png",
-        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The **3rd most populous country is the United States** (341,784,857), and the **4th is Indonesia** (288,315,089).\\n\\nTheir population difference is **53,469,768 people**, approximately **53.5 million**.\",\n  \"steps\": 3,\n  \"reason\": \"done\",\n  \"toolCalls\": 3,\n  \"usage\": {\n    \"inputTokens\": 2752,\n    \"outputTokens\": 1035,\n    \"cacheReadTokens\": 7680,\n    \"cacheWriteTokens\": 0,\n    \"context\": 4094\n  },\n  \"durationMs\": 23370,\n  \"proof\": \"/Users/core/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480848410-6e50bc.png\"\n}\n"
+        "proof": "/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480848410-6e50bc.png",
+        "raw": "{\n  \"ok\": true,\n  \"answer\": \"The **3rd most populous country is the United States** (341,784,857), and the **4th is Indonesia** (288,315,089).\\n\\nTheir population difference is **53,469,768 people**, approximately **53.5 million**.\",\n  \"steps\": 3,\n  \"reason\": \"done\",\n  \"toolCalls\": 3,\n  \"usage\": {\n    \"inputTokens\": 2752,\n    \"outputTokens\": 1035,\n    \"cacheReadTokens\": 7680,\n    \"cacheWriteTokens\": 0,\n    \"context\": 4094\n  },\n  \"durationMs\": 23370,\n  \"proof\": \"/Users/bench/.betterwright/artifacts/37a8eec1ce19687d/proof-1784480848410-6e50bc.png\"\n}\n"
       },
       "reference": {
         "elapsedMs": 22333,
