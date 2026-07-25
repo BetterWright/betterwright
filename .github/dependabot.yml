@@ -6,6 +6,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   # Runtime dependencies are pinned exactly on purpose — playwright-core and
   # cloakbrowser each couple to a browser binary, and tldts carries the Public
@@ -17,6 +19,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     allow:
       - dependency-type: development
     ignore:
