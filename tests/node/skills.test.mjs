@@ -100,6 +100,17 @@ test("urlPatternMatches handles hosts, www, wildcards, and path globs", () => {
   assert.equal(urlPatternMatches("not a url", "example.com"), false);
 });
 
+test("urlPatternMatches strips raw NULs so the ** sentinel cannot be forged", () => {
+  // The glob translation parks "**" on a U+0000 sentinel before expanding
+  // single stars. A raw NUL in a pattern used to be cashed out as ".*", so a
+  // crafted skill pattern could match paths its author never wrote a glob for.
+  const smuggled = "example.com/foo\u0000bar";
+  assert.equal(urlPatternMatches("https://example.com/fooXbar", smuggled), false);
+  assert.equal(urlPatternMatches("https://example.com/foo/x/bar", smuggled), false);
+  // The NUL is dropped, not treated as a glob: only the literal remainder matches.
+  assert.equal(urlPatternMatches("https://example.com/foobar", smuggled), true);
+});
+
 test("packaged skills ship and are discoverable", () => {
   const names = listSkills().map((skill) => skill.name);
   for (const expected of ["1password", "bitwarden", "credential-manager", "github"])

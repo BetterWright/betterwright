@@ -10,16 +10,12 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+
+import { defaultHome } from "./home.mjs";
 
 const CONFIG_FILE = "config.json";
 const PASSWORD_HASH_PATTERN = /^(sha256:)?[0-9a-f]{64}$/i;
-
-function defaultHome() {
-  const configured = (process.env.BETTERWRIGHT_HOME || "").trim();
-  return configured || path.join(os.homedir(), ".betterwright");
-}
 
 export function liveViewConfigPath(home = defaultHome()) {
   return path.join(home, CONFIG_FILE);

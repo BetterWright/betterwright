@@ -43,8 +43,8 @@
     },
     "./worker": {
       "types": "./types/worker.d.ts",
-      "import": "./src/worker.mjs",
-      "default": "./src/worker.mjs"
+      "import": "./src/worker-constants.mjs",
+      "default": "./src/worker-constants.mjs"
     },
     "./mcp-server": {
       "types": "./types/mcp-server.d.ts",
@@ -73,6 +73,7 @@
     "SKILL.md",
     "SECURITY.md",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

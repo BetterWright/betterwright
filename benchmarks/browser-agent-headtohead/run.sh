@@ -4,7 +4,8 @@
 # Both take raw browser-automation JavaScript, so this isolates the *browser
 # runtime* (navigation, snapshot, tabs, redaction) from any LLM. Login-free and
 # deterministic. Requires `betterwright setup` and a signed-in reference CLI,
-# named by REFERENCE_CLI (default "reference-agent").
+# named by REFERENCE_CLI. The "reference-agent" default is a placeholder that
+# exists nowhere — set REFERENCE_CLI to a CLI installed on your machine.
 #
 # Usage: zsh benchmarks/browser-agent-headtohead/run.sh
 set -e

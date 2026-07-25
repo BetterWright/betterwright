@@ -16,6 +16,10 @@
       "recommended": true
     }
   },
+  // The formatter is off deliberately, not as an oversight: the codebase is
+  // consistently hand-formatted (2-space indent, double quotes, semicolons —
+  // see .editorconfig), and enabling it would land a ~4,000-line whitespace
+  // commit across ~80 files that destroys git blame for zero behavior change.
   "formatter": {
     "enabled": false
   }

@@ -3,15 +3,12 @@
 **The token-efficient browser for AI agents** — one persistent, policy-guarded
 browser engineered so every observation costs the fewest tokens possible.
 
-BetterWright is used in two ways; most pages apply to both, and
-[getting-started.md](getting-started.md) explains how to pick:
-
-- **Integrated** — *your* agent drives the browser, through the skill
-  (`betterwright skill`), the MCP server (`betterwright mcp`), the Pi package,
-  or the [JS API](javascript.md).
-- **Standalone** — BetterWright's own agent loop drives
-  (`betterwright exec "<task>"` / the interactive console), and you — or a
-  coding agent using it as a browser sub-agent — read back one JSON answer.
+BetterWright is used in two ways — **integrated**, where *your* agent drives
+the browser (skill, MCP, Pi, or the [JS API](javascript.md)), and
+**standalone**, where BetterWright's own agent loop drives
+(`betterwright exec "<task>"`) and returns one JSON answer.
+[getting-started.md](getting-started.md#pick-your-shape-first) explains how to
+pick; most pages apply to both.
 
 ## Start here
 
@@ -22,7 +19,7 @@ BetterWright is used in two ways; most pages apply to both, and
 | [The built-in agent](agent.md) | `betterwright exec`, the interactive console, model adapters, `runAgentTask()` |
 | [JavaScript API](javascript.md) | `BetterWright`, `NetworkPolicy`, the result envelope, vault API |
 | [Browser API](browser-api.md) | Every sandboxed global inside a snippet: `page`, `snapshot`, `screenshot`, `human`, … |
-| [Recipes](browser-recipes.md) | Short copy-paste patterns for common flows |
+| [CAPTCHA recipes](browser-recipes.md) | Manual fallbacks for CAPTCHA interactions |
 | [Sessions & the daemon](sessions.md) | Persistence, concurrency, interrupting a run, reconnecting |
 
 ## Capabilities

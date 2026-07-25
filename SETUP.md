@@ -13,14 +13,13 @@ way to run snippets (the CLI is the simplest) and adding the operator guidance
 to its instructions — `betterwright skill` prints both halves ready to paste.
 
 There is also a lighter integration that needs no section of this guide at
-all: **delegate whole browser tasks** instead of driving step by step. If the
-host already has a shell tool, it can run
-`betterwright exec "<task in plain language>" --model gpt-5.6-sol` (or any
-other real model id — Ollama, OpenRouter, Claude, …; see
-[docs/agent.md](docs/agent.md)) and read back a single JSON answer —
-BetterWright's own agent loop does the browsing, and the transcript stays out
-of the host's context. The sections below are for the fuller, step-by-step
-integration; the two compose fine.
+all: **delegate whole browser tasks** to BetterWright's own agent loop with
+`betterwright exec "<task in plain language>" --model <id>` and read back a
+single JSON answer — see
+[docs/getting-started.md](docs/getting-started.md#pick-your-shape-first) for
+the two usage shapes and [docs/agent.md](docs/agent.md) for models and flags.
+The sections below are for the fuller, step-by-step integration; the two
+compose fine.
 
 ---
 

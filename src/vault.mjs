@@ -18,13 +18,16 @@ import {
   rm,
 } from "node:fs/promises";
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import { getDomain } from "tldts";
 
-import { VAULT_MATCH_MODES } from "./credential-constants.mjs";
+import {
+  redactSecretsDeep,
+  VAULT_MATCH_MODES,
+} from "./credential-constants.mjs";
+import { defaultHome } from "./home.mjs";
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -1181,12 +1184,14 @@ export class LocalCredentialVault {
 
   constructor(options = {}) {
     const resolved = normalizeOptions(options);
+    // Behavior note: the fallback used to hard-code ~/.betterwright, ignoring
+    // BETTERWRIGHT_HOME. It now uses the shared defaultHome() so a vault
+    // constructed without dir/home lands in the same home directory as every
+    // other BetterWright component. The client always passes an explicit
+    // home, so only direct no-option constructions are affected.
     const directory = resolved.dir
       ? path.resolve(String(resolved.dir))
-      : path.resolve(
-          String(resolved.home || path.join(os.homedir(), ".betterwright")),
-          "vault",
-        );
+      : path.resolve(String(resolved.home || defaultHome()), "vault");
     this.dir = directory;
     this.paths = Object.freeze({
       key: path.join(directory, "vault.key"),
@@ -1805,28 +1810,9 @@ export class LocalCredentialVault {
   }
 
   redact(value) {
-    const secrets = [...this.#activeSecrets].filter(Boolean).sort((left, right) => right.length - left.length);
-    const redactText = (input) => {
-      let output = String(input);
-      for (const secret of secrets) {
-        output = output.split(secret).join("[REDACTED_PASSWORD]");
-      }
-      return output;
-    };
-    const seen = new WeakSet();
-    const redactValue = (input) => {
-      if (typeof input === "string") return redactText(input);
-      if (!input || typeof input !== "object") return input;
-      if (seen.has(input)) return "[Circular]";
-      seen.add(input);
-      if (Array.isArray(input)) return input.map(redactValue);
-      const output = {};
-      for (const [key, item] of Object.entries(input)) {
-        output[redactText(key)] = redactValue(item);
-      }
-      return output;
-    };
-    return redactValue(value);
+    // Delegates to the one shared algorithm so the host-side net cannot drift
+    // from the worker-side one; only the secret set differs per process.
+    return redactSecretsDeep(value, this.#activeSecrets);
   }
 
   /** Clear redaction material only after the owning browser worker is closed. */

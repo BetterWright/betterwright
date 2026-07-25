@@ -9,11 +9,10 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
-
+import { resolveChromiumArgs } from "./chromium-args.mjs";
 import {
   assertRotationPreservesMatchMode,
   MAX_PENDING_CREDENTIAL_ORIGINS,
@@ -21,6 +20,7 @@ import {
   validateCredentialMatchMode,
 } from "./credential-constants.mjs";
 import { normalizeDownloadPolicy } from "./downloads.mjs";
+import { defaultHome } from "./home.mjs";
 import { defaultLiveViewListen } from "./live-view.mjs";
 import { loadLiveViewConfig } from "./live-view-config.mjs";
 import { NetworkPolicy } from "./policy.mjs";
@@ -112,11 +112,6 @@ function resolvePublicSearchPolicy(policy) {
     throw new TypeError('publicSearchPolicy must be "block" or "allow".');
   }
   return value;
-}
-
-function defaultHome() {
-  const configured = (process.env.BETTERWRIGHT_HOME || "").trim();
-  return configured || path.join(os.homedir(), ".betterwright");
 }
 
 /** Translate host-facing fillCredential options into the worker `spec`. */
@@ -250,6 +245,16 @@ export class BetterWright {
    *   presented to sites. The native Chromium fork defaults to "macos" (a
    *   realistic consumer-Mac fingerprint captured from real Chrome on Apple
    *   Silicon); the managed CloakBrowser path defaults to the host platform.
+   * @param {string[]} [options.chromiumArgs] extra Chromium switches appended
+   *   to the managed launch arguments, for host-level tuning the managed list
+   *   has no opinion on — `["--disable-gpu", "--disable-software-rasterizer"]`
+   *   on a GPU-less server being the motivating case. Also settable per host
+   *   via `BETTERWRIGHT_CHROMIUM_ARGS` (whitespace-separated); both apply.
+   *   Switches BetterWright owns — proxy, remote debugging, profile directory,
+   *   and the `--fingerprint*`/locale/timezone identity family — are rejected
+   *   with a `TypeError`, and a switch already present in the managed list is
+   *   dropped (with a warning on the next result) so BetterWright's value
+   *   always wins.
    * @param {object} [options.liveView] defaults for {@link startLiveView}:
    *   `{host, port, interactive, quality, maxWidth, publicHost}`. Defaults to
    *   bind `0.0.0.0` with a LAN `publicHost` so printed URLs open from another
@@ -286,6 +291,10 @@ export class BetterWright {
     this.timezone = options.timezone || null;
     this.headedInvisible = options.headedInvisible === true;
     if (this.headedInvisible) this.headless = false;
+    // Validate at construction so a bad switch is a clear TypeError here
+    // rather than an opaque browser launch failure several calls later. The
+    // environment is re-read at launch, so this is validation, not capture.
+    this.chromiumArgs = resolveChromiumArgs(options.chromiumArgs);
     if (
       options.platform != null &&
       !["macos", "windows", "linux"].includes(options.platform)
@@ -365,6 +374,7 @@ export class BetterWright {
       timezone: this.timezone,
       headedInvisible: this.headedInvisible,
       platform: this.platform,
+      chromiumArgs: this.chromiumArgs,
       headless: this.headless,
       credentialCapture: this.credentialCapture,
       searchMinIntervalMs: this.searchMinIntervalMs,
@@ -1215,7 +1225,18 @@ export class BetterWright {
       try {
         envelope = this.vault.redact(response);
       } catch {
-        /* redaction must never throw out */
+        // Fail closed: if redaction itself breaks, the raw response may still
+        // carry active secrets, so the whole envelope is withheld rather than
+        // returned unscrubbed. Only pendingCredential survives — it is
+        // documented secret-free and losing it would strand a staged
+        // generated credential with no way to commit or discard it.
+        envelope = {
+          ok: false,
+          error: "Result withheld: secret redaction failed.",
+          ...(response.pendingCredential
+            ? { pendingCredential: response.pendingCredential }
+            : {}),
+        };
       }
     }
     if (Array.isArray(envelope.pages) && envelope.pages.length) {

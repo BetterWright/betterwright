@@ -226,6 +226,18 @@ dialogs.acceptNext("optional prompt text");   // or dialogs.dismissNext()
 await page.click («the button that opens the dialog»);
 ```
 
+## Overlays, controls, and media
+
+Three more frozen globals verify page state that a snapshot alone answers
+poorly. Each works across all child frames of the current page and returns
+plain JSON; frames with nothing to report are omitted.
+
+| Global | Description |
+| --- | --- |
+| `overlays.dismiss()` | Close obstructing cookie-consent and promotional overlays — for cookie banners it prefers a reject/essential-only button and falls back to accept; promos get close/no-thanks. Only layers whose text matches consent or promo patterns are considered, so a task-critical dialog is never dismissed. Returns `{dismissed: [{kind, label}]}` — `kind` is `"cookie"` or `"promotion"`, `label` is the clicked control's label. |
+| `controls.inspect()` | Report the exact state of every form control — inputs, selects, textareas, and ARIA checkbox/combobox/listbox/radio/slider/spinbutton/switch roles. Returns `{frames: [{url, controls}]}`; each control carries `type`, `label`, `value` (`[redacted]` for passwords), `checked`, `selected`/`pressed`/`ariaChecked`, `min`/`max`/`step`, `disabled`, `visible`, and `options` for selects. Use it to prove a required filter or facet is actually active rather than inferring that from the results. |
+| `media.inspect()` | Report every `<video>` and `<audio>` element with its playback state. Returns `{frames: [{url, media}]}`; each item carries `kind`, `title` (aria-label, title attribute, or nearby caption/heading), `source`, `paused`, `ended`, `currentTime`, `duration`, `readyState`, `visible`, plus the frame's `documentTitle` and visible `headings`. Use it to match what is actually playing against the requested item before claiming playback. |
+
 ## Credentials
 
 The `credentials` helpers manage records in the

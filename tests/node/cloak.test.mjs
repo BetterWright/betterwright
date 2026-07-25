@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import {
@@ -11,6 +10,7 @@ import {
   managedCloakViewport,
 } from "../../src/cloak.mjs";
 import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const enabled = process.env.BETTERWRIGHT_CLOAK_E2E === "1";
 const opts = { skip: enabled ? false : "set BETTERWRIGHT_CLOAK_E2E=1" };
@@ -67,7 +67,7 @@ test("managed Cloak viewports stay coherent on affected builds", () => {
 });
 
 test("assertProfileNotNewer rejects a profile upgraded by a newer Chromium", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-profver-"));
+  const dir = makeTempDir("betterwright-profver-");
   try {
     // Fresh profile (no marker): no-op regardless of running version.
     assert.doesNotThrow(() => assertProfileNotNewer(dir, "145.0.7632.109"));
@@ -89,7 +89,7 @@ test("assertProfileNotNewer rejects a profile upgraded by a newer Chromium", () 
 });
 
 test("managed Cloak headed mode opens a coherent visible window", opts, async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-cloak-headed-"));
+  const home = makeTempDir("betterwright-cloak-headed-");
   const browser = new BetterWright({ home, headless: false });
   try {
     assert.equal(browser.browserFlavor, "cloak");
@@ -121,7 +121,7 @@ test("managed Cloak headed mode opens a coherent visible window", opts, async ()
 });
 
 test("managed Cloak browser hides test-browser signals and keeps one profile identity", opts, async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-cloak-"));
+  const home = makeTempDir("betterwright-cloak-");
   const server = http.createServer((request, response) => {
     const delay = request.url === "/slow-fetch" ? 650 : 700;
     setTimeout(() => {

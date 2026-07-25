@@ -260,7 +260,7 @@ be lifted, and where it does *not* claim to be a boundary — is in
 | [The built-in agent](docs/agent.md) | [CAPTCHA helpers](docs/captcha.md) | [Chromium fork](docs/chromium-fork.md) |
 | [JavaScript API](docs/javascript.md) | [Network policy](docs/network-policy.md) | [Headed / headless](docs/attach-mode.md) |
 | [Browser API (snippet globals)](docs/browser-api.md) | [Skill packs](docs/skills.md) | [Operator guidance](docs/agent-prompt.md) |
-| [Recipes](docs/browser-recipes.md) | | |
+| [CAPTCHA recipes](docs/browser-recipes.md) | | Benchmarks: [Online-Mind2Web, 92.7%](benchmarks/online-mind2web/REPORT.md) · [agent head-to-head](benchmarks/exec-headtohead/REPORT.md) |
 
 ## Scope and responsible use
 

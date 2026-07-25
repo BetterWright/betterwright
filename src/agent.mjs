@@ -1204,7 +1204,10 @@ const QUALIFIED_MODEL_SOURCES = new Set([
   ...Object.keys(MODEL_ENDPOINT_PRESETS),
 ]);
 
-function endpointSourceName(value) {
+// Canonical endpoint-source parsing. Exported so the CLI's `models` command
+// accepts exactly the same names (and emits exactly the same error) as
+// `--model source/id` parsing — the two had drifted when the CLI kept a copy.
+export function endpointSourceName(value) {
   const name = String(value || "custom")
     .trim()
     .toLowerCase()
@@ -1241,10 +1244,21 @@ function modelIdAliases(value) {
   return new Set(modelIdAliasValues(value).map((alias) => alias.toLowerCase()));
 }
 
-function endpointDiscoverySources() {
+// The sources worth probing without an explicit selection: the local runtimes
+// always, OpenRouter only when a key is configured (its probe is a remote
+// call). Exported so CLI model listing discovers from the same set as bare-id
+// resolution.
+export function endpointDiscoverySources() {
   const sources = ["ollama", "vllm"];
   if (process.env.OPENROUTER_API_KEY) sources.push("openrouter");
   return sources;
+}
+
+// Per-source quick-probe budget: OpenRouter is a remote API and needs more
+// headroom than the loopback ollama/vllm probes. Exported so the CLI's quick
+// listing uses the same budgets as bare-id discovery.
+export function discoveryTimeoutMs(source) {
+  return source === "openrouter" ? 3_000 : 750;
 }
 
 function endpointURL(value, source) {
@@ -1499,8 +1513,7 @@ async function discoverModelCandidates(model, options = {}) {
     endpointDiscoverySources().map(async (source) => {
       try {
         const timeoutMs =
-          Number(options.discoveryTimeoutMs) ||
-          (source === "openrouter" ? 3_000 : 750);
+          Number(options.discoveryTimeoutMs) || discoveryTimeoutMs(source);
         const result = await listEndpointModels({
           source,
           fetchImpl: options.fetchImpl,
