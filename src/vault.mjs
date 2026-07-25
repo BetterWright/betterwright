@@ -1819,6 +1819,172 @@ export class LocalCredentialVault {
   resetRedactionSecrets() {
     this.#activeSecrets.clear();
   }
+
+  // --- Owner-only local access ---------------------------------------------
+  //
+  // The person who owns these files can already read vault.key, so refusing
+  // them their own saved passwords protects nothing and strands anything the
+  // agent captured or generated. These methods give them a supported way in.
+  //
+  // They are deliberately NOT reachable through `handleRequest`: that method
+  // resolves a fixed action list in `#dispatch`, which is the only surface the
+  // worker RPC (and therefore model-authored browser code) can address. Adding
+  // an action there would hand the sandbox a secret-read primitive; adding a
+  // method here does not. Keep it that way.
+
+  /** Open the vault read-only, without creating one that does not exist yet. */
+  async #readSnapshot() {
+    if (!(await pathExists(this.paths.data))) return null;
+    const { key, snapshot } = await loadKeyAndSnapshot(this.paths);
+    key.fill(0);
+    return snapshot;
+  }
+
+  /**
+   * Every stored record, metadata only, newest first — not scoped to a site.
+   * @param {{query?: string, category?: string}} [options]
+   */
+  async ownerList({ query = null, category = null } = {}) {
+    const wanted = category == null ? null : normalizeCategory(category);
+    const text = optionalString(query, "Credential search text", 1024, "")
+      .trim()
+      .toLocaleLowerCase();
+    return serialize(this.dir, async () => {
+      const snapshot = await this.#readSnapshot();
+      if (!snapshot) return { credentials: [], pendingCredentials: [] };
+      const credentials = snapshot.records
+        .filter((record) => wanted == null || record.category === wanted)
+        .filter((record) => metadataSearch(record, text))
+        .sort((left, right) => recordTimestamp(right) - recordTimestamp(left))
+        .map((record) => publicRecord(record));
+      const pendingCredentials = snapshot.pending
+        .sort((left, right) => recordTimestamp(right) - recordTimestamp(left))
+        .map((pending) => publicPendingRecord(pending));
+      return { credentials, pendingCredentials };
+    });
+  }
+
+  /**
+   * Resolve one record's stored secret for its owner. Audited like a mutation:
+   * a read that exposes plaintext is the entry a compromise investigation
+   * needs most, so a failed audit append is reported rather than swallowed.
+   *
+   * The returned secret is deliberately not added to `#activeSecrets`. That
+   * set exists to scrub values a browser worker handled out of its result
+   * envelopes; a value revealed to the owner never entered a page, and
+   * tracking it would consume the bounded redaction capacity that a real fill
+   * needs — `#trackSecret` fails closed when that set is full.
+   *
+   * @param {string} id record id, or a pending id for an uncommitted signup
+   */
+  async ownerReveal(id) {
+    const wanted = requiredString(String(id ?? ""), "Credential id", 256);
+    return serialize(this.dir, async () => {
+      const snapshot = await this.#readSnapshot();
+      if (!snapshot) throw vaultError("No credential vault exists yet.", "NOT_FOUND");
+      const record = snapshot.records.find((candidate) => candidate.id === wanted);
+      const pending = record
+        ? null
+        : snapshot.pending.find((candidate) => candidate.pendingId === wanted);
+      if (!record && !pending) {
+        throw vaultError(`No credential with id "${wanted}" is stored.`, "NOT_FOUND");
+      }
+      const metadata = record ? publicRecord(record) : publicPendingRecord(pending);
+      const auditWarning = await appendMutationAudit(this.paths, {
+        at: new Date().toISOString(),
+        action: record ? "owner-reveal" : "owner-reveal-pending",
+        origin: metadata.origin,
+        id: wanted,
+        category: metadata.category,
+      });
+      return withAuditWarning(
+        {
+          ...metadata,
+          pending: Boolean(pending),
+          secret: record ? (record.password ?? null) : pending.secret,
+          ...(record?.notes != null ? { notes: record.notes } : {}),
+          ...(record?.fields != null ? { fields: record.fields } : {}),
+        },
+        auditWarning,
+      );
+    });
+  }
+
+  /**
+   * Delete one record by id regardless of the site it was saved for. The
+   * site-scoped `remove` action cannot reach a record whose origin no longer
+   * resolves, which would otherwise make some entries undeletable.
+   * @param {string} id
+   */
+  async ownerRemove(id) {
+    const wanted = requiredString(String(id ?? ""), "Credential id", 256);
+    return serialize(this.dir, async () => {
+      await ensurePrivateDirectory(this.dir);
+      const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+      try {
+        await release.assertOwned();
+        if (!(await pathExists(this.paths.data))) {
+          throw vaultError("No credential vault exists yet.", "NOT_FOUND");
+        }
+        const { key, snapshot } = await loadKeyAndSnapshot(this.paths);
+        try {
+          const index = snapshot.records.findIndex((candidate) => candidate.id === wanted);
+          const pendingIndex =
+            index === -1
+              ? snapshot.pending.findIndex((candidate) => candidate.pendingId === wanted)
+              : -1;
+          if (index === -1 && pendingIndex === -1) {
+            throw vaultError(`No credential with id "${wanted}" is stored.`, "NOT_FOUND");
+          }
+          const [removed] =
+            index === -1
+              ? snapshot.pending.splice(pendingIndex, 1)
+              : snapshot.records.splice(index, 1);
+          const metadata =
+            index === -1 ? publicPendingRecord(removed) : publicRecord(removed);
+          await persistSnapshot(this.paths, key, snapshot);
+          await release.assertOwned();
+          const auditWarning = await appendMutationAudit(this.paths, {
+            at: new Date().toISOString(),
+            action: index === -1 ? "owner-remove-pending" : "owner-remove",
+            origin: metadata.origin,
+            id: wanted,
+            category: metadata.category,
+          });
+          return withAuditWarning({ ...metadata, removed: true }, auditWarning);
+        } finally {
+          key.fill(0);
+        }
+      } finally {
+        await release();
+      }
+    });
+  }
+
+  /**
+   * Recent metadata-only audit entries, newest first.
+   * @param {{limit?: number}} [options]
+   */
+  async ownerAudit({ limit = 50 } = {}) {
+    const count = boundedInteger(limit, 50, 1, 10_000, "limit");
+    let contents;
+    try {
+      contents = await readBoundedFile(this.paths.audit, MAX_AUDIT_BYTES, "Credential vault audit log");
+    } catch (error) {
+      if (isMissing(error)) return { entries: [] };
+      throw error;
+    }
+    const entries = [];
+    for (const line of contents.toString("utf8").split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        entries.push(JSON.parse(line));
+      } catch {
+        // A torn final line from a crashed append is not worth failing over.
+      }
+    }
+    return { entries: entries.slice(-count).reverse() };
+  }
 }
 
 export function createLocalCredentialVault(options = {}) {

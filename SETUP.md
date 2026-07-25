@@ -23,6 +23,27 @@ compose fine.
 
 ---
 
+## The short path
+
+If the host is one BetterWright can detect — Claude Code, Cursor, Codex, or
+anything reading `~/.agents/skills` — two commands do everything in this guide:
+
+```bash
+npm install -g betterwright
+betterwright init          # add --yes to skip every prompt
+```
+
+`init` checks Node, downloads the browser if it is missing, installs the skill
+into each agent host it finds, offers MCP registration when the Claude CLI is
+present, and finishes by loading a real page to prove the whole path works. It
+is idempotent — re-run it after an upgrade. If it ends with
+`BetterWright is ready.`, you are done; skip to **§6 — Safeguards**.
+
+Read on when `init` found nothing to wire (a custom agent, a JS host, an MCP
+client it does not know), or when you want to do it deliberately.
+
+---
+
 ## Step 0 — Prerequisites (do this for every path)
 
 1. **Node.js 22+ must be on `PATH`.** Check with `node --version`. If missing,
@@ -49,9 +70,10 @@ compose fine.
    `--cloak-only`), the CloakBrowser wrapper downloads its signed binary from
    CloakHQ. npm installation itself has no hidden browser-download lifecycle
    script.
-4. **Verify** with `betterwright doctor` — it must print
-   `BetterWright is ready.` If it does not, stop and report exactly what
-   `doctor` printed.
+4. **Verify** with `betterwright doctor` — it must end with
+   `BetterWright is ready.` Every line it flags with `✗` names its own fix; if
+   any remain, stop and report exactly what `doctor` printed. `!` lines are
+   optional things that are not set up, not failures.
 
 Then go to the matching section:
 
@@ -81,6 +103,7 @@ Install the skill where the host reads instructions:
 ```bash
 betterwright skill --install    # ~/.claude/skills + ~/.agents/skills (browser/SKILL.md)
 betterwright skill --install --all   # also ~/.cursor/skills/browser/SKILL.md
+betterwright skill --status     # which of those exist, and at what version
 ```
 
 Each install is stamped with the package version. After an npm upgrade,
@@ -209,6 +232,17 @@ documents):
 The server reads its policy from the environment, so the same command works
 everywhere — see **§6** for the variables. Restart the client (or reload its MCP
 servers) and confirm a `browser` tool appears. Then do **§5**.
+
+If the client shows no BetterWright tools, do not debug through the client —
+ask the server directly:
+
+```bash
+betterwright mcp --check
+```
+
+It reports the two things that actually fail: a missing
+`@modelcontextprotocol/sdk` peer (the server cannot start, and a client will
+usually swallow the error), and a missing browser.
 
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.

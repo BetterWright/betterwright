@@ -18,11 +18,15 @@ its built-in browser agent and just read the answer.
 </div>
 
 ```bash
-npm install -g betterwright && betterwright setup
+npm install -g betterwright && betterwright init
 
 betterwright run -c "await page.goto('https://example.com'); return page.title()"
 # {"ok": true, "result": "Example Domain", ...}
 ```
+
+`init` downloads the browser, wires up whichever agents it finds on your
+machine, and proves it works by loading a real page. One command, no choices to
+make up front.
 
 **30–75% fewer observation tokens** than a standard accessibility dump ·
 read-only tasks finish in **one model turn** · persistent sessions so you
@@ -47,14 +51,14 @@ Any agent that can run a shell command can drive the browser.
 plus operator guidance. No server, no SDK, no glue code.
 
 ```bash
-# Claude Code + Agent Skills dirs (stamped with this package version)
-betterwright skill --install
-# also ~/.cursor/skills:  betterwright skill --install --all
-# After npm upgrade: setup/update refresh already-installed skill files;
-# doctor tips if a managed skill is still stale.
+# The short version: init detects your agent hosts and wires them all.
+betterwright init
 
-# Codex — append to AGENTS.md
-betterwright skill >> ~/.codex/AGENTS.md
+# Or do it by hand, one host at a time:
+betterwright skill --install       # ~/.claude/skills + ~/.agents/skills
+betterwright skill --install --all # also ~/.cursor/skills
+betterwright skill --status        # where it landed, and whether it is current
+betterwright skill >> ~/.codex/AGENTS.md   # Codex reads an instructions file
 
 # Any custom agent — the same instructions ship as SKILL.md in this repo
 # and the npm package (node_modules/betterwright/SKILL.md); copy it wherever
@@ -63,10 +67,14 @@ betterwright skill >> ~/.codex/AGENTS.md
 # MCP (stdio server: browser, browser_login, browser_download, browser_handoff, browser_doctor)
 npm install -g betterwright @modelcontextprotocol/sdk
 claude mcp add betterwright -- npx betterwright mcp
+betterwright mcp --check           # why does my client show no tools?
 
 # Pi Coding Agent (native persistent tools, trusted login, approval-gated downloads)
 pi install npm:betterwright
 ```
+
+After an npm upgrade, `setup` / `update` refresh already-installed skill files,
+and `doctor` says so if one is still stale.
 
 Or drive it from your own code:
 
@@ -236,10 +244,36 @@ npm lifecycle side effect, so installs stay predictable with `--ignore-scripts`.
 
 ```bash
 npm install -g betterwright
+betterwright init      # guided: browser + agent wiring + a real page load
+```
+
+`init` is safe to re-run and reports what is already done. The steps it runs
+are all available on their own:
+
+```bash
 betterwright setup     # fork (mac/linux) + Cloak fallback
 betterwright update    # refresh / switch to the Chromium fork
-betterwright doctor    # confirm everything resolves
+betterwright doctor    # what is installed, what is missing, how to fix it
 ```
+
+## Getting a password back out
+
+The vault fills logins without ever handing a secret to model code — which
+would leave *you* locked out of a password your agent generated during a
+signup. So there is a separate, human-only door:
+
+```bash
+betterwright vault list                # metadata: site, username, when
+betterwright vault copy <id>           # password → clipboard, never the screen
+betterwright vault show <id> --reveal  # print it (refuses to a pipe or a file)
+betterwright vault audit               # every read and write, metadata only
+```
+
+`--reveal` writes plaintext only to a terminal; redirect it and it fails closed.
+These commands live on an owner-only API that the browser worker — and so
+model-authored snippet code — cannot reach. See
+[SECURITY.md](SECURITY.md#the-shell-is-a-trusted-channel) for what that does
+and does not protect.
 
 ## How it works
 

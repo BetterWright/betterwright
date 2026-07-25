@@ -19,6 +19,31 @@ threat model and the controls that enforce it are documented in
 Please read those sections before deploying BetterWright somewhere it can be
 driven by untrusted input.
 
+## The shell is a trusted channel
+
+`betterwright vault show --reveal` and `betterwright vault copy` return stored
+passwords to the person running them. That is the point: the vault would
+otherwise be a one-way door, with no supported way to recover a password an
+agent generated during a signup.
+
+Be clear about what this does and does not change:
+
+- **It does not weaken the sandbox.** Those operations live on the vault's
+  owner-only API, which `handleRequest` — the sole surface the browser worker
+  and therefore model-authored snippet code can address — cannot route to.
+  Snippets still get metadata only.
+- **It does not defend against a hostile shell.** Anyone who can run
+  `betterwright vault` can already read `vault.key` and `vault.enc` as the same
+  OS user. If you give an agent an unrestricted shell tool on a machine with a
+  populated vault, that agent can read the vault, with or without this command.
+  Scope the agent's shell, run it as a different OS user, or use an external
+  vault adapter whose key material lives somewhere the agent cannot reach.
+
+The `--reveal` gate is about **accidental** exposure, not adversarial access:
+it refuses to write plaintext anywhere but a terminal, so a redirect, a pipe, a
+CI log, or a tool capturing stdout cannot collect a password by mistake. Every
+reveal is written to the metadata-only audit log (`betterwright vault audit`).
+
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately via GitHub's **Report a

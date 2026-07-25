@@ -60,6 +60,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -105,16 +106,55 @@ export function daemonPackageVersion() {
 // the CLI import it as such; the resolution rule itself lives in home.mjs.
 export { defaultDaemonHome };
 
+// A unix socket path is bounded by `sockaddr_un.sun_path` — 104 bytes on
+// macOS/BSD, 108 on Linux — and the kernel rejects anything longer with EINVAL
+// instead of truncating. A BETTERWRIGHT_HOME under a deep path (a CI
+// workspace, a long project directory, a container mount) therefore cost you
+// session persistence silently: the daemon died on listen, and every run/exec
+// fell back to a private browser with only "the session daemon did not start"
+// to go on. Below the limit nothing changes; above it, fall back to a short
+// owner-only path derived from the same home so sessions still persist.
+const MAX_SOCKET_PATH_BYTES = 100;
+
+function homeHash(home) {
+  return crypto.createHash("sha256").update(path.resolve(home)).digest("hex").slice(0, 16);
+}
+
+/** Owner-only directory holding fallback sockets for over-long homes. */
+export function fallbackSocketDir() {
+  const uid = typeof process.getuid === "function" ? process.getuid() : "shared";
+  return path.join(os.tmpdir(), `betterwright-${uid}`);
+}
+
 export function daemonSocketPath(home = defaultDaemonHome()) {
   if (process.platform === "win32") {
-    const hash = crypto
-      .createHash("sha256")
-      .update(path.resolve(home))
-      .digest("hex")
-      .slice(0, 16);
-    return `\\\\.\\pipe\\betterwright-${hash}`;
+    // Named pipes live in their own namespace and have no such limit.
+    return `\\\\.\\pipe\\betterwright-${homeHash(home)}`;
   }
-  return path.join(home, "daemon.sock");
+  const natural = path.join(home, "daemon.sock");
+  if (Buffer.byteLength(natural) <= MAX_SOCKET_PATH_BYTES) return natural;
+  return path.join(fallbackSocketDir(), `${homeHash(home)}.sock`);
+}
+
+/**
+ * Make sure the socket's directory exists and is owner-only before binding.
+ * The home directory is already private; the tmpdir fallback is not
+ * necessarily, and on Linux `os.tmpdir()` is shared between users, so refuse
+ * a directory somebody else owns rather than binding a socket inside it.
+ */
+export function ensureSocketDirectory(socketPath) {
+  const directory = path.dirname(socketPath);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stats = fs.lstatSync(directory);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error(`Session daemon socket directory is not a real directory: ${directory}`);
+  }
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    throw new Error(
+      `Session daemon socket directory ${directory} is owned by another user; refusing to use it.`,
+    );
+  }
+  fs.chmodSync(directory, 0o700);
 }
 
 export function daemonInfoPath(home = defaultDaemonHome()) {
@@ -795,6 +835,7 @@ export async function startSessionDaemon(options = {}) {
   }
 
   server = net.createServer(handleConnection);
+  if (process.platform !== "win32") ensureSocketDirectory(socketPath);
   await new Promise((resolve, reject) => {
     const tryListen = (retried) => {
       server.once("error", (error) => {

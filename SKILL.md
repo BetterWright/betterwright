@@ -1,7 +1,7 @@
 ---
 name: browser
 description: Drive a persistent, policy-guarded real web browser via the betterwright CLI. Use for any task that needs the live web — logging in, filling forms, booking, buying, or reading a page an API will not give you.
-generated_by: betterwright@1.3.1
+generated_by: betterwright@1.4.0
 ---
 
 # Browser tool: BetterWright
@@ -17,6 +17,8 @@ Invocations share one persistent session (background daemon): open tabs, page st
 Surface details for "Live view and handoff" below: `browser_handoff` action "start" opens it, "status" waits for takeover Done; `live_view` watches without pausing, `handoff` pauses until they click Done; interactive accepts `/live`; `exec "<task>" --live-view` opens the viewer at step 0; `betterwright view` prints a URL for the open tabs without closing them (takeover: Take control / the dock).
 
 Network access is policy-guarded: loopback and the private network are reachable by default; `--block-private-network` / `--block-loopback` lock down; `--allow-host <host>` / `--block-host <host>` adjust. Cloud-metadata endpoints are always blocked. Below, "`run()`" means "one `betterwright run` (or `repl`) snippet"; the "approval-gated download tool" is `betterwright run --approve-downloads`: one bounded download-enabled run, used only after the user explicitly approves.
+
+`betterwright vault` is the user's own command for reading their saved passwords, not a tool for you. Never run `vault show --reveal`, `vault copy`, or `vault rm`: a stored password must not enter your context or be deleted on your initiative, and fill happens inside the browser without one. `betterwright vault list` is metadata-only and fine when the user asks what is saved. When they want a password themselves, tell them to run `betterwright vault copy <id>` — it reaches their clipboard without either of us seeing it.
 
 # Operating the browser
 

@@ -119,9 +119,48 @@ export function installVaultCapture(context, deps = {}) {
     return "";
   };
 
+  /**
+   * Is a two-phase generated credential already in flight for this account?
+   *
+   * `generateAndFill` types its secret into the page, so the sensor sees a
+   * perfectly ordinary accepted submission and used to save it a second time —
+   * leaving two records per agent signup. Worse, the capture's own
+   * `base-domain` default silently widened a credential the caller had asked
+   * to scope to `host` or `exact-origin`: the same password ended up offered
+   * across the whole registrable domain.
+   *
+   * When a generation owns this account, the explicit
+   * commitGenerated/discardGenerated pair decides whether it is stored and at
+   * what scope. Defer to it. A vault that cannot answer falls through to
+   * saving, because losing a password is worse than storing a duplicate.
+   */
+  async function generationOwnsCapture(session, capture) {
+    try {
+      const response = await deps.vaultCallAtOrigin(
+        session,
+        capture.origin,
+        "list-pending",
+        {},
+      );
+      const pendings = response?.pendingCredentials;
+      if (!Array.isArray(pendings)) return false;
+      const captured = String(capture.username || "").toLocaleLowerCase();
+      return pendings.some((pending) => {
+        if (pending?.expired) return false;
+        const owner = String(pending?.username || "").toLocaleLowerCase();
+        // An unnamed generation (password-only signup step) claims the origin;
+        // a named one claims only its own account.
+        return !owner || !captured || owner === captured;
+      });
+    } catch {
+      return false;
+    }
+  }
+
   async function saveCapture(capture) {
     try {
       const session = deps.sessionForPage(capture.page);
+      if (await generationOwnsCapture(session, capture)) return;
       await deps.vaultCallAtOrigin(session, capture.origin, "save", {
         username: capture.username,
         password: capture.password,

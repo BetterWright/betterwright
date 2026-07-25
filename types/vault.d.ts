@@ -36,6 +36,47 @@ export interface VaultPublicRecord {
   updatedAt: string;
 }
 
+export interface VaultPendingRecord {
+  pendingId: string;
+  id?: string;
+  origin: string;
+  matchMode: VaultMatchMode;
+  username: string;
+  label: string | null;
+  category: "login";
+  createdAt: string;
+  expiresAt: string;
+  expired: boolean;
+}
+
+export interface VaultAuditWarning {
+  code: string;
+  message: string;
+}
+
+export interface VaultOwnerListResult {
+  credentials: VaultPublicRecord[];
+  pendingCredentials: VaultPendingRecord[];
+}
+
+/** The only shape in this module that carries a stored secret. */
+export interface VaultRevealedRecord extends VaultPublicRecord {
+  pending: boolean;
+  secret: string | null;
+  notes?: string | null;
+  fields?: Record<string, unknown>;
+  auditWarning?: VaultAuditWarning;
+}
+
+export interface VaultAuditEntry {
+  at: string;
+  action: string;
+  origin?: string;
+  id?: string;
+  category?: VaultCategory;
+  count?: number;
+}
+
 export class LocalCredentialVaultError extends Error {
   code: string;
 }
@@ -75,6 +116,26 @@ export class LocalCredentialVault {
 
   /** Clear tracked material after every page in the owning worker is closed. */
   resetRedactionSecrets(): void;
+
+  // Owner-only local access, for a trusted host acting on behalf of the person
+  // who owns the vault files (`betterwright vault`). Deliberately unreachable
+  // through `handleRequest`, which is the surface the browser worker — and so
+  // model-authored code — addresses. Never expose these to a model.
+
+  /** Every stored record, metadata only, ignoring site scope. */
+  ownerList(options?: {
+    query?: string | null;
+    category?: VaultCategory | null;
+  }): Promise<VaultOwnerListResult>;
+
+  /** Resolve one record's stored secret by id. Audited. */
+  ownerReveal(id: string): Promise<VaultRevealedRecord>;
+
+  /** Delete one record by id, ignoring site scope. Audited. */
+  ownerRemove(id: string): Promise<VaultPublicRecord & { removed: true }>;
+
+  /** Recent metadata-only audit entries, newest first. */
+  ownerAudit(options?: { limit?: number }): Promise<{ entries: VaultAuditEntry[] }>;
 }
 
 export const VAULT_CATEGORIES: readonly VaultCategory[];

@@ -122,6 +122,12 @@ function makeHarness(overrides = {}) {
     vaultCallAtOrigin: async (_session, origin, action, payload) => {
       calls.push({ kind: "vault", origin, action, payload });
       if (action === "list") return { credentials: overrides.listRecords || [] };
+      if (action === "list-pending") {
+        if (overrides.pendingFails) throw new Error("vault unavailable");
+        return overrides.pendingRecords
+          ? { pendingCredentials: overrides.pendingRecords }
+          : {};
+      }
       return {};
     },
     sessionForPage: () => ({ id: "default" }),
@@ -427,4 +433,66 @@ test("httpOrigin accepts only parseable http(s) URLs (shared with the worker)", 
   assert.equal(httpOrigin(""), "");
   assert.equal(httpOrigin(null), "");
   assert.equal(httpOrigin(undefined), "");
+});
+
+// `generateAndFill` types its generated secret into the page, so the sensor
+// sees an ordinary accepted submission. Saving it again left two records per
+// agent signup — and the capture's `base-domain` default silently widened a
+// credential the caller had scoped to `host` or `exact-origin`.
+test("capture defers to an in-flight generated credential for the same account", async () => {
+  const harness = makeHarness({
+    headed: false,
+    modelAt: () => Date.now(),
+    pendingRecords: [{ pendingId: "pending_1", username: "ada", expired: false }],
+  });
+  const session = await attached(harness);
+  emitCapture(session);
+  emitNavigation(session, `${ORIGIN}/home`);
+  await tick(150);
+
+  assert.deepEqual(vaultSaves(harness.calls), [], "the two-phase commit owns this save");
+  harness.handle.dispose();
+});
+
+test("capture still saves when the pending generation is for another account", async () => {
+  const harness = makeHarness({
+    headed: false,
+    modelAt: () => Date.now(),
+    pendingRecords: [{ pendingId: "pending_1", username: "grace", expired: false }],
+  });
+  const session = await attached(harness);
+  emitCapture(session);
+  emitNavigation(session, `${ORIGIN}/home`);
+
+  assert.equal(await waitFor(() => vaultSaves(harness.calls).length === 1), true);
+  assert.equal(vaultSaves(harness.calls)[0].payload.username, "ada");
+  harness.handle.dispose();
+});
+
+test("an expired generation no longer owns the account", async () => {
+  const harness = makeHarness({
+    headed: false,
+    modelAt: () => Date.now(),
+    pendingRecords: [{ pendingId: "pending_1", username: "ada", expired: true }],
+  });
+  const session = await attached(harness);
+  emitCapture(session);
+  emitNavigation(session, `${ORIGIN}/home`);
+
+  assert.equal(await waitFor(() => vaultSaves(harness.calls).length === 1), true);
+  harness.handle.dispose();
+});
+
+test("a vault that cannot report pendings still saves rather than losing a password", async () => {
+  const harness = makeHarness({
+    headed: false,
+    modelAt: () => Date.now(),
+    pendingFails: true,
+  });
+  const session = await attached(harness);
+  emitCapture(session);
+  emitNavigation(session, `${ORIGIN}/home`);
+
+  assert.equal(await waitFor(() => vaultSaves(harness.calls).length === 1), true);
+  harness.handle.dispose();
 });
