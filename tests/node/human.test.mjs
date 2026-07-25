@@ -14,7 +14,7 @@ import {
   pressPointer,
   scrollWheel,
   typeText,
-} from "../../src/human.mjs";
+} from "../../dist/src/human.js";
 
 function fakeMouse() {
   const calls = [];

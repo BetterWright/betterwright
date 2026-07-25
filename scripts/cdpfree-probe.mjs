@@ -20,7 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const EXT_SRC = path.join(ROOT, "src", "cdpfree", "extension");
+const EXT_BUILD = path.join(ROOT, "dist", "src", "cdpfree", "extension");
 
 function managedBrowserPath() {
   const root = path.join(os.homedir(), ".cloakbrowser");
@@ -250,8 +250,11 @@ async function waitForBridge(timeoutMs = 30_000) {
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "bw-cdpfree-"));
 const extDir = path.join(tmpHome, "ext");
 fs.mkdirSync(extDir, { recursive: true });
+if (!fs.existsSync(path.join(EXT_BUILD, "background.js"))) {
+  throw new Error("CDP-free extension is not built; run `npm run build` first");
+}
 for (const file of ["manifest.json", "background.js"]) {
-  fs.copyFileSync(path.join(EXT_SRC, file), path.join(extDir, file));
+  fs.copyFileSync(path.join(EXT_BUILD, file), path.join(extDir, file));
 }
 fs.writeFileSync(
   path.join(extDir, "config.js"),

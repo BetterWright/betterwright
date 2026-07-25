@@ -7,7 +7,7 @@ import {
   formatHangingText,
   makeLineReader,
   readExecTaskFromStdin,
-} from "../../src/cli-io.mjs";
+} from "../../dist/src/cli-io.js";
 
 test("readExecTaskFromStdin preserves literal money and multiline content", () => {
   assert.equal(

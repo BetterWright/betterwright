@@ -6,7 +6,7 @@ import {
   diffSnapshots,
   filterInteractive,
   parseAnnotationBoxes,
-} from "../../src/snapshot.mjs";
+} from "../../dist/src/snapshot.js";
 
 const TREE = [
   '- generic [active] [ref=e1]:',

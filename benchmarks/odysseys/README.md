@@ -4,7 +4,7 @@ Long-horizon multi-site web agent benchmark from:
 
 > Jang, Koh, Fried, Salakhutdinov — *Odysseys: Benchmarking Web Agents on Realistic Long Horizon Tasks* (arXiv:2604.24964)
 
-This harness runs all **200** official tasks through BetterWright’s own `exec` agent (`src/agent.mjs`), records screenshot trajectories, and scores them with the paper’s **per-rubric** grading style (averaged + perfect).
+This harness runs all **200** official tasks through BetterWright’s own `exec` agent (`src/agent.ts`, compiled to `dist/src/agent.js`), records screenshot trajectories, and scores them with the paper’s **per-rubric** grading style (averaged + perfect).
 
 ## Config used for the campaign
 

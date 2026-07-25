@@ -7,7 +7,7 @@ import { test } from "node:test";
 import {
   createPiExtension,
   PI_LOGIN_PARAMETERS,
-} from "../../src/pi-extension.mjs";
+} from "../../dist/src/pi-extension.js";
 
 class FakePi {
   constructor() {

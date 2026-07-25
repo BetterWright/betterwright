@@ -7,7 +7,7 @@ import {
   isWebSocketUpgrade,
   upgradeWebSocket,
   webSocketAcceptValue,
-} from "../../src/live-view-ws.mjs";
+} from "../../dist/src/live-view-ws.js";
 
 // RFC 6455 §1.3 sample handshake value.
 test("webSocketAcceptValue matches the RFC sample", () => {

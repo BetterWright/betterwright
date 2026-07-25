@@ -9,9 +9,9 @@ import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
 
-import { sealTranscript } from "../../src/agent.mjs";
-import { ReplayBuffer, startSessionDaemon } from "../../src/daemon.mjs";
-import { execTask } from "../../src/daemon-client.mjs";
+import { sealTranscript } from "../../dist/src/agent.js";
+import { ReplayBuffer, startSessionDaemon } from "../../dist/src/daemon.js";
+import { execTask } from "../../dist/src/daemon-client.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function stubBrowser() {

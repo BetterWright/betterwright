@@ -1,75 +1,74 @@
 {
   "name": "betterwright",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A persistent, policy-guarded Playwright browser for AI agents with network controls, trusted credential filling, proof screenshots, and CAPTCHA helpers.",
   "type": "module",
-  "main": "src/index.mjs",
+  "main": "dist/src/index.js",
   "types": "types/index.d.ts",
   "exports": {
     ".": {
       "types": "./types/index.d.ts",
-      "import": "./src/index.mjs",
-      "default": "./src/index.mjs"
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
     },
     "./agent": {
       "types": "./types/agent.d.ts",
-      "import": "./src/agent.mjs",
-      "default": "./src/agent.mjs"
+      "import": "./dist/src/agent.js",
+      "default": "./dist/src/agent.js"
     },
     "./auth": {
       "types": "./types/auth.d.ts",
-      "import": "./src/auth.mjs",
-      "default": "./src/auth.mjs"
+      "import": "./dist/src/auth.js",
+      "default": "./dist/src/auth.js"
     },
     "./policy": {
       "types": "./types/policy.d.ts",
-      "import": "./src/policy.mjs",
-      "default": "./src/policy.mjs"
+      "import": "./dist/src/policy.js",
+      "default": "./dist/src/policy.js"
     },
     "./vault": {
       "types": "./types/vault.d.ts",
-      "import": "./src/vault.mjs",
-      "default": "./src/vault.mjs"
+      "import": "./dist/src/vault.js",
+      "default": "./dist/src/vault.js"
     },
     "./prompt": {
       "types": "./types/prompt.d.ts",
-      "import": "./src/prompt.mjs",
-      "default": "./src/prompt.mjs"
+      "import": "./dist/src/prompt.js",
+      "default": "./dist/src/prompt.js"
     },
     "./pi": {
       "types": "./types/pi.d.ts",
-      "import": "./src/pi.mjs",
-      "default": "./src/pi.mjs"
+      "import": "./dist/src/pi.js",
+      "default": "./dist/src/pi.js"
     },
     "./pi-extension": {
       "types": "./types/pi-extension.d.ts",
-      "import": "./src/pi-extension.mjs",
-      "default": "./src/pi-extension.mjs"
+      "import": "./dist/src/pi-extension.js",
+      "default": "./dist/src/pi-extension.js"
     },
     "./worker": {
       "types": "./types/worker.d.ts",
-      "import": "./src/worker-constants.mjs",
-      "default": "./src/worker-constants.mjs"
+      "import": "./dist/src/worker-constants.js",
+      "default": "./dist/src/worker-constants.js"
     },
     "./mcp-server": {
       "types": "./types/mcp-server.d.ts",
-      "import": "./src/mcp-server.mjs",
-      "default": "./src/mcp-server.mjs"
+      "import": "./dist/src/mcp-server.js",
+      "default": "./dist/src/mcp-server.js"
     },
     "./skills": {
       "types": "./types/skills.d.ts",
-      "import": "./src/skills.mjs",
-      "default": "./src/skills.mjs"
+      "import": "./dist/src/skills.js",
+      "default": "./dist/src/skills.js"
     },
     "./package.json": "./package.json"
   },
   "bin": {
-    "betterwright": "bin/betterwright.mjs"
+    "betterwright": "dist/bin/betterwright.js"
   },
   "files": [
-    "src",
-    "!src/cdpfree",
-    "bin",
+    "dist",
+    "!dist/src/cdpfree",
     "types",
     "skills",
     "docs/*.md",
@@ -82,13 +81,16 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test tests/node/*.test.mjs",
-    "test:unit": "node scripts/run-unit-tests.mjs",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check:build": "npm run build && node scripts/check-build.mjs",
+    "test": "npm run build && node --test tests/node/*.test.mjs",
+    "test:unit": "npm run build && node scripts/run-unit-tests.mjs",
     "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
     "lint": "biome ci src bin scripts tests",
     "check:versions": "node scripts/check-versions.mjs",
-    "check:package": "node scripts/check-package.mjs",
-    "release:check": "npm run check:versions && npm run lint && npm run test:unit && npm run test:types && npm run check:package",
+    "check:package": "npm run build && node scripts/check-package.mjs",
+    "release:check": "npm run check:versions && npm run lint && npm run typecheck && npm run check:build && npm run test:unit && npm run test:types && npm run check:package",
     "prepublishOnly": "npm run release:check"
   },
   "engines": {
@@ -100,7 +102,7 @@
   },
   "pi": {
     "extensions": [
-      "./src/pi-extension.mjs"
+      "./dist/src/pi-extension.js"
     ]
   },
   "dependencies": {
@@ -145,7 +147,8 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "typescript": "^5.9.3"
+    "@types/node": "^22.20.1",
+    "typescript": "^7.0.2"
   },
   "optionalDependencies": {
     "patchright-core": "1.61.1"

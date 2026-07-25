@@ -11,12 +11,12 @@ import {
   fallbackSocketDir,
   normalizeDaemonConfig,
   startSessionDaemon,
-} from "../../src/daemon.mjs";
+} from "../../dist/src/daemon.js";
 import {
   connectSessionDaemon,
   createDaemonBrowser,
   execTask,
-} from "../../src/daemon-client.mjs";
+} from "../../dist/src/daemon-client.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function stubBrowser() {

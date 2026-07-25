@@ -10,7 +10,7 @@ import {
   loadTranscript,
   saveTranscript,
   transcriptPath,
-} from "../../src/session-store.mjs";
+} from "../../dist/src/session-store.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function browserTurn(content, note = "") {

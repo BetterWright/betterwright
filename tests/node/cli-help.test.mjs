@@ -14,10 +14,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { COMMAND_SUMMARIES, helpFor, MAIN_USAGE, wantsHelp } from "../../src/cli-help.mjs";
+import { COMMAND_SUMMARIES, helpFor, MAIN_USAGE, wantsHelp } from "../../dist/src/cli-help.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const cli = path.join(root, "bin", "betterwright.mjs");
+const cli = path.join(root, "dist", "bin", "betterwright.js");
 
 function runCli(args, { timeout = 20_000, env = {} } = {}) {
   return spawnSync(process.execPath, [cli, ...args], {

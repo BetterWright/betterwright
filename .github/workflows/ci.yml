@@ -22,6 +22,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check:versions
       - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run check:build
       # Coverage is report-only: it prints the table in the job log without
       # gating, so an experimental Node feature can never fail the release.
       - run: npm run test:unit
@@ -41,8 +43,9 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run build
       - name: Install managed CloakBrowser
-        run: node bin/betterwright.mjs setup --cloak-only
+        run: node dist/bin/betterwright.js setup --cloak-only
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
       # broken Cloak install can never report green by skipping every browser test.
       - run: npm test

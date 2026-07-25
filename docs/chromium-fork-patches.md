@@ -1,7 +1,7 @@
 # Chromium Fork Fingerprint Patch Set
 
 Build-side patches for the pinned BetterWright Chromium 150 fork. The JS
-layer (`src/fork-identity.mjs`) already masks UA, UA-CH, `navigator.platform`,
+layer (`src/fork-identity.ts`) already masks UA, UA-CH, `navigator.platform`,
 and screen geometry via launch flags + CDP emulation. The surfaces below are
 only reachable from Chromium source — patch them so the binary is coherent
 even where CDP cannot reach (service workers, WebGL, canvas, fonts).
@@ -110,7 +110,7 @@ the rendered buffer. Must be stable per profile and distinct per seed.
   Apple Color Emoji…) into `artifacts/linux-x64/fonts/ttf`.
 - The worker generates an absolute-path `fonts.conf` in the profile runtime
   dir and launches the fork with `FONTCONFIG_FILE` pointing at it
-  (`src/fork-identity.mjs: prepareForkFontsConfig`, gated on the Mac mask).
+  (`src/fork-identity.ts: prepareForkFontsConfig`, gated on the Mac mask).
 - Acceptance, verified on a Linux x64 host: `fc-list` enumerates 470 faces;
   `measureText` widths differ per family (Helvetica Neue 291 / Menlo 247 /
   Georgia 307 / Palatino 307 / Avenir Next 304) instead of collapsing to one

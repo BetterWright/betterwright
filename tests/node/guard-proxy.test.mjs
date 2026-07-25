@@ -4,7 +4,7 @@ import net from "node:net";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
-import { createGuardProxy } from "../../src/guard-proxy.mjs";
+import { createGuardProxy } from "../../dist/src/guard-proxy.js";
 
 const IPV6_ONE = "2001:db8:0:0:0:0:0:1";
 const IPV6_TWO = "2001:db8:0:0:0:0:0:2";

@@ -16,6 +16,23 @@
       "recommended": true
     }
   },
+  // The first TypeScript release keeps the dynamic browser/model protocol
+  // boundaries explicit while they are progressively narrowed. TypeScript's
+  // noEmitOnError build is authoritative. These two TypeScript-only style
+  // rules are deferred until those legacy protocol boundaries are narrowed.
+  "overrides": [
+    {
+      "includes": ["src/**/*.ts", "bin/**/*.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off",
+            "noImplicitAnyLet": "off"
+          }
+        }
+      }
+    }
+  ],
   // The formatter is off deliberately, not as an oversight: the codebase is
   // consistently hand-formatted (2-space indent, double quotes, semicolons —
   // see .editorconfig), and enabling it would land a ~4,000-line whitespace

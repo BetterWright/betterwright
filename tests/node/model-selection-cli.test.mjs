@@ -8,10 +8,10 @@ import {
   discoveryTimeoutMs,
   endpointDiscoverySources,
   endpointSourceName,
-} from "../../src/agent.mjs";
+} from "../../dist/src/agent.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const cli = path.join(root, "bin", "betterwright.mjs");
+const cli = path.join(root, "dist", "bin", "betterwright.js");
 
 function runCli(args, envOverrides = {}) {
   const env = { ...process.env, ...envOverrides };

@@ -8,7 +8,7 @@ import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   chromiumForkContextOptions,
   resolveChromiumForkBinary,
-} from "../../src/chromium-fork.mjs";
+} from "../../dist/src/chromium-fork.js";
 
 const present = () => true;
 const ROOT = path.dirname(
@@ -93,7 +93,7 @@ test("Chromium fork preserves native metrics and normal browser behavior", () =>
 
 test("managed worker avoids detectable WebSocket interception", () => {
   const workerSource = fs.readFileSync(
-    path.join(ROOT, "src", "worker.mjs"),
+    path.join(ROOT, "dist", "src", "worker.js"),
     "utf8",
   );
   assert.doesNotMatch(workerSource, /\.routeWebSocket\s*\(/);

@@ -15,7 +15,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BetterWright } from "../src/index.mjs";
+import { BetterWright } from "../dist/src/index.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PROBE_PAGE = path.join(ROOT, "tests", "fixtures", "stealth-probe.html");

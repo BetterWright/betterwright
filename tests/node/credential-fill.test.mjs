@@ -7,9 +7,9 @@ import {
   collectCredentialFrameDetections,
   disposeCredentialFrameDetections,
   probePinnedCredentialOrigin,
-} from "../../src/credential-target-scan.mjs";
-import { cloakRuntime } from "../../src/doctor.mjs";
-import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
+} from "../../dist/src/credential-target-scan.js";
+import { cloakRuntime } from "../../dist/src/doctor.js";
+import { BetterWright, NetworkPolicy } from "../../dist/src/index.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const ready = (await cloakRuntime()).installed;

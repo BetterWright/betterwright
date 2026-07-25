@@ -7,8 +7,8 @@ import { test } from "node:test";
 import {
   assertRotationPreservesMatchMode,
   pendingCredentialRecovery,
-} from "../../src/credential-constants.mjs";
-import { BetterWright, LocalCredentialVault } from "../../src/index.mjs";
+} from "../../dist/src/credential-constants.js";
+import { BetterWright, LocalCredentialVault } from "../../dist/src/index.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 test("the encrypted local credential vault is enabled by default and can be replaced or disabled", async () => {

@@ -5,11 +5,11 @@ import {
   collectValues,
   firstPositional,
   flagValue,
-} from "../../src/cli-flags.mjs";
-import { NetworkPolicy } from "../../src/policy.mjs";
+} from "../../dist/src/cli-flags.js";
+import { NetworkPolicy } from "../../dist/src/policy.js";
 
 // A realistic argv prefix: node, script path, subcommand.
-const argvFor = (...tokens) => ["node", "bin/betterwright.mjs", "run", ...tokens];
+const argvFor = (...tokens) => ["node", "dist/bin/betterwright.js", "run", ...tokens];
 
 test("regression: --block-host=evil.com produces a non-empty block list that blocks the host", () => {
   const blockHosts = collectValues(

@@ -8,7 +8,7 @@ import {
   piImageArtifacts,
   piImageContent,
   piPrimaryImageArtifact,
-} from "../../src/pi.mjs";
+} from "../../dist/src/pi.js";
 
 test("Pi image artifact discovery is safe, ordered, and deduplicated", () => {
   const screenshot = path.join(os.tmpdir(), "betterwright-proof.png");

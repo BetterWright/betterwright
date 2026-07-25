@@ -49,18 +49,21 @@ jobs:
       - name: Install locked dependencies
         if: steps.existing.outputs.published != 'true'
         run: npm ci --ignore-scripts
+      - name: Build TypeScript sources
+        if: steps.existing.outputs.published != 'true'
+        run: npm run build
       - name: Install managed CloakBrowser
         if: steps.existing.outputs.published != 'true'
-        run: node bin/betterwright.mjs setup --cloak-only
+        run: node dist/bin/betterwright.js setup --cloak-only
       - name: Verify Chromium fork update
         if: steps.existing.outputs.published != 'true'
         shell: bash
         run: |
           HOME=$(mktemp -d)
           export HOME
-          node bin/betterwright.mjs update
+          node dist/bin/betterwright.js update
           node -e "
-            import { resolveChromiumForkBinary } from './src/chromium-fork.mjs';
+            import { resolveChromiumForkBinary } from './dist/src/chromium-fork.js';
             const binary = resolveChromiumForkBinary({ home: process.env.HOME });
             if (!binary) throw new Error('update did not install a discoverable fork');
             console.log('fork ok:', binary);

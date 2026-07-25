@@ -18,7 +18,7 @@ betterwright setup --cloak-only
 
 Artifacts come from the GitHub Release tag `chromium-<version>` (see
 `CHROMIUM_FORK_RELEASE_TAG` / `CHROMIUM_FORK_ASSETS` in
-`src/chromium-fork.mjs`). Each zip is SHA-256 pinned in that manifest before
+`src/chromium-fork.ts`). Each zip is SHA-256 pinned in that manifest before
 extract. Apple-licensed fonts are **not** in the public zip.
 
 ## Runtime Selection
@@ -112,7 +112,7 @@ Chrome 150.0.7871.129 (the fork's exact pinned version) on an Apple M4 Pro
 MacBook Pro running macOS 26.6: UA and UA-CH (brands, `macOS` 26.6.0,
 `arm`), `navigator.platform = MacIntel`, 1800×1169 @2x screen geometry with
 real menu-bar/Dock `availHeight`, 12 cores, `deviceMemory` 16. See
-`src/fork-identity.mjs`.
+`src/fork-identity.ts`.
 
 Two layers apply it without any page-world JavaScript shims:
 

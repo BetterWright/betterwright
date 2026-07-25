@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { agentSystemPrompt } from "../../src/prompt.mjs";
+import { agentSystemPrompt } from "../../dist/src/prompt.js";
 
 test("default prompt is permissive", () => {
   const prompt = agentSystemPrompt();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { detectBotChallenge, isPublicSearchNavigation } from "../../src/challenges.mjs";
+import { detectBotChallenge, isPublicSearchNavigation } from "../../dist/src/challenges.js";
 
 test("detects Google unusual traffic on country search domains", () => {
   const challenge = detectBotChallenge({

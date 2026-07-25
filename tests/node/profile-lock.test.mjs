@@ -12,7 +12,7 @@ import {
   profileLockHeldByUs,
   releaseProfileLockDir,
   touchProfileLock,
-} from "../../src/profile-lock.mjs";
+} from "../../dist/src/profile-lock.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function makeRoot() {

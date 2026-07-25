@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { METADATA_RESOLVER_RULES } from "../../src/worker-constants.mjs";
+import { METADATA_RESOLVER_RULES } from "../../dist/src/worker-constants.js";
 
 test("METADATA_RESOLVER_RULES is a comma-joined --host-resolver-rules value", () => {
   assert.equal(typeof METADATA_RESOLVER_RULES, "string");

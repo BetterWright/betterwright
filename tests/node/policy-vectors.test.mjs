@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { NetworkPolicy } from "../../src/policy.mjs";
+import { NetworkPolicy } from "../../dist/src/policy.js";
 
 const fixturePath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),

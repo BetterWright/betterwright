@@ -16,7 +16,7 @@ now() { python3 -c 'import time;print(int(time.time()*1000))'; }
 echo "== 1. Cold one-shot: navigate + interactive snapshot (x3) =="
 for i in 1 2 3; do
   s=$(now)
-  BETTERWRIGHT_HEADLESS=1 node "$BW_DIR/bin/betterwright.mjs" run -c \
+  BETTERWRIGHT_HEADLESS=1 node "$BW_DIR/dist/bin/betterwright.js" run -c \
     "await page.goto('https://example.com'); const s = await snapshot({interactive:true}); return s.length" >/dev/null 2>&1
   echo "  BetterWright run  #$i: $(( $(now) - s ))ms"
 done
@@ -33,12 +33,12 @@ printf '%s\n\n%s\n\n%s\n\n%s\n' \
   "await page.goto('https://example.org'); return (await snapshot({interactive:true})).length" \
   "await page.goto('https://example.com'); return (await snapshot({interactive:true})).length" \
   "await page.goto('https://example.org'); return (await snapshot({interactive:true})).length" \
-  | BETTERWRIGHT_HEADLESS=1 node "$BW_DIR/bin/betterwright.mjs" repl 2>&1 | grep durationMs
+  | BETTERWRIGHT_HEADLESS=1 node "$BW_DIR/dist/bin/betterwright.js" repl 2>&1 | grep durationMs
 
 echo "== 3. Capability: password redaction in snapshot =="
 DATA='data:text/html,<form><input id=p type=password placeholder=Pass></form>'
 echo -n "  BetterWright: "
-BETTERWRIGHT_HEADLESS=1 node "$BW_DIR/bin/betterwright.mjs" run -c \
+BETTERWRIGHT_HEADLESS=1 node "$BW_DIR/dist/bin/betterwright.js" run -c \
   "await page.goto('$DATA'); await page.fill('#p','topsecretpw'); const s = await snapshot({interactive:true}); return s.includes('topsecretpw') ? 'LEAKS' : 'redacted'" 2>&1 | grep -oE 'LEAKS|redacted' | head -1
 echo -n "  Reference:    "
 ( cd /tmp && "$REFERENCE_CLI" repl \

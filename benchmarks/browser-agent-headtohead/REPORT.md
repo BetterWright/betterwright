@@ -54,7 +54,7 @@ Running the password-redaction task **surfaced a real bug**: BetterWright's
 (`textbox "Password" … : hunter2secret`), where the reference emits `[redacted]`.
 An agent taking a routine snapshot after any password fill — its own or a
 password-manager extension's — would have pulled the secret into model context.
-Fixed in `src/worker.mjs` (`redactPasswordValues`): password-input values are
+Fixed in `src/worker.ts` (`redactPasswordValues`): password-input values are
 replaced with `[redacted]` before the snapshot is stored, diffed, or returned,
 with negligible latency cost. Covered by an e2e test; both runtimes now match.
 

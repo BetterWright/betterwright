@@ -12,13 +12,13 @@ import {
   modelReadiness,
   modelSetupHint,
   preferredModelId,
-} from "../../src/doctor.mjs";
+} from "../../dist/src/doctor.js";
 import {
   agentHostTargets,
   detectAgentHosts,
   runInit,
   upsertCodexInstructions,
-} from "../../src/onboard.mjs";
+} from "../../dist/src/onboard.js";
 
 function tempHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-init-"));

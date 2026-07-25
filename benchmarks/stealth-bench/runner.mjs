@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BetterWright, codexModel, runAgentTask } from "../../src/index.mjs";
+import { BetterWright, codexModel, runAgentTask } from "../../dist/src/index.js";
 
 export const DATASET_NAME = "Stealth_Bench_V1";
 export const PINNED_DATASET_SHA256 =
