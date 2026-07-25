@@ -406,6 +406,30 @@ test("an over-long home falls back to a bindable socket path", { skip: process.p
   assert.equal(fallback, daemonSocketPath(deep));
 });
 
+test("an over-long symlinked home hashes the same before and after it exists", { skip: process.platform === "win32" }, () => {
+  // The client computes the socket path before spawnDaemon creates the home;
+  // the daemon computes it after. For an over-long home under a symlinked
+  // ancestor those two moments must agree, or the client polls a socket the
+  // daemon never binds and silently loses session persistence — which is
+  // exactly what a naive realpath (resolvable only once the path exists) did.
+  const root = makeTempDir("betterwright-symhome-");
+  const real = `${root}/real`;
+  fs.mkdirSync(real);
+  const link = `${root}/link`;
+  fs.symlinkSync(real, link);
+  const tail = `${"d".repeat(40)}/${"e".repeat(40)}/${"f".repeat(40)}`;
+  const deep = `${link}/${tail}`;
+  assert.ok(Buffer.byteLength(`${deep}/daemon.sock`) > 100, "fixture must be over-long");
+
+  const beforeExists = daemonSocketPath(deep); // client, home not yet created
+  fs.mkdirSync(deep, { recursive: true });
+  const afterExists = daemonSocketPath(deep); // daemon, home now created
+  assert.equal(beforeExists, afterExists);
+
+  // The symlinked spelling and its real target still converge onto one socket.
+  assert.equal(daemonSocketPath(`${real}/${tail}`), afterExists);
+});
+
 test("the shared-tmpdir fallback directory is created owner-only", { skip: process.platform === "win32" }, () => {
   // Only the fallback lives under a shared os.tmpdir(), so only it is
   // hardened to 0700.

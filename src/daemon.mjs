@@ -119,18 +119,34 @@ export { defaultDaemonHome };
 // owner-only path derived from the same home so sessions still persist.
 const MAX_SOCKET_PATH_BYTES = 100;
 
-function homeHash(home) {
-  // Resolve symlinks so two spellings of the same home (a symlinked ~, a
-  // bind mount) hash to one socket and share one daemon rather than spawning
-  // a second over the same profile. realpath needs the path to exist; before
-  // it does, fall back to a lexical resolve.
-  let canonical;
-  try {
-    canonical = fs.realpathSync(home);
-  } catch {
-    canonical = path.resolve(home);
+// Canonicalize a home path so two spellings of the same directory (a symlinked
+// ~, a bind mount, macOS `/tmp`→`/private/tmp`) resolve identically — AND so
+// the answer does not change once the directory is created. The client hashes
+// the home before `spawnDaemon` makes it; the daemon hashes it after. A plain
+// `realpathSync` gives different answers across that boundary (it can only
+// resolve an existing path), which desynced the two onto different sockets.
+// Resolve the deepest ancestor that exists, then re-append the not-yet-created
+// tail — `mkdir` creates real directories, so the daemon's later full realpath
+// equals this.
+function canonicalHome(home) {
+  let head = path.resolve(home);
+  const tail = [];
+  for (;;) {
+    try {
+      head = fs.realpathSync(head);
+      break;
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) break; // reached the filesystem root
+      tail.unshift(path.basename(head));
+      head = parent;
+    }
   }
-  return crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
+  return tail.length ? path.join(head, ...tail) : head;
+}
+
+function homeHash(home) {
+  return crypto.createHash("sha256").update(canonicalHome(home)).digest("hex").slice(0, 16);
 }
 
 /** Owner-only directory holding fallback sockets for over-long homes. */
