@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -12,6 +11,7 @@ import {
   saveTranscript,
   transcriptPath,
 } from "../../src/session-store.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function browserTurn(content, note = "") {
   return [
@@ -68,7 +68,7 @@ test("elideTranscript drops malformed entries", () => {
 });
 
 test("save/load roundtrip with private permissions; clear forgets", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-store-"));
+  const home = makeTempDir("bw-store-");
   try {
     const messages = [
       { role: "user", text: "book the flight" },
@@ -88,7 +88,7 @@ test("save/load roundtrip with private permissions; clear forgets", () => {
 });
 
 test("hostile session names cannot escape the sessions directory", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-store-"));
+  const home = makeTempDir("bw-store-");
   try {
     for (const name of ["../../etc/passwd", "..", "a/b", ".hidden", "x".repeat(200)]) {
       const file = transcriptPath(home, name);
@@ -107,7 +107,7 @@ test("hostile session names cannot escape the sessions directory", () => {
 });
 
 test("loadTranscript tolerates a corrupt file", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-store-"));
+  const home = makeTempDir("bw-store-");
   try {
     const file = transcriptPath(home, "default");
     fs.mkdirSync(path.dirname(file), { recursive: true });

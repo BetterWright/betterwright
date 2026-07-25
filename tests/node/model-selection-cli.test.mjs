@@ -4,6 +4,12 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import {
+  discoveryTimeoutMs,
+  endpointDiscoverySources,
+  endpointSourceName,
+} from "../../src/agent.mjs";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const cli = path.join(root, "bin", "betterwright.mjs");
 
@@ -97,4 +103,57 @@ test("model-id flag is folded into the primary model selector", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--model-id was merged into --model/);
+});
+
+test("models rejects an unknown source with agent.mjs's shared error message", () => {
+  const result = runCli(["models", "bogus"]);
+
+  assert.equal(result.status, 1);
+  // The CLI used to keep its own copy of this message ("...or a custom
+  // --base-url.") that had drifted from the one --model parsing emits; both
+  // now come from endpointSourceName.
+  assert.match(
+    result.stderr,
+    /Unknown model source "bogus"\. Use openrouter, ollama, vllm, or custom\./,
+  );
+});
+
+test("models normalizes source spellings the same way --model parsing does", () => {
+  // endpointSourceName strips [-_ ], so `cus_tom` selects the custom source
+  // (which then fails fast for want of a --base-url, keeping the test
+  // offline) instead of being rejected as an unknown source.
+  const result = runCli(["models", "cus_tom"], {
+    BETTERWRIGHT_MODEL_BASE_URL: undefined,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /custom: unavailable .*--base-url/s);
+  assert.match(result.stderr, /No available models found\./);
+});
+
+test("source parsing and probe budgets are the agent's own exports", () => {
+  assert.equal(endpointSourceName("Open-Router"), "openrouter");
+  assert.equal(endpointSourceName("v_llm"), "vllm");
+  assert.throws(
+    () => endpointSourceName("bogus"),
+    /Use openrouter, ollama, vllm, or custom\./,
+  );
+  // OpenRouter's probe crosses the network, so it gets more headroom than the
+  // loopback runtimes.
+  assert.equal(discoveryTimeoutMs("openrouter"), 3_000);
+  assert.equal(discoveryTimeoutMs("ollama"), 750);
+  assert.equal(discoveryTimeoutMs("vllm"), 750);
+});
+
+test("endpoint discovery probes local runtimes always and OpenRouter only with a key", () => {
+  const saved = process.env.OPENROUTER_API_KEY;
+  try {
+    delete process.env.OPENROUTER_API_KEY;
+    assert.deepEqual(endpointDiscoverySources(), ["ollama", "vllm"]);
+    process.env.OPENROUTER_API_KEY = "test-key";
+    assert.deepEqual(endpointDiscoverySources(), ["ollama", "vllm", "openrouter"]);
+  } finally {
+    if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = saved;
+  }
 });

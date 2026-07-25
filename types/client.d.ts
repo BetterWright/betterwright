@@ -46,6 +46,8 @@ export class BetterWright {
   timezone: string | null;
   headedInvisible: boolean;
   platform: "macos" | "windows" | "linux" | null;
+  /** Validated extra Chromium switches, from the option and the environment. */
+  chromiumArgs: string[];
   defaultTimeout: number;
   liveView: LiveViewOptions;
 

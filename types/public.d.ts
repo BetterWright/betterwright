@@ -62,6 +62,23 @@ export interface BetterWrightOptions {
    */
   platform?: "macos" | "windows" | "linux";
   /**
+   * Extra Chromium switches appended to the managed launch arguments, for
+   * host-level tuning the managed list has no opinion on —
+   * `["--disable-gpu", "--disable-software-rasterizer"]` on a GPU-less server
+   * being the motivating case. Also settable per host with
+   * `BETTERWRIGHT_CHROMIUM_ARGS` (whitespace-separated, quotes allowed); both
+   * sources apply.
+   *
+   * Switches BetterWright owns are rejected with a `TypeError`: proxy
+   * selection, remote debugging, the profile directory, and the
+   * `--fingerprint*` / `--lang` / `--bw-timezone` / `--headless` identity
+   * family. A switch that merely duplicates one already in the managed list is
+   * dropped — Chromium resolves duplicates last-wins, so appending it would
+   * override BetterWright's value rather than lose to it — and the drop is
+   * reported in the next result's `warnings`.
+   */
+  chromiumArgs?: string[];
+  /**
    * Defaults for `startLiveView()`. Binds `0.0.0.0` with a LAN `publicHost` by
    * default so printed URLs open from another machine on the network. Pass
    * `{host:"127.0.0.1"}` for loopback-only.

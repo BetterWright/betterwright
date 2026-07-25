@@ -60,11 +60,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
 import { BetterWright, NetworkPolicy } from "./client.mjs";
+import { defaultHome as defaultDaemonHome } from "./home.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -101,10 +101,9 @@ export function daemonPackageVersion() {
   }
 }
 
-export function defaultDaemonHome() {
-  const configured = (process.env.BETTERWRIGHT_HOME || "").trim();
-  return configured || path.join(os.homedir(), ".betterwright");
-}
+// Kept under the daemon-flavored name because daemon-client, session-store and
+// the CLI import it as such; the resolution rule itself lives in home.mjs.
+export { defaultDaemonHome };
 
 export function daemonSocketPath(home = defaultDaemonHome()) {
   if (process.platform === "win32") {

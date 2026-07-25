@@ -5,7 +5,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
@@ -13,6 +12,7 @@ import test from "node:test";
 import { sealTranscript } from "../../src/agent.mjs";
 import { ReplayBuffer, startSessionDaemon } from "../../src/daemon.mjs";
 import { execTask } from "../../src/daemon-client.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function stubBrowser() {
   const calls = [];
@@ -35,7 +35,7 @@ function stubBrowser() {
 }
 
 async function startTestDaemon(overrides = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-dr-"));
+  const home = makeTempDir("bw-dr-");
   const browser = overrides.browser || stubBrowser();
   const exits = [];
   const daemon = await startSessionDaemon({

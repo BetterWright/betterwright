@@ -14,15 +14,19 @@ jobs:
     name: Worker copies in sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check:versions
       - run: npm run lint
+      # Coverage is report-only: it prints the table in the job log without
+      # gating, so an experimental Node feature can never fail the release.
       - run: npm run test:unit
+        env:
+          BETTERWRIGHT_COVERAGE: "1"
       - run: npm run test:types
       - run: npm run check:package
 
@@ -31,8 +35,8 @@ jobs:
     name: Node tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm

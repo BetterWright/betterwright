@@ -1,20 +1,16 @@
 # The built-in agent harness (`betterwright exec`)
 
-BetterWright works in two shapes:
+This page covers the **standalone** shape: BetterWright supplies a
+browser-tuned agent loop, you plug a *model* into it, and you hand it a
+natural-language task. For how it compares to the integrated shape, see
+[Pick your shape first](getting-started.md#pick-your-shape-first).
 
-- **Integrated** (bring your own agent): some other harness — Claude Code,
-  Codex, Pi, an MCP client, or your own code — drives BetterWright through
-  `run()`, the MCP `browser` tool, or the Pi package. This is the default and is
-  covered everywhere else in these docs.
-- **Standalone** (let BetterWright drive itself): BetterWright supplies a
-  browser-tuned agent loop, you plug a *model* into it, and you hand it a
-  natural-language task. That is this page. This shape also nests inside the
-  first: a coding agent can shell out `betterwright exec "<task>"` as a browser
-  **sub-agent** — one command in, one JSON answer out, with the entire browsing
-  transcript (snapshots, retries, verification) kept out of the caller's
-  context.
+The two nest: a coding agent can shell out `betterwright exec "<task>"` as a
+browser **sub-agent** — one command in, one JSON answer out, with the entire
+browsing transcript (snapshots, retries, verification) kept out of the caller's
+context.
 
-The second shape exists because the browser runtime is rarely the slow part.
+This shape exists because the browser runtime is rarely the slow part.
 The end-to-end gap is usually the *agent scaffold* — a browser-specialized
 loop takes fewer, tighter steps than a general coding agent.
 `betterwright exec` gives BetterWright that scaffold.
@@ -86,10 +82,13 @@ a warning telling the model to change approach; at five, the run ends with
 that cannot succeed. Any successful browser call — or new human steering through
 the live view — clears the streak.
 
-`reason` is one of `done`, `stopped`, `interrupted` (see
-[sessions.md](sessions.md)), `timeout`, `context_limit`, `no_progress`, or
-`model_error`. Only `done` yields `ok: true`; every other reason still returns
-the partial answer and the full transcript.
+`reason` is one of `done`, `answered` (the model gave its answer in prose
+instead of calling `done`), `stopped`, `interrupted` (see
+[sessions.md](sessions.md)), `timeout`, `context_limit`, `no_progress`,
+`max_tokens` (the provider truncated the final response at the output-token
+limit), `refusal` (the model declined the task), or `model_error`. Only `done`
+and `answered` yield `ok: true`; every other reason still returns the partial
+answer and the full transcript.
 
 Flags:
 

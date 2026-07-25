@@ -1,4 +1,10 @@
-# Browser recipes for CAPTCHA interactions
+# CAPTCHA recipes
+
+Try `captcha.solve()` first — the local automatic solver documented in
+[captcha.md](captcha.md) handles checkbox, Turnstile, managed-challenge, and
+slider stages without any of the code below. These recipes are the manual
+fallbacks for when `solve()` reports a stage it cannot finish or you need
+finer control.
 
 Each block is the body of a `run()` snippet. BetterWright exposes `captcha`
 alongside `page`, `snapshot`, and `screenshot`. A detected challenge normally
@@ -71,11 +77,7 @@ const bounds = await widget.boundingBox();
 return captcha.inspect(bounds || undefined);
 ```
 
-Always inspect the returned snapshot and `challenges` list. If the challenge
-changes form, handle that as the next distinct stage rather than repeating the
-same action. If the same stage rejects an action, stop native challenge attempts
-immediately and use an alternate first-party source or request human help.
-Otherwise, continue through at most three distinct stages before taking that
-handoff. When the challenge clears, verify the current application state first.
-Replay the original action only if it is idempotent or the state proves it did
-not already complete; never duplicate a submission, purchase, or message.
+Always inspect the returned snapshot and `challenges` list after each action.
+The staging rules — when a change of form counts as a new stage, when to stop
+and hand off, and what may safely be replayed afterwards — are in
+[captcha.md](captcha.md).

@@ -1,23 +1,25 @@
-# Headed and headless CloakBrowser
+# Headed and headless browsing
 
-BetterWright always launches its managed CloakBrowser. Headed and headless runs
-use the same persistent profile, fingerprint identity, network floor, download
-controls, and browser worker. There is no stock-Chromium fallback and no
-ordinary-Chrome CDP attach mode.
+BetterWright launches its managed browser — the [Chromium
+fork](chromium-fork.md) when its artifact is installed (macOS arm64 / Linux
+x64), CloakBrowser otherwise. Headed and headless runs use the same persistent
+profile, fingerprint identity, network floor, download controls, and browser
+worker. There is no stock-Chromium fallback and no ordinary-Chrome CDP attach
+mode.
 
 ## Choosing the display mode
 
 `headless` accepts `true`, `false`, or `"auto"` (the default):
 
-- `"auto"` opens a visible Cloak window when a display is available and runs
+- `"auto"` opens a visible browser window when a display is available and runs
   headless on servers, containers, and CI.
-- `false` always requests a visible Cloak window.
-- `true` always runs Cloak headless.
+- `false` always requests a visible window.
+- `true` always runs headless.
 
 ```js
 new BetterWright();                    // visible on a desktop, headless on a server
-new BetterWright({ headless: false }); // always headed Cloak
-new BetterWright({ headless: true });  // always headless Cloak
+new BetterWright({ headless: false }); // always headed
+new BetterWright({ headless: true });  // always headless
 ```
 
 The CLI equivalent is `betterwright run --headed`. For MCP, set
@@ -41,10 +43,10 @@ headless runs. Only one process can own the profile at a time; concurrent
 workers receive isolated ephemeral profiles rather than corrupting it.
 
 To sign in manually, start one headed run, complete the login in the visible
-Cloak window, then keep using the normal persistent profile. For model-safe
+browser window, then keep using the normal persistent profile. For model-safe
 credential filling, prefer the trusted [credential API](credentials.md).
 
-## Cloak-only enforcement
+## Managed-browser enforcement
 
 These legacy settings are rejected instead of silently choosing a normal
 browser:
@@ -60,14 +62,15 @@ binary version, tier, and path that will launch.
 
 ## Troubleshooting headed launch
 
-1. Run `betterwright doctor` and confirm `browser cloak`,
-   `cloakbrowser_ok true`, and `ready true`.
+1. Run `betterwright doctor` and confirm `ready true`, and note which backend
+   its `browser` field reports (`chromium-fork` or `cloak`) — either is a
+   correct install.
 2. Run `betterwright setup` if the managed binary is missing.
 3. On Linux, confirm a display is present or use `xvfb-run`.
 4. If BetterWright reports that the profile was upgraded by a newer browser,
    move or remove `$BETTERWRIGHT_HOME/browser/profile` and sign in again. The
-   guard deliberately stops before an older Cloak build can crash while opening
-   an incompatible profile.
+   guard deliberately stops before an older browser build can crash while
+   opening an incompatible profile.
 
-Managed CloakBrowser reduces common automation false positives; it cannot
+The managed browser reduces common automation false positives; it cannot
 guarantee that a site will accept a session or never present a challenge.

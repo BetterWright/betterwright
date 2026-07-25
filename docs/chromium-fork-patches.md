@@ -6,10 +6,10 @@ and screen geometry via launch flags + CDP emulation. The surfaces below are
 only reachable from Chromium source — patch them so the binary is coherent
 even where CDP cannot reach (service workers, WebGL, canvas, fonts).
 
-All values come from the capture machine: MacBook Pro 14" (Mac16,8), Apple
+All values come from a real capture machine: MacBook Pro 14" (Mac16,8), Apple
 M4 Pro, 12 cores / 24 GB, macOS 26.6, display 1800x1169 @2x, running genuine
 Google Chrome 150.0.7871.129. Gate every patch on
-`--fingerprint-platform=macos` (the flag the launcher now passes) and key
+`--fingerprint-platform=macos` (the flag the launcher passes) and key
 per-profile variation to `--fingerprint=<seed>`.
 
 ## 1. Platform identity at source (replaces the CDP stopgap)
@@ -59,15 +59,15 @@ the single interception covers both) and GPU process info strings if any
 diagnostic surface exposes the real GL renderer (e.g. `chrome://gpu` is not
 web-visible, but `WEBGL_debug_renderer_info` via WebGL1 contexts is).
 
-## 3. Canvas noise (unique but stable per profile) — IMPLEMENTED 2026-07-22
+## 3. Canvas noise (unique but stable per profile)
 
 Goal: a canvas hash that is unique to this profile+seed and **stable across
 restarts** — per-session randomization is itself a detection signal.
 
-Implemented as a shared renderer helper
-(`third_party/blink/renderer/platform/graphics/fingerprint_noise.{h,cc}`):
-FNV-1a over the `--fingerprint` seed + splitmix64 per pixel; ±1 on one color
-channel per pixel, alpha untouched. Hooked at every readback surface:
+A shared renderer helper
+(`third_party/blink/renderer/platform/graphics/fingerprint_noise.{h,cc}`)
+applies FNV-1a over the `--fingerprint` seed + splitmix64 per pixel; ±1 on one
+color channel per pixel, alpha untouched. Hook it at every readback surface:
 
 - `image_data_buffer.cc` — `ImageDataBuffer::FarbleIfEnabled()` copies the
   readback and re-points `pixmap_` (covers `toDataURL`, `toBlob`,
@@ -78,31 +78,31 @@ channel per pixel, alpha untouched. Hooked at every readback surface:
 - `webgl_rendering_context_base.cc` — WebGL `readPixels` (RGBA/
   UNSIGNED_BYTE).
 
-Verified on `core`: identical `canvasHash`/`getImageDataHash`/
-`webglReadPixelsHash` across two cold starts with one seed; all three change
-with a different seed.
+Acceptance, verified on a Linux x64 host: identical `canvasHash`/
+`getImageDataHash`/`webglReadPixelsHash` across two cold starts with one
+seed; all three change with a different seed.
 
-## 4. Audio — IMPLEMENTED 2026-07-22
+## 4. Audio
 
 `offline_audio_context.cc` — `FireCompletionEvent()` applies
 `ApplyFingerprintAudioNoise` (±5e-7, seed+channel keyed) to every channel of
-the rendered buffer. Verified stable per profile, distinct per seed.
+the rendered buffer. Must be stable per profile and distinct per seed.
 
-## 5. Hardware surfaces — IMPLEMENTED (first slice)
+## 5. Hardware surfaces
 
 - `navigator_base.cc`: `hardwareConcurrency` → `12` when masked. (The CDP
   `Emulation.setHardwareConcurrencyOverride` stopgap covers pages only.)
 - `navigator_device_memory.cc`: `deviceMemory` → `16` — the bucketed value
   real Chrome reports on the 24 GB capture machine.
 
-## 6. Screen geometry — IMPLEMENTED (first slice)
+## 6. Screen geometry
 
 `ui/ozone/platform/headless/headless_screen.cc`: with the Mac mask, bounds
 **3600×2338 physical** + `TLBR(78,0,162,0)` insets under
 `--force-device-scale-factor=2` → CSS `1800×1169`, `availHeight 1049`,
-`dpr 2`. Do not regress the physical-pixel math (see the handoff doc).
+`dpr 2`. Do not regress the physical-pixel math.
 
-## 7. Fonts (the hardest Linux→Mac tell) — IMPLEMENTED 2026-07-22
+## 7. Fonts (the hardest Linux→Mac tell)
 
 - `scripts/assemble-mac-fonts.sh` (run on macOS) copies 36 mac-metric fonts
   (Helvetica/Helvetica Neue, Arial set, Times NR set, Courier New, Georgia,
@@ -111,24 +111,25 @@ the rendered buffer. Verified stable per profile, distinct per seed.
 - The worker generates an absolute-path `fonts.conf` in the profile runtime
   dir and launches the fork with `FONTCONFIG_FILE` pointing at it
   (`src/fork-identity.mjs: prepareForkFontsConfig`, gated on the Mac mask).
-- Verified on `core`: `fc-list` enumerates 470 faces; `measureText` widths
-  differ per family (Helvetica Neue 291 / Menlo 247 / Georgia 307 /
-  Palatino 307 / Avenir Next 304) instead of collapsing to one fallback.
-  SF/Helvetica Neue binaries are Apple-licensed: lab artifact only.
+- Acceptance, verified on a Linux x64 host: `fc-list` enumerates 470 faces;
+  `measureText` widths differ per family (Helvetica Neue 291 / Menlo 247 /
+  Georgia 307 / Palatino 307 / Avenir Next 304) instead of collapsing to one
+  fallback.
 
-## 8. Build flags — DONE
+## 8. Build flags
 
 `out/LinuxStatic` builds with `proprietary_codecs=true`,
 `ffmpeg_branding="Chrome"`, `is_component_build=false`, `target_cpu="x64"`.
 
-## Acceptance — PASSED 2026-07-22
+## Acceptance
 
-Headless Linux fork on `core` + residential egress returns a **real Google
-SERP** (`sorryUrl:false, unusualTraffic:false, resultish:true`) for the same
-query the Mac passes, once **timezone and locale match the egress IP**
-(`timezone: "Asia/Singapore", locale: "en-US"` — or `geoip: true` with an
-upstream proxy). UTC timezone + SG residential IP was the final coherence
-break; everything else was already in place.
+The headless Linux x64 fork behind residential egress must return a **real
+Google SERP** (`sorryUrl:false, unusualTraffic:false, resultish:true`) for the
+same query a genuine Mac passes, once **timezone and locale match the egress
+IP** (e.g. `timezone: "Asia/Singapore", locale: "en-US"` for a Singapore exit
+— or `geoip: true` with an upstream proxy). A UTC timezone paired with a
+residential exit IP in another region is a coherence break on its own, even
+with every other surface patched.
 
 ## Validation after build
 

@@ -22,17 +22,23 @@ import {
   type VaultMatchMode,
 } from "betterwright";
 import {
+  type AgentMessage,
   type AgentModel,
   type AgentResult,
   claudeModel,
+  discoveryTimeoutMs,
+  endpointDiscoverySources,
   endpointModel,
+  endpointSourceName,
   listEndpointModels,
   MODEL_ENDPOINT_PRESETS,
+  type ModelEndpointSource,
   modelSelectionChoices,
   nativeModelCatalog,
   resolveModel,
   resolveModelSelection,
   runAgentTask,
+  sealTranscript,
 } from "betterwright/agent";
 import { type CodexAuth, type LoginResult, loadCodexAuth, loginProvider } from "betterwright/auth";
 import type { PiImageContentBlock } from "betterwright/pi";
@@ -130,8 +136,13 @@ const agentResult: Promise<AgentResult> = runAgentTask({
   model: customModel,
   maxDurationMs: 120_000,
   maxTranscriptChars: 500_000,
+  signal: new AbortController().signal,
   onStep: ({ step, tool, note }) => void [step, tool, note],
 });
+const sealed: AgentMessage[] = sealTranscript([], "interrupted");
+const reasonCheck: AgentResult["reason"] = "no_progress";
+const discoverySources: ModelEndpointSource[] = endpointDiscoverySources();
+const discoveryBudget: number = discoveryTimeoutMs(endpointSourceName("open-router"));
 const login: Promise<LoginResult> = loginProvider({ provider: "codex", open: false });
 const codexAuth: CodexAuth | null = loadCodexAuth();
 
@@ -172,6 +183,10 @@ void [
   endpointModels,
   openRouterBaseURL,
   agentResult,
+  sealed,
+  reasonCheck,
+  discoverySources,
+  discoveryBudget,
   login,
   codexAuth,
   localVault,

@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { BetterWright } from "../../src/client.mjs";
-import { installVaultCapture } from "../../src/vault-capture.mjs";
+import { httpOrigin, installVaultCapture } from "../../src/vault-capture.mjs";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const ORIGIN = "https://app.example.com";
@@ -416,4 +416,15 @@ test("credentialCapture option defaults on, forced off without a vault", () => {
       ._workerConfig().credentialCapture,
     false,
   );
+});
+
+test("httpOrigin accepts only parseable http(s) URLs (shared with the worker)", () => {
+  assert.equal(httpOrigin("https://app.example.com/login?next=/x"), "https://app.example.com");
+  assert.equal(httpOrigin("http://example.com:8080/path"), "http://example.com:8080");
+  assert.equal(httpOrigin("chrome://settings"), "");
+  assert.equal(httpOrigin("file:///etc/passwd"), "");
+  assert.equal(httpOrigin("not a url"), "");
+  assert.equal(httpOrigin(""), "");
+  assert.equal(httpOrigin(null), "");
+  assert.equal(httpOrigin(undefined), "");
 });

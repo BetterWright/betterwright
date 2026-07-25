@@ -3,6 +3,8 @@ import { once } from "node:events";
 import test from "node:test";
 
 import { createLiveViewServer, guessTailscaleHost } from "../../src/live-view.mjs";
+import { liveViewHtml, liveViewLoginHtml } from "../../src/live-view-html.mjs";
+import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function fakePage(url = "https://example.com/") {
   const listeners = new Map();
@@ -50,12 +52,13 @@ function fakeCdp(respond = {}) {
   };
 }
 
-function makeServer({ pages, cdp, newCDPSession, preferredPage } = {}) {
+function makeServer({ pages, cdp, newCDPSession, preferredPage, html, loginHtml } = {}) {
   const activity = [];
   const pageList = pages || [{ id: "page-1", page: fakePage(), sessionId: "default", active: true }];
   const session = cdp || fakeCdp();
   const server = createLiveViewServer({
-    html: () => "<!doctype html><title>viewer</title>",
+    html: html || (() => "<!doctype html><title>viewer</title>"),
+    loginHtml,
     listPages: () => pageList,
     preferredPage: preferredPage || (() => null),
     newCDPSession: newCDPSession || (async () => session),
@@ -121,6 +124,72 @@ test("HTTP requests require the exact token; the page never caches", async () =>
     }
     const wrongPath = await fetch(`http://${base.host}/other?t=${info.token}`);
     assert.equal(wrongPath.status, 404);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Every other test stubs `html` to stay focused on the protocol; these two
+// serve the real 40KB viewer/login templates from live-view-html.mjs so a
+// broken template (unbalanced script, leaked template literal, missing WS
+// bootstrap) can no longer ship green.
+function assertWellFormedPage(body) {
+  const opens = (body.match(/<script/g) || []).length;
+  const closes = (body.match(/<\/script>/g) || []).length;
+  assert.ok(opens > 0, "the page must carry its inline client script");
+  assert.equal(opens, closes, "unbalanced <script> tags would kill the client JS");
+  assert.ok(!body.includes("${"), "a leftover template placeholder reached the browser");
+  assert.match(body, /<title>BetterWright — Live View<\/title>/);
+}
+
+test("the real viewer page serves intact and bootstraps the websocket", async () => {
+  const { server, info } = await startedServer({ html: liveViewHtml });
+  try {
+    const response = await fetch(info.url);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
+    const body = await response.text();
+    assertWellFormedPage(body);
+    // The client must reconnect to /ws with the capability token it was
+    // served under — without this string the viewer renders but never paints.
+    assert.ok(body.includes("/ws?t="), "viewer must carry the WS bootstrap");
+  } finally {
+    await server.stop();
+  }
+});
+
+test("the real login page serves intact and posts back to /login", async () => {
+  const { server } = makeServer({ html: liveViewHtml, loginHtml: liveViewLoginHtml });
+  try {
+    const info = await server.start({
+      host: "127.0.0.1",
+      port: 0,
+      password: "hunter22",
+    });
+    const gate = await fetch(info.url);
+    assert.equal(gate.status, 200);
+    const body = await gate.text();
+    assertWellFormedPage(body);
+    // The gate must be the branded login form, not the viewer: a password
+    // field posting to /login, and none of the viewer's WS machinery.
+    assert.match(body, /<form[^>]*method="post"/);
+    assert.match(body, /name="password"/);
+    assert.ok(body.includes('"/login?t="'), "the form must target /login with the token");
+    assert.ok(!body.includes("/ws?t="), "the locked gate must not leak the viewer bootstrap");
+
+    // After authenticating, the same URL serves the real viewer.
+    const base = new URL(info.url);
+    const login = await fetch(`http://${base.host}/login?t=${info.token}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "password=hunter22",
+      redirect: "manual",
+    });
+    const cookie = String(login.headers.get("set-cookie")).split(";")[0];
+    const page = await fetch(info.url, { headers: { cookie } });
+    const viewer = await page.text();
+    assertWellFormedPage(viewer);
+    assert.ok(viewer.includes("/ws?t="));
   } finally {
     await server.stop();
   }
@@ -948,15 +1017,13 @@ test("a stored sha256 passwordHash gates exactly like a plaintext password", asy
   );
 });
 
-test("live-view config file round-trips a hashed password and sanitizes input", async (t) => {
+test("live-view config file round-trips a hashed password and sanitizes input", async () => {
   const fs = await import("node:fs");
-  const os = await import("node:os");
   const path = await import("node:path");
   const { loadLiveViewConfig, saveLiveViewPassword, hashLiveViewPassword } = await import(
     "../../src/live-view-config.mjs"
   );
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-cfg-"));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const home = makeTempDir("bw-cfg-");
 
   assert.deepEqual(loadLiveViewConfig(home), {}); // no file yet
 

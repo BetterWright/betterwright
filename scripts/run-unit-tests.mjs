@@ -18,7 +18,16 @@ if (!files.length) {
   process.exit(1);
 }
 
-const result = spawnSync(process.execPath, ["--test", ...files], {
+// Coverage is opt-in and report-only: it prints Node's coverage table without
+// enforcing thresholds, so this experimental feature can never turn a passing
+// suite red. CI sets BETTERWRIGHT_COVERAGE=1 to keep the number visible.
+// (--test-coverage-exclude needs Node >= 22.5; the flag is only added when
+// coverage is requested, so the default run works on any supported Node.)
+const coverageArgs =
+  process.env.BETTERWRIGHT_COVERAGE === "1"
+    ? ["--experimental-test-coverage", "--test-coverage-exclude=tests/**"]
+    : [];
+const result = spawnSync(process.execPath, [...coverageArgs, "--test", ...files], {
   cwd: root,
   stdio: "inherit",
 });

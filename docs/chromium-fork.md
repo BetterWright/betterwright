@@ -125,7 +125,7 @@ Two layers apply it without any page-world JavaScript shims:
 
 The binary patch set in
 [chromium-fork-patches.md](chromium-fork-patches.md) is implemented and
-verified (2026-07-22): UA/UA-CH at the source, `navigator.platform`, WebGL
+verified: UA/UA-CH at the source, `navigator.platform`, WebGL
 renderer/vendor, deterministic per-profile canvas/audio farbling, screen
 geometry, and a bundled macOS-metric font set loaded through a launch-time
 `FONTCONFIG_FILE`. With timezone/locale matched to egress geography the
