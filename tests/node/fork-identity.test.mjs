@@ -7,7 +7,7 @@ import {
   forkFontsDir,
   forkMacIdentity,
   prepareForkFontsConfig,
-} from "../../src/fork-identity.mjs";
+} from "../../dist/src/fork-identity.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 test("fork mac identity carries no linux or headless markers", () => {

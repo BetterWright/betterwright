@@ -4,7 +4,7 @@ import { test } from "node:test";
 import {
   downloadBehaviorParams,
   normalizeDownloadPolicy,
-} from "../../src/downloads.mjs";
+} from "../../dist/src/downloads.js";
 
 test("normalizes the three download policies", () => {
   assert.equal(normalizeDownloadPolicy(undefined), "ask");

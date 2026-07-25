@@ -8,8 +8,8 @@ import {
   assertProfileNotNewer,
   managedCloakArgs,
   managedCloakViewport,
-} from "../../src/cloak.mjs";
-import { BetterWright, NetworkPolicy } from "../../src/index.mjs";
+} from "../../dist/src/cloak.js";
+import { BetterWright, NetworkPolicy } from "../../dist/src/index.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const enabled = process.env.BETTERWRIGHT_CLOAK_E2E === "1";

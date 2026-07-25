@@ -24,7 +24,7 @@ if (lock.version !== pkg.version || lockRoot.version !== pkg.version) {
 // These are pinned exactly on purpose. playwright-core and cloakbrowser each
 // ship a coupled browser binary, and tldts carries the Public Suffix List
 // snapshot that `getDomain` uses to decide a credential's base-domain scope in
-// vault.mjs — so a routine bump there silently widens which origins a saved
+// vault.ts — so a routine bump there silently widens which origins a saved
 // credential is offered to. Drift in any of them must fail the release.
 for (const dependency of ["playwright-core", "cloakbrowser", "tldts"]) {
   if (lockRoot.dependencies?.[dependency] !== pkg.dependencies[dependency]) {
@@ -57,13 +57,13 @@ else {
 
 expectMatch(
   "Node runtime Playwright pin",
-  read("src/doctor.mjs"),
+  read("src/doctor.ts"),
   /PINNED_PLAYWRIGHT_VERSION = "([^"]+)"/,
   pkg.dependencies["playwright-core"],
 );
 expectMatch(
   "Node runtime CloakBrowser pin",
-  read("src/doctor.mjs"),
+  read("src/doctor.ts"),
   /PINNED_CLOAKBROWSER_VERSION = "([^"]+)"/,
   pkg.dependencies.cloakbrowser,
 );

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// One Odysseys task through BetterWright's own agent harness (src/agent.mjs).
+// One Odysseys task through BetterWright's own agent harness (src/agent.ts).
 // The parent (exec-runner.mjs) spawns one of these per task with an isolated home.
 
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveModel, runAgentTask } from "../../src/agent.mjs";
-import { BetterWright } from "../../src/client.mjs";
+import { resolveModel, runAgentTask } from "../../dist/src/agent.js";
+import { BetterWright } from "../../dist/src/client.js";
 import { AGENT_PROMPT_PATH, buildTaskPrompt } from "./runner.mjs";
 
 const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));

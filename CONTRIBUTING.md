@@ -7,10 +7,11 @@ project; the notes below keep it consistent.
 
 ```
 src/                 The Node runtime (the source of truth)
-  worker.mjs         The long-lived Playwright worker + sandbox
-  client.mjs         The JavaScript client
-  policy.mjs         NetworkPolicy
-bin/betterwright.mjs The Node CLI
+  worker.ts          The long-lived Playwright worker + sandbox
+  client.ts          The TypeScript client
+  policy.ts          NetworkPolicy
+bin/betterwright.ts  The Node CLI
+dist/                Generated ESM JavaScript (not committed)
 tests/node/          Node tests
 docs/                Documentation
 examples/            Runnable JavaScript scripts
@@ -20,17 +21,23 @@ scripts/             Maintenance scripts
 ## Running the tests
 
 ```bash
-npm ci && npm test
+npm ci
+npm run release:check
 ```
 
-The browser-integration tests skip automatically unless the runtime is installed
-(`betterwright setup`); the policy, vault, prompt, and challenge suites run anywhere.
+For the complete managed-browser integration suite, install the runtime and run
+`BETTERWRIGHT_REQUIRE_BROWSER=1 BETTERWRIGHT_CHROMIUM_ROOT=off npm test`.
+The policy, vault, prompt, and challenge suites run anywhere.
 
 ## Style
 
-- JavaScript: ESM, no build step, and exact runtime dependency pins.
-  `npm run lint` runs Biome's lint rules over `src`, `bin`, `scripts`, and
-  `tests`, and `npm run test:types` verifies the published declarations.
+- Runtime and CLI sources are TypeScript 7 ESM compiled to ordinary ESM
+  JavaScript in `dist/`; no TypeScript loader or bundler is used at runtime.
+  Keep NodeNext import specifiers ending in `.js`, because that is the emitted
+  filename Node loads.
+- Runtime dependencies stay exact-pinned. `npm run lint` covers `src`, `bin`,
+  `scripts`, and `tests`; `npm run typecheck` checks implementation sources;
+  `npm run test:types` verifies the hand-written published declarations.
 - Comments explain *why*, not *what*. Match the surrounding code.
 
 ## Scope

@@ -17,11 +17,11 @@ import {
   resolveModel,
   resolveModelSelection,
   runAgentTask,
-} from "../../src/agent.mjs";
-import { formatAgentUsage, uncachedInputTokens } from "../../src/agent-usage.mjs";
-import { _createMcpHandlersForTest } from "../../src/mcp-server.mjs";
-import { PI_BROWSER_PARAMETERS, PI_LOGIN_PARAMETERS } from "../../src/pi-extension.mjs";
-import { browserToolProperties, loginToolProperties } from "../../src/tool-schemas.mjs";
+} from "../../dist/src/agent.js";
+import { formatAgentUsage, uncachedInputTokens } from "../../dist/src/agent-usage.js";
+import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
+import { PI_BROWSER_PARAMETERS, PI_LOGIN_PARAMETERS } from "../../dist/src/pi-extension.js";
+import { browserToolProperties, loginToolProperties } from "../../dist/src/tool-schemas.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function base64url(buffer) {
@@ -1826,7 +1826,7 @@ test("runAgentTask never retries after the deadline aborts the model call", asyn
 function runInChildProcess(name, body) {
   const dir = makeTempDir(`bw-liveness-${name}-`);
   const script = path.join(dir, "run.mjs");
-  const agentUrl = JSON.stringify(pathToFileURL(path.resolve("src/agent.mjs")).href);
+  const agentUrl = JSON.stringify(pathToFileURL(path.resolve("dist/src/agent.js")).href);
   fs.writeFileSync(script, `import { runAgentTask } from ${agentUrl};\n${body}`);
 
   const { status, stdout, stderr } = spawnSync(process.execPath, [script], {

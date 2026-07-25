@@ -13,7 +13,7 @@ import {
   staleAgentSkillReport,
   staleAgentSkillTip,
   wrapClaudeSkillMarkdown,
-} from "../../src/skill-install.mjs";
+} from "../../dist/src/skill-install.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function tempHome() {

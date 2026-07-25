@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { stealthDriverVersion } from "../../src/doctor.mjs";
-import { BetterWright } from "../../src/index.mjs";
-import { resolve } from "../../src/stealth-hooks.mjs";
+import { stealthDriverVersion } from "../../dist/src/doctor.js";
+import { BetterWright } from "../../dist/src/index.js";
+import { resolve } from "../../dist/src/stealth-hooks.js";
 
 // The resolve hook is the load-bearing piece: it swaps the driver for the whole
 // worker process (including the Cloak wrapper's own bare import) by rewriting

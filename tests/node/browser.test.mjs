@@ -7,8 +7,8 @@ import http from "node:http";
 import path from "node:path";
 import { test } from "node:test";
 
-import { cloakRuntime } from "../../src/doctor.mjs";
-import { BetterWright, NetworkPolicy, runAgentTask } from "../../src/index.mjs";
+import { cloakRuntime } from "../../dist/src/doctor.js";
+import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const ready = (await cloakRuntime()).installed;

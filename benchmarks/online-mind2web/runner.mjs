@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../..");
-const PI_EXTENSION = path.join(ROOT, "src/pi-extension.mjs");
+const PI_EXTENSION = path.join(ROOT, "dist/src/pi-extension.js");
 const AGENT_PROMPT_PATH = path.join(HERE, "agent-prompt.md");
 
 export const BENCHMARK_MODEL = "openai-codex/gpt-5.6-sol";

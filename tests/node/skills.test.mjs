@@ -12,7 +12,7 @@ import {
   readSkill,
   skillHintsForPages,
   urlPatternMatches,
-} from "../../src/skills.mjs";
+} from "../../dist/src/skills.js";
 
 const SAMPLE = `---
 name: example

@@ -7,8 +7,8 @@ import {
   normalizeChromiumArgs,
   parseChromiumArgs,
   resolveChromiumArgs,
-} from "../../src/chromium-args.mjs";
-import { managedChromiumForkArgs, managedCloakArgs } from "../../src/cloak.mjs";
+} from "../../dist/src/chromium-args.js";
+import { managedChromiumForkArgs, managedCloakArgs } from "../../dist/src/cloak.js";
 
 test("empty and whitespace-only argument strings parse to nothing", () => {
   for (const raw of ["", "   ", "\t\n", null, undefined]) {

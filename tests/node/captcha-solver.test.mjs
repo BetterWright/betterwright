@@ -9,7 +9,7 @@ import {
   maxAutoStages,
   nextSolveAction,
   solveTimeoutMs,
-} from "../../src/captcha-solver.mjs";
+} from "../../dist/src/captcha-solver.js";
 
 test("classifies reCAPTCHA anchor as checkbox", () => {
   const result = classifyChallengeStage({

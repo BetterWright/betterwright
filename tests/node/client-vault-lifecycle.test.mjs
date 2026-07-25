@@ -3,7 +3,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import test from "node:test";
 
-import { BetterWright } from "../../src/client.mjs";
+import { BetterWright } from "../../dist/src/client.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function tempHome() {

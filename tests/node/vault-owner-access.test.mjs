@@ -11,14 +11,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { positionalArgs } from "../../src/cli-flags.mjs";
-import { createLocalCredentialVault } from "../../src/vault.mjs";
+import { positionalArgs } from "../../dist/src/cli-flags.js";
+import { createLocalCredentialVault } from "../../dist/src/vault.js";
 import {
   copyToClipboard,
   resolveCredentialId,
   revealAllowed,
   runVaultCommand,
-} from "../../src/vault-cli.mjs";
+} from "../../dist/src/vault-cli.js";
 
 function tempHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-vault-owner-"));

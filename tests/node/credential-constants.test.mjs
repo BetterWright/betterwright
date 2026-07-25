@@ -4,7 +4,7 @@ import { test } from "node:test";
 import {
   REDACTED_PASSWORD_PLACEHOLDER,
   redactSecretsDeep,
-} from "../../src/credential-constants.mjs";
+} from "../../dist/src/credential-constants.js";
 
 test("redactSecretsDeep scrubs strings, keys, and nested values without mutating input", () => {
   const secrets = new Set(["hunter2", ""]);

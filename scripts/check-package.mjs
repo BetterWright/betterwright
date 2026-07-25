@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-package-"));
+const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -61,10 +62,10 @@ try {
     "LICENSE",
     "README.md",
     "SETUP.md",
-    "bin/betterwright.mjs",
-    "src/index.mjs",
-    "src/vault.mjs",
-    "src/worker.mjs",
+    "dist/bin/betterwright.js",
+    "dist/src/index.js",
+    "dist/src/vault.js",
+    "dist/src/worker.js",
     "types/index.d.ts",
     "types/vault.d.ts",
     "types/captcha-solver.d.ts",
@@ -85,12 +86,29 @@ try {
   const missing = required.filter((name) => !paths.has(name));
   if (missing.length) throw new Error(`npm tarball is missing: ${missing.join(", ")}`);
 
+  const runtimeTargets = [
+    manifest.main,
+    ...Object.values(manifest.bin || {}),
+    ...Object.values(manifest.exports || {}).flatMap((value) =>
+      typeof value === "string" ? [value] : Object.values(value || {}),
+    ),
+    ...(manifest.pi?.extensions || []),
+  ]
+    .filter((target) => typeof target === "string" && target.endsWith(".js"))
+    .map((target) => target.replace(/^\.\//, ""));
+  const missingTargets = [...new Set(runtimeTargets)].filter((target) => !paths.has(target));
+  if (missingTargets.length) {
+    throw new Error(`npm tarball is missing runtime package targets: ${missingTargets.join(", ")}`);
+  }
+
   // `internal/` and handoff/research notes are written for us, not for users:
   // they carry session context, competitor research, and operator IPs. Keeping
   // them out of the tarball is enforced here because `files` uses a docs glob.
   const forbidden = [...paths].filter((name) =>
     /(^|\/)(node_modules|tests|artifacts|internal|\.betterwright)(\/|$)/.test(name) ||
-    /(^|\/)(HANDOFF-|.*-handoff\.md$)/.test(name),
+    /(^|\/)(HANDOFF-|.*-handoff\.md$)/.test(name) ||
+    /^(?:src|bin)\//.test(name) ||
+    (name.endsWith(".ts") && !name.endsWith(".d.ts")),
   );
   if (forbidden.length) throw new Error(`npm tarball contains private/dev files: ${forbidden.join(", ")}`);
 

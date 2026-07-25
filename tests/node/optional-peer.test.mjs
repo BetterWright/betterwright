@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { importOptionalPeer, installHint } from "../../src/optional-peer.mjs";
+import { importOptionalPeer, installHint } from "../../dist/src/optional-peer.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 // Writes a loadable ESM package into <root>/node_modules/<name>.

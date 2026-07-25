@@ -174,7 +174,7 @@ stays populated without any agent code calling `save`:
   sessions there is nobody to ask, so user-driven captures are dropped.
 
 Capture is implemented by a worker-injected sensor running in a dedicated CDP
-isolated world per frame (`src/vault-sensor.js` + `src/vault-capture.mjs`),
+isolated world per frame (`src/vault-sensor.ts` + `src/vault-capture.ts`),
 not an extension and not page-visible JavaScript. Only trusted initiating click
 or Enter-key events (`event.isTrusted`) trigger a capture; a submit event alone
 is deliberately insufficient because Chromium can mark a page-script-initiated

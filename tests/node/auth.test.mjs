@@ -12,7 +12,7 @@ import {
   loadGrokAuth,
   loginProvider,
   refreshCodexToken,
-} from "../../src/auth.mjs";
+} from "../../dist/src/auth.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function base64url(buffer) {

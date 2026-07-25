@@ -164,7 +164,7 @@ function lastMeaningfulLine(text) {
 async function runBetterwright(task) {
   const r = await run(
     "node",
-    ["bin/betterwright.mjs", "exec", task, "--model", "codex", "--effort", EFFORT, "--max-steps", "16"],
+    ["dist/bin/betterwright.js", "exec", task, "--model", "codex", "--effort", EFFORT, "--max-steps", "16"],
     { cwd: REPO },
   );
   let parsed = null;

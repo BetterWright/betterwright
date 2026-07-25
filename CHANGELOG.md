@@ -9,6 +9,30 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-25
+
+### Changed
+
+- Migrated all runtime and CLI source files to TypeScript 7.0.2. The package
+  now compiles NodeNext ESM into `dist/` and publishes ordinary JavaScript, so
+  consumers need no TypeScript loader and existing imports, CLI commands, and
+  public type declarations remain compatible.
+- Tests, benchmarks, the Pi extension manifest, CI, and the npm release
+  workflow now exercise the compiled artifacts instead of bypassing the build.
+- Refreshed CloakBrowser's compatible `tar` transitive dependency to 7.5.22,
+  including the fix for crafted-archive stack exhaustion.
+
+### Added
+
+- A no-emit typecheck and fail-closed TypeScript build with missing-import,
+  switch-fallthrough, unreachable-code, and incomplete-return checks.
+- Build-layout and package-contract gates that prove every TypeScript source
+  emits JavaScript, every package export resolves, relative runtime imports are
+  complete, CLI/worker entrypoints are executable, and no TypeScript source is
+  included in the npm tarball.
+
+No direct runtime dependency or public API changes.
+
 ## [1.4.0] - 2026-07-25
 
 Getting started is one command, and the vault is no longer a one-way door.
@@ -248,6 +272,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
+[1.5.0]: https://github.com/BetterWright/betterwright/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/BetterWright/betterwright/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/BetterWright/betterwright/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/BetterWright/betterwright/compare/v1.1.4...v1.3.0
 [1.1.4]: https://github.com/BetterWright/betterwright/releases/tag/v1.1.4

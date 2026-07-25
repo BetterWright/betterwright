@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────┐       JSON lines over stdio       ┌──────────────────────────┐
-│ Client (JavaScript)         │  ────────  execute  ───────────▶ │ Bundled Node worker      │
+│ Client (compiled ESM)       │  ────────  execute  ───────────▶ │ Compiled Node worker     │
 │                             │                                   │                          │
 │ • owns the worker           │  ◀────  guard / vault RPC  ─────  │ • managed Cloak browser  │
 │ • NetworkPolicy            │  ───────  rpc_response  ────────▶ │ • sandbox (node:vm)      │
@@ -18,8 +18,9 @@ lifetime, sends it snippets to run, and answers the two kinds of callback the
 worker makes: `guard` (is this request allowed?) and `vault` (a credential
 operation). The worker owns the browser and the sandbox the model's code runs in.
 
-The worker implementation lives at `src/worker.mjs` and is loaded by the npm
-package; the client layer stays thin.
+The worker implementation lives at `src/worker.ts`. TypeScript 7 compiles it to
+`dist/src/worker.js`, which is what the npm package runs; the client layer stays
+thin. The package ships ordinary ESM JavaScript, not a TypeScript runtime loader.
 
 ## Why a separate worker process
 
@@ -189,7 +190,7 @@ inspects a page. The opt-in `stealthRuntimeFix` (constructor option, `--stealth`
 or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`) closes that vector by swapping the driver
 for the pre-patched `patchright-core`, which executes snippets in an isolated
 world. It is applied by registering a module-resolution hook on the worker
-process (`src/stealth-register.mjs` → `src/stealth-hooks.mjs`) so the redirect
+process (`src/stealth-register.ts` → `src/stealth-hooks.ts`) so the redirect
 also covers the Cloak wrapper's own bare `import("playwright-core")`. The cost is
 that model snippets can no longer read page-defined main-world globals; it is off
 by default for that reason.

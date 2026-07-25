@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // One Online-Mind2Web task through BetterWright's OWN agent harness (the exec
-// shape, src/agent.mjs) — no Pi. The parent (exec-runner.mjs) spawns one of
+// shape, src/agent.ts) — no Pi. The parent (exec-runner.mjs) spawns one of
 // these per task with an isolated BetterWright home.
 //
 // The exec harness has no built-in trajectory recorder (that lived in the Pi
@@ -12,8 +12,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveModel, runAgentTask } from "../../src/agent.mjs";
-import { BetterWright } from "../../src/client.mjs";
+import { resolveModel, runAgentTask } from "../../dist/src/agent.js";
+import { BetterWright } from "../../dist/src/client.js";
 import { buildTaskPrompt } from "./runner.mjs";
 
 const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));

@@ -31,7 +31,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { BetterWright } from "../src/index.mjs";
+import { BetterWright } from "../dist/src/index.js";
 
 const args = process.argv.slice(2);
 function argValue(name, fallback) {

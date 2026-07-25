@@ -7,7 +7,7 @@ import {
   createGuardProxy,
   httpGetViaProxy,
   parseUpstreamProxy,
-} from "../../src/guard-proxy.mjs";
+} from "../../dist/src/guard-proxy.js";
 
 function socksGreeting(client) {
   client.write(Buffer.from([5, 1, 0]));

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { NetworkPolicy } from "../../src/policy.mjs";
+import { NetworkPolicy } from "../../dist/src/policy.js";
 
 const allow = (policy, url) => policy.check(url).allowed === true;
 // Private networks and loopback are open by default; construct a hardened

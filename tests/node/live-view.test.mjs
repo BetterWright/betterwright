@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
 
-import { createLiveViewServer, guessTailscaleHost } from "../../src/live-view.mjs";
-import { liveViewHtml, liveViewLoginHtml } from "../../src/live-view-html.mjs";
+import { createLiveViewServer, guessTailscaleHost } from "../../dist/src/live-view.js";
+import { liveViewHtml, liveViewLoginHtml } from "../../dist/src/live-view-html.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 function fakePage(url = "https://example.com/") {
@@ -1021,7 +1021,7 @@ test("live-view config file round-trips a hashed password and sanitizes input", 
   const fs = await import("node:fs");
   const path = await import("node:path");
   const { loadLiveViewConfig, saveLiveViewPassword, hashLiveViewPassword } = await import(
-    "../../src/live-view-config.mjs"
+    "../../dist/src/live-view-config.js"
   );
   const home = makeTempDir("bw-cfg-");
 

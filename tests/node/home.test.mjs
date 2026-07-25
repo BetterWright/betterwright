@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { defaultHome } from "../../src/home.mjs";
-import { LocalCredentialVault } from "../../src/vault.mjs";
+import { defaultHome } from "../../dist/src/home.js";
+import { LocalCredentialVault } from "../../dist/src/vault.js";
 
 function withHomeEnv(value, body) {
   const previous = process.env.BETTERWRIGHT_HOME;

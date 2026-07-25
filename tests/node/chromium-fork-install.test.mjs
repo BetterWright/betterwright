@@ -8,11 +8,11 @@ import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   CHROMIUM_FORK_ASSETS,
   CHROMIUM_FORK_RELEASE_TAG,
-} from "../../src/chromium-fork.mjs";
+} from "../../dist/src/chromium-fork.js";
 import {
   chromiumForkAssetForHost,
   installChromiumFork,
-} from "../../src/chromium-fork-install.mjs";
+} from "../../dist/src/chromium-fork-install.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 test("public fork assets are pinned for mac-arm64 and linux-x64", () => {

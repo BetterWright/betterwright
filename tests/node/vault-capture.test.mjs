@@ -4,8 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { BetterWright } from "../../src/client.mjs";
-import { httpOrigin, installVaultCapture } from "../../src/vault-capture.mjs";
+import { BetterWright } from "../../dist/src/client.js";
+import { httpOrigin, installVaultCapture } from "../../dist/src/vault-capture.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 const ORIGIN = "https://app.example.com";

@@ -5,7 +5,7 @@ import {
   buildV2LaunchPlan,
   resolveGeoIdentity,
   v2LaunchArgs,
-} from "../../src/cloak-v2.mjs";
+} from "../../dist/src/cloak-v2.js";
 
 test("v2LaunchArgs renders locale/timezone/platform flags", () => {
   const args = v2LaunchArgs({

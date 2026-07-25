@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeCredentialToolOptions } from "../../src/credential-tool-options.mjs";
+import { normalizeCredentialToolOptions } from "../../dist/src/credential-tool-options.js";
 
 test("credential tool options share one strict allowlist and normalization", () => {
   const input = {

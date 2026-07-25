@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { BetterWright } from "../../src/client.mjs";
+import { BetterWright } from "../../dist/src/client.js";
 import {
   _createMcpHandlersForTest,
   contentForResult,
@@ -13,7 +13,7 @@ import {
   liveViewFromEnv,
   loginOptionsFromArgs,
   policyFromEnv,
-} from "../../src/mcp-server.mjs";
+} from "../../dist/src/mcp-server.js";
 import { makeTempDir } from "./helpers/temp-dir.mjs";
 
 test("MCP omits and rejects browser_login when the vault is disabled", async () => {

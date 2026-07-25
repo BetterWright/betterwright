@@ -171,14 +171,15 @@ For a local checkout under active development:
 
 ```bash
 npm install
+npm run build
 npx betterwright setup
 pi install /absolute/path/to/betterwright
 pi
 ```
 
 Use `-l` with `pi install` for project-local Pi settings. To try the source
-extension without installing the package, run
-`pi --extension ./src/pi-extension.mjs` from the BetterWright checkout.
+extension without installing the package, run `npm run build` and then
+`pi --extension ./dist/src/pi-extension.js` from the BetterWright checkout.
 
 The extension supports these optional host environment variables:
 

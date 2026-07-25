@@ -23,7 +23,7 @@ import {
   createLocalCredentialVault,
   LocalCredentialVault,
   LocalCredentialVaultError,
-} from "../../src/vault.mjs";
+} from "../../dist/src/vault.js";
 
 const EXAMPLE = "https://login.example.com";
 
@@ -52,7 +52,7 @@ async function expectNoCredential(promise) {
 }
 
 function childSave(directory, username, { barrier = null } = {}) {
-  const moduleUrl = pathToFileURL(path.resolve("src/vault.mjs")).href;
+  const moduleUrl = pathToFileURL(path.resolve("dist/src/vault.js")).href;
   const source = `
     import { existsSync } from "node:fs";
     import { LocalCredentialVault } from ${JSON.stringify(moduleUrl)};
@@ -1557,7 +1557,7 @@ test(
   },
   async () => {
     const context = await fixture({ staleLockMs: 100, lockTimeoutMs: 250 });
-    const moduleUrl = pathToFileURL(path.resolve("src/vault.mjs")).href;
+    const moduleUrl = pathToFileURL(path.resolve("dist/src/vault.js")).href;
     const holderSource = `
       import { LocalCredentialVault } from ${JSON.stringify(moduleUrl)};
       const vault = new LocalCredentialVault({
