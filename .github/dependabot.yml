@@ -10,7 +10,7 @@ updates:
   # Runtime dependencies are pinned exactly on purpose — playwright-core and
   # cloakbrowser each couple to a browser binary, and tldts carries the Public
   # Suffix List snapshot that decides a credential's base-domain scope (the
-  # full rationale lives in scripts/check-versions.mjs). Those bumps must be
+  # full rationale lives in scripts/check-versions.ts). Those bumps must be
   # deliberate, so Dependabot only proposes devDependency updates, and the
   # ignore list restates the pinned four in case the allow scope ever widens.
   - package-ecosystem: npm

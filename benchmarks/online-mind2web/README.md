@@ -1,5 +1,7 @@
 # Online-Mind2Web benchmark
 
+> Compile the harness first: `npm run build:harness` (emits the `.js` next to each `.ts`).
+
 This directory contains BetterWright's reproducible 50-task
 [Online-Mind2Web](https://github.com/OSU-NLP-Group/Online-Mind2Web) harness. It
 runs Pi Coding Agent through the native BetterWright extension, emits the
@@ -67,18 +69,18 @@ Set `TASKS` to an Online-Mind2Web JSON array (or `{ "tasks": [...] }`) with
 ```bash
 export TASKS=/absolute/path/to/Online-Mind2Web.json
 
-node benchmarks/online-mind2web/runner.mjs sample \
+node benchmarks/online-mind2web/runner.js sample \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/sample-50.json \
   --count 50 \
   --holdout-count 15
 
 # Or create a manifest containing every task in the pinned snapshot.
-node benchmarks/online-mind2web/runner.mjs full \
+node benchmarks/online-mind2web/runner.js full \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/full-300.json
 
-node benchmarks/online-mind2web/runner.mjs run \
+node benchmarks/online-mind2web/runner.js run \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/sample-50.json \
   --output benchmarks/online-mind2web/runs/development \
@@ -87,13 +89,13 @@ node benchmarks/online-mind2web/runner.mjs run \
   --timeout-minutes 45 \
   --concurrency 3
 
-node benchmarks/online-mind2web/runner.mjs validate \
+node benchmarks/online-mind2web/runner.js validate \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/sample-50.json \
   --output benchmarks/online-mind2web/runs/development \
   --partition development
 
-node benchmarks/online-mind2web/judge.mjs \
+node benchmarks/online-mind2web/judge.js \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/sample-50.json \
   --output benchmarks/online-mind2web/runs/development \

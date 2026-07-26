@@ -135,7 +135,8 @@ with every other surface patched.
 
 ```bash
 BETTERWRIGHT_CHROMIUM_PATH=/path/to/linux-x64/chrome \
-  node scripts/stealth-report.mjs --live
+  npm run build:harness
+  node scripts/stealth-report.js --live
 ```
 
 Probe checklist: `navigator.platform` → `MacIntel`; UA/UA-CH macOS in both

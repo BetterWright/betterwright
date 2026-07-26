@@ -6,8 +6,16 @@
       "bin/**",
       "scripts/**",
       "tests/**",
+      "benchmarks/**",
+      "examples/**",
       "!!tests/manual/**",
-      "!!tests/node/fixtures/**"
+      "!!tests/node/fixtures/**",
+      // Benchmark run artifacts (browser profiles, traces) are not our code.
+      "!!benchmarks/*/runs/**",
+      // Emitted next to the .ts input by the dev projects; lint the source.
+      "!!scripts/**/*.js",
+      "!!tests/**/*.js",
+      "!!benchmarks/**/*.js"
     ]
   },
   "linter": {
@@ -22,7 +30,13 @@
   // rules are deferred until those legacy protocol boundaries are narrowed.
   "overrides": [
     {
-      "includes": ["src/**/*.ts", "bin/**/*.ts"],
+      "includes": [
+        "src/**/*.ts",
+        "bin/**/*.ts",
+        "scripts/**/*.ts",
+        "tests/**/*.ts",
+        "benchmarks/**/*.ts"
+      ],
       "linter": {
         "rules": {
           "suspicious": {

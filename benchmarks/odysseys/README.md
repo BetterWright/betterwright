@@ -1,5 +1,7 @@
 # Odysseys benchmark (BetterWright harness)
 
+> Compile the harness first: `npm run build:harness` (emits the `.js` next to each `.ts`).
+
 Long-horizon multi-site web agent benchmark from:
 
 > Jang, Koh, Fried, Salakhutdinov — *Odysseys: Benchmarking Web Agents on Realistic Long Horizon Tasks* (arXiv:2604.24964)
@@ -25,7 +27,7 @@ Do **not** launch the full 200 until you are ready. Prefer a smaller pilot first
 
 ```bash
 # Full 200-task agent campaign — 8 in parallel (do not raise without headroom)
-node benchmarks/odysseys/exec-runner.mjs run \
+node benchmarks/odysseys/exec-runner.js run \
   --tasks benchmarks/odysseys/odysseys.json \
   --manifest benchmarks/odysseys/full-200.json \
   --output benchmarks/odysseys/runs/full-200-gpt56sol-high \
@@ -36,7 +38,7 @@ node benchmarks/odysseys/exec-runner.mjs run \
   --timeout-minutes 100
 
 # Rubric judge — multimodal Pi + screenshots (gpt-5.6-luna)
-node benchmarks/odysseys/judge.mjs \
+node benchmarks/odysseys/judge.js \
   --tasks benchmarks/odysseys/odysseys.json \
   --manifest benchmarks/odysseys/full-200.json \
   --output benchmarks/odysseys/runs/full-200-gpt56sol-high \

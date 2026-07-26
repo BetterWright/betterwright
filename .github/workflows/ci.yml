@@ -53,4 +53,4 @@ jobs:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
           BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Test managed CloakBrowser headed mode
-        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.mjs
+        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js

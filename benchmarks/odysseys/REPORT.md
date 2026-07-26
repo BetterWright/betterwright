@@ -36,8 +36,8 @@ Harness under `benchmarks/odysseys/`:
 | Component | Role |
 | --- | --- |
 | `odysseys.json` + `full-200.json` | Official 200 tasks + rubrics |
-| `exec-runner.mjs` / `exec-task.mjs` | Parallel agent campaign (isolated Chromium per task) |
-| `judge.mjs` | Per-rubric 0/1 scoring |
+| `exec-runner.ts` / `exec-task.ts` | Parallel agent campaign (isolated Chromium per task) |
+| `judge.ts` | Per-rubric 0/1 scoring |
 | `judge-loop.sh` | Background re-judge as submissions land |
 | `agent-prompt.md` | Odysseys-specific operator guidance |
 | `status.sh` | Progress snapshot |
@@ -304,8 +304,8 @@ benchmarks/odysseys/
   REPORT.md                 # this file
   README.md                 # how to run
   agent-prompt.md
-  exec-runner.mjs           # default concurrency 8
-  judge.mjs                 # luna multimodal
+  exec-runner.ts            # default concurrency 8
+  judge.ts                  # luna multimodal
   runs/full-200-gpt56sol-high/
     progress.jsonl
     submission/<id>/...
@@ -317,13 +317,13 @@ logs/odysseys-judge.log
 Resume (skips valid submissions):
 
 ```bash
-node benchmarks/odysseys/exec-runner.mjs run \
+node benchmarks/odysseys/exec-runner.js run \
   --tasks benchmarks/odysseys/odysseys.json \
   --manifest benchmarks/odysseys/full-200.json \
   --output benchmarks/odysseys/runs/full-200-gpt56sol-high \
   --model gpt-5.6-sol --effort high --concurrency 8
 
-node benchmarks/odysseys/judge.mjs \
+node benchmarks/odysseys/judge.js \
   --tasks benchmarks/odysseys/odysseys.json \
   --manifest benchmarks/odysseys/full-200.json \
   --output benchmarks/odysseys/runs/full-200-gpt56sol-high \

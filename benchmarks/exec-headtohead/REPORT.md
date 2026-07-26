@@ -124,8 +124,8 @@ only).
 
 ```bash
 betterwright auth --login codex        # one-time OAuth (ChatGPT / Codex plan)
-node benchmarks/exec-headtohead/run.mjs            # all 15 scenarios, both harnesses
-node benchmarks/exec-headtohead/run.mjs --only saucedemo  # a subset
+node benchmarks/exec-headtohead/run.js            # all 15 scenarios, both harnesses
+node benchmarks/exec-headtohead/run.js --only saucedemo  # a subset
 ```
 
 Raw per-task output (answers, step counts, timings, proof paths) is written to

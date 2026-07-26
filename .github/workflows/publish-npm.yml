@@ -28,12 +28,19 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - name: Install Trusted Publishing capable npm
         run: npm install --global npm@11.5.1
+      # The release scripts are TypeScript, so dependencies (tsc) must be in
+      # place before the tag can be verified. This install is unconditional for
+      # that reason; every later step still short-circuits on an existing
+      # published version.
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
       - name: Verify release source and tag
         shell: bash
         run: |
           git fetch origin main
           git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main
-          node scripts/check-versions.mjs --tag "${{ github.event.release.tag_name }}"
+          npm run build:tools
+          node scripts/check-versions.js --tag "${{ github.event.release.tag_name }}"
       - name: Check whether this version already exists
         id: existing
         shell: bash
@@ -46,9 +53,6 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Install locked dependencies
-        if: steps.existing.outputs.published != 'true'
-        run: npm ci --ignore-scripts
       - name: Build TypeScript sources
         if: steps.existing.outputs.published != 'true'
         run: npm run build
@@ -77,7 +81,7 @@ jobs:
           BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Test managed CloakBrowser headed mode
         if: steps.existing.outputs.published != 'true'
-        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.mjs
+        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js
       - name: Publish to npm with provenance
         if: steps.existing.outputs.published != 'true'
         run: npm publish --access public --tag latest
