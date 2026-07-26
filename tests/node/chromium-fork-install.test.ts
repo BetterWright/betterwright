@@ -10,12 +10,13 @@ import {
   CHROMIUM_FORK_RELEASE_TAG,
 } from "../../dist/src/chromium-fork.js";
 import {
+  _extractZipForTest,
   chromiumForkAssetForHost,
   installChromiumFork,
 } from "../../dist/src/chromium-fork-install.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
-test("public fork assets are pinned for mac-arm64 and linux-x64", () => {
+test("public fork assets are pinned for mac-arm64, linux-x64, and win32-x64", () => {
   assert.equal(CHROMIUM_FORK_RELEASE_TAG, `chromium-${BETTERWRIGHT_CHROMIUM_VERSION}`);
   assert.equal(
     chromiumForkAssetForHost({ platform: "darwin", arch: "arm64" })?.name,
@@ -25,21 +26,61 @@ test("public fork assets are pinned for mac-arm64 and linux-x64", () => {
     chromiumForkAssetForHost({ platform: "linux", arch: "x64" })?.name,
     "betterwright-chromium-linux-x64.zip",
   );
-  assert.equal(chromiumForkAssetForHost({ platform: "win32", arch: "x64" }), null);
+  assert.equal(
+    chromiumForkAssetForHost({ platform: "win32", arch: "x64" })?.name,
+    "betterwright-chromium-win-x64.zip",
+  );
   for (const asset of Object.values<any>(CHROMIUM_FORK_ASSETS)) {
     assert.match(asset.sha256, /^[a-f0-9]{64}$/);
   }
 });
 
-test("installChromiumFork skips platforms without a public artifact", async () => {
+test("installChromiumFork skips unsupported platforms without a public artifact", async () => {
   const result = await installChromiumFork({
-    platform: "win32",
-    arch: "x64",
+    platform: "linux",
+    arch: "arm64",
     home: "/tmp/bw-home",
     log() {},
   });
   assert.match(result.skipped, /No public Chromium fork artifact/);
   assert.equal(result.binary, null);
+});
+
+test("Windows fork extraction uses the built-in tar executable", () => {
+  const calls = [];
+  const destDir = makeTempDir("bw-fork-extract-");
+  try {
+    _extractZipForTest("C:\\tmp\\fork.zip", destDir, {
+      platform: "win32",
+      spawn: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+    assert.deepEqual(calls, [{
+      command: "tar.exe",
+      args: ["-xf", "C:\\tmp\\fork.zip", "-C", destDir],
+      options: { encoding: "utf8" },
+    }]);
+  } finally {
+    fs.rmSync(destDir, { recursive: true, force: true });
+  }
+});
+
+test("Windows fork extraction reports tar failures", () => {
+  const destDir = makeTempDir("bw-fork-extract-fail-");
+  try {
+    assert.throws(
+      () =>
+        _extractZipForTest("C:\\tmp\\fork.zip", destDir, {
+          platform: "win32",
+          spawn: () => ({ status: 2, stdout: "", stderr: "bad archive" }),
+        }),
+      /tar\.exe extract failed: bad archive/,
+    );
+  } finally {
+    fs.rmSync(destDir, { recursive: true, force: true });
+  }
 });
 
 test("installChromiumFork short-circuits when already installed", async () => {
@@ -62,19 +103,19 @@ test("installChromiumFork short-circuits when already installed", async () => {
   assert.match(logs.join("\n"), /already installed/);
 });
 
-test("installChromiumFork downloads, verifies SHA-256, and extracts", async () => {
+test("installChromiumFork downloads, verifies, and installs the Windows layout", async () => {
   const home = makeTempDir("bw-fork-home-");
   const payload = Buffer.from("betterwright-chromium-test-zip");
   const sha256 = createHash("sha256").update(payload).digest("hex");
   const assets = {
-    "linux-x64": { name: "test-linux.zip", sha256 },
+    "win32-x64": { name: "test-windows.zip", sha256 },
   };
-  const binaryRel = path.join("linux-x64", "chrome");
+  const binaryRel = path.join("win-x64", "chrome.exe");
   let downloadedUrl = null;
 
   try {
     const result = await installChromiumFork({
-      platform: "linux",
+      platform: "win32",
       arch: "x64",
       home,
       force: true,
@@ -93,12 +134,12 @@ test("installChromiumFork downloads, verifies SHA-256, and extracts", async () =
     });
     assert.equal(
       downloadedUrl,
-      `https://github.com/BetterWright/betterwright/releases/download/${CHROMIUM_FORK_RELEASE_TAG}/test-linux.zip`,
+      `https://github.com/BetterWright/betterwright/releases/download/${CHROMIUM_FORK_RELEASE_TAG}/test-windows.zip`,
     );
     assert.equal(result.alreadyInstalled, false);
     assert.equal(
       result.binary,
-      path.join(home, ".betterwright", "chromium", "linux-x64", "chrome"),
+      path.join(home, ".betterwright", "chromium", "win-x64", "chrome.exe"),
     );
     assert.ok(fs.existsSync(result.binary));
   } finally {

@@ -462,7 +462,7 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
     console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
     if (!cloakOnly) {
       console.log(
-        "On macOS arm64 / Linux x64, doctor should report browser: chromium-fork after update/setup.",
+        "On macOS arm64 / Linux x64 / Windows x64, doctor should report browser: chromium-fork after update/setup.",
       );
     }
   }

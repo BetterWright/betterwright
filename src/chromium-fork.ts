@@ -77,6 +77,11 @@ export const CHROMIUM_FORK_ASSETS = Object.freeze({
     sha256:
       "45ffef258415057d70b71639424dc681284babf533939d32375f99585a136d31",
   }),
+  "win32-x64": Object.freeze({
+    name: "betterwright-chromium-win-x64.zip",
+    sha256:
+      "977cb811fdc7198723865b741b24da329128d5d1d519f5599e2b4cb1b9dadafa",
+  }),
 });
 
 function configuredValue(value) {
@@ -96,7 +101,7 @@ export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
  *     configured-but-missing binary is an error).
  *  2. The default root (~/.betterwright/chromium) — if the artifact for this
  *     platform exists there, use it silently. Platforms without a shipped
- *     artifact (e.g. Windows) fall through to managed CloakBrowser.
+ *     artifact fall through to managed CloakBrowser.
  *  3. Either variable set to "off" forces the managed CloakBrowser path.
  */
 export function resolveChromiumForkBinary({

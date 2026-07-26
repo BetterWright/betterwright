@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   doctorChecks,
   formatDoctorChecks,
+  missingForkFontsWarning,
   modelReadiness,
   modelSetupHint,
   preferredModelId,
@@ -285,6 +286,42 @@ test("doctor checks translate a raw report into fixable lines", () => {
   const failures = broken.filter((check) => check.status === "fail");
   assert.ok(failures.length >= 2);
   assert.ok(failures.every((check) => check.fix));
+});
+
+test("doctor only warns about missing fork font bundles on Linux", () => {
+  const chromiumFork = "/x/fork/chrome";
+  assert.match(
+    missingForkFontsWarning({
+      chromiumFork,
+      chromiumForkFonts: null,
+      platform: "linux",
+    }),
+    /fontconfig/,
+  );
+  assert.equal(
+    missingForkFontsWarning({
+      chromiumFork,
+      chromiumForkFonts: null,
+      platform: "win32",
+    }),
+    null,
+  );
+  assert.equal(
+    missingForkFontsWarning({
+      chromiumFork,
+      chromiumForkFonts: null,
+      platform: "darwin",
+    }),
+    null,
+  );
+  assert.equal(
+    missingForkFontsWarning({
+      chromiumFork,
+      chromiumForkFonts: "/x/fork/fonts",
+      platform: "linux",
+    }),
+    null,
+  );
 });
 
 test("doctor output groups checks and marks each status", () => {

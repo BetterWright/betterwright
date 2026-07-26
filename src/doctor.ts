@@ -83,6 +83,16 @@ export async function cloakRuntime() {
   }
 }
 
+/** Missing adjacent fonts only expose host fontconfig on Linux. */
+export function missingForkFontsWarning({
+  chromiumFork,
+  chromiumForkFonts,
+  platform = process.platform,
+}) {
+  if (platform !== "linux" || !chromiumFork || chromiumForkFonts) return null;
+  return "fork binary has no fonts/ttf beside it; host fontconfig will leak (Linux tell). Deploy the macOS-metric font bundle next to chrome.";
+}
+
 /** Build the readiness report `betterwright doctor` prints. */
 export async function doctorReport() {
   const core = resolveCoreDir();
@@ -108,10 +118,10 @@ export async function doctorReport() {
   }
   const browser = chromiumFork ? "chromium-fork" : "cloak";
   const chromiumForkFonts = chromiumFork ? forkFontsDir(chromiumFork) : null;
-  const chromiumForkFontsWarning =
-    chromiumFork && !chromiumForkFonts
-      ? "fork binary has no fonts/ttf beside it; host fontconfig will leak (Linux tell). Deploy the macOS-metric font bundle next to chrome."
-      : null;
+  const chromiumForkFontsWarning = missingForkFontsWarning({
+    chromiumFork,
+    chromiumForkFonts,
+  });
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
@@ -305,7 +315,7 @@ export function doctorChecks(
   } else if (report.chromium_fork_error) {
     add("Browser", "Chromium fork", "fail", report.chromium_fork_error, "Run `betterwright update`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.");
   } else {
-    add("Browser", "Chromium fork", "warn", "not installed — using CloakBrowser", "Run `betterwright update` for the fork (macOS arm64 / Linux x64 only).");
+    add("Browser", "Chromium fork", "warn", "not installed — using CloakBrowser", "Run `betterwright update` for the fork (macOS arm64 / Linux x64 / Windows x64).");
   }
   add(
     "Browser",

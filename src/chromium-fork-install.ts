@@ -3,7 +3,7 @@
 // and by default `betterwright setup` on platforms that ship an artifact.
 //
 // Pattern matches Playwright/Cloak: the npm package is the driver; the
-// ~200 MB browser zip is fetched from a pinned GitHub Release and verified
+// browser zip is fetched from a pinned GitHub Release and verified
 // with SHA-256 before extract. Apple-licensed fonts are intentionally not
 // in the public zip (see scripts/assemble-mac-fonts.sh).
 
@@ -90,11 +90,18 @@ function downloadToFile(url, destPath, { redirectsLeft = 5 }: any = {}) {
   });
 }
 
-function extractZip(zipPath, destDir) {
+function extractZip(
+  zipPath,
+  destDir,
+  {
+    platform = process.platform,
+    spawn = spawnSync,
+  } = {},
+) {
   fs.mkdirSync(destDir, { recursive: true, mode: 0o755 });
-  if (process.platform === "darwin") {
+  if (platform === "darwin") {
     // ditto preserves macOS app bundle metadata better than unzip.
-    const result = spawnSync(
+    const result = spawn(
       "ditto",
       ["-x", "-k", zipPath, destDir],
       { encoding: "utf8" },
@@ -106,20 +113,27 @@ function extractZip(zipPath, destDir) {
     }
     return;
   }
-  const result = spawnSync("unzip", ["-oq", zipPath, "-d", destDir], {
+
+  const command = platform === "win32" ? "tar.exe" : "unzip";
+  const args = platform === "win32"
+    ? ["-xf", zipPath, "-C", destDir]
+    : ["-oq", zipPath, "-d", destDir];
+  const result = spawn(command, args, {
     encoding: "utf8",
   });
   if (result.status !== 0) {
     throw new Error(
-      `unzip failed: ${result.stderr || result.stdout || "unknown error"}`,
+      `${command} extract failed: ${result.stderr || result.stdout || "unknown error"}`,
     );
   }
 }
 
+export const _extractZipForTest = extractZip;
+
 /**
  * Install (or refresh) the Chromium fork for this platform into
  * `~/.betterwright/chromium`. Returns `{ binary, root, skipped }` where
- * `skipped` is set when this platform has no public artifact (e.g. Windows).
+ * `skipped` is set when this platform has no public artifact.
  *
  * `download` / `extract` are injectable for unit tests.
  */

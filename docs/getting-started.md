@@ -62,8 +62,8 @@ new BetterWright version is adopted.
 
 ### Managed CloakBrowser backend
 
-On platforms without a public fork artifact (Windows today), or when you pass
-`--cloak-only`, launches use CloakBrowser. `betterwright setup` asks the
+On platforms without a public fork artifact, or when you pass `--cloak-only`,
+launches use CloakBrowser. `betterwright setup` asks the
 pinned official wrapper to fetch the correct binary directly from CloakHQ's
 release source and verify the published checksums with its pinned Ed25519
 signature before extraction. BetterWright ships the wrapper integration, not
@@ -87,7 +87,7 @@ doctor` reports both versions. For a reproducible deployment, set a full
 `CLOAKBROWSER_VERSION`; to keep an already installed build from checking for a
 newer stable build, set `CLOAKBROWSER_AUTO_UPDATE=false`.
 
-### Native Chromium fork (default on macOS arm64 / Linux x64)
+### Native Chromium fork (default on macOS arm64 / Linux x64 / Windows x64)
 
 `betterwright setup` and `betterwright update` download BetterWright's own
 Chromium build into `~/.betterwright/chromium/` (SHA-256 verified from the
@@ -111,8 +111,7 @@ Resolution order:
 2. Zero-config discovery at `~/.betterwright/chromium/<platform>/`: if the
    artifact for this platform exists there, it is used automatically
    (this is what `update` / default `setup` populate).
-3. Otherwise the managed CloakBrowser backend. Platforms with no shipped
-   artifact (Windows) always land here.
+3. Otherwise the managed CloakBrowser backend.
 
 Force the managed path even with an artifact installed:
 
@@ -162,9 +161,8 @@ opened that directory, falling back to Cloak fails closed
 hosts, or delete `browser/profile` when switching backends (saved site
 logins in that profile are lost).
 
-A typical split: **Linux and macOS hosts get the fork artifact, Windows hosts
-run `betterwright setup` and stay on CloakBrowser** — one config, no branching
-in your deployment code.
+macOS arm64, Linux x64, and Windows x64 hosts all get the fork artifact with
+one config and no platform branching in deployment code.
 
 ## Your first run
 
