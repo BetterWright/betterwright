@@ -2,9 +2,9 @@
 
 A **session** is an independent set of pages plus its own `state` object, named
 with `--session` (default `"default"`). A **session daemon** is the background
-process that owns them: one per `BETTERWRIGHT_HOME`, holding a single browser —
-policy guard, stealth hooks, vault, worker, Chromium — and serving thin CLI
-clients over a local socket.
+process that owns them: one per `BETTERWRIGHT_HOME` **and profile**, holding a
+single browser — policy guard, stealth hooks, vault, worker, Chromium — and
+serving thin CLI clients over a local socket.
 
 That is what makes `run`, `repl`, and `exec` persistent. Open tabs, in-page
 state, cookies, and (for `exec`) the agent's conversation survive between
@@ -26,7 +26,7 @@ betterwright close --all                         # end everything, stop the daem
 | Different browser flags | An **idle** daemon is replaced; a **busy** one is left alone and the call falls back to a one-shot browser |
 | Session idle past the TTL | Its pages close (default 15 minutes) |
 | Last session closes | The daemon exits on its own |
-| `betterwright close --all` | Every session closes and the daemon stops now |
+| `betterwright close --all` | Every session of every profile closes and each daemon stops now |
 
 Set `BETTERWRIGHT_NO_DAEMON=1` (or pass `--no-daemon`) to skip it entirely and
 get a private one-shot browser per call — the pre-daemon behaviour.
@@ -43,6 +43,34 @@ each other.
 betterwright exec --session research "compare the three plans" &
 betterwright exec --session invoices "download last month's invoice" &
 ```
+
+## Sessions vs. profiles
+
+Sessions share one browser, and therefore **one cookie jar**: every session is
+signed in as the same person. That is what you want for parallel work as one
+identity, and it is cheap — one Chromium, many lanes.
+
+A `--profile <name>` is the other axis: a **separate identity**, with its own
+cookie jar, its own browser, its own daemon, and its own saved `exec`
+transcripts. Use it when two runs must be different accounts — a posting
+account and a reading account, work and personal — rather than two lanes of the
+same account.
+
+```bash
+betterwright exec --profile social  "post the release note" &
+betterwright exec --profile review  "summarise the top HN thread" &
+betterwright sessions        # both daemons, labelled by profile
+betterwright close --all     # stops every profile's daemon
+```
+
+`BETTERWRIGHT_PROFILE=social` sets the identity for a whole shell (and is the
+only way to set it for the MCP server); `--profile` beats it. Both run at once
+and both stay signed in, because each profile locks its own directory under
+`$BETTERWRIGHT_HOME/browser/profiles/`. Two runs of the *same*
+profile still serialize: the second gets an isolated, signed-out ephemeral
+profile, exactly as two runs of the default profile do. Omitting `--profile`
+keeps the single default profile and the daemon it already had. The vault is
+shared, so a credential saved once fills in any profile.
 
 ## Stopping a run
 

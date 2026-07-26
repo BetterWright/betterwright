@@ -9,6 +9,24 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- Named browser profiles: `profile` on the `BetterWright` constructor,
+  `--profile <name>` on the CLI, and `BETTERWRIGHT_PROFILE` for the MCP server
+  and any shell (the flag wins). A
+  profile is a separate identity inside one home — its own cookie jar at
+  `browser/profiles/<name>`, its own profile lock, its own session daemon
+  (`daemon-<name>.sock`), and its own `exec` transcripts — so two identities
+  run at the same time and both stay signed in. `--session` remains the way to
+  run parallel work as the *same* identity. `betterwright sessions` now lists
+  every profile's daemon and `close --all` stops all of them; anything narrower
+  acts only on the selected profile.
+- Omitting `profile` changes nothing on disk: the same `browser/profile`
+  directory, the same lock, the same `daemon.sock`, and the same
+  `sessions/<name>/` transcripts. There is no migration. Upgrading while a
+  daemon is running restarts that daemon once (its config signature now
+  records the profile), as any flag change does.
+
 ## [1.5.0] - 2026-07-25
 
 ### Changed

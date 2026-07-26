@@ -147,6 +147,8 @@ Semantics the skill already explains to the agent:
   the image to see the page.
 - Policy flags: `--block-private-network`, `--block-loopback`,
   `--allow-host HOST`, `--block-host HOST`, `--headed` (see **§6**).
+- `--profile <name>` acts as a second identity (own cookies, own daemon); see
+  **§6**.
 
 Then do **§5**.
 
@@ -369,6 +371,14 @@ or the MCP env vars):
 | Remove download approval | `downloadPolicy: "allow"` | `BETTERWRIGHT_DOWNLOAD_POLICY=allow` |
 | Disable all downloads | `downloadPolicy: "deny"` | `BETTERWRIGHT_DOWNLOAD_POLICY=deny` |
 | Block public search-result UIs | `publicSearchPolicy: "block"` | `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block` |
+| Act as a second identity | `--profile social` / `profile: "social"` | `BETTERWRIGHT_PROFILE=social` (the CLI reads it too) |
+
+A **profile** is a separate browser identity inside the same home: its own
+cookie jar, its own session daemon, its own `exec` history — so two agents (or
+two MCP servers) work in parallel without either being signed out. The vault is
+shared, so a credential saved once fills in any profile. Omit it for the single
+default profile. Use `--session <name>` instead for parallel work as the *same*
+identity. See [docs/sessions.md](docs/sessions.md#sessions-vs-profiles).
 
 Cloud metadata endpoints can never be allowlisted. See
 [docs/network-policy.md](docs/network-policy.md).

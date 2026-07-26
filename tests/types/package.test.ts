@@ -66,6 +66,7 @@ const options: BetterWrightOptions = {
   browser: "cloak",
   headless: "auto",
   downloadPolicy: "ask",
+  profile: "social",
 };
 const browser = new BetterWright(options);
 const vaultOptions: LocalCredentialVaultOptions = { home: "/tmp/betterwright-types" };

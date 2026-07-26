@@ -35,8 +35,14 @@ function mkdirPrivate(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
+// The lock lives beside the profile it guards, so this marker is reserved in
+// any directory that holds profiles: `src/profile-name.ts` rejects profile
+// names containing it, which keeps a named profile's data directory from ever
+// landing on another profile's lock (or on a `.stale-…` tombstone of one).
+export const PROFILE_LOCK_SUFFIX = ".betterwright-lock";
+
 export function profileLockDirFor(profileDir) {
-  return `${profileDir}.betterwright-lock`;
+  return `${profileDir}${PROFILE_LOCK_SUFFIX}`;
 }
 
 function readOwner(ownerFile) {

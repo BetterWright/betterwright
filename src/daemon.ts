@@ -1,6 +1,6 @@
 // The BetterWright session daemon.
 //
-// One background process per BETTERWRIGHT_HOME owns a single BetterWright
+// One background process per (BETTERWRIGHT_HOME, profile) owns a single BetterWright
 // instance — policy guard, stealth hooks, vault, worker, browser — and serves
 // thin CLI clients over a local socket. This is what makes `betterwright run`
 // and `betterwright exec` persistent: open tabs, in-page state, and the repl
@@ -12,8 +12,8 @@
 // Protocol: newline-delimited JSON over a unix domain socket (win32: a named
 // pipe). Requests are `{id, op, ...}`; responses `{id, ok, ...}`. Ops:
 //   hello         {version, configSig}     -> {ok, pid, version, configSig,
-//                                              withVault, sessions, startedAt,
-//                                              uptimeMs, runs}
+//                                              profile, withVault, sessions,
+//                                              startedAt, uptimeMs, runs}
 //   call          {method, args, session}  -> {ok, result} for a whitelisted
 //                                             BetterWright method; the daemon
 //                                             pins `session` into the options
@@ -69,6 +69,7 @@ import readline from "node:readline";
 // a socket path or config signature would otherwise pay that cost too. Loaded
 // lazily in `createBrowserFromDaemonConfig`, the sole place it is used.
 import { defaultHome as defaultDaemonHome } from "./home.js";
+import { profileFileSuffix, profileLabel, resolveProfileName } from "./profile-name.js";
 
 const require = createRequire(import.meta.url);
 
@@ -145,8 +146,12 @@ function canonicalHome(home) {
   return tail.length ? path.join(head, ...tail) : head;
 }
 
-function homeHash(home) {
-  return crypto.createHash("sha256").update(canonicalHome(home)).digest("hex").slice(0, 16);
+// The profile joins the hash so two profiles in a deep home get two distinct
+// fallback sockets — a shared one would silently put both identities in one
+// browser, which is the exact confusion named profiles exist to prevent.
+function homeHash(home, profile?: unknown) {
+  const key = `${canonicalHome(home)}\u0000${resolveProfileName(profile) ?? ""}`;
+  return crypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
 
 /** Owner-only directory holding fallback sockets for over-long homes. */
@@ -155,14 +160,20 @@ export function fallbackSocketDir() {
   return path.join(os.tmpdir(), `betterwright-${uid}`);
 }
 
-export function daemonSocketPath(home = defaultDaemonHome()) {
+// A named profile is a separate identity — separate cookie jar, separate
+// browser — so it gets its OWN daemon rather than sharing one and losing
+// session persistence to a config mismatch. The socket, info file, and log are
+// therefore keyed by (home, profile). The default profile keeps the historical
+// bare names, so an upgraded install finds the daemon it already had.
+export function daemonSocketPath(home = defaultDaemonHome(), profile?: unknown) {
+  const suffix = profileFileSuffix(profile);
   if (process.platform === "win32") {
     // Named pipes live in their own namespace and have no such limit.
-    return `\\\\.\\pipe\\betterwright-${homeHash(home)}`;
+    return `\\\\.\\pipe\\betterwright-${homeHash(home, profile)}`;
   }
-  const natural = path.join(home, "daemon.sock");
+  const natural = path.join(home, `daemon${suffix}.sock`);
   if (Buffer.byteLength(natural) <= MAX_SOCKET_PATH_BYTES) return natural;
-  return path.join(fallbackSocketDir(), `${homeHash(home)}.sock`);
+  return path.join(fallbackSocketDir(), `${homeHash(home, profile)}.sock`);
 }
 
 /**
@@ -200,12 +211,49 @@ export function ensureSocketDirectory(socketPath) {
   fs.chmodSync(directory, 0o700);
 }
 
-export function daemonInfoPath(home = defaultDaemonHome()) {
-  return path.join(home, "daemon.json");
+export function daemonInfoPath(home = defaultDaemonHome(), profile?: unknown) {
+  return path.join(home, `daemon${profileFileSuffix(profile)}.json`);
 }
 
-export function daemonLogPath(home = defaultDaemonHome()) {
-  return path.join(home, "daemon.log");
+export function daemonLogPath(home = defaultDaemonHome(), profile?: unknown) {
+  return path.join(home, `daemon${profileFileSuffix(profile)}.log`);
+}
+
+/**
+ * Every profile that has a daemon info file in this home, default first.
+ *
+ * `betterwright sessions` and `close --all` are home-wide, so they must see
+ * every profile's daemon, not just the one the current flags select. An info
+ * file is written at startup and removed on clean shutdown; a stale one left
+ * by a killed daemon simply fails to connect, which the callers treat as "not
+ * running". Returns profile names (`null` for the default profile).
+ */
+export function daemonProfilesInHome(home = defaultDaemonHome()): (string | null)[] {
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(home);
+  } catch {
+    return [];
+  }
+  const found: (string | null)[] = [];
+  for (const entry of entries.sort()) {
+    if (entry === "daemon.json") {
+      found.unshift(null);
+      continue;
+    }
+    const match = /^daemon-(.+)\.json$/.exec(entry);
+    if (!match) continue;
+    // A file whose name is not a valid profile name cannot have been written
+    // by this code; ignore it rather than trust an arbitrary string.
+    let profile: string | null = null;
+    try {
+      profile = resolveProfileName(match[1]);
+    } catch {
+      continue;
+    }
+    if (profile) found.push(profile);
+  }
+  return found;
 }
 
 export function sessionTtlMs() {
@@ -234,9 +282,22 @@ export function normalizeDaemonConfig(config: any = {}) {
   const cloak = config.cloak && typeof config.cloak === "object" ? config.cloak : {};
   const hosts = (list) =>
     [...new Set((Array.isArray(list) ? list : []).map((h) => String(h).trim().toLowerCase()).filter(Boolean))].sort();
+  const profile = resolveProfileName(config.profile);
   return {
     protocol: DAEMON_PROTOCOL,
     headless: config.headless !== false,
+    // A daemon serves exactly one profile (it owns one browser), and the
+    // socket is already keyed by profile — but keep it in the signature too so
+    // a client that somehow reaches a daemon on another identity's browser
+    // sees a mismatch instead of quietly acting as the wrong account.
+    //
+    // Present ONLY for a named profile: the default profile's signature then
+    // stays byte-identical to the pre-profiles one, so upgrading while a
+    // daemon holds live sessions reuses that daemon instead of falling back to
+    // a one-shot browser that finds the profile locked and comes up signed
+    // out. A named profile has its own socket, so nothing can be there but a
+    // daemon that already understands this field.
+    ...(profile ? { profile } : {}),
     policy: {
       allowLoopback: policy.allowLoopback !== false,
       allowPrivateNetwork: policy.allowPrivateNetwork !== false,
@@ -266,6 +327,7 @@ export async function createBrowserFromDaemonConfig(config) {
   return new BetterWright({
     policy: new NetworkPolicy(normalized.policy),
     headless: normalized.headless,
+    ...(normalized.profile ? { profile: normalized.profile } : {}),
     cloakV2: normalized.cloak.cloakV2,
     upstreamProxy: normalized.cloak.upstreamProxy || undefined,
     geoip: normalized.cloak.geoip,
@@ -352,9 +414,13 @@ export class ReplayBuffer {
  */
 export async function startSessionDaemon(options: any = {}) {
   const home = options.home || defaultDaemonHome();
-  const socketPath = options.socketPath || daemonSocketPath(home);
   const config = normalizeDaemonConfig(options.config);
   const configSig = JSON.stringify(config);
+  // Normalize first: the socket, info file, and log are keyed by the profile
+  // this daemon serves, so they must come from the same normalized config the
+  // browser is built from — never from a raw, unvalidated option.
+  const profile = config.profile ?? null;
+  const socketPath = options.socketPath || daemonSocketPath(home, profile);
   const version = options.version || daemonPackageVersion();
   const ttlMs = Math.max(Number(options.ttlMs) || sessionTtlMs(), 1_000);
   const emptyGraceMs = Math.max(Number(options.emptyGraceMs) || EMPTY_GRACE_MS, 250);
@@ -423,6 +489,9 @@ export async function startSessionDaemon(options: any = {}) {
     version,
     protocol: DAEMON_PROTOCOL,
     configSig,
+    // Which identity this daemon is holding, so a client can say so in a
+    // message and a home-wide command can label each daemon it finds.
+    profile,
     withVault: Boolean(browser.vault),
     ttlMs,
     startedAt: new Date(startedAt).toISOString(),
@@ -598,11 +667,11 @@ export async function startSessionDaemon(options: any = {}) {
       const store = await import("./session-store.js");
       if (message.fresh) {
         execHistories.delete(key);
-        store.clearTranscript(home, key);
+        store.clearTranscript(home, key, profile);
       }
       const history = message.fresh
         ? []
-        : (execHistories.get(key) ?? store.loadTranscript(home, key));
+        : (execHistories.get(key) ?? store.loadTranscript(home, key, profile));
       const result = await runAgentTask({
         task: String(message.task || ""),
         browser,
@@ -628,7 +697,7 @@ export async function startSessionDaemon(options: any = {}) {
       if (result.transcript) {
         execHistories.set(key, result.transcript);
         try {
-          store.saveTranscript(home, key, result.transcript);
+          store.saveTranscript(home, key, result.transcript, {}, profile);
         } catch (error) {
           log(`transcript save failed for ${key}: ${error?.message || error}`);
         }
@@ -732,7 +801,7 @@ export async function startSessionDaemon(options: any = {}) {
       if (run.orphanTimer) clearTimeout(run.orphanTimer);
       if (!run.settled) run.controller.abort();
     }
-    for (const file of [socketPath, daemonInfoPath(home)]) {
+    for (const file of [socketPath, daemonInfoPath(home, profile)]) {
       if (process.platform === "win32" && file === socketPath) continue;
       try {
         fs.rmSync(file, { force: true });
@@ -921,10 +990,11 @@ export async function startSessionDaemon(options: any = {}) {
   }
   try {
     fs.writeFileSync(
-      daemonInfoPath(home),
+      daemonInfoPath(home, profile),
       JSON.stringify({
         pid: process.pid,
         socket: socketPath,
+        profile,
         version,
         protocol: DAEMON_PROTOCOL,
         configSig,
@@ -938,7 +1008,10 @@ export async function startSessionDaemon(options: any = {}) {
 
   reaper = setInterval(() => void reap(), reapIntervalMs);
   reaper.unref?.();
-  log(`listening on ${socketPath} (pid ${process.pid}, v${version}, protocol ${DAEMON_PROTOCOL})`);
+  log(
+    `listening on ${socketPath} (pid ${process.pid}, v${version}, protocol ${DAEMON_PROTOCOL}, ` +
+      `profile ${profileLabel(profile)})`,
+  );
 
   return {
     socketPath,

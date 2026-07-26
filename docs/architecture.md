@@ -138,24 +138,67 @@ Everything lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`):
 ```
 ~/.betterwright/
 ├── browser/
-│   ├── profile/        persistent browser profile (cookies, logins)
-│   └── runtime/        ephemeral profiles when the main one is locked
+│   ├── profile/        default persistent browser profile (cookies, logins)
+│   ├── profiles/       named profiles, one directory per identity
+│   │   └── <name>/     e.g. profiles/social — plus its <name>.betterwright-lock
+│   └── runtime/        ephemeral profiles when a profile is locked (shared)
+├── sessions/           saved `exec` transcripts, per session name
+│   └── @<name>/        …and per named profile
 ├── vault/
 │   ├── vault.key       owner-only local encryption key
 │   ├── vault.enc       authenticated AES-256-GCM record table
 │   ├── audit.jsonl     metadata-only credential actions
 │   └── vault.lock/     cross-process write lock
+├── daemon.sock         session daemon for the default profile
+├── daemon-<name>.sock  …one per named profile (plus .json / .log siblings)
 └── artifacts/          screenshots, downloads, spilled output (quota-managed)
     └── downloads/
 ```
+
+### Named profiles
+
+A home has one persistent profile by default, at `browser/profile`. Only one
+process can own it at a time; a second concurrent worker gets an isolated
+ephemeral profile from `browser/runtime` (a signed-out browser) rather than
+corrupting it.
+
+`profile: "<name>"` (CLI `--profile <name>` or `BETTERWRIGHT_PROFILE`, which
+the MCP server reads too) selects a **separate identity**: an independent persistent profile at
+`browser/profiles/<name>`, with its own cookie jar, its own lock
+(`browser/profiles/<name>.betterwright-lock`, a sibling of the directory), its
+own [session daemon](sessions.md), and its own `exec` transcripts. Two
+identities therefore run at the same time, each fully signed in. Two instances
+of the *same* profile still serialize, and the second falls back to an
+ephemeral profile exactly as the default profile does today.
+
+This is a different axis from `--session`. Sessions are concurrent lanes inside
+one browser sharing one cookie jar — the right tool for parallel work as the
+same identity. Profiles are separate cookie jars in separate browsers — the
+right tool for a second account.
+
+Omitting `profile` leaves `browser/profile`, its lock, `daemon.sock`, and
+`sessions/<name>/` exactly where they were: no migration, no move, no copy.
+
+**Scoped per profile:** the profile directory, its lock, the session daemon
+(socket, info file, log), and saved `exec` transcripts.
+**Shared across profiles:** the vault, `artifacts/`, `browser/runtime/`, and
+the CloakBrowser binary cache — so a credential saved once is reachable from
+every profile, and a second copy of Chromium is never downloaded.
+
+Names are validated as a strict allowlist (letters, digits, `.`, `-`, `_`,
+starting with a letter or digit; no path separators, `..`, absolute paths,
+trailing dots, or Windows reserved device names), and the marker
+`.betterwright-lock` is reserved, so a name can neither escape
+`browser/profiles/` nor land on another profile's lock directory. An invalid
+name fails at construction. Names are as case-sensitive as the filesystem.
 
 The separately licensed CloakBrowser binary is cached by its official wrapper,
 not copied into BetterWright's package or home directory. `betterwright setup`
 downloads it directly from CloakHQ's release source and verifies the wrapper's
 pinned Ed25519 signature before extraction.
 
-Delete the directory to reset everything; delete `browser/profile/` to sign
-out everywhere, or `vault/` to remove saved credential items — `vault.key` and
+Delete the directory to reset everything; delete `browser/profile/` (or one
+`browser/profiles/<name>/`) to sign out everywhere in that profile, or `vault/` to remove saved credential items — `vault.key` and
 `vault.enc` are only useful together, so back them up or discard them as a
 pair. `betterwright vault path` prints these locations.
 
@@ -163,7 +206,10 @@ When `$BETTERWRIGHT_HOME` sits under a path long enough that
 `<home>/daemon.sock` would exceed the platform's unix-socket limit (104 bytes
 on macOS, 108 on Linux), the session daemon binds a short socket derived from
 the home inside an owner-only directory in the system temp dir instead. Nothing
-else moves, and the client resolves the same path.
+else moves, and the client resolves the same path. A named profile's socket
+(`daemon-<name>.sock`) falls back the same way, on a path derived from the home
+*and* the profile, so a long name can never produce an unbindable socket or
+collide with another profile's.
 
 ## Pinned browser integration
 

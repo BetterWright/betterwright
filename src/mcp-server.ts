@@ -25,6 +25,13 @@
 //     BETTERWRIGHT_BLOCK_HOSTS=ads.com     always-block list (comma-separated)
 //     BETTERWRIGHT_DOWNLOAD_POLICY=ask     ask (default), allow, or deny downloads
 //     BETTERWRIGHT_HEADLESS=0              run the managed browser headed
+//     BETTERWRIGHT_PROFILE=<name>          act as a named browser profile: a
+//                                          separate identity (own cookies, own
+//                                          session daemon) at
+//                                          browser/profiles/<name>. Unset uses
+//                                          the single default profile. Two MCP
+//                                          servers on one home with different
+//                                          profiles stay signed in at once.
 //     BETTERWRIGHT_TIMEZONE=<IANA tz>      pin the browser timezone to the egress
 //                                          geography (unset: host timezone)
 //     BETTERWRIGHT_LOCALE=<locale>         browser locale for the same identity
@@ -50,6 +57,7 @@ import { doctorReport } from "./doctor.js";
 import { loadLiveViewConfig } from "./live-view-config.js";
 import { importOptionalPeer } from "./optional-peer.js";
 import { piImageArtifacts, piImageContent } from "./pi.js";
+import { resolveProfileName } from "./profile-name.js";
 import { mcpLoginInputSchema, mcpRunInputSchema } from "./tool-schemas.js";
 
 const require = createRequire(import.meta.url);
@@ -95,6 +103,17 @@ export function headlessFromEnv(env = process.env) {
   // explicit BETTERWRIGHT_HEADLESS=0/1 when the deployer sets one.
   if (!String(env.BETTERWRIGHT_HEADLESS || "").trim()) return "auto";
   return boolEnv(env, "BETTERWRIGHT_HEADLESS");
+}
+
+/**
+ * The named browser profile this server acts as, or null for the default one.
+ * A profile is a separate identity — its own cookies, its own session daemon —
+ * so two MCP servers on one home with different profiles both stay signed in.
+ * An invalid name throws, which surfaces at startup rather than as a
+ * mysteriously signed-out browser later.
+ */
+export function profileFromEnv(env = process.env) {
+  return resolveProfileName(String(env.BETTERWRIGHT_PROFILE || "").trim() || undefined);
 }
 
 export function liveViewFromEnv(env = process.env, fileConfig = loadLiveViewConfig()) {
@@ -443,6 +462,11 @@ export async function runMcpServer(env = process.env, options: any = {}) {
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
+    // A named profile is a separate identity, so two MCP servers sharing one
+    // home (a "social" one holding the logins, a "research" one that only
+    // reads) both stay signed in instead of one getting a signed-out
+    // ephemeral profile. Unset keeps the single default profile.
+    ...(profileFromEnv(env) ? { profile: profileFromEnv(env) } : {}),
     // Identity must match egress geography (see docs/getting-started.md):
     // a headless server whose exit IP sits in another country needs these
     // pinned or geo-sensitive sites challenge every run.

@@ -548,6 +548,9 @@ async function completeWithRetry(model, request, deadline, stopSignal) {
  * @param {import("./prompt.js").Guardrails} [options.guardrails] deployer limits
  * @param {string} [options.session="default"] browser session name
  * @param {boolean|"auto"} [options.headless] browser headless mode (new browsers)
+ * @param {string} [options.profile] named browser profile (a separate identity
+ *   with its own cookies) for a browser this call creates. Ignored when
+ *   `browser` is supplied — that browser already has a profile.
  * @param {NetworkPolicy} [options.policy] network policy (new browsers)
  * @param {number} [options.maxDurationMs=1800000] wall-clock budget for the
  *   agent loop; it has no fixed step cap
@@ -616,6 +619,7 @@ export async function runAgentTask(options: any = {}) {
     new BetterWright({
       policy: options.policy || new NetworkPolicy(),
       headless: options.headless,
+      ...(options.profile ? { profile: options.profile } : {}),
       ...(Object.hasOwn(options, "vault") ? { vault: options.vault } : {}),
     });
   const withLogin = Boolean(browser.vault);

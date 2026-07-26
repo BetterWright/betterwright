@@ -37,7 +37,8 @@ xvfb-run -a betterwright run --headed -c "return page.title()"
 
 ## Persistent state
 
-Both modes use `$BETTERWRIGHT_HOME/browser/profile`. Cookies, local storage,
+Both modes use `$BETTERWRIGHT_HOME/browser/profile` (or
+`browser/profiles/<name>` with a named profile). Cookies, local storage,
 browser history, and logins therefore survive a switch between headed and
 headless runs. Only one process can own the profile at a time; concurrent
 workers receive isolated ephemeral profiles rather than corrupting it.
@@ -45,6 +46,26 @@ workers receive isolated ephemeral profiles rather than corrupting it.
 To sign in manually, start one headed run, complete the login in the visible
 browser window, then keep using the normal persistent profile. For model-safe
 credential filling, prefer the trusted [credential API](credentials.md).
+
+### A second identity
+
+The single-owner rule is per profile, and `profile: "<name>"` makes a new one:
+an independent persistent profile at
+`$BETTERWRIGHT_HOME/browser/profiles/<name>` with its own cookie jar, lock, and
+session daemon.
+
+```js
+new BetterWright({ profile: "social" }); // signed in as the posting account
+new BetterWright({ profile: "review" }); // signed in as the reading account
+```
+
+Both run at the same time, each fully signed in; sign into each one once, the
+same way. Omitting `profile` keeps the default `browser/profile`, unchanged.
+For parallel work as the *same* identity use `--session` names instead — they
+share one browser and one cookie jar. The CLI equivalent is `--profile <name>`;
+for MCP, set `BETTERWRIGHT_PROFILE`. See
+[sessions.md](sessions.md#sessions-vs-profiles) and
+[architecture.md](architecture.md#named-profiles).
 
 ## Managed-browser enforcement
 

@@ -5,6 +5,14 @@
 // remembers earlier tasks — the resume half of session persistence (the
 // daemon holds the browser half).
 //
+// A named browser profile keeps its own set under `<home>/sessions/@<profile>/`.
+// A profile is a separate identity, and an exec transcript quotes the pages it
+// visited while signed in as that identity, so it must never resume into
+// another one — two profiles both using the default session name would
+// otherwise share one history file. The `@` prefix cannot collide with a
+// session directory: sanitized session names always start with a letter or
+// digit.
+//
 // Saved transcripts are elided, not summarized: stale browser observations
 // (page snapshots, by far the bulk of a browsing transcript) are replaced
 // with a one-line stub, because the live page — still open in the session
@@ -17,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { defaultDaemonHome, sessionName } from "./daemon.js";
+import { resolveProfileName } from "./profile-name.js";
 
 const STORE_VERSION = 1;
 const KEEP_RECENT_BROWSER_RESULTS = 2;
@@ -27,16 +36,20 @@ export const ELIDED_OBSERVATION =
 
 const ROLES = new Set(["user", "assistant", "tool"]);
 
-function storeDir(home, session) {
+function storeDir(home, session, profile?: unknown) {
   const name = sessionName(session);
   const safe = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)
     ? name
     : `h-${crypto.createHash("sha256").update(name).digest("hex").slice(0, 16)}`;
-  return path.join(home || defaultDaemonHome(), "sessions", safe);
+  const root = path.join(home || defaultDaemonHome(), "sessions");
+  const resolved = resolveProfileName(profile);
+  // The default profile keeps `sessions/<name>` exactly as before, so an
+  // upgraded install resumes the transcripts it already has.
+  return resolved === null ? path.join(root, safe) : path.join(root, `@${resolved}`, safe);
 }
 
-export function transcriptPath(home, session) {
-  return path.join(storeDir(home, session), "transcript.json");
+export function transcriptPath(home, session, profile?: unknown) {
+  return path.join(storeDir(home, session, profile), "transcript.json");
 }
 
 function validMessage(message) {
@@ -98,9 +111,9 @@ export function elideTranscript(messages, options: any = {}) {
 }
 
 /** Load the saved transcript for a session, or [] when absent/invalid. */
-export function loadTranscript(home, session) {
+export function loadTranscript(home, session, profile?: unknown) {
   try {
-    const raw = fs.readFileSync(transcriptPath(home, session), "utf8");
+    const raw = fs.readFileSync(transcriptPath(home, session, profile), "utf8");
     const parsed = JSON.parse(raw);
     const messages = Array.isArray(parsed) ? parsed : parsed?.messages;
     if (!Array.isArray(messages)) return [];
@@ -111,13 +124,14 @@ export function loadTranscript(home, session) {
 }
 
 /** Elide and persist a transcript (atomic write, private permissions). */
-export function saveTranscript(home, session, messages, options: any = {}) {
-  const dir = storeDir(home, session);
+export function saveTranscript(home, session, messages, options: any = {}, profile?: unknown) {
+  const dir = storeDir(home, session, profile);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const file = transcriptPath(home, session);
+  const file = transcriptPath(home, session, profile);
   const payload = JSON.stringify({
     version: STORE_VERSION,
     session: sessionName(session),
+    ...(resolveProfileName(profile) ? { profile: resolveProfileName(profile) } : {}),
     savedAt: new Date().toISOString(),
     messages: elideTranscript(messages, options),
   });
@@ -128,9 +142,9 @@ export function saveTranscript(home, session, messages, options: any = {}) {
 }
 
 /** Forget a session's saved transcript (used by `exec --fresh`). */
-export function clearTranscript(home, session) {
+export function clearTranscript(home, session, profile?: unknown) {
   try {
-    fs.rmSync(transcriptPath(home, session), { force: true });
+    fs.rmSync(transcriptPath(home, session, profile), { force: true });
   } catch {
     /* best effort */
   }
