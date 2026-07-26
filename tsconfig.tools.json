@@ -1,0 +1,41 @@
+// Build and release tooling: the scripts that produce and verify `dist/`.
+//
+// This project is deliberately the half of the development sources that does
+// NOT import the built runtime, because `prebuild` compiles it — on a clean
+// checkout `dist/` does not exist yet. Anything that imports
+// `../dist/src/*.js` belongs in tsconfig.harness.json instead; adding such an
+// import here fails the build on a clean tree, which is the intended alarm.
+//
+// It compiles in place (no outDir): `scripts/build.ts` becomes
+// `scripts/build.js` beside it, so the scripts keep resolving the repo root as
+// `../`. The emitted `.js` is gitignored.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "moduleDetection": "legacy",
+    "lib": ["ES2024"],
+    "types": ["node"],
+    "strict": false,
+    "noImplicitAny": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "noEmitOnError": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "useDefineForClassFields": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": false
+  },
+  "files": [
+    "scripts/build.ts",
+    "scripts/check-build.ts",
+    "scripts/check-package.ts",
+    "scripts/check-versions.ts",
+    "scripts/run-unit-tests.ts"
+  ]
+}

@@ -1,0 +1,25 @@
+// The shipped examples are consumer code: they import `betterwright` by name,
+// not by relative path. `paths` points that bare specifier at this repo's own
+// published type surface so CI proves the examples still compile against the
+// API we are about to publish. Nothing is emitted — the examples ship as
+// TypeScript and run on Node's type stripping (Node >= 22.18).
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "verbatimModuleSyntax": true,
+    // No `baseUrl` — TypeScript 7 removed it; `paths` resolves relative to
+    // this file.
+    "paths": {
+      "betterwright": ["./types/index.d.ts"],
+      "betterwright/*": ["./types/*.d.ts"]
+    }
+  },
+  "include": ["examples/**/*.ts"]
+}

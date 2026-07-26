@@ -2,6 +2,16 @@
 node_modules/
 npm-debug.log*
 
+# Compiled development sources. tsconfig.tools.json and tsconfig.harness.json
+# emit next to their .ts input on purpose: scripts resolve the repo root as
+# `../`, the tests import the built runtime as `../../dist/src/*.js` and read
+# `../fixtures/*`, and moving the output would break every one of those
+# relative contracts.
+scripts/*.js
+tests/node/**/*.js
+benchmarks/*/*.js
+*.tsbuildinfo
+
 # Python
 __pycache__/
 *.py[cod]

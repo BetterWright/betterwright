@@ -1,5 +1,7 @@
 # Stealth Bench V1
 
+> Compile the harness first: `npm run build:harness` (emits the `.js` next to each `.ts`).
+
 This runner applies Browser Use's encrypted Stealth Bench task set to
 BetterWright without copying or publishing its plaintext tasks. It decrypts the
 tasks in memory, launches an isolated browser profile for each attempt, stores
@@ -11,7 +13,7 @@ That differs from the original 71-task blog post, so reports must retain the
 dataset hash.
 
 ```bash
-node benchmarks/stealth-bench/runner.mjs \
+node benchmarks/stealth-bench/runner.js \
   --dataset /path/to/browser-use-benchmark/Stealth_Bench_V1.enc \
   --mode headless \
   --task-ids 1,2,3 \

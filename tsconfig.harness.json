@@ -1,0 +1,45 @@
+// Everything that drives the built runtime: the Node test suite, the benchmark
+// harnesses, and the probe scripts. All of it reaches `dist/src/*.js`, so this
+// project only compiles after `npm run build` — `npm run build:harness` chains
+// the two in the right order.
+//
+// `dist/` ships no declaration files, so those imports resolve as `any`, which
+// is exactly the checking these files had as JavaScript. Their own bodies are
+// fully checked, and `noEmitOnError` means a type error fails the test run.
+//
+// Emits in place, like tsconfig.tools.json, because the tests locate the built
+// runtime at `../../dist/src/*.js` and their fixtures at `../fixtures/*`.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "moduleDetection": "legacy",
+    // ES2024 (not the runtime tsconfig's ES2023) because the benchmark
+    // harnesses use `Map.groupBy`, which Node 22 has and the shipped runtime
+    // does not need.
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "strict": false,
+    "noImplicitAny": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "noEmitOnError": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "useDefineForClassFields": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": false
+  },
+  "include": [
+    "scripts/cdpfree-probe.ts",
+    "scripts/stealth-report.ts",
+    "scripts/warm-profile.ts",
+    "tests/node/**/*.ts",
+    "benchmarks/**/*.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
+}

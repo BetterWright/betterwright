@@ -1,0 +1,409 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+
+import {
+  assertRotationPreservesMatchMode,
+  pendingCredentialRecovery,
+} from "../../dist/src/credential-constants.js";
+import { BetterWright, LocalCredentialVault } from "../../dist/src/index.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
+
+test("the encrypted local credential vault is enabled by default and can be replaced or disabled", async () => {
+  const home = path.join(os.tmpdir(), "betterwright-client-default-vault");
+  const local = new BetterWright({ home });
+  const customVault = { async handleRequest() {} };
+  const custom = new BetterWright({ vault: customVault });
+  const disabled = new BetterWright({ vault: false });
+  const disabledWithNull = new BetterWright({ vault: null });
+  try {
+    assert.ok(local.vault instanceof LocalCredentialVault);
+    assert.equal(local.vault.dir, path.join(home, "vault"));
+    assert.equal(custom.vault, customVault);
+    assert.equal(disabled.vault, null);
+    assert.equal(disabledWithNull.vault, null);
+    assert.throws(
+      () => new BetterWright({ vault: true }),
+      /vault must implement handleRequest/,
+    );
+  } finally {
+    await local.close();
+    await custom.close();
+    await disabled.close();
+    await disabledWithNull.close();
+  }
+});
+
+test("download approval is required by default and configurable", async () => {
+  const guarded = new BetterWright();
+  const allowed = new BetterWright({ downloadPolicy: "allow" });
+  try {
+    assert.equal(guarded.downloadPolicy, "ask");
+    assert.equal(guarded._workerConfig().downloadPolicy, "ask");
+    assert.equal(allowed.downloadPolicy, "allow");
+    assert.throws(
+      () => new BetterWright({ downloadPolicy: "sometimes" }),
+      /downloadPolicy must be "ask", "allow", or "deny"/,
+    );
+  } finally {
+    await guarded.close();
+    await allowed.close();
+  }
+});
+
+test("public search result UIs are allowed by default and block is opt-in", async () => {
+  const relaxed = new BetterWright();
+  const blocked = new BetterWright({ publicSearchPolicy: "block" });
+  try {
+    assert.equal(relaxed.publicSearchPolicy, "allow");
+    assert.equal(relaxed._workerConfig().publicSearchPolicy, "allow");
+    assert.equal(blocked._workerConfig().publicSearchPolicy, "block");
+    assert.throws(
+      () => new BetterWright({ publicSearchPolicy: "pace" }),
+      /publicSearchPolicy must be "block" or "allow"/,
+    );
+  } finally {
+    await relaxed.close();
+    await blocked.close();
+  }
+});
+
+test("CloakBrowser is the managed default", async () => {
+  const browser = new BetterWright();
+  try {
+    assert.equal(browser.browserFlavor, "cloak");
+    assert.equal(browser._workerConfig().browserFlavor, "cloak");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Cloaking V2 options reach the worker and headedInvisible forces headed mode", async () => {
+  const defaults = new BetterWright();
+  const configured = new BetterWright({
+    cloakV2: false,
+    upstreamProxy: "socks5://proxy.example:1080",
+    geoip: true,
+    locale: "de-DE",
+    timezone: "Europe/Berlin",
+    headless: true,
+    headedInvisible: true,
+  });
+  try {
+    assert.equal(defaults.cloakV2, true);
+    assert.equal(defaults._workerConfig().cloakV2, true);
+    assert.equal(configured.headless, false);
+    assert.deepEqual(
+      {
+        cloakV2: configured._workerConfig().cloakV2,
+        upstreamProxy: configured._workerConfig().upstreamProxy,
+        geoip: configured._workerConfig().geoip,
+        locale: configured._workerConfig().locale,
+        timezone: configured._workerConfig().timezone,
+        headedInvisible: configured._workerConfig().headedInvisible,
+      },
+      {
+        cloakV2: false,
+        upstreamProxy: "socks5://proxy.example:1080",
+        geoip: true,
+        locale: "de-DE",
+        timezone: "Europe/Berlin",
+        headedInvisible: true,
+      },
+    );
+  } finally {
+    await defaults.close();
+    await configured.close();
+  }
+});
+
+test("chromiumArgs reach the worker config and reserved switches fail at construction", async () => {
+  const defaults = new BetterWright();
+  const tuned = new BetterWright({
+    chromiumArgs: ["--disable-gpu", "--disable-software-rasterizer"],
+  });
+  try {
+    assert.deepEqual(defaults.chromiumArgs, []);
+    assert.deepEqual(defaults._workerConfig().chromiumArgs, []);
+    assert.deepEqual(tuned._workerConfig().chromiumArgs, [
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+    ]);
+    // Rejected in the constructor, so a switch that would bypass the guard
+    // proxy surfaces as a clear TypeError instead of an opaque launch failure.
+    assert.throws(
+      () => new BetterWright({ chromiumArgs: ["--proxy-server=http://10.0.0.1:8080"] }),
+      { name: "TypeError", message: /reserved by BetterWright/ },
+    );
+  } finally {
+    await defaults.close();
+    await tuned.close();
+  }
+});
+
+test("headed and headless modes use the same managed Cloak profile", async () => {
+  const headed = new BetterWright({ headless: false });
+  const headless = new BetterWright({ headless: true });
+  try {
+    assert.equal(headed.browserFlavor, "cloak");
+    assert.equal(headless.browserFlavor, "cloak");
+    assert.equal(headed.headless, false);
+    assert.equal(headless.headless, true);
+    assert.match(headed._workerConfig().profileDir, /[/\\]profile$/);
+    assert.equal(
+      headed._workerConfig().profileDir,
+      headless._workerConfig().profileDir,
+    );
+  } finally {
+    await headed.close();
+    await headless.close();
+  }
+});
+
+test("stock browsers, custom executables, and CDP attach are rejected", () => {
+  assert.throws(
+    () => new BetterWright({ browser: "chromium" }),
+    /only supports the managed CloakBrowser backend/,
+  );
+  assert.throws(
+    () => new BetterWright({ browser: "other" }),
+    /only supports the managed CloakBrowser backend/,
+  );
+  assert.throws(
+    () => new BetterWright({ executablePath: "/opt/chromium" }),
+    /CLOAKBROWSER_BINARY_PATH/,
+  );
+  assert.throws(
+    () => new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" }),
+    /connectOverCdp is not supported/,
+  );
+  assert.doesNotThrow(() => new BetterWright({ connectOverCdp: "" }));
+});
+
+test("legacy environment settings cannot re-enable a stock browser", () => {
+  const previousBrowser = process.env.BETTERWRIGHT_BROWSER;
+  const previousCdp = process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
+  try {
+    process.env.BETTERWRIGHT_BROWSER = "chromium";
+    assert.throws(
+      () => new BetterWright(),
+      /only supports the managed CloakBrowser backend/,
+    );
+    process.env.BETTERWRIGHT_BROWSER = "cloak";
+    process.env.BETTERWRIGHT_CONNECT_OVER_CDP = "http://127.0.0.1:9222";
+    assert.throws(
+      () => new BetterWright(),
+      /connectOverCdp is not supported/,
+    );
+  } finally {
+    if (previousBrowser === undefined) delete process.env.BETTERWRIGHT_BROWSER;
+    else process.env.BETTERWRIGHT_BROWSER = previousBrowser;
+    if (previousCdp === undefined) delete process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
+    else process.env.BETTERWRIGHT_CONNECT_OVER_CDP = previousCdp;
+  }
+});
+
+test("pendingCredentialRecovery requires a pendingId and stringifies the origin", () => {
+  assert.equal(pendingCredentialRecovery(null, {}, "https://a.test"), null);
+  assert.equal(pendingCredentialRecovery({}, {}, "https://a.test"), null);
+  assert.equal(
+    pendingCredentialRecovery({ pendingId: "   " }, {}, "https://a.test"),
+    null,
+  );
+  assert.deepEqual(
+    pendingCredentialRecovery(
+      { pendingId: " pending_1 " },
+      null,
+      new URL("https://signup.example.test"),
+    ),
+    {
+      pendingId: "pending_1",
+      origin: "https://signup.example.test/",
+      matchMode: "base-domain",
+      username: null,
+      label: null,
+      expiresAt: null,
+    },
+  );
+});
+
+test("pendingCredentialRecovery matchMode: record wins, then request, then base-domain", () => {
+  const at = (record, requested) =>
+    pendingCredentialRecovery(
+      { pendingId: "p", ...record },
+      requested,
+      "https://a.test",
+    ).matchMode;
+  assert.equal(at({ matchMode: "exact-origin" }, { matchMode: "host" }), "exact-origin");
+  assert.equal(at({ matchMode: "never" }, {}), "never");
+  assert.equal(at({ matchMode: "bogus" }, { matchMode: "host" }), "host");
+  assert.equal(at({}, { matchMode: "host" }), "host");
+  assert.equal(at({ matchMode: "bogus" }, { matchMode: "also-bogus" }), "base-domain");
+  assert.equal(at({}, {}), "base-domain");
+  assert.equal(at({}, null), "base-domain");
+});
+
+test("pendingCredentialRecovery resolves username/label by own-property, honoring explicit null", () => {
+  const build = (record, requested) =>
+    pendingCredentialRecovery(
+      { pendingId: "p", ...record },
+      requested,
+      "https://a.test",
+    );
+  // The record's own property wins even when its value is null.
+  assert.equal(
+    build({ username: null }, { username: "alice@example.test" }).username,
+    null,
+  );
+  assert.equal(build({ label: null }, { label: "work" }).label, null);
+  // Absent from the record: fall back to the request, stringified.
+  assert.equal(
+    build({}, { username: "alice@example.test" }).username,
+    "alice@example.test",
+  );
+  assert.equal(build({}, { username: 42 }).username, "42");
+  assert.equal(build({}, { label: "work" }).label, "work");
+  // Present on the record: the record value wins, stringified.
+  assert.equal(build({ username: 7 }, { username: "alice" }).username, "7");
+  // Absent everywhere: null.
+  assert.equal(build({}, {}).username, null);
+  assert.equal(build({}, {}).label, null);
+});
+
+test("pendingCredentialRecovery expiresAt is null unless the record carries a value", () => {
+  const build = (record) =>
+    pendingCredentialRecovery({ pendingId: "p", ...record }, {}, "https://a.test");
+  assert.equal(build({}).expiresAt, null);
+  assert.equal(build({ expiresAt: null }).expiresAt, null);
+  assert.equal(
+    build({ expiresAt: "2026-08-01T00:00:00.000Z" }).expiresAt,
+    "2026-08-01T00:00:00.000Z",
+  );
+  assert.equal(build({ expiresAt: 0 }).expiresAt, "0");
+});
+
+test("rotating an existing credential rejects a matchMode override everywhere", () => {
+  const expected =
+    /matchMode cannot be changed when rotating an existing credential/;
+  assert.throws(
+    () => assertRotationPreservesMatchMode({ id: "cred_1", matchMode: "host" }),
+    (error) => error instanceof TypeError && expected.test(error.message),
+  );
+  assert.throws(
+    () => assertRotationPreservesMatchMode({ id: 0, matchMode: null }),
+    TypeError,
+  );
+  assert.doesNotThrow(() => assertRotationPreservesMatchMode({ id: "cred_1" }));
+  assert.doesNotThrow(() =>
+    assertRotationPreservesMatchMode({ matchMode: "host" }),
+  );
+  assert.doesNotThrow(() =>
+    assertRotationPreservesMatchMode({ id: null, matchMode: "host" }),
+  );
+  assert.doesNotThrow(() => assertRotationPreservesMatchMode(undefined));
+  assert.doesNotThrow(() => assertRotationPreservesMatchMode(null));
+});
+
+// Regression: a launch step failing after the browser context was already
+// launched (here: the download guard, which requires a browser CDP session the
+// stub does not provide) must close that context — before the profile lock is
+// released — instead of orphaning the Chromium process.
+test("a failed launch step closes the already-launched browser context", async (t) => {
+  const home = makeTempDir("betterwright-launch-leak-");
+  const stubRoot = makeTempDir("betterwright-cloak-stub-");
+  const marker = path.join(stubRoot, "close-marker.jsonl");
+  fs.mkdirSync(path.join(stubRoot, "dist"));
+  fs.writeFileSync(
+    path.join(stubRoot, "package.json"),
+    JSON.stringify({ type: "module" }),
+  );
+  // A stand-in Cloak wrapper (loaded in the worker process through the
+  // BETTERWRIGHT_CLOAKBROWSER_PATH override) whose context supports the launch
+  // steps up to the download guard, then records every close() call together
+  // with whether the profile lock still existed at that moment.
+  fs.writeFileSync(
+    path.join(stubRoot, "dist", "index.js"),
+    `import { EventEmitter } from "node:events";
+import fs from "node:fs";
+
+export async function launchPersistentContext(options) {
+  const emitter = new EventEmitter();
+  const lockDir = \`\${options.userDataDir}.betterwright-lock\`;
+  const marker = process.env.BETTERWRIGHT_TEST_CLOSE_MARKER;
+  return {
+    on: (...args) => emitter.on(...args),
+    once: (...args) => emitter.once(...args),
+    async route() {},
+    // No newBrowserCDPSession: installDownloadGuard must fail after launch.
+    browser: () => ({}),
+    pages: () => [],
+    async close() {
+      fs.appendFileSync(
+        marker,
+        \`\${JSON.stringify({ lockHeldAtClose: fs.existsSync(lockDir) })}\\n\`,
+      );
+      emitter.emit("close");
+    },
+  };
+}
+`,
+  );
+  const savedEnv: Record<string, string | undefined> = {};
+  for (const key of [
+    "BETTERWRIGHT_CLOAKBROWSER_PATH",
+    "BETTERWRIGHT_CHROMIUM_PATH",
+    "BETTERWRIGHT_CHROMIUM_ROOT",
+    "BETTERWRIGHT_TEST_CLOSE_MARKER",
+  ])
+    savedEnv[key] = process.env[key];
+  process.env.BETTERWRIGHT_CLOAKBROWSER_PATH = stubRoot;
+  process.env.BETTERWRIGHT_CHROMIUM_PATH = "off";
+  delete process.env.BETTERWRIGHT_CHROMIUM_ROOT;
+  process.env.BETTERWRIGHT_TEST_CLOSE_MARKER = marker;
+  const browser = new BetterWright({ home, headless: true, vault: false });
+  t.after(async () => {
+    await browser.close().catch(() => {});
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(stubRoot, { recursive: true, force: true });
+  });
+
+  const result = await browser.run("return 1;", { timeout: 30 });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /browser CDP session/);
+  assert.ok(
+    fs.existsSync(marker),
+    "the context launched before the failure was never closed (leaked browser)",
+  );
+  const closes = fs
+    .readFileSync(marker, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.equal(closes.length, 1, "the launched context must be closed exactly once");
+  assert.equal(
+    closes[0].lockHeldAtClose,
+    true,
+    "the context must be closed before the profile lock is released",
+  );
+});
+
+test("CLOAKBROWSER_BINARY_PATH remains the only binary override", async () => {
+  const previous = process.env.CLOAKBROWSER_BINARY_PATH;
+  process.env.CLOAKBROWSER_BINARY_PATH = "/opt/cloak/chrome";
+  const browser = new BetterWright();
+  try {
+    assert.equal(browser.browserFlavor, "cloak");
+    assert.equal(browser._workerConfig().browserFlavor, "cloak");
+    assert.equal("executablePath" in browser._workerConfig(), false);
+  } finally {
+    await browser.close();
+    if (previous === undefined) delete process.env.CLOAKBROWSER_BINARY_PATH;
+    else process.env.CLOAKBROWSER_BINARY_PATH = previous;
+  }
+});
