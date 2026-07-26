@@ -25,6 +25,20 @@ export type {
 
 export interface BetterWrightOptions {
   home?: string;
+  /**
+   * Named persistent browser profile inside the home. Omit it (the default) to
+   * keep the single `browser/profile` directory unchanged. A name selects an
+   * independent, separately-locked profile at `browser/profiles/<name>`, so
+   * different names run concurrently — each fully logged in — while the same
+   * name still serializes behind the ephemeral fallback. The vault, artifacts,
+   * and CloakBrowser binary cache stay shared across profiles.
+   *
+   * Names allow letters, digits, ".", "-", and "_", must start with a letter
+   * or digit, and cannot contain path separators or "..". They are as
+   * case-sensitive as the underlying filesystem. An invalid name throws a
+   * `TypeError` at construction.
+   */
+  profile?: string;
   policy?: NetworkPolicy;
   /** Custom credential backend, or false/null to disable the built-in vault. */
   vault?: CredentialVault | false | null;

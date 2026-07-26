@@ -285,6 +285,23 @@ The security model — what the sandbox removes, why the metadata floor cannot
 be lifted, and where it does *not* claim to be a boundary — is in
 [docs/architecture.md](docs/architecture.md).
 
+All state lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`): the
+persistent browser profile at `browser/profile`, the credential `vault/`, and
+`artifacts/`. Only one process can own the default profile at a time, so a
+second concurrent run gets a signed-out ephemeral profile. To run unrelated
+work in parallel while each stays logged in, give each a **named profile** —
+an independent, separately-locked profile at `browser/profiles/<name>`:
+
+```js
+new BetterWright({ profile: "social" }); // holds the X / LinkedIn logins
+new BetterWright({ profile: "review" }); // reads and screenshots pages, concurrently
+```
+
+Omitting `profile` keeps the single default profile, unchanged. The vault and
+artifacts are shared across profiles. CLI: `--profile <name>`; MCP:
+`BETTERWRIGHT_PROFILE`. See
+[docs/architecture.md](docs/architecture.md#named-profiles).
+
 ## Docs
 
 | Start here | Capabilities | Under the hood |

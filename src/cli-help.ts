@@ -104,6 +104,9 @@ result. Globals include page, snapshot, screenshot, credentials, human.
 
 Options:
   --session <name>       which persistent session to use (default "default")
+  --profile <name>       named persistent profile at browser/profiles/<name>
+                         (default: the shared browser/profile); different names
+                         run concurrently, each with its own logins
   --headed               show the browser window
   --close                close the session after this call
   --approve-downloads    allow downloads for this one run

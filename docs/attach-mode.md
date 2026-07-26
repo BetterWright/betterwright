@@ -46,6 +46,27 @@ To sign in manually, start one headed run, complete the login in the visible
 browser window, then keep using the normal persistent profile. For model-safe
 credential filling, prefer the trusted [credential API](credentials.md).
 
+### Named profiles for concurrency
+
+The single-owner rule above means concurrency and logged-in state are otherwise
+mutually exclusive: a second concurrent run of the default profile gets a
+signed-out ephemeral browser. To run unrelated work in parallel while each
+stays logged in, give each its own named profile:
+
+```js
+new BetterWright({ profile: "social" }); // holds the X / LinkedIn logins
+new BetterWright({ profile: "review" }); // reads and screenshots pages
+```
+
+Each name is an independent persistent profile at `$BETTERWRIGHT_HOME/browser/
+profiles/<name>` with its own lock, so `social` and `review` run at the same
+time without sharing a cookie jar and without either being signed out. The same
+name still serializes with the ephemeral fallback. Omitting `profile` keeps the
+default `browser/profile`, unchanged. The vault is shared across profiles, so a
+credential saved from one profile is usable from every profile. The CLI
+equivalent is `--profile <name>`; for MCP, set `BETTERWRIGHT_PROFILE`. See
+[architecture.md](architecture.md#named-profiles).
+
 ## Managed-browser enforcement
 
 These legacy settings are rejected instead of silently choosing a normal

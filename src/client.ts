@@ -24,6 +24,7 @@ import { defaultHome } from "./home.js";
 import { defaultLiveViewListen } from "./live-view.js";
 import { loadLiveViewConfig } from "./live-view-config.js";
 import { NetworkPolicy } from "./policy.js";
+import { profileDirFor, resolveProfileName } from "./profile-name.js";
 import { listSkills, skillHintsForPages } from "./skills.js";
 import { createLocalCredentialVault } from "./vault.js";
 
@@ -195,6 +196,7 @@ function stealthDriverAvailable() {
 /** A persistent, policy-guarded Playwright browser. */
 export class BetterWright {
   declare home: string;
+  declare profile: string | null;
   declare policy: NetworkPolicy;
   declare vault: any;
   declare credentialCapture: boolean;
@@ -235,6 +237,15 @@ export class BetterWright {
   /**
    * @param {object} [options]
    * @param {string} [options.home] state directory (default ~/.betterwright)
+   * @param {string} [options.profile] named persistent browser profile inside
+   *   the home. Omit it (the default) to keep the single `browser/profile`
+   *   directory unchanged. A name selects an independent, separately-locked
+   *   profile at `browser/profiles/<name>`, so different names run
+   *   concurrently, each fully logged in; the same name still serializes with
+   *   the ephemeral fallback. The vault, artifacts, and browser binary cache
+   *   stay shared across profiles. Names allow letters, digits, ".", "-", and
+   *   "_" (no path separators or "..") and are case-sensitive to the extent
+   *   the filesystem is.
    * @param {NetworkPolicy} [options.policy] network policy
    * @param {object|false|null} [options.vault] custom vault with
    *   `handleRequest(action, payload, origin)`, or false/null to disable the
@@ -300,6 +311,10 @@ export class BetterWright {
    */
   constructor(options: any = {}) {
     this.home = options.home || defaultHome();
+    // null == the default `browser/profile`; a validated name scopes the
+    // profile directory and its lock without touching the shared vault,
+    // artifacts, or binary cache. Throws TypeError on an invalid name.
+    this.profile = resolveProfileName(options.profile);
     this.policy = options.policy || new NetworkPolicy();
     if (Object.hasOwn(options, "vault")) {
       const vault = options.vault;
@@ -398,8 +413,12 @@ export class BetterWright {
     for (const dir of [root, artifacts, downloads, runtime]) {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
+    // Only the profile directory (and, derived from it, its lock) is scoped by
+    // name: default -> `browser/profile`, a name -> `browser/profiles/<name>`.
+    // The runtime, artifacts, and downloads directories above stay shared, so
+    // ephemeral fallbacks and saved files are common to every profile.
     return {
-      profileDir: path.join(root, "profile"),
+      profileDir: profileDirFor(root, this.profile),
       runtimeDir: runtime,
       artifactsDir: artifacts,
       downloadsDir: downloads,

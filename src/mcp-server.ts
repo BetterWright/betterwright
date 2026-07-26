@@ -443,6 +443,13 @@ export async function runMcpServer(env = process.env, options: any = {}) {
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
+    // Named browser profile (see docs/architecture.md): an independent,
+    // separately-locked profile at browser/profiles/<name> so parallel MCP
+    // servers on one home stay logged in without serializing. Unset keeps the
+    // single default profile.
+    ...(String(env.BETTERWRIGHT_PROFILE || "").trim()
+      ? { profile: String(env.BETTERWRIGHT_PROFILE).trim() }
+      : {}),
     // Identity must match egress geography (see docs/getting-started.md):
     // a headless server whose exit IP sits in another country needs these
     // pinned or geo-sensitive sites challenge every run.

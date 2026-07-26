@@ -237,6 +237,17 @@ export function normalizeDaemonConfig(config: any = {}) {
   return {
     protocol: DAEMON_PROTOCOL,
     headless: config.headless !== false,
+    // The named browser profile (see src/profile-name.ts). It rides in the
+    // config signature, not the socket path: the daemon socket stays per-home
+    // (`<home>/daemon.sock`, with the temp-dir fallback for long homes) so the
+    // vault, artifacts, and binary cache remain shared, and adding a profile
+    // never pushes the socket over the 104/108-byte limit. A daemon holds one
+    // browser, hence one profile; a client that asks for a different profile
+    // sees a signature mismatch and — rather than run on the wrong profile —
+    // falls back to a private in-process browser scoped to the profile it asked
+    // for. Concurrency across profiles therefore always works; only daemon-side
+    // session persistence is limited to one profile per home at a time.
+    profile: config.profile ? String(config.profile) : null,
     policy: {
       allowLoopback: policy.allowLoopback !== false,
       allowPrivateNetwork: policy.allowPrivateNetwork !== false,
@@ -266,6 +277,7 @@ export async function createBrowserFromDaemonConfig(config) {
   return new BetterWright({
     policy: new NetworkPolicy(normalized.policy),
     headless: normalized.headless,
+    ...(normalized.profile ? { profile: normalized.profile } : {}),
     cloakV2: normalized.cloak.cloakV2,
     upstreamProxy: normalized.cloak.upstreamProxy || undefined,
     geoip: normalized.cloak.geoip,

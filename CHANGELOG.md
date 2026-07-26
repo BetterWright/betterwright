@@ -9,6 +9,18 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- Named, independently-locked browser profiles inside one home. The new
+  `profile` constructor option (also `--profile <name>` on the CLI and
+  `BETTERWRIGHT_PROFILE` for the MCP server) selects a persistent profile at
+  `browser/profiles/<name>`; different names run concurrently, each fully
+  logged in, while the same name still serializes behind the ephemeral runtime
+  fallback. Omitting `profile` leaves `browser/profile` and every login in it
+  untouched — no migration. The vault, artifacts, CloakBrowser binary cache,
+  and per-home session-daemon socket stay shared across profiles. Names are
+  validated against path traversal and reserved device names.
+
 ## [1.5.0] - 2026-07-25
 
 ### Changed

@@ -224,8 +224,18 @@ async function makeBrowser(flags, { headless }: any = {}) {
   return new BetterWright({
     policy: new NetworkPolicy(policyOptionsFromFlags(flags)),
     headless: headless ?? !flags.has("--headed"),
+    ...(profileFromFlags() ? { profile: profileFromFlags() } : {}),
     ...cloakingFromFlags(flags),
   });
+}
+
+// The named browser profile for this invocation: `--profile <name>` selects an
+// independent, separately-locked profile at `browser/profiles/<name>` so
+// unrelated runs stay logged in concurrently; omitting it keeps the single
+// default profile. Shared with the daemon config below so the in-process
+// fallback and the daemon agree on which profile a run targets.
+function profileFromFlags() {
+  return flagValue(process.argv, "--profile") || undefined;
 }
 
 // Cloaking V2 flags shared by run/repl/agent. On by default; --no-cloak-v2
@@ -451,6 +461,7 @@ async function readSnippet(arg) {
 function daemonConfigFromFlags(flags) {
   return {
     headless: !flags.has("--headed"),
+    profile: profileFromFlags(),
     policy: {
       allowLoopback: !flags.has("--block-loopback"),
       allowPrivateNetwork: !flags.has("--block-private-network"),

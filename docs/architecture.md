@@ -138,8 +138,10 @@ Everything lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`):
 ```
 ~/.betterwright/
 ├── browser/
-│   ├── profile/        persistent browser profile (cookies, logins)
-│   └── runtime/        ephemeral profiles when the main one is locked
+│   ├── profile/        default persistent browser profile (cookies, logins)
+│   ├── profiles/       named persistent profiles, one directory per name
+│   │   └── <name>/     e.g. profiles/social, profiles/review
+│   └── runtime/        ephemeral profiles when a profile is locked (shared)
 ├── vault/
 │   ├── vault.key       owner-only local encryption key
 │   ├── vault.enc       authenticated AES-256-GCM record table
@@ -148,6 +150,41 @@ Everything lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`):
 └── artifacts/          screenshots, downloads, spilled output (quota-managed)
     └── downloads/
 ```
+
+### Named profiles
+
+By default a home has exactly one persistent profile, at `browser/profile`.
+Only one process can own it at a time; a second concurrent worker gets an
+isolated ephemeral profile from `browser/runtime` (a signed-out browser) rather
+than corrupting the profile. That safety trade means concurrency and logged-in
+state are mutually exclusive on the default profile.
+
+Passing `profile: "<name>"` to the constructor (or `--profile <name>` on the
+CLI, or `BETTERWRIGHT_PROFILE` for the MCP server) selects an independent
+persistent profile at `browser/profiles/<name>` with the same internal layout
+and **its own lock** (`browser/profiles/<name>.betterwright-lock`, a sibling of
+the profile directory). Because the lock is per-profile, two BetterWright
+instances on *different* names run at the same time, each fully logged in;
+two instances on the *same* name still serialize, and the second falls back to
+an ephemeral runtime profile exactly as the single default profile does today.
+Omitting `profile` leaves `browser/profile` — and every existing login in it —
+untouched: there is no migration.
+
+Names are validated as a strict allowlist (letters, digits, `.`, `-`, `_`,
+starting with a letter or digit; no path separators, `..`, absolute paths, or
+Windows reserved device names) so a name can never escape `browser/profiles/`.
+They are as case-sensitive as the underlying filesystem.
+
+Only the profile directory and its lock are scoped. The **vault, the
+`artifacts/` directory, the CloakBrowser binary cache, and the session-daemon
+socket are shared across every profile in a home** — so a credential saved once
+is reachable from any profile. The daemon socket in particular stays per-home
+(`<home>/daemon.sock`, with the temp-dir fallback below): the profile rides in
+the daemon's config signature rather than the socket path, so a nested profile
+name can never push the socket over the unix-socket length limit. One daemon
+holds one profile at a time; a client that requests a different profile than the
+running daemon holds falls back to a private in-process browser scoped to the
+profile it asked for, so cross-profile concurrency always works.
 
 The separately licensed CloakBrowser binary is cached by its official wrapper,
 not copied into BetterWright's package or home directory. `betterwright setup`

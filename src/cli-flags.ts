@@ -52,6 +52,7 @@ export const VALUE_FLAGS = new Set([
   "--model-id",
   "--platform",
   "--port",
+  "--profile",
   "--protocol",
   "--provider",
   "--public-host",
