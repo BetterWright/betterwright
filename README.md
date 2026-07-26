@@ -111,18 +111,18 @@ screenshot, and prints **one JSON object** — answer, steps, token usage,
 proof path.
 
 **Models are selected by real id**, not by adapter nickname. Pass the model
-id you want (`gpt-5.6-sol`, `claude-opus-4-8`, `qwen3:8b`, …). BetterWright
+id you want (`gpt-5.6-sol`, `claude-opus-5`, `qwen3.5:9b`, …). BetterWright
 probes running local servers (Ollama, vLLM), OpenRouter when keyed, and native
 Claude / Codex / Grok routes; if exactly one source exposes that id, it uses
-it. Prefix the source only to pin a collision (`ollama/qwen3:8b`). The words
+it. Prefix the source only to pin a collision (`ollama/qwen3.5:9b`). The words
 `claude`, `codex`, and `grok` alone are **not** model shortcuts.
 
 | You have… | Typical start |
 | --- | --- |
 | ChatGPT / Codex subscription | `betterwright auth --login codex` → `--model gpt-5.6-sol` |
-| Anthropic API key | `ANTHROPIC_API_KEY=…` → `--model claude-opus-4-8` |
-| xAI (OAuth or API key) | `betterwright auth --login grok` or `XAI_API_KEY` → `--model grok-4.3` |
-| Local [Ollama](https://ollama.com) | pull a tool-calling model → `--model qwen3:8b` or `ollama/…` |
+| Anthropic API key | `ANTHROPIC_API_KEY=…` → `--model claude-opus-5` |
+| xAI (OAuth or API key) | `betterwright auth --login grok` or `XAI_API_KEY` → `--model grok-4.5` |
+| Local [Ollama](https://ollama.com) | pull a tool-calling model → `--model qwen3.5:9b` or `ollama/…` |
 | Local vLLM | serve with tool-calling enabled → `--model <id>` or `vllm/<id>` |
 | [OpenRouter](https://openrouter.ai) | `OPENROUTER_API_KEY=…` → `--model <author/model>` |
 | Any OpenAI-compatible `/v1` | `--base-url https://host/v1 --model <id>` |
@@ -133,7 +133,7 @@ betterwright models
 betterwright models ollama
 
 # Local Ollama — no API key; default base http://127.0.0.1:11434/v1
-betterwright exec "check example.com" --model ollama/qwen3:8b
+betterwright exec "check example.com" --model ollama/qwen3.5:9b
 
 # OpenRouter — bare author/model id when unambiguous
 OPENROUTER_API_KEY=… betterwright exec "check example.com" \
