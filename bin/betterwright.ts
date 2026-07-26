@@ -51,7 +51,12 @@ import {
   makeLineReader,
   readExecTaskFromStdin,
 } from "../src/cli-io.js";
-import { daemonLogPath, defaultDaemonHome, sessionName } from "../src/daemon.js";
+import {
+  daemonLogPath,
+  daemonProfilesInHome,
+  defaultDaemonHome,
+  sessionName,
+} from "../src/daemon.js";
 import {
   connectSessionDaemon,
   createDaemonBrowser,
@@ -69,6 +74,7 @@ import {
   resolveCoreDir,
 } from "../src/doctor.js";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.js";
+import { profileLabel, resolveProfileName } from "../src/profile-name.js";
 // `agentSystemPrompt` comes from the light prompt module, not index.js, which
 // would drag the whole browser/worker/vault graph in just to print a skill.
 import { agentSystemPrompt } from "../src/prompt.js";
@@ -224,8 +230,35 @@ async function makeBrowser(flags, { headless }: any = {}) {
   return new BetterWright({
     policy: new NetworkPolicy(policyOptionsFromFlags(flags)),
     headless: headless ?? !flags.has("--headed"),
+    ...(cliProfile() ? { profile: cliProfile() } : {}),
     ...cloakingFromFlags(flags),
   });
+}
+
+// The named browser profile for this invocation. `--profile <name>` selects a
+// separate identity: its own cookie jar at `browser/profiles/<name>`, its own
+// profile lock, and its own session daemon, so two identities run at once
+// without either being signed out. Omitting it keeps the single default
+// profile. Parsed from argv once and validated up front in main(), so this
+// cannot throw at a call site; every browser, daemon, and transcript path in
+// this file goes through it, which is what keeps the in-process fallback on
+// the same identity the daemon would have used.
+let cliProfileCache: string | null | undefined;
+function cliProfile(): string | null {
+  if (cliProfileCache === undefined) {
+    const raw = flagValue(process.argv, "--profile");
+    // `--profile ""` is a mistake, not a request for the default profile: a
+    // script passing an unset `--profile "$IDENTITY"` must fail loudly rather
+    // than quietly act as the wrong identity. Only an absent flag defaults —
+    // and then BETTERWRIGHT_PROFILE, the same variable the MCP server reads,
+    // so a host that runs both surfaces acts as one identity in both (and
+    // `betterwright view` attaches to the browser its MCP server is driving).
+    const fromEnv = String(process.env.BETTERWRIGHT_PROFILE || "").trim() || undefined;
+    cliProfileCache = resolveProfileName(
+      raw === undefined || raw === null ? fromEnv : raw,
+    );
+  }
+  return cliProfileCache;
 }
 
 // Cloaking V2 flags shared by run/repl/agent. On by default; --no-cloak-v2
@@ -451,6 +484,9 @@ async function readSnippet(arg) {
 function daemonConfigFromFlags(flags) {
   return {
     headless: !flags.has("--headed"),
+    // Selects which daemon to talk to (one per profile per home), not merely
+    // how it is configured — see connectSessionDaemon.
+    profile: cliProfile(),
     policy: {
       allowLoopback: !flags.has("--block-loopback"),
       allowPrivateNetwork: !flags.has("--block-private-network"),
@@ -540,7 +576,7 @@ Operate a real, persistent web browser with the \`betterwright\` command wheneve
 
 It prints one JSON object {ok, result, error, console, events, artifacts, pages, challenges, warnings, durationMs}; \`artifacts\` lists files written during the run — screenshots there have a \`path\`; open that image to actually see the page.
 
-Invocations share one persistent session (background daemon): open tabs, page state, and the in-memory \`state\` object survive between \`run\` calls; logins/cookies persist in the on-disk profile. Act in small steps — one \`run\` per action-and-observe — and call \`run\` again to continue. The session auto-closes after ~15 idle minutes; run \`betterwright close\` when you finish to end it sooner; give parallel workers their own \`--session <name>\`. Batch steps in one process by piping blank-line-separated snippets: \`printf '%s\\n\\n%s\\n' "snippetA" "snippetB" | betterwright repl\` (same session).
+Invocations share one persistent session (background daemon): open tabs, page state, and the in-memory \`state\` object survive between \`run\` calls; logins/cookies persist in the on-disk profile. Act in small steps — one \`run\` per action-and-observe — and call \`run\` again to continue. The session auto-closes after ~15 idle minutes; run \`betterwright close\` when you finish to end it sooner; give parallel workers their own \`--session <name>\` (same logins, own tabs), or \`--profile <name>\` when a run needs a different signed-in identity (own cookie jar). Batch steps in one process by piping blank-line-separated snippets: \`printf '%s\\n\\n%s\\n' "snippetA" "snippetB" | betterwright repl\` (same session).
 
 Surface details for "Live view and handoff" below: \`browser_handoff\` action "start" opens it, "status" waits for takeover Done; \`live_view\` watches without pausing, \`handoff\` pauses until they click Done; interactive accepts \`/live\`; \`exec "<task>" --live-view\` opens the viewer at step 0; \`betterwright view\` prints a URL for the open tabs without closing them (takeover: Take control / the dock).
 
@@ -784,11 +820,15 @@ Shell note: double quotes still expand \`$\`. Use single quotes for literal pric
 
 Options: --stdin --model <id|source/id> --base-url <url> --api-key-env <name>
          --protocol chat|responses --effort <level> --session <name> --headed
-         --live-view --fresh --close --no-daemon
+         --profile <name> --live-view --fresh --close --no-daemon
 
 Repeated execs continue the same session: the browser (tabs, logins) stays
 live in a background daemon and the agent remembers the prior conversation.
---fresh starts the session over; --close ends it after this task.`;
+--fresh starts the session over; --close ends it after this task.
+
+--profile <name> acts as a different identity: its own cookies, its own daemon,
+its own conversation history. Two profiles run at once, each stays signed in.
+Use --session for parallel work as the same identity.`;
 
 // Bare `betterwright` (no subcommand): an interactive agent console. You type
 // natural-language tasks; BetterWright's own agent loop drives the browser,
@@ -899,7 +939,10 @@ async function cmdInteractive(flags) {
   const reasoningLabel = () => modelOptions.effort || "model default";
   console.log(`${bold("BetterWright")} — interactive agent console`);
   console.log(
-    dim(`model ${modelLabel()} · reasoning ${reasoningLabel()} · session ${session} · ${headless ? "headless" : "headed"}`),
+    dim(
+      `model ${modelLabel()} · reasoning ${reasoningLabel()} · session ${session}` +
+        `${cliProfile() ? ` · profile ${profileLabel(cliProfile())}` : ""} · ${headless ? "headless" : "headed"}`,
+    ),
   );
   console.log(dim("Type a task and press Enter. Follow-ups keep the session; /new starts fresh."));
   console.log(dim("While it works, type a message and press Enter to steer its next turn."));
@@ -1267,7 +1310,7 @@ async function cmdExec(flags) {
         // plain line than a stack trace.
         console.error(error?.message || String(error));
         if (/connection closed|did not answer/i.test(String(error?.message || ""))) {
-          console.error(`  the daemon's log may say why: ${daemonLogPath(home)}`);
+          console.error(`  the daemon's log may say why: ${daemonLogPath(home, cliProfile())}`);
         }
         return 1;
       } finally {
@@ -1285,8 +1328,8 @@ async function cmdExec(flags) {
     // pre-daemon behavior — but the transcript still persists on disk, so
     // the next exec resumes the conversation even without live tabs.
     const { runAgentTask } = await import("../src/agent.js");
-    if (fresh) clearTranscript(home, session);
-    const history = fresh ? [] : loadTranscript(home, session);
+    if (fresh) clearTranscript(home, session, cliProfile());
+    const history = fresh ? [] : loadTranscript(home, session, cliProfile());
     const policy = await policyFromFlags(flags);
     try {
       const full = await runAgentTask({
@@ -1297,10 +1340,13 @@ async function cmdExec(flags) {
         history,
         policy,
         headless: !flags.has("--headed"),
+        // The same identity the daemon would have used, so a one-shot exec
+        // sees the same logins instead of silently acting as the default.
+        ...(cliProfile() ? { profile: cliProfile() } : {}),
         liveView: liveViewCliOptions(argv),
         onStep,
       });
-      saveTranscript(home, session, full.transcript);
+      saveTranscript(home, session, full.transcript, {}, cliProfile());
       const { transcript: _transcript, ...summary } = full;
       result = { ...summary, session, resumedMessages: history.length };
     } catch (error) {
@@ -1341,30 +1387,57 @@ async function cmdExec(flags) {
 // Management ops talk to whatever daemon is running (any version/config) and
 // never spawn one.
 async function cmdClose(flags, rest) {
+  // `--all` means the whole home — every profile's daemon. Anything narrower
+  // targets the profile this invocation selected, so closing one identity's
+  // session never disturbs another's.
+  if (flags.has("--all")) {
+    const daemons = await connectRunningDaemons(defaultDaemonHome());
+    if (!daemons.length) {
+      console.log("No session daemon is running — nothing to close.");
+      return 0;
+    }
+    let closedSessions = 0;
+    for (const { profile, channel, hello } of daemons) {
+      try {
+        const names = (hello.sessions || []).map((entry) => entry.name);
+        for (const name of names) {
+          await channel.request({ op: "close_session", session: name }, 60_000).catch(() => {});
+        }
+        await channel.request({ op: "shutdown" }, 10_000).catch(() => {});
+        closedSessions += names.length;
+        if (daemons.length > 1) {
+          console.log(
+            `Profile ${profileLabel(hello.profile ?? profile)}: closed ${names.length} session${names.length === 1 ? "" : "s"}.`,
+          );
+        }
+      } finally {
+        channel.end();
+      }
+    }
+    const daemonWord = `${daemons.length} browser daemon${daemons.length === 1 ? "" : "s"}`;
+    console.log(
+      closedSessions
+        ? `Closed ${closedSessions} session${closedSessions === 1 ? "" : "s"} and stopped ${daemonWord}.`
+        : `Stopped ${daemonWord} (no sessions were open).`,
+    );
+    return 0;
+  }
   const outcome = await connectSessionDaemon({
     cliPath: CLI_PATH,
+    profile: cliProfile(),
     spawnIfNeeded: false,
     ignoreMismatch: true,
   });
   if (!outcome.ok) {
-    console.log("No session daemon is running — nothing to close.");
+    console.log(
+      cliProfile()
+        ? `No session daemon is running for profile ${profileLabel(cliProfile())} — nothing to close.`
+        : "No session daemon is running — nothing to close.",
+    );
     return 0;
   }
-  const { channel, hello } = outcome;
+  const { channel } = outcome;
   try {
-    if (flags.has("--all")) {
-      const names = (hello.sessions || []).map((entry) => entry.name);
-      for (const name of names) {
-        await channel.request({ op: "close_session", session: name }, 60_000).catch(() => {});
-      }
-      await channel.request({ op: "shutdown" }, 10_000).catch(() => {});
-      console.log(
-        names.length
-          ? `Closed ${names.length} session${names.length === 1 ? "" : "s"} and stopped the browser daemon.`
-          : "Stopped the browser daemon (no sessions were open).",
-      );
-      return 0;
-    }
     const positional = rest.filter((token) => !token.startsWith("-"));
     const session = sessionName(
       flagValue(process.argv, "--session", positional[0] || "default"),
@@ -1381,38 +1454,67 @@ async function cmdClose(flags, rest) {
   }
 }
 
+/**
+ * Every profile that might have a daemon in this home: the ones that left an
+ * info file, plus the profile this invocation asked for (it may be starting
+ * up, or its info file may have been cleaned away). Default first, no repeats.
+ */
+function daemonProfilesToInspect(home) {
+  const found = daemonProfilesInHome(home);
+  const wanted = cliProfile();
+  const all = [...found, ...(found.includes(wanted) ? [] : [wanted])];
+  return [...new Set(all)].sort((a, b) => (a === null ? -1 : b === null ? 1 : a.localeCompare(b)));
+}
+
+/** Connect to each profile's daemon in this home; skip the ones not running. */
+async function connectRunningDaemons(home) {
+  const connected = [];
+  for (const profile of daemonProfilesToInspect(home)) {
+    const outcome = await connectSessionDaemon({
+      cliPath: CLI_PATH,
+      profile,
+      spawnIfNeeded: false,
+      ignoreMismatch: true,
+    });
+    if (outcome.ok) connected.push({ profile, ...outcome });
+  }
+  return connected;
+}
+
 async function cmdSessions() {
-  const outcome = await connectSessionDaemon({
-    cliPath: CLI_PATH,
-    spawnIfNeeded: false,
-    ignoreMismatch: true,
-  });
-  if (!outcome.ok) {
+  const home = defaultDaemonHome();
+  // Sessions is a home-wide inventory: a daemon per profile means "what is
+  // running here" has to look at all of them, or a named profile's live
+  // sessions would be invisible and look like a leak.
+  const daemons = await connectRunningDaemons(home);
+  if (!daemons.length) {
     console.log("No session daemon is running.");
     return 0;
   }
-  const { channel, hello } = outcome;
-  channel.end();
   const { dim } = styler();
-  console.log(
-    dim(
-      `daemon pid ${hello.pid} · v${hello.version} · up ${formatDuration(hello.uptimeMs || 0)} · ` +
-        `${hello.runs?.active || 0} run(s) active of ${hello.runs?.started || 0} started · ` +
-        `sessions idle out after ${formatDuration(hello.ttlMs || 0)}`,
-    ),
-  );
-  if (!hello.sessions?.length) {
-    console.log("No open sessions.");
-    return 0;
-  }
-  for (const entry of hello.sessions) {
-    const marks = [
-      entry.running ? `running (${entry.watchers} watcher${entry.watchers === 1 ? "" : "s"})` : "",
-      entry.inflight ? `${entry.inflight} call(s) in flight` : "",
-    ].filter(Boolean);
+  for (const { profile, channel, hello } of daemons) {
+    channel.end();
     console.log(
-      `${entry.name.padEnd(20)} idle ${formatDuration(entry.idleMs)}${marks.length ? ` · ${marks.join(" · ")}` : ""}`,
+      dim(
+        `daemon pid ${hello.pid} · v${hello.version} · profile ${profileLabel(hello.profile ?? profile)} · ` +
+          `up ${formatDuration(hello.uptimeMs || 0)} · ` +
+          `${hello.runs?.active || 0} run(s) active of ${hello.runs?.started || 0} started · ` +
+          `sessions idle out after ${formatDuration(hello.ttlMs || 0)}`,
+      ),
     );
+    if (!hello.sessions?.length) {
+      console.log("No open sessions.");
+      continue;
+    }
+    for (const entry of hello.sessions) {
+      const marks = [
+        entry.running ? `running (${entry.watchers} watcher${entry.watchers === 1 ? "" : "s"})` : "",
+        entry.inflight ? `${entry.inflight} call(s) in flight` : "",
+      ].filter(Boolean);
+      console.log(
+        `${entry.name.padEnd(20)} idle ${formatDuration(entry.idleMs)}${marks.length ? ` · ${marks.join(" · ")}` : ""}`,
+      );
+    }
   }
   return 0;
 }
@@ -1423,10 +1525,16 @@ async function cmdSessions() {
  * daemon is left alone and the command falls back to an ephemeral profile
  * with the worker's usual warning.
  */
+// Take the persistent profile back from an idle daemon before launching a
+// private browser on it. Scoped to the profile this invocation wants: a daemon
+// holding a *different* profile owns a different lock and a different cookie
+// jar, so shutting it down would close another identity's live sessions for no
+// benefit at all.
 async function reclaimDaemonProfile() {
   try {
     const outcome = await connectSessionDaemon({
       cliPath: CLI_PATH,
+      profile: cliProfile(),
       spawnIfNeeded: false,
       ignoreMismatch: true,
     });
@@ -1504,6 +1612,9 @@ function printLiveViewBanner(view, { dim, bold, attached = false }: any = {}) {
   if (attached) {
     console.log(dim("attached to the session daemon (same tabs as run/exec)"));
   }
+  // Which identity is on screen — invisible otherwise, and the reason a viewer
+  // may be looking at a signed-out browser they did not expect.
+  if (cliProfile()) console.log(dim(`profile ${profileLabel(cliProfile())}`));
   const reach =
     view.expose === "tailscale"
       ? "devices on your tailnet (Tailscale)"
@@ -1700,6 +1811,21 @@ async function main() {
   const tokens = process.argv.slice(2);
   const flags = new Set(tokens.filter((token) => token.startsWith("--")));
   const first = tokens[0];
+  // A bad `--profile` should read as one clear line before anything launches,
+  // not as a TypeError stack from inside a browser constructor. Help and
+  // --version still answer, so `--help` never depends on valid flags.
+  if (!wantsHelp(tokens) && !flags.has("--version")) {
+    try {
+      cliProfile();
+    } catch (error) {
+      // Name where the bad value came from: an MCP host debugging a server
+      // that will not start needs to know it is the environment, not a flag.
+      const source =
+        flagValue(process.argv, "--profile") === undefined ? "BETTERWRIGHT_PROFILE" : "--profile";
+      console.error(`${source}: ${error?.message || error}`);
+      return 1;
+    }
+  }
   // No subcommand (nothing, or only flags like `betterwright --headed`): launch
   // the interactive agent console. `--version`/`--help` are still honored.
   if (!first || first.startsWith("-")) {
@@ -1780,6 +1906,7 @@ async function main() {
       // missing SDK and a missing browser, and both are checkable here.
       if (flags.has("--check")) {
         const { mcpSdkAvailable } = await import("../src/onboard.js");
+        const { profileFromEnv } = await import("../src/mcp-server.js");
         const sdk = await mcpSdkAvailable();
         console.log(sdk.ok ? "  ✓ MCP SDK available" : `  ✗ ${sdk.error}`);
         const report = await doctorReport();
@@ -1788,6 +1915,11 @@ async function main() {
             ? `  ✓ Browser ready (${report.browser})`
             : "  ✗ Browser not installed — run `betterwright setup`",
         );
+        // An invalid BETTERWRIGHT_PROFILE already failed in main(), before any
+        // of this ran. Confirm the valid one, so a client showing a signed-out
+        // browser can be traced to the identity it was told to use.
+        const profile = profileFromEnv();
+        if (profile) console.log(`  ✓ Profile "${profile}"`);
         const ok = sdk.ok && report.ready;
         console.log("");
         console.log(

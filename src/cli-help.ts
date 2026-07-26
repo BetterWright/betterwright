@@ -17,7 +17,7 @@ export const COMMAND_SUMMARIES = [
   ["exec", "hand a whole task to BetterWright's own browser agent"],
   ["vault", "read and manage saved passwords"],
   ["sessions", "list live browser sessions"],
-  ["close", "close a session (--all also stops the daemon)"],
+  ["close", "close a session (--all stops every profile's daemon)"],
   ["models", "list models the configured backends expose"],
   ["view", "open a live web view of the browser"],
   ["auth", "sign in to a model backend (codex | grok)"],
@@ -104,6 +104,12 @@ result. Globals include page, snapshot, screenshot, credentials, human.
 
 Options:
   --session <name>       which persistent session to use (default "default")
+  --profile <name>       browser profile to act as — a separate identity with
+                         its own cookies and its own daemon, at
+                         browser/profiles/<name> (default: the shared profile;
+                         BETTERWRIGHT_PROFILE sets one for the whole shell).
+                         Use --session for parallel work as the same identity,
+                         --profile for a different account.
   --headed               show the browser window
   --close                close the session after this call
   --approve-downloads    allow downloads for this one run
@@ -122,7 +128,7 @@ Example:
 Read blank-line-separated snippets from stdin and run each one against the same
 live session, printing a JSON result per snippet. Ctrl-D quits.
 
-Takes the same session, network, and browser flags as \`betterwright run\`.
+Takes the same session, profile, network, and browser flags as \`betterwright run\`.
 
 Example:
   printf '%s\\n\\n%s\\n' "await page.goto('https://example.com')" "return page.title()" \\
@@ -132,8 +138,9 @@ Example:
 
   sessions: `Usage: betterwright sessions
 
-List the browser sessions held by the background daemon, with how long each has
-been idle and whether a task is running in it. Never starts a daemon.`,
+List the browser sessions held by the background daemons, with how long each
+has been idle and whether a task is running in it. Every profile in this home
+is listed, one daemon per profile. Never starts a daemon.`,
 
   close: `Usage: betterwright close [name] [options]
 
@@ -142,7 +149,8 @@ therefore your logins, do not.
 
 Options:
   --session <name>   the session to close (default "default")
-  --all              close every session and stop the daemon`,
+  --profile <name>   close a session of that profile (default: the shared one)
+  --all              close every session of every profile and stop each daemon`,
 
   models: `Usage: betterwright models [source] [options]
 
@@ -166,6 +174,7 @@ Options:
   --expose <preset>    lan (default) | local | tailscale
   --host <host>        bind address; overrides --expose
   --port <port>        bind port (default: ephemeral)
+  --profile <name>     watch that profile's browser (default: the shared one)
   --watch-only         no takeover controls
   --set-password       store a password every viewer must enter
   --clear-password     remove that password

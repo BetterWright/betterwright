@@ -285,6 +285,29 @@ The security model — what the sandbox removes, why the metadata floor cannot
 be lifted, and where it does *not* claim to be a boundary — is in
 [docs/architecture.md](docs/architecture.md).
 
+## Sessions and profiles
+
+All state lives under `$BETTERWRIGHT_HOME` (default `~/.betterwright`): the
+persistent browser profile, the credential vault, and artifacts. Two knobs
+divide work up, and they are different axes:
+
+- `--session <name>` — parallel lanes in **one** browser, sharing one cookie
+  jar. Same identity, no launch cost, no queueing behind each other.
+- `--profile <name>` — a **separate identity**: its own cookie jar at
+  `browser/profiles/<name>`, its own session daemon, its own `exec` history.
+  Two profiles run at once and both stay signed in.
+
+```js
+new BetterWright({ profile: "social" }); // the posting account
+new BetterWright({ profile: "review" }); // the reading account, concurrently
+```
+
+Omitting `profile` keeps the single default profile, unchanged. The vault and
+artifacts are shared across profiles, so a credential saved once fills
+anywhere. CLI: `--profile <name>` or `BETTERWRIGHT_PROFILE`, which the MCP
+server reads too. See
+[docs/sessions.md](docs/sessions.md#sessions-vs-profiles).
+
 ## Docs
 
 | Start here | Capabilities | Under the hood |

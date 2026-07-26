@@ -1635,3 +1635,92 @@ test("an image-grid challenge is solvable with aria-ref tile clicks and Verify",
     await bw.close();
   }
 });
+
+// --- Named profiles: separate identities in one home -----------------------
+
+test("two named profiles browse concurrently, both persistent", opts, async () => {
+  const home = tempHome();
+  const social = new BetterWright({ home, profile: "social", headless: true });
+  const review = new BetterWright({ home, profile: "review", headless: true });
+  try {
+    const [a, b] = await Promise.all([
+      social.run("await page.goto('about:blank'); return 'social'"),
+      review.run("await page.goto('about:blank'); return 'review'"),
+    ]);
+    assert.equal(a.ok, true, a.error);
+    assert.equal(b.ok, true, b.error);
+    // Neither was pushed onto the signed-out ephemeral fallback.
+    assert.equal(a.profileMode, "persistent");
+    assert.equal(b.profileMode, "persistent");
+    assert.ok(fs.existsSync(path.join(home, "browser", "profiles", "social")));
+    assert.ok(fs.existsSync(path.join(home, "browser", "profiles", "review")));
+    assert.equal(fs.existsSync(path.join(home, "browser", "profile")), false);
+  } finally {
+    await Promise.all([social.close(), review.close()]);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("cookies are per profile, and survive a restart of the same profile", opts, async () => {
+  // The point of a named profile is a separate, *persistent* cookie jar. A
+  // local server keeps this test offline and loopback-only.
+  const server = await listen((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end("<title>jar</title><p>cookie jar</p>");
+  });
+  const { origin } = server;
+
+  const home = tempHome();
+  const social = new BetterWright({ home, profile: "social", headless: true });
+  const review = new BetterWright({ home, profile: "review", headless: true });
+  try {
+    const set = await social.run(
+      `await page.goto(${JSON.stringify(origin)}); ` +
+        "await page.evaluate(() => { document.cookie = 'bw=social; path=/; max-age=3600'; }); " +
+        "return page.evaluate(() => document.cookie)",
+    );
+    assert.equal(set.ok, true, set.error);
+    assert.match(set.result, /bw=social/);
+
+    const other = await review.run(
+      `await page.goto(${JSON.stringify(origin)}); return page.evaluate(() => document.cookie)`,
+    );
+    assert.equal(other.ok, true, other.error);
+    assert.doesNotMatch(other.result, /bw=social/, "the other profile must not see the cookie");
+
+    // Reopen "social" after closing it: a named profile persists like the
+    // default one, rather than being an ephemeral directory per launch.
+    await social.close();
+    const again = new BetterWright({ home, profile: "social", headless: true });
+    try {
+      const back = await again.run(
+        `await page.goto(${JSON.stringify(origin)}); return page.evaluate(() => document.cookie)`,
+      );
+      assert.equal(back.ok, true, back.error);
+      assert.match(back.result, /bw=social/, "the profile did not persist its cookie jar");
+    } finally {
+      await again.close();
+    }
+  } finally {
+    await Promise.all([social.close(), review.close()]);
+    await server.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a second browser on the SAME profile falls back to ephemeral", opts, async () => {
+  const home = tempHome();
+  const first = new BetterWright({ home, profile: "social", headless: true });
+  const second = new BetterWright({ home, profile: "social", headless: true });
+  try {
+    const a = await first.run("return 'first'");
+    assert.equal(a.ok, true, a.error);
+    assert.equal(a.profileMode, "persistent");
+    const b = await second.run("return 'second'");
+    assert.equal(b.ok, true, b.error);
+    assert.equal(b.profileMode, "ephemeral");
+  } finally {
+    await Promise.all([first.close(), second.close()]);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

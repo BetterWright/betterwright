@@ -25,6 +25,7 @@ import {
   defaultDaemonHome,
   sessionName,
 } from "./daemon.js";
+import { profileLabel, resolveProfileName } from "./profile-name.js";
 
 const CONNECT_TIMEOUT_MS = 1_000;
 const SPAWN_WAIT_MS = 8_000;
@@ -159,13 +160,15 @@ function rotateDaemonLog(file) {
   }
 }
 
-function spawnDaemon({ home, cliPath, config }) {
+function spawnDaemon({ home, cliPath, config, profile }) {
   const payload = Buffer.from(JSON.stringify(config), "utf8").toString("base64url");
   let logFd;
   try {
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-    rotateDaemonLog(daemonLogPath(home));
-    logFd = fs.openSync(daemonLogPath(home), "a", 0o600);
+    // One log per daemon, so two profiles' daemons never interleave lines in
+    // one file and `daemon-<name>.log` names the identity that wrote it.
+    rotateDaemonLog(daemonLogPath(home, profile));
+    logFd = fs.openSync(daemonLogPath(home, profile), "a", 0o600);
   } catch {
     logFd = "ignore";
   }
@@ -193,7 +196,7 @@ function spawnDaemon({ home, cliPath, config }) {
   }
 }
 
-async function connectWithSpawn({ home, socketPath, cliPath, config, spawnIfNeeded }) {
+async function connectWithSpawn({ home, socketPath, cliPath, config, profile, spawnIfNeeded }) {
   let socket = await connectOnce(socketPath);
   if (socket || !spawnIfNeeded) return socket;
   // A dead daemon can leave its socket file behind; remove it so the fresh
@@ -205,7 +208,7 @@ async function connectWithSpawn({ home, socketPath, cliPath, config, spawnIfNeed
       /* the daemon's own EADDRINUSE probe handles this */
     }
   }
-  spawnDaemon({ home, cliPath, config });
+  spawnDaemon({ home, cliPath, config, profile });
   const deadline = Date.now() + SPAWN_WAIT_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -242,18 +245,31 @@ export async function connectSessionDaemon({
   // Management commands (`close`, `sessions`) talk to whatever daemon is
   // there, regardless of version/config — they only inspect and tear down.
   ignoreMismatch = false,
+  // Which identity's daemon to talk to. Each profile has its own socket, so
+  // this selects a *different daemon* rather than reconfiguring a shared one:
+  // two profiles keep their sessions alive side by side. Defaults to the
+  // profile in `config`, which is where the CLI puts it.
+  profile = undefined,
   _retried = false,
 }: any = {}): Promise<any> {
-  const socketPath = daemonSocketPath(home);
+  const wantProfile = resolveProfileName(profile ?? (config as any)?.profile);
+  const socketPath = daemonSocketPath(home, wantProfile);
   const version = daemonPackageVersion();
-  const configSig = daemonConfigSignature(config);
-  const socket = await connectWithSpawn({ home, socketPath, cliPath, config, spawnIfNeeded });
+  const configSig = daemonConfigSignature({ ...config, profile: wantProfile });
+  const socket = await connectWithSpawn({
+    home,
+    socketPath,
+    cliPath,
+    config: { ...config, profile: wantProfile },
+    profile: wantProfile,
+    spawnIfNeeded,
+  });
   if (!socket) {
     return {
       ok: false,
       reason: spawnIfNeeded
-        ? "the session daemon did not start"
-        : "no session daemon is running",
+        ? `the session daemon for profile ${profileLabel(wantProfile)} did not start`
+        : `no session daemon is running for profile ${profileLabel(wantProfile)}`,
     };
   }
   const channel = createChannel(socket);
@@ -278,7 +294,15 @@ export async function connectSessionDaemon({
   const busy = sessions.length > 0;
   if (busy || _retried || !spawnIfNeeded) {
     channel.end();
-    const what = hello.version === version ? "different browser flags" : `version ${hello.version}`;
+    const what =
+      hello.version !== version
+        ? `version ${hello.version}`
+        : // The socket is per profile, so a profile mismatch here means a
+          // daemon from before this feature (or a hand-built config); name it
+          // precisely rather than blaming "flags" the user did not pass.
+          (hello.profile ?? null) !== wantProfile
+          ? `profile ${profileLabel(hello.profile ?? null)}`
+          : "different browser flags";
     return {
       ok: false,
       reason:
@@ -293,7 +317,14 @@ export async function connectSessionDaemon({
   }
   channel.end();
   await waitForSocketGone(socketPath);
-  return connectSessionDaemon({ home, cliPath, config, spawnIfNeeded, _retried: true });
+  return connectSessionDaemon({
+    home,
+    cliPath,
+    config,
+    profile: wantProfile,
+    spawnIfNeeded,
+    _retried: true,
+  });
 }
 
 /**

@@ -25,6 +25,26 @@ export type {
 
 export interface BetterWrightOptions {
   home?: string;
+  /**
+   * Named persistent browser profile inside the home: a separate identity,
+   * with its own cookie jar, its own profile lock, and its own session daemon,
+   * at `browser/profiles/<name>`. Omit it (the default) to use the single
+   * `browser/profile` directory, unchanged.
+   *
+   * This is a different axis from `session` names: sessions are concurrent
+   * lanes inside one browser sharing one cookie jar (parallel work as the same
+   * identity), profiles are separate cookie jars in separate browsers
+   * (different accounts). Two profiles run at the same time, each fully logged
+   * in; two instances of the *same* profile still serialize, and the second
+   * gets an ephemeral signed-out profile. The vault, artifacts, and browser
+   * binary cache stay shared across profiles.
+   *
+   * Names allow letters, digits, ".", "-", and "_", must start with a letter
+   * or digit, and cannot contain path separators or "..". They are as
+   * case-sensitive as the underlying filesystem. An invalid name throws a
+   * `TypeError` at construction.
+   */
+  profile?: string;
   policy?: NetworkPolicy;
   /** Custom credential backend, or false/null to disable the built-in vault. */
   vault?: CredentialVault | false | null;

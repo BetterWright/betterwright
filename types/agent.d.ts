@@ -71,6 +71,12 @@ export interface RunAgentTaskOptions {
   browser?: BetterWright;
   guardrails?: Guardrails;
   session?: string;
+  /**
+   * Named browser profile — a separate identity, with its own cookies — for a
+   * browser this call creates. Ignored when `browser` is supplied, since that
+   * browser already has a profile.
+   */
+  profile?: string;
   headless?: boolean | "auto";
   policy?: NetworkPolicy;
   /** Wall-clock budget for the loop in milliseconds (default 30 minutes). */
