@@ -97,6 +97,45 @@ test("navigate and read the title", opts, async () => {
   }
 });
 
+test("managed Cloak sessions preserve native service-worker behavior", opts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url === "/sw.js") {
+      response.writeHead(200, {
+        "content-type": "application/javascript",
+        "service-worker-allowed": "/",
+      });
+      response.end("self.addEventListener('fetch', () => {});");
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end("<!doctype html><title>Service worker fixture</title>");
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    policy: new NetworkPolicy(),
+    headless: true,
+  });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      return page.evaluate(async () => {
+        const registration = await navigator.serviceWorker.register('/sw.js');
+        await navigator.serviceWorker.ready;
+        return {
+          scope: registration.scope,
+          active: Boolean(registration.active),
+        };
+      });
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.active, true);
+    assert.equal(result.result.scope, `${site.origin}/`);
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
 test("page summaries identify the active tab", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {

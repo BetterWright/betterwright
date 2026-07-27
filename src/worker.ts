@@ -1561,7 +1561,11 @@ async function ensureBrowser(config) {
         args: launchArgs,
         contextOptions: {
           acceptDownloads: true,
-          serviceWorkers: "block",
+          // Service workers are normal browser behavior and many modern apps
+          // (including authentication flows) depend on registration succeeding.
+          // The SOCKS guard remains the network security boundary for worker
+          // traffic, so allowing them does not bypass policy enforcement.
+          serviceWorkers: "allow",
         },
         launchOptions: {
           downloadsPath: launchConfig.downloadsDir,
@@ -3888,6 +3892,29 @@ async function collectFrameMetadata(page) {
       .filter((frame) => frame !== page.mainFrame())
       .slice(0, 24)
       .map(async (frame) => {
+        const presentation = await frame
+          .frameElement()
+          .then(async (element) => {
+            try {
+              return await element.evaluate((iframe) => {
+                const rect = iframe.getBoundingClientRect();
+                const style = getComputedStyle(iframe);
+                return {
+                  visible:
+                    rect.width > 0 &&
+                    rect.height > 0 &&
+                    style.display !== "none" &&
+                    style.visibility !== "hidden" &&
+                    Number(style.opacity || "1") > 0,
+                  width: rect.width,
+                  height: rect.height,
+                };
+              });
+            } finally {
+              await element.dispose().catch(() => {});
+            }
+          })
+          .catch(() => null);
         const frameText = (
           await frame
             .locator("body")
@@ -3904,6 +3931,9 @@ async function collectFrameMetadata(page) {
         return {
           url: frame.url(),
           text: frameText,
+          visible: presentation?.visible ?? null,
+          width: presentation?.width ?? null,
+          height: presentation?.height ?? null,
           completed:
             checked ||
             /verification (?:complete|successful)|success!|you are verified/i.test(
@@ -4257,8 +4287,9 @@ async function detectCaptchaOnPage(page) {
     type: challenge?.type,
   });
   const widgets = [];
-  for (const frame of page.frames()) {
-    if (frame === page.mainFrame()) continue;
+  const childFrames = page.frames().filter((frame) => frame !== page.mainFrame());
+  for (const [index, frame] of childFrames.entries()) {
+    if (metadata.frames[index]?.visible === false) continue;
     const url = frame.url() || "";
     for (const [provider, pattern] of Object.entries(WIDGET_FRAME_PATTERNS)) {
       if (pattern.test(url)) {

@@ -27,6 +27,22 @@ test("classifies reCAPTCHA anchor as checkbox", () => {
   assert.equal(result.needsVision, false);
 });
 
+test("does not classify hidden dormant provider frames as active stages", () => {
+  const result = classifyChallengeStage({
+    main: { url: "https://shop.example/signup" },
+    frames: [
+      {
+        url: "https://www.google.com/recaptcha/enterprise/anchor?k=site-key",
+        text: "Verify you are human",
+        visible: false,
+      },
+    ],
+  });
+  assert.equal(result.stage, CAPTCHA_STAGES.NONE);
+  assert.equal(result.autoSolvable, false);
+  assert.equal(result.needsVision, false);
+});
+
 test("classifies reCAPTCHA bframe as image grid", () => {
   const result = classifyChallengeStage({
     main: { url: "https://shop.example/checkout" },

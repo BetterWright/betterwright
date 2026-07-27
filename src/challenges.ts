@@ -74,6 +74,7 @@ function normalizeSource(value, kind, index = null, fallback: any = {}) {
     title: stringValue(source.title ?? fallback.title),
     text: stringValue(source.text ?? fallback.text),
     completed: source.completed === true,
+    visible: typeof source.visible === "boolean" ? source.visible : null,
   };
 }
 
@@ -116,6 +117,14 @@ function explicitInvisible(url) {
 }
 
 function challengeUrlSignal(source, includeInvisible = false) {
+  // Provider widgets are commonly preloaded in zero-size/hidden iframes long
+  // before a site asks the user to verify anything. Treating their URL alone
+  // as an active challenge derails normal forms and makes agents attempt a
+  // CAPTCHA that has not been issued. Visible prompt text can still identify
+  // a real escalation through genericTextSignal below.
+  if (!includeInvisible && source.kind === "frame" && source.visible === false) {
+    return null;
+  }
   const parsed = parsedUrl(source.url);
   if (!parsed) return null;
 
@@ -189,6 +198,7 @@ function searchProviderTextSignal(main) {
 }
 
 function genericTextSignal(source) {
+  if (source.kind === "frame" && source.visible === false) return null;
   const title = normalizedText(source.title);
   const body = normalizedText(source.text);
   const text = `${title} ${body}`.trim();
