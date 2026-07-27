@@ -130,12 +130,14 @@ export function classifyChallengeStage(metadata: any = {}) {
       url: stringValue(frame.url),
       title: stringValue(frame.title),
       text: stringValue(frame.text),
+      visible: typeof frame.visible === "boolean" ? frame.visible : null,
     })),
     {
       kind: "main",
       url: stringValue(main.url ?? input.url),
       title: stringValue(main.title ?? input.title),
       text: stringValue(main.text ?? input.text),
+      visible: true,
     },
   ];
 
@@ -145,6 +147,10 @@ export function classifyChallengeStage(metadata: any = {}) {
   let source = sources[sources.length - 1];
 
   for (const candidate of sources) {
+    // Sites preload dormant CAPTCHA providers in hidden iframes. They are not
+    // an interactive stage until the frame becomes visible or the host page
+    // presents an explicit blocking prompt.
+    if (candidate.kind === "frame" && candidate.visible === false) continue;
     const text = normalizedText(`${candidate.title}\n${candidate.text}`);
     const url = candidate.url.toLowerCase();
     const parsed = parsedUrl(candidate.url);

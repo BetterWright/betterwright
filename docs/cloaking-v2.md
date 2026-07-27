@@ -26,6 +26,7 @@ hardware, automation markers, and client hints.
 | Timezone | `--fingerprint-timezone`, so `Intl` and `Date` agree |
 | GPU, plugins, hardware | CloakBrowser source-level fingerprint patches |
 | JavaScript APIs | Left native; no replacement getters or functions |
+| Service workers | Allowed natively on both managed-browser backends; traffic still crosses the policy guard |
 
 That last row is important. Fresh stock Chrome 150 leaves `chrome.runtime`
 unavailable to ordinary web pages and can initially enumerate zero speech
@@ -92,6 +93,11 @@ Interactive CAPTCHA issuance is a separate gate. In the current public-demo
 runs, Turnstile remained at `processing` without a token in both modes, while
 reCAPTCHA v2 escalated to an image grid that requires vision. The report prints
 `tokenIssued` explicitly so those outcomes cannot be mistaken for a pass.
+
+Sites frequently preload invisible Enterprise CAPTCHA providers before a form
+is submitted. BetterWright reports those frames only after their iframe becomes
+visible or the page presents an explicit blocking verification prompt, so a
+dormant provider cannot derail an otherwise normal signup or login flow.
 
 ## Configuration
 

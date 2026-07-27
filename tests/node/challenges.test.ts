@@ -251,6 +251,22 @@ test("ignores explicitly invisible provider frames without a blocking prompt", (
   }
 });
 
+test("ignores hidden dormant provider frames even without an invisible URL marker", () => {
+  for (const url of [
+    "https://www.google.com/recaptcha/enterprise/anchor?k=key",
+    "https://newassets.hcaptcha.com/captcha/v1/build/static/hcaptcha.html#frame=challenge",
+    "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2/av0",
+  ]) {
+    assert.equal(
+      detectBotChallenge({
+        main: { url: "https://example.com/signup" },
+        frames: [{ url, visible: false, text: "Verify you are human" }],
+      }),
+      null,
+    );
+  }
+});
+
 test("uses visible frame text to report an interactive challenge from an invisible widget", () => {
   for (const [url, provider] of [
     ["https://www.google.com/recaptcha/api2/anchor?k=key&size=invisible", "recaptcha"],
