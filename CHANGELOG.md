@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.5.1-beta.0] - 2026-07-26
+
 ### Fixed
 
 - Managed Cloak sessions now allow native service-worker registration, matching
