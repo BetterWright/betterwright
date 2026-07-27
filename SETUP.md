@@ -61,11 +61,11 @@ client it does not know), or when you want to do it deliberately.
 3. **Download the managed browser** (one-time, ~200 MB):
 
    ```bash
-   betterwright setup     # Chromium fork on mac/linux + Cloak fallback
+   betterwright setup     # Chromium fork on supported hosts + Cloak fallback
    # or: betterwright update   # fork only (switches default away from Cloak)
    ```
 
-   On macOS arm64 / Linux x64, setup/update fetch the pinned Chromium fork
+   On macOS arm64 / Linux x64 / Windows x64, setup/update fetch the pinned Chromium fork
    (SHA-256 verified) into `~/.betterwright/chromium/`. Elsewhere (and with
    `--cloak-only`), the CloakBrowser wrapper downloads its signed binary from
    CloakHQ. npm installation itself has no hidden browser-download lifecycle

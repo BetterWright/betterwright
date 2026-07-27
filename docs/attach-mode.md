@@ -2,7 +2,7 @@
 
 BetterWright launches its managed browser — the [Chromium
 fork](chromium-fork.md) when its artifact is installed (macOS arm64 / Linux
-x64), CloakBrowser otherwise. Headed and headless runs use the same persistent
+x64 / Windows x64), CloakBrowser otherwise. Headed and headless runs use the same persistent
 profile, fingerprint identity, network floor, download controls, and browser
 worker. There is no stock-Chromium fallback and no ordinary-Chrome CDP attach
 mode.

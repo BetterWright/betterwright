@@ -25,8 +25,8 @@ new BetterWright({
 ```
 
 The `browser` option is not how you choose a browser: when the [Chromium
-fork](chromium-fork.md) artifact is installed (macOS arm64 / Linux x64), it is
-used automatically, with managed CloakBrowser as the fallback. Headed and
+fork](chromium-fork.md) artifact is installed (macOS arm64 / Linux x64 /
+Windows x64), it is used automatically, with managed CloakBrowser as the fallback. Headed and
 headless modes keep BetterWright's persistent profile and policy while reducing
 common stock-browser automation signals; they do not guarantee undetectability.
 

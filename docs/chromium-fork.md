@@ -2,10 +2,10 @@
 
 BetterWright can run the pinned BetterWright Chromium 150 fork while keeping
 its public `run()`, `human.*`, `captcha.*`, snapshot, policy, proxy, and vault
-APIs unchanged. On macOS arm64 and Linux x64, `betterwright setup` /
-`betterwright update` download the fork into the zero-config discovery root;
-CloakBrowser remains the fallback when no artifact is present (and the only
-path on Windows today).
+APIs unchanged. On macOS arm64, Linux x64, and Windows x64,
+`betterwright setup` / `betterwright update` download the fork into the
+zero-config discovery root; CloakBrowser remains the fallback when no artifact
+is present.
 
 ## Install / update
 
@@ -46,8 +46,7 @@ artifacts/
   win-x64/chrome.exe
 ```
 
-Only macOS arm64 and Linux x64 are built and runtime-tested. Windows is reserved
-for a future verified artifact.
+macOS arm64, Linux x64, and Windows x64 are built and runtime-tested.
 
 `BETTERWRIGHT_CHROMIUM_PATH` takes precedence over
 `BETTERWRIGHT_CHROMIUM_ROOT`. Configured paths must be absolute and must exist;
@@ -58,17 +57,18 @@ BetterWright fails closed instead of silently falling back to another browser.
 With neither variable set, BetterWright checks the default root
 `~/.betterwright/chromium/` for the current platform's artifact. Found → the
 fork runs with no configuration at all. Not found (or no artifact shipped for
-the platform, e.g. Windows) → managed CloakBrowser, exactly as before.
+the platform) → managed CloakBrowser, exactly as before.
 
 ```text
 ~/.betterwright/chromium/
   mac-arm64/Chromium.app/Contents/MacOS/Chromium
   linux-x64/chrome          (+ fonts/ttf/ for the macOS-metric font set)
+  win-x64/chrome.exe
 ```
 
 This makes mixed fleets trivial: run `betterwright update` (or `setup`) on
-Linux and macOS hosts, `betterwright setup --cloak-only` on Windows, and every
-machine picks the right backend with the same configuration. Set
+macOS arm64, Linux x64, and Windows x64 hosts, and every machine picks the
+right backend with the same configuration. Set
 `BETTERWRIGHT_CHROMIUM_ROOT=off` (or `BETTERWRIGHT_CHROMIUM_PATH=off`) to force
 the managed path on a host that has the artifact installed.
 

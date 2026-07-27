@@ -231,7 +231,7 @@ step from what it sees, in a browser that must still be there next turn:
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
 | [**Human-shaped input**](docs/browser-api.md#human-shaped-interactions) | Curved pointer movement, paced typing, eased wheel — no extra dependency |
 | [**Cloaking V2**](docs/cloaking-v2.md) | Coherent native fingerprint: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; live reCAPTCHA v3 returns 0.9 headed and headless |
-| [**Native Chromium fork**](docs/chromium-fork.md) | Optional BetterWright-built Chromium: per-profile-stable canvas/audio farbling, platform masking, macOS-metric fonts. Auto-detected at `~/.betterwright/chromium/`; platforms without an artifact (Windows) stay on managed CloakBrowser |
+| [**Native Chromium fork**](docs/chromium-fork.md) | Optional BetterWright-built Chromium: per-profile-stable canvas/audio farbling, platform masking, macOS-metric fonts. Auto-detected at `~/.betterwright/chromium/` on macOS arm64, Linux x64, and Windows x64 |
 | [**Skill packs**](docs/skills.md) | Per-site and per-password-manager guidance the host agent reads on demand — surfaced automatically when an open page matches |
 | [**Download approval**](docs/browser-api.md) | Denied by default; a trusted host approves one download run at a time |
 | [**Operator guidance**](docs/agent-prompt.md) | `betterwright skill` / `agentSystemPrompt()` — decisive action on authorized tasks, with optional confirmation/spending guardrails |
@@ -239,7 +239,7 @@ step from what it sees, in a browser that must still be there next turn:
 ## Install
 
 Requires **Node.js 22+**. Setup downloads the browser (~200 MB, once) — the
-Chromium fork on macOS arm64 / Linux x64, CloakBrowser elsewhere — never as an
+Chromium fork on macOS arm64 / Linux x64 / Windows x64, CloakBrowser elsewhere — never as an
 npm lifecycle side effect, so installs stay predictable with `--ignore-scripts`.
 
 ```bash

@@ -41,7 +41,6 @@ test("default root discovers a deployed artifact (zero-config fork)", () => {
 });
 
 test("platforms without a deployed artifact fall back to managed CloakBrowser", () => {
-  // Windows: layout exists but no artifact shipped.
   assert.equal(
     resolveChromiumForkBinary({
       env: {},
@@ -134,7 +133,7 @@ test("explicit Chromium fork path wins and must be absolute", () => {
   );
 });
 
-test("artifact root resolves native macOS and Linux layouts", () => {
+test("artifact root resolves native macOS, Linux, and Windows layouts", () => {
   assert.equal(
     resolveChromiumForkBinary({
       env: { BETTERWRIGHT_CHROMIUM_ROOT: "/opt/betterwright" },
@@ -159,6 +158,15 @@ test("artifact root resolves native macOS and Linux layouts", () => {
       existsSync: present,
     }),
     path.join("/opt/betterwright", "linux-x64", "chrome"),
+  );
+  assert.equal(
+    resolveChromiumForkBinary({
+      env: { BETTERWRIGHT_CHROMIUM_ROOT: "/opt/betterwright" },
+      platform: "win32",
+      arch: "x64",
+      existsSync: present,
+    }),
+    path.join("/opt/betterwright", "win-x64", "chrome.exe"),
   );
 });
 

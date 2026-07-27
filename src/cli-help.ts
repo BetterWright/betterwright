@@ -60,7 +60,7 @@ Safe to re-run: it reports what is already done and changes only what is not.`,
 
   setup: `Usage: betterwright setup [options]
 
-Download the managed browser (~200 MB, once). On macOS arm64 and Linux x64
+Download the managed browser (once). On macOS arm64, Linux x64, and Windows x64
 this installs BetterWright's Chromium fork into ~/.betterwright/chromium/ and
 the CloakBrowser binary as a fallback; elsewhere, CloakBrowser alone.
 
