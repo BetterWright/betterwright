@@ -9,6 +9,15 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Fixed
+
+- Managed Cloak sessions now allow native service-worker registration, matching
+  the Chromium-fork path and ordinary Chrome behavior while keeping all worker
+  traffic behind the policy guard proxy.
+- Dormant CAPTCHA providers preloaded in hidden or zero-size iframes no longer
+  appear as active challenges. A visible widget or blocking verification prompt
+  is still detected and follows the existing solve/handoff flow.
+
 ### Added
 
 - Named browser profiles: `profile` on the `BetterWright` constructor,
