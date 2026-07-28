@@ -9,7 +9,7 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
-## [1.5.1-beta.0] - 2026-07-26
+## [1.5.1] - 2026-07-28
 
 ### Fixed
 
@@ -22,6 +22,13 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Added
 
+- The pinned BetterWright Chromium 150 fork now ships for Windows x64 in
+  addition to macOS arm64 and Linux x64. `betterwright setup` and
+  `betterwright update` verify and install the Windows artifact using the
+  built-in `tar.exe`, then select it as the zero-configuration default.
+  CloakBrowser remains the explicit or automatic fallback when the fork is
+  disabled or absent. Windows doctor output also avoids the Linux-only
+  fontconfig warning because Windows uses DirectWrite.
 - Named browser profiles: `profile` on the `BetterWright` constructor,
   `--profile <name>` on the CLI, and `BETTERWRIGHT_PROFILE` for the MCP server
   and any shell (the flag wins). A
