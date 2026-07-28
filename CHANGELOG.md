@@ -9,7 +9,7 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
-## [1.5.1-beta.0] - 2026-07-26
+## [1.5.1] - 2026-07-28
 
 ### Fixed
 
@@ -20,8 +20,22 @@ Releases before 1.1.3 predate this file; their notes live on the
   appear as active challenges. A visible widget or blocking verification prompt
   is still detected and follows the existing solve/handoff flow.
 
+### Changed
+
+- Completed the repository-wide TypeScript migration for build and release
+  scripts, tests, benchmarks, and shipped examples. Published examples now live
+  under `examples/typescript/*.ts` and are type-checked against the public
+  declarations; runtime package exports remain ordinary JavaScript.
+
 ### Added
 
+- The pinned BetterWright Chromium 150 fork now ships for Windows x64 in
+  addition to macOS arm64 and Linux x64. `betterwright setup` and
+  `betterwright update` verify and install the Windows artifact using the
+  built-in `tar.exe`, then select it as the zero-configuration default.
+  CloakBrowser remains the explicit or automatic fallback when the fork is
+  disabled or absent. Windows doctor output also avoids the Linux-only
+  fontconfig warning because Windows uses DirectWrite.
 - Named browser profiles: `profile` on the `BetterWright` constructor,
   `--profile <name>` on the CLI, and `BETTERWRIGHT_PROFILE` for the MCP server
   and any shell (the flag wins). A
@@ -301,6 +315,7 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
+[1.5.1]: https://github.com/BetterWright/betterwright/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/BetterWright/betterwright/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/BetterWright/betterwright/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/BetterWright/betterwright/compare/v1.3.0...v1.3.1
