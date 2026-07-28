@@ -20,6 +20,13 @@ Releases before 1.1.3 predate this file; their notes live on the
   appear as active challenges. A visible widget or blocking verification prompt
   is still detected and follows the existing solve/handoff flow.
 
+### Changed
+
+- Completed the repository-wide TypeScript migration for build and release
+  scripts, tests, benchmarks, and shipped examples. Published examples now live
+  under `examples/typescript/*.ts` and are type-checked against the public
+  declarations; runtime package exports remain ordinary JavaScript.
+
 ### Added
 
 - The pinned BetterWright Chromium 150 fork now ships for Windows x64 in
@@ -308,6 +315,7 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
+[1.5.1]: https://github.com/BetterWright/betterwright/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/BetterWright/betterwright/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/BetterWright/betterwright/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/BetterWright/betterwright/compare/v1.3.0...v1.3.1
