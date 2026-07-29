@@ -8,6 +8,7 @@ import {
   piImageContent,
   piPrimaryImageArtifact,
 } from "./pi.js";
+import { resolveProfileName } from "./profile-name.js";
 import { agentSystemPrompt } from "./prompt.js";
 import { piBrowserToolParameters, piLoginToolParameters } from "./tool-schemas.js";
 
@@ -125,7 +126,7 @@ function normalizedMaxSteps(value) {
   return parsed;
 }
 
-function resolvedBrowserOptions(options) {
+function resolvedBrowserOptions(options, profile) {
   const timeout = envPositiveInteger("BETTERWRIGHT_PI_TIMEOUT_SECONDS", 0);
   const downloadPolicy = String(
     process.env.BETTERWRIGHT_PI_DOWNLOAD_POLICY || "",
@@ -136,6 +137,7 @@ function resolvedBrowserOptions(options) {
     ...(options || {}),
     ...(timeout ? { defaultTimeout: timeout } : {}),
     ...(downloadPolicy ? { downloadPolicy } : {}),
+    ...(profile ? { profile } : {}),
   };
 }
 
@@ -412,6 +414,15 @@ export function createPiExtension(options: any = {}) {
     const startUrl = normalizedStartUrl(
       options.startUrl ?? process.env.BETTERWRIGHT_PI_START_URL,
     );
+    // Same identity knob as the CLI and MCP server: a named profile is a
+    // separate persistent cookie jar with its own lock, so two Pi sessions
+    // with different profiles run concurrently, both signed in. Resolved
+    // eagerly so an invalid name surfaces at extension load, not as a
+    // mysteriously signed-out browser later.
+    const profile = resolveProfileName(
+      String(options.profile ?? process.env.BETTERWRIGHT_PROFILE ?? "").trim() ||
+        undefined,
+    );
     let browser = options.browser || null;
     let startPromise = null;
     let pendingStartWarning = "";
@@ -447,7 +458,9 @@ export function createPiExtension(options: any = {}) {
 
     async function getBrowser() {
       if (!browser)
-        browser = new BetterWright(resolvedBrowserOptions(options.browserOptions));
+        browser = new BetterWright(
+          resolvedBrowserOptions(options.browserOptions, profile),
+        );
       if (startUrl && !startPromise) {
         startPromise = browser
           .run(

@@ -163,7 +163,7 @@ ephemeral profile from `browser/runtime` (a signed-out browser) rather than
 corrupting it.
 
 `profile: "<name>"` (CLI `--profile <name>` or `BETTERWRIGHT_PROFILE`, which
-the MCP server reads too) selects a **separate identity**: an independent persistent profile at
+the MCP server and the Pi extension read too) selects a **separate identity**: an independent persistent profile at
 `browser/profiles/<name>`, with its own cookie jar, its own lock
 (`browser/profiles/<name>.betterwright-lock`, a sibling of the directory), its
 own [session daemon](sessions.md), and its own `exec` transcripts. Two

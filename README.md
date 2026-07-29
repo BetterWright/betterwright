@@ -305,7 +305,7 @@ new BetterWright({ profile: "review" }); // the reading account, concurrently
 Omitting `profile` keeps the single default profile, unchanged. The vault and
 artifacts are shared across profiles, so a credential saved once fills
 anywhere. CLI: `--profile <name>` or `BETTERWRIGHT_PROFILE`, which the MCP
-server reads too. See
+server and the Pi extension read too. See
 [docs/sessions.md](docs/sessions.md#sessions-vs-profiles).
 
 ## Docs
