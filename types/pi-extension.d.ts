@@ -7,10 +7,31 @@ export interface PiExtensionOptions {
   browser?: Pick<
     BetterWright,
     "run" | "close" | "downloadPolicy" | "fillCredential"
-  >;
+  > &
+    Partial<
+      Pick<
+        BetterWright,
+        | "liveViewDrainChat"
+        | "liveViewPostChat"
+        | "liveViewStatus"
+        | "startLiveView"
+        | "stopLiveView"
+        | "waitForHandoff"
+      >
+    >;
   browserOptions?: BetterWrightOptions;
+  chatPollMs?: number;
   closeBrowserOnShutdown?: boolean;
   guardrails?: Guardrails;
+  liveView?: {
+    enabled?: boolean;
+    expose?: string;
+    host?: string;
+    password?: string;
+    passwordHash?: string;
+    port?: number;
+    publicHost?: string;
+  };
   maxSteps?: number;
   requireEvidence?: boolean;
   session?: string;
@@ -40,6 +61,10 @@ export interface PiExtensionApiLike {
   on(event: string, handler: (...args: any[]) => unknown): void;
   getActiveTools?(): string[];
   setActiveTools?(names: string[]): void;
+  sendMessage?(
+    message: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): void;
 }
 
 export type PiExtension = (pi: PiExtensionApiLike) => void;
@@ -47,6 +72,7 @@ export type PiExtension = (pi: PiExtensionApiLike) => void;
 export const PI_BROWSER_PARAMETERS: Readonly<object>;
 export const PI_LOGIN_PARAMETERS: Readonly<object>;
 export const PI_EVIDENCE_PARAMETERS: Readonly<object>;
+export const PI_HANDOFF_PARAMETERS: Readonly<object>;
 export function createPiExtension(options?: PiExtensionOptions): PiExtension;
 
 declare const extension: PiExtension;

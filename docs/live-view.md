@@ -7,7 +7,7 @@ policy-guarded session, and a human can watch it live, message it, take the
 controls, or complete a step the agent cannot (MFA, a resistant CAPTCHA, a
 consequential click) — then hand control straight back.
 
-Three surfaces, one server:
+Several surfaces, one server:
 
 | Surface | What it does |
 | --- | --- |
@@ -16,13 +16,16 @@ Three surfaces, one server:
 | the session dock (chat / ask / handoff) | always-on chat to guide the agent; `ask` questions appear as chips + a reply box; `handoff` elevates the dock with **Done** / **Cancel** and force-enables browser control |
 | agent `live_view` tool | mid-task watch without pausing: the model can open the viewer whenever the user asks, relay the URL, and keep working (`handoff` still pauses for human hands) |
 | MCP `browser_handoff` | `action: "start"` anytime during an MCP session (watch or handoff) |
+| Pi extension `browser_handoff` | native [Pi Coding Agent](https://github.com/badlogic/pi-mono) tool: `start`/`status`/`stop` plus a blocking `wait` (Done/Cancel handoff); viewer chat is delivered between turns — waking an idle agent — and browser-step notes mirror back into the dock |
 | `betterwright view` | attaches to the **session daemon** when one is running (same tabs as `run`/`exec`/`skill` agents) and holds the viewer until Ctrl-C; if no daemon, starts a private browser for warm-up / remote-desktop |
 
 Library equivalents: `browser.startLiveView()`, `browser.stopLiveView()`,
 `browser.liveViewStatus()`, `browser.waitForHandoff()`, `browser.waitForAsk()`,
 `browser.liveViewPostChat()`, `browser.liveViewDrainChat()`, and
 `runAgentTask({liveView: true})` (or omit the flag and call the agent
-`live_view` / `handoff` tools mid-task). MCP clients get a `browser_handoff` tool.
+`live_view` / `handoff` tools mid-task). MCP clients and Pi sessions get a
+`browser_handoff` tool; both require the same deployer opt-in
+(`BETTERWRIGHT_LIVE_VIEW=1`) before a view can reach beyond the machine.
 
 **Live view is invocable anytime** — not only at process or task start. The
 code sandbox still cannot start it (sealed); host surfaces above can.
