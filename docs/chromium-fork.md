@@ -16,10 +16,12 @@ betterwright setup           # fork (when shipped) + CloakBrowser fallback
 betterwright setup --cloak-only
 ```
 
-Artifacts come from the GitHub Release tag `chromium-<version>` (see
-`CHROMIUM_FORK_RELEASE_TAG` / `CHROMIUM_FORK_ASSETS` in
-`src/chromium-fork.ts`). Each zip is SHA-256 pinned in that manifest before
-extract. Apple-licensed fonts are **not** in the public zip.
+Artifacts come from a revisioned GitHub Release tag such as
+`chromium-<version>-r2` (see `CHROMIUM_FORK_RELEASE_TAG` /
+`CHROMIUM_FORK_ASSETS` in `src/chromium-fork.ts`). Revisioning keeps older
+published BetterWright packages bound to their original immutable assets.
+Each zip is SHA-256 pinned in the manifest before extract. Apple-licensed
+fonts are **not** in the public zip.
 
 ## Runtime Selection
 

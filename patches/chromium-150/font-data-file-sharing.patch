@@ -1,0 +1,134 @@
+diff --git a/components/services/font_data/BUILD.gn b/components/services/font_data/BUILD.gn
+index 2305b75361..6b0cf621f8 100644
+--- a/components/services/font_data/BUILD.gn
++++ b/components/services/font_data/BUILD.gn
+@@ -30,6 +30,24 @@ source_set("lib") {
+   public_deps = [ "//skia" ]
+ }
+ 
++test("font_data_service_unittests") {
++  sources = [ "font_data_service_impl_unittest.cc" ]
++  deps = [
++    ":lib",
++    "//base",
++    "//base/test:test_support",
++    "//components/services/font_data/public/mojom",
++    "//mojo/core/test:run_all_unittests",
++    "//mojo/public/cpp/bindings",
++    "//mojo/public/cpp/system",
++    "//skia",
++    "//testing/gtest",
++    "//ui/gfx",
++  ]
++
++  data_deps = [ "//third_party/test_fonts" ]
++}
++
+ source_set("unit_tests") {
+   testonly = true
+   sources = [ "font_data_service_impl_unittest.cc" ]
+diff --git a/components/services/font_data/font_data_service_impl.cc b/components/services/font_data/font_data_service_impl.cc
+index 4917c5780e..b8500a4334 100644
+--- a/components/services/font_data/font_data_service_impl.cc
++++ b/components/services/font_data/font_data_service_impl.cc
+@@ -121,12 +121,6 @@ std::tuple<base::File, uint64_t> FontDataServiceImpl::GetFileHandle(
+   typeface.getResourceName(&font_path);
+   base::UmaHistogramBoolean("Chrome.FontDataService.EmptyPathOnGetFileHandle",
+                             font_path.isEmpty());
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+-  // TODO(crbug.com/463411679): `getResourceName()` is not implemented for
+-  // Linux nor ChromeOS, so the returned file will always be invalid and a
+-  // memory region will be shared instead.
+-  CHECK(font_path.isEmpty());
+-#endif  // BUILDFLAG(IS_LINUX)
+   if (font_path.isEmpty()) {
+     return {};
+   }
+diff --git a/components/services/font_data/font_data_service_impl_unittest.cc b/components/services/font_data/font_data_service_impl_unittest.cc
+index 67971d6712..21f9fa97cd 100644
+--- a/components/services/font_data/font_data_service_impl_unittest.cc
++++ b/components/services/font_data/font_data_service_impl_unittest.cc
+@@ -208,18 +208,10 @@ TEST_F(FontDataServiceImplUnitTest, MatchFamilyName) {
+   font_service_->MatchFamilyName(
+       family_name, CreateTypefaceStyle(400, 5, mojom::TypefaceSlant::kRoman),
+       &out_result);
+-#if BUILDFLAG(IS_WIN)
+   EXPECT_EQ(impl_.GetCacheSizeForTesting(), 0u);
+   EXPECT_TRUE(out_result->typeface_data->is_font_file());
+   EXPECT_TRUE(
+       out_result->typeface_data->get_font_file()->file_handle.IsValid());
+-#else
+-  // For now, on Linux/ChromeOS we always hit the memory region fallback, and
+-  // therefore also adds to the cache.
+-  EXPECT_EQ(impl_.GetCacheSizeForTesting(), 1u);
+-  EXPECT_TRUE(out_result->typeface_data->is_region());
+-  EXPECT_TRUE(out_result->typeface_data->get_region().IsValid());
+-#endif
+ }
+ 
+ TEST_F(FontDataServiceImplUnitTest, MatchFamilyNameMemoryCacheSize) {
+@@ -339,15 +331,9 @@ TEST_F(FontDataServiceImplUnitTest, LegacyMakeTypefaceNullFamilyName) {
+   font_service_->LegacyMakeTypeface(
+       std::nullopt, CreateTypefaceStyle(400, 5, mojom::TypefaceSlant::kRoman),
+       &out_result);
+-#if BUILDFLAG(IS_WIN)
+   EXPECT_TRUE(out_result->typeface_data->is_font_file());
+   EXPECT_TRUE(
+       out_result->typeface_data->get_font_file()->file_handle.IsValid());
+-#else
+-  // For now, on Linux/ChromeOS we always hit the memory region fallback.
+-  EXPECT_TRUE(out_result->typeface_data->is_region());
+-  EXPECT_TRUE(out_result->typeface_data->get_region().IsValid());
+-#endif
+ }
+ 
+ #if BUILDFLAG(IS_WIN)
+diff --git a/third_party/skia/src/ports/SkFontConfigTypeface.h b/third_party/skia/src/ports/SkFontConfigTypeface.h
+index 6ea63cb..d657faf 100644
+--- a/third_party/skia/src/ports/SkFontConfigTypeface.h
++++ b/third_party/skia/src/ports/SkFontConfigTypeface.h
+@@ -65,6 +65,7 @@ protected:
+     }
+ 
+     void onGetFontDescriptor(SkFontDescriptor*, bool*) const override;
++    int onGetResourceName(SkString* resourceName) const override;
+     std::unique_ptr<SkStreamAsset> onOpenStream(int* ttcIndex) const override;
+ 
+     void onGetFamilyName(SkString* familyName) const override {
+diff --git a/third_party/skia/src/ports/SkFontMgr_FontConfigInterface.cpp b/third_party/skia/src/ports/SkFontMgr_FontConfigInterface.cpp
+index 16e3a2b..c1c46da 100644
+--- a/third_party/skia/src/ports/SkFontMgr_FontConfigInterface.cpp
++++ b/third_party/skia/src/ports/SkFontMgr_FontConfigInterface.cpp
+@@ -27,6 +27,13 @@ std::unique_ptr<SkStreamAsset> SkTypeface_FCI::onOpenStream(int* ttcIndex) const
+     return std::unique_ptr<SkStreamAsset>(fFCI->openStream(this->getIdentity()));
+ }
+ 
++int SkTypeface_FCI::onGetResourceName(SkString* resourceName) const {
++    if (resourceName) {
++        *resourceName = fIdentity.fString;
++    }
++    return 1;
++}
++
+ void SkTypeface_FCI::onGetFontDescriptor(SkFontDescriptor* desc, bool* serialize) const {
+     SkTypeface_proxy::onGetFontDescriptor(desc, serialize);
+     SkString name;
+diff --git a/third_party/skia/tests/FCITest.cpp b/third_party/skia/tests/FCITest.cpp
+index 603a8ba..02a3f36 100644
+--- a/third_party/skia/tests/FCITest.cpp
++++ b/third_party/skia/tests/FCITest.cpp
+@@ -114,6 +114,14 @@ DEF_TEST(FontConfigInterface_MatchStyleNamedInstance, reporter) {
+                 return;
+             }
+ 
++            SkString resource_from_typeface;
++            REPORTER_ASSERT(reporter,
++                            typeface->getResourceName(&resource_from_typeface) == 1,
++                            "Matched font should expose its backing resource.");
++            REPORTER_ASSERT(reporter,
++                            resource_from_typeface == resultIdentity.fString,
++                            "Matched font's resource should match the FontConfig identity.");
++
+             SkString family_from_typeface;
+             typeface->getFamilyName(&family_from_typeface);
+ 

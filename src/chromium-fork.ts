@@ -60,7 +60,7 @@ export const PLATFORM_LAYOUT = Object.freeze({
 });
 
 /** GitHub release that hosts the per-platform fork zip artifacts. */
-export const CHROMIUM_FORK_RELEASE_TAG = `chromium-${BETTERWRIGHT_CHROMIUM_VERSION}`;
+export const CHROMIUM_FORK_RELEASE_TAG = `chromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`;
 
 /**
  * Public download manifest for `betterwright update` / default `setup`.
@@ -75,7 +75,7 @@ export const CHROMIUM_FORK_ASSETS = Object.freeze({
   "linux-x64": Object.freeze({
     name: "betterwright-chromium-linux-x64.zip",
     sha256:
-      "45ffef258415057d70b71639424dc681284babf533939d32375f99585a136d31",
+      "676249346f0fd91e8b2768190efbb958cc20239bedacd6c53d541882a57bf4a0",
   }),
   "win32-x64": Object.freeze({
     name: "betterwright-chromium-win-x64.zip",
