@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-07-30
+
 ### Changed
 
 - The Linux x64 Chromium fork now uses file-backed FontDataService transport
@@ -16,6 +18,11 @@ Releases before 1.1.3 predate this file; their notes live on the
   25% at 1, 5, 10, and 20 same-site tabs in the validated four-vCPU workload,
   while preserving full Site Isolation, process locks, fingerprint output,
   and an explicit `--renderer-process-limit` override.
+
+### Fixed
+
+- Chromium-only GitHub Releases no longer start the npm publishing job; only
+  package release tags beginning with `v` may enter Trusted Publishing.
 
 ## [1.5.1] - 2026-07-28
 
@@ -323,6 +330,7 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
+[1.5.2]: https://github.com/BetterWright/betterwright/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/BetterWright/betterwright/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/BetterWright/betterwright/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/BetterWright/betterwright/compare/v1.3.1...v1.4.0
