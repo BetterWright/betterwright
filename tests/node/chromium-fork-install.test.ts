@@ -17,7 +17,10 @@ import {
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 test("public fork assets are pinned for mac-arm64, linux-x64, and win32-x64", () => {
-  assert.equal(CHROMIUM_FORK_RELEASE_TAG, `chromium-${BETTERWRIGHT_CHROMIUM_VERSION}`);
+  assert.equal(
+    CHROMIUM_FORK_RELEASE_TAG,
+    `chromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`,
+  );
   assert.equal(
     chromiumForkAssetForHost({ platform: "darwin", arch: "arm64" })?.name,
     "betterwright-chromium-mac-arm64.zip",

@@ -1,4 +1,4 @@
-# Chromium Fork Fingerprint Patch Set
+# Chromium Fork Patch Set
 
 Build-side patches for the pinned BetterWright Chromium 150 fork. The JS
 layer (`src/fork-identity.ts`) already masks UA, UA-CH, `navigator.platform`,
@@ -116,7 +116,77 @@ the rendered buffer. Must be stable per profile and distinct per seed.
   Georgia 307 / Palatino 307 / Avenir Next 304) instead of collapsing to one
   fallback.
 
-## 8. Build flags
+## 8. Linux font-data file sharing
+
+Apply `patches/chromium-150/font-data-file-sharing.patch` from the Chromium
+source root. It was validated at Chromium
+`e69b30bba288603e514cffb4c79c359cac68e923` and Skia
+`bee4c917220040e147f14964635ff92ce6c5a3f6`. It makes Skia's
+FontConfig-backed typefaces expose their backing file identity, allowing
+`FontDataService` to send renderers a read-only font file handle instead of
+copying the complete font into an anonymous shared region. TTC indices,
+variation coordinates, synthetic styles, fallback for non-file-backed
+typefaces, and renderer-side per-file mapping remain unchanged.
+
+This is especially important with the bundled Mac-compatible TTC collection:
+the old fallback kept large direct font mappings alongside deleted
+`/tmp/.org.chromium.*` copies. Validate with:
+
+```bash
+autoninja -C out/LinuxSelective chrome font_data_service_unittests
+out/LinuxSelective/font_data_service_unittests \
+  --test-launcher-bot-mode --gtest_color=no
+```
+
+The focused test must report file-handle results on Linux while the explicit
+memory-fallback tests continue to report valid shared regions. Resource
+benchmarks must use summed Chromium PSS and verify that process counts, tab
+counts, font metrics, canvas/audio hashes, and live detector verdicts remain
+unchanged.
+
+## 9. Linux renderer soft limit
+
+Apply `patches/chromium-150/renderer-process-soft-limit.patch` from the
+Chromium source root. The patch makes four the Linux fork's default **soft**
+renderer-process limit, retaining an explicit `--renderer-process-limit`
+override for diagnostics or higher-capacity deployments. The default is set
+through `RenderProcessHost::SetMaxRendererProcessCount()` during Linux startup,
+the same global-override path as the command-line switch. Do not implement it
+only through `ContentBrowserClient::GetMaxRendererProcessCountOverride()`:
+Chromium 150's `RemoveRendererProcessLimit` feature can bypass calculated or
+embedder limits while deliberately preserving explicit/global overrides.
+
+This does not disable Site Isolation or remove process locks. Once four
+renderer hosts exist, Chromium's existing `GetExistingProcessHost()` path may
+reuse only a suitable renderer; distinct locked sites, origins, profiles,
+storage partitions, and cross-origin-isolated contexts still receive separate
+processes and may exceed the soft limit. The result is bounded same-site
+process sharing. On hosts where more same-site renderer parallelism is more
+important than memory, override the default with
+`BETTERWRIGHT_CHROMIUM_ARGS=--renderer-process-limit=N`.
+
+The exact compiled Linux artifact reduced summed Chromium PSS by 29.62%,
+29.81%, 25.96%, and 28.50% at 1/5/10/20 X.com tabs versus the PGO control.
+Concurrent deterministic throughput changed by +0.55% to +1.42%, while live
+CPU-seconds per 1,000 operations improved by 1.55% to 8.67%. Validate all of
+the following on any rebuilt artifact:
+
+- Six distinct test sites still create at least six site-locked renderers when
+  the configured soft limit is four.
+- Same-site tabs begin sharing only after the limit, while all tabs retain
+  independent page lifecycle and DOM state.
+- Summed Chromium PSS is measured at 1, 5, 10, and 20 tabs against a build
+  without this patch; do not use summed RSS.
+- Concurrent fixed-content responsiveness, live-site CPU, headed/headless
+  fingerprints, detector verdicts, and open/use/close lifecycle checks pass.
+
+Chromium's own `SitePerProcessBrowserTest.MainFrameProcessReuseWhenOverLimit`
+and `SubframeProcessReuseWhenOverLimit` cover the security invariant: even
+with a limit of one, different sites remain in different processes while
+eligible same-site documents may reuse a process. The deliberate stability
+tradeoff is that co-resident same-site tabs share renderer crash/debugger fate.
+
+## 10. Build flags
 
 `out/LinuxStatic` builds with `proprietary_codecs=true`,
 `ffmpeg_branding="Chrome"`, `is_component_build=false`, `target_cpu="x64"`.

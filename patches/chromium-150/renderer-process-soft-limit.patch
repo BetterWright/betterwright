@@ -1,0 +1,20 @@
+diff --git a/content/browser/browser_main_loop.cc b/content/browser/browser_main_loop.cc
+index 90ee66b3e9..5357126f65 100644
+--- a/content/browser/browser_main_loop.cc
++++ b/content/browser/browser_main_loop.cc
+@@ -607,6 +607,15 @@ int BrowserMainLoop::EarlyInitialization() {
+     if (base::StringToSizeT(limit_string, &process_limit)) {
+       RenderProcessHost::SetMaxRendererProcessCount(process_limit);
+     }
++#if BUILDFLAG(IS_LINUX)
++  } else {
++    // BrowserBox sandboxes have four vCPUs. Chromium's memory-derived default
++    // allows dozens of renderers in an 8 GiB sandbox, duplicating substantial
++    // same-site V8 and Blink state without adding useful CPU parallelism. This
++    // remains a soft limit: Site Isolation creates another site-locked process
++    // whenever no existing renderer is suitable.
++    RenderProcessHost::SetMaxRendererProcessCount(4u);
++#endif
+   }
+ 
+   if (parts_)

@@ -9,6 +9,14 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- The Linux x64 Chromium fork now uses file-backed FontDataService transport
+  and a four-renderer soft limit. These reduce summed Chromium PSS by at least
+  25% at 1, 5, 10, and 20 same-site tabs in the validated four-vCPU workload,
+  while preserving full Site Isolation, process locks, fingerprint output,
+  and an explicit `--renderer-process-limit` override.
+
 ## [1.5.1] - 2026-07-28
 
 ### Fixed
