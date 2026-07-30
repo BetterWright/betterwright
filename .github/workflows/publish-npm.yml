@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   publish:
+    if: startsWith(github.event.release.tag_name, 'v')
     name: Publish trusted package
     runs-on: ubuntu-latest
     environment: npm
