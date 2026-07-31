@@ -158,7 +158,9 @@ jobs:
         if: runner.os == 'Windows' && steps.windows_unit.outcome == 'failure'
         shell: bash
         run: |
-          echo "::warning title=Windows unit tests failed (known, non-gating)::Node ${{ matrix.node }} on windows-latest. These failures predate this job and do not block the merge; see the note in .github/workflows/ci.yml."
+          # No commas in `title=`: the annotation command treats them as
+          # property separators and silently truncates the rest.
+          echo "::warning title=Known non-gating Windows unit test failures::Node ${{ matrix.node }} on windows-latest. These failures predate this job and do not block the merge; see the note in .github/workflows/ci.yml."
           echo "⚠️ **Windows unit tests failed on Node ${{ matrix.node }}** — known and non-gating. See the \`Unit tests (Windows, non-gating)\` step for the list." >> "$GITHUB_STEP_SUMMARY"
 
   audit:
