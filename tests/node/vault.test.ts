@@ -64,7 +64,16 @@ function childSave(directory, username, { barrier = null } = {}) {
       process.env.TEST_VAULT_BARRIER &&
       !existsSync(process.env.TEST_VAULT_BARRIER)
     ) await new Promise((resolve) => setTimeout(resolve, 5));
-    const vault = new LocalCredentialVault(process.env.TEST_VAULT_DIR);
+    // These tests serialize up to 24 child processes through one lock, and on
+    // a two-core Windows runner every release's retire rename must also
+    // outlast the other children's polls pinning the lock directory — the
+    // last writer in line can legitimately wait longer than the 10s
+    // production default. The tests assert that serialization is correct,
+    // not that it is fast, so give the children a stress-sized budget.
+    const vault = new LocalCredentialVault({
+      dir: process.env.TEST_VAULT_DIR,
+      lockTimeoutMs: 30_000,
+    });
     await vault.handleRequest(
       "save",
       { username: process.env.TEST_VAULT_USER, password: "child-process-secret" },
