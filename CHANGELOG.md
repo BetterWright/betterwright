@@ -9,13 +9,15 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-31
+
 ### Added
 
 - `CODE_OF_CONDUCT.md`, GitHub issue forms, a pull-request template, and
   `CODEOWNERS`.
 - A cross-platform CI job covering Linux, macOS, and Windows on Node 22 and 24,
   an advisory dependency-audit job, per-job timeouts, and cancellation of
-  superseded pull-request runs.
+  superseded pull-request runs. All six platform legs gate merges.
 - `.nvmrc` and `.gitattributes`, the latter pinning LF so the byte-exact
   `SKILL.md` test passes in a Windows working tree.
 
@@ -35,6 +37,29 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
+- The credential vault's multi-process lock now works on Windows, where a
+  directory cannot be renamed while any handle is open to a file inside it and
+  a file cannot be renamed over a destination another process holds open. The
+  lease opens after the publish rename there (ownership is re-proven by token
+  and file identity), lock retirement and vault writes briefly outlast
+  concurrent readers pinning their destination, and a quarantine blocked by a
+  live owner's open lease keeps waiting instead of crashing. The recorded
+  filesystem evidence lives in `research/windows-fs-probe.mjs`, and the entire
+  unit suite that surfaced this — 49 failing tests at first contact — now
+  passes and gates on Windows.
+- `human.type` actually clears the field before typing on the default
+  BetterWright Chromium fork. Its clear step pressed `Control+A` and trusted
+  the browser to select-all, but the fork does not run the select-all editing
+  command for synthesized keyboard events, so typed text landed in front of
+  the old value. The clear now selects through the element itself, which works
+  on every browser build, inside iframes, and for contenteditables.
+- The live view no longer delivers the same frame to the same viewer twice
+  when a visibility repaint races the broadcast; every delivery path now goes
+  through one per-client gate.
+- `mkdirPrivate` tightens permissions only on directories it actually creates.
+  It previously re-chmodded a pre-existing directory to `0700` — for the
+  profile lock, that directory is wherever the user pointed the profile,
+  silently revoking access the user had deliberately granted.
 - The JWT payload decoder names `base64url` explicitly instead of relying on
   Node's lenient `base64` decoder accepting the URL-safe alphabet.
 - `NetworkPolicy.checkHost`, `downloadPolicyFromEnv`, and the daemon's identity
@@ -362,7 +387,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.5.2...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/BetterWright/betterwright/compare/v1.5.2...v1.6.0
 [1.5.2]: https://github.com/BetterWright/betterwright/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/BetterWright/betterwright/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/BetterWright/betterwright/compare/v1.4.0...v1.5.0
