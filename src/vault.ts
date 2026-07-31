@@ -631,7 +631,7 @@ async function atomicWrite(file, contents) {
     await handle.sync();
     await handle.close();
     handle = null;
-    await rename(temporary, file);
+    await renameOutlastingReaders(temporary, file);
     await chmod(file, FILE_MODE);
     await syncDirectory(directory);
   } catch (error) {
@@ -986,23 +986,24 @@ function startLockHeartbeat(lockPath, token, handle, staleMs) {
   };
 }
 
-// Windows refuses to rename a directory while any process holds a file
-// inside it open (research/windows-fs-probe.mjs) — and contenders polling
-// readLockDirectory open the lock's owner.json for a few milliseconds at a
-// time, so a retire rename can lose that race repeatedly but never for long.
-// Retry briefly; the pin vanishes as soon as the reader's descriptor closes.
-// Elsewhere a rename never fails for this reason and the first attempt wins.
+// Windows refuses a rename whenever another process pins a path it touches:
+// a directory cannot move while any file inside it is held open, and a file
+// cannot be renamed over an open destination (research/windows-fs-probe.mjs).
+// Both pins here are momentary — contenders polling readLockDirectory hold
+// the lock's owner.json for a few milliseconds per poll, and a concurrent
+// vault read (or an antivirus scan) holds vault.enc about as long — so a
+// rename can lose that race repeatedly but never for long. Retry briefly;
+// the pin vanishes as soon as the reader's descriptor closes. The lock's
+// publish rename deliberately does not come through here: EPERM there is
+// the collision signal that tells a contender the lock is already taken.
 async function renameOutlastingReaders(from, to) {
+  if (process.platform !== "win32") return rename(from, to);
   let delay = 5;
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await rename(from, to);
     } catch (error) {
-      if (
-        process.platform !== "win32" ||
-        !["EPERM", "EACCES", "EBUSY"].includes(error?.code) ||
-        attempt >= 20
-      ) {
+      if (!["EPERM", "EACCES", "EBUSY"].includes(error?.code) || attempt >= 20) {
         throw error;
       }
     }

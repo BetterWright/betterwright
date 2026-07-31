@@ -415,12 +415,11 @@ const windowsPipes = process.platform === "win32";
 
 test("daemon paths keep their historical names for the default profile", () => {
   const home = "/tmp/bw-home";
+  assert.equal(daemonSocketPath(home), daemonSocketPath(home, null));
   if (windowsPipes) {
     assert.match(daemonSocketPath(home), /^\\\\\.\\pipe\\betterwright-[0-9a-f]+$/);
-    assert.equal(daemonSocketPath(home), daemonSocketPath(home, null));
   } else {
     assert.equal(daemonSocketPath(home), path.join(home, "daemon.sock"));
-    assert.equal(daemonSocketPath(home, null), path.join(home, "daemon.sock"));
   }
   assert.equal(daemonInfoPath(home), path.join(home, "daemon.json"));
   assert.equal(daemonLogPath(home), path.join(home, "daemon.log"));

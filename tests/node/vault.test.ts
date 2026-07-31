@@ -5,6 +5,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rename,
   rm,
@@ -1256,6 +1257,29 @@ test("concurrent instances and processes serialize without dropping records", as
     );
     assert.equal(listed.credentials.length, 26);
     assert.equal(new Set(listed.credentials.map((record) => record.username)).size, 26);
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("a reader holding the data file open does not fail a concurrent save", async () => {
+  const context = await fixture();
+  try {
+    await saveLogin(context.vault, "first", "first-secret");
+    // Pin vault.enc the way a concurrent list or an antivirus scan would.
+    // Windows refuses to rename the freshly written ciphertext over an open
+    // destination (research/windows-fs-probe.mjs), so on that platform the
+    // save below succeeds only because atomicWrite outlasts this descriptor.
+    const reader = await open(path.join(context.dir, "vault.enc"), "r");
+    const release = setTimeout(() => void reader.close().catch(() => {}), 150);
+    try {
+      await saveLogin(context.vault, "second", "second-secret");
+    } finally {
+      clearTimeout(release);
+      await reader.close().catch(() => {});
+    }
+    const listed = await context.vault.handleRequest("list", {}, EXAMPLE);
+    assert.equal(listed.credentials.length, 2);
   } finally {
     await context.cleanup();
   }

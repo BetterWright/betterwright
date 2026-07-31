@@ -96,8 +96,12 @@ jobs:
     # sync" and "Node tests"; GitHub appends matrix values to a job's display
     # name ("Node tests (windows-latest, 24)"), so turning either of those into
     # a matrix would make the required checks unmatchable and block every merge.
-    # Platform and version coverage therefore lives here, under a name nothing
-    # depends on, and the two protected jobs stay single-runner and untouched.
+    # Platform and version coverage therefore lives here, and the two protected
+    # jobs stay single-runner and untouched. All six matrix legs are themselves
+    # required checks now ("Cross-platform unit tests (<os>, <node>)"), so
+    # renaming this job or changing the matrix values means updating branch
+    # protection in the same breath — otherwise merges block on a check that
+    # can never report.
     name: Cross-platform unit tests
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -162,7 +166,9 @@ jobs:
       # on runtime deps, this job is the only automated signal a human gets.
       # `continue-on-error` keeps a finding loud (the step goes orange and the
       # summary below names it) without letting a third-party publish take the
-      # repository offline.
+      # repository offline. The job itself is a required check — that requires
+      # the audit to have *run* on every merge, not to be clean, because the
+      # job succeeds regardless of findings.
       - name: Audit runtime dependencies
         id: runtime
         continue-on-error: true

@@ -1264,7 +1264,7 @@ async function humanClickTarget(page, session, value, options: any = {}) {
   const point = pointInside(box, inputLike);
   await movePointer(page.mouse, session.cursor, point, options);
   await pressPointer(page.mouse, inputLike);
-  return { point, inputLike, target };
+  return target;
 }
 
 // Select a target's existing text so the next Backspace clears it. The
@@ -3659,9 +3659,9 @@ function buildSandbox(session, consoleMessages, execution) {
   });
   human.type = realm.safeFunction(async (target, text, options: any = {}) => {
     const page = await ensureSessionPage(session);
-    const clicked = await humanClickTarget(page, session, target, options);
+    const clickedTarget = await humanClickTarget(page, session, target, options);
     if (options?.clear !== false) {
-      await selectAllForClear(page, clicked.target);
+      await selectAllForClear(page, clickedTarget);
       await page.keyboard.press("Backspace");
     }
     await typeText(page.keyboard, text, options);
