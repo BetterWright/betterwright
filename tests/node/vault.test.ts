@@ -34,7 +34,10 @@ async function fixture(options = {}) {
     root,
     dir,
     vault: new LocalCredentialVault({ dir, ...options }),
-    cleanup: () => rm(root, { recursive: true, force: true }),
+    // The retries absorb Windows's closed-but-delete-pending entries, which
+    // keep the parent directory ENOTEMPTY for a moment after handles close.
+    cleanup: () =>
+      rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
   };
 }
 
@@ -172,10 +175,14 @@ test("encrypts all records, keeps files owner-only, and returns metadata only", 
       assert.doesNotMatch(diskText, /private operator note/);
       assert.doesNotMatch(diskText, /alice@example\.com/);
     }
-    for (const file of [context.vault.paths.key, context.vault.paths.data, context.vault.paths.audit]) {
-      assert.equal((await stat(file)).mode & 0o777, 0o600);
+    // POSIX permission bits do not exist on Windows (stat reports 0o666/0o777
+    // regardless), so assert them only where they are meaningful.
+    if (process.platform !== "win32") {
+      for (const file of [context.vault.paths.key, context.vault.paths.data, context.vault.paths.audit]) {
+        assert.equal((await stat(file)).mode & 0o777, 0o600);
+      }
+      assert.equal((await stat(context.dir)).mode & 0o777, 0o700);
     }
-    assert.equal((await stat(context.dir)).mode & 0o777, 0o700);
     for (const line of audit.trim().split("\n")) assert.doesNotThrow(() => JSON.parse(line));
   } finally {
     await context.cleanup();

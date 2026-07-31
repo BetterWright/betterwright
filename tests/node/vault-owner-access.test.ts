@@ -22,7 +22,10 @@ import {
 
 function tempHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-vault-owner-"));
-  test.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  // The retries absorb Windows's delete-pending window after handles close.
+  test.after(() =>
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+  );
   return home;
 }
 

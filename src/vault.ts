@@ -888,18 +888,19 @@ async function quarantineStaleLock(lockPath, staleMs) {
     return true;
   } catch (error) {
     if (isMissing(error)) return true;
-    if (
-      isRenameCollision(error) ||
-      (isWindowsRenameDestinationError(error) && (await pathExists(tombstone)))
-    ) {
-      return false;
-    }
-    // Windows also refuses to rename a directory whose owner still holds the
-    // lease handle open inside it (research/windows-fs-probe.mjs). An open
-    // lease is stronger evidence of life than the heartbeat that made the
-    // lock look stale, so treat the owner as alive and keep waiting.
-    if (isWindowsRenameDestinationError(error) && (await pathExists(lockPath))) {
-      return false;
+    if (isRenameCollision(error)) return false;
+    if (isWindowsRenameDestinationError(error)) {
+      // Another contender's tombstone won the race: stand down.
+      if (await pathExists(tombstone)) return false;
+      // Windows also refuses to rename a directory whose owner still holds
+      // the lease handle open inside it (research/windows-fs-probe.mjs). An
+      // open lease is stronger evidence of life than the heartbeat that made
+      // the lock look stale, so if the lock is still there, treat the owner
+      // as alive and keep waiting. If it is gone, the owner released (or a
+      // contender quarantined it) mid-race, which is the same outcome as our
+      // own rename finding nothing — report it reclaimed so the caller
+      // retries acquisition.
+      return !(await pathExists(lockPath));
     }
     throw error;
   }

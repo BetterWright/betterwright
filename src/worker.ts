@@ -1255,7 +1255,7 @@ async function humanTargetBox(page, value, timeout = DEFAULT_ACTION_TIMEOUT_MS, 
 
 async function humanClickTarget(page, session, value, options: any = {}) {
   const timeout = Math.max(1, Number(options?.timeout) || DEFAULT_ACTION_TIMEOUT_MS);
-  const { box, inputLike } = await humanTargetBox(
+  const { target, box, inputLike } = await humanTargetBox(
     page,
     value,
     timeout,
@@ -1264,7 +1264,36 @@ async function humanClickTarget(page, session, value, options: any = {}) {
   const point = pointInside(box, inputLike);
   await movePointer(page.mouse, session.cursor, point, options);
   await pressPointer(page.mouse, inputLike);
-  return { point, inputLike };
+  return { point, inputLike, target };
+}
+
+// Select a target's existing text so the next Backspace clears it. The
+// obvious `Control+A` chord is not reliable: the Chromium fork does not run
+// the select-all editing command for synthesized keyboard events (stock
+// Chromium does), so the chord silently left the old text in place and typed
+// text landed in front of it. Selecting through the element works on every
+// build and inside iframes, and raises the same `select` event a real
+// shortcut would; the chord remains only for bounds-style targets that have
+// no element to select through.
+async function selectAllForClear(page, target) {
+  if (target && typeof target.evaluate === "function") {
+    await target.evaluate((element) => {
+      if (typeof element.select === "function") {
+        element.select();
+        return;
+      }
+      if (element.isContentEditable) {
+        const selection = element.ownerDocument.defaultView?.getSelection();
+        if (!selection) return;
+        const range = element.ownerDocument.createRange();
+        range.selectNodeContents(element);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    });
+    return;
+  }
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
 }
 
 async function installContextGuard(context) {
@@ -3630,9 +3659,9 @@ function buildSandbox(session, consoleMessages, execution) {
   });
   human.type = realm.safeFunction(async (target, text, options: any = {}) => {
     const page = await ensureSessionPage(session);
-    await humanClickTarget(page, session, target, options);
+    const clicked = await humanClickTarget(page, session, target, options);
     if (options?.clear !== false) {
-      await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+      await selectAllForClear(page, clicked.target);
       await page.keyboard.press("Backspace");
     }
     await typeText(page.keyboard, text, options);
