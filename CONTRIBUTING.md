@@ -34,16 +34,15 @@ For the complete managed-browser integration suite, install the runtime and run
 `BETTERWRIGHT_REQUIRE_BROWSER=1 BETTERWRIGHT_CHROMIUM_ROOT=off npm test`.
 The policy, vault, prompt, and challenge suites run anywhere.
 
-Two notes on running the suite locally:
+One note on running the suite locally: **do not run the tests as root.**
+Several tests simulate an unwritable directory with `chmod`, which root
+bypasses; they detect this and skip, so a root run reports green while
+leaving those paths unexercised.
 
-- **Do not run the tests as root.** Several tests simulate an unwritable
-  directory with `chmod`, which root bypasses; they detect this and skip, so a
-  root run reports green while leaving those paths unexercised.
-- **Windows is known-red.** Around fifty unit tests — the vault suite and the
-  profile-lock recovery paths — fail on Windows today. CI runs the Windows leg
-  and reports a failure as a warning annotation, but does not gate on it; see
-  the `Unit tests (Windows, non-gating)` step in `.github/workflows/ci.yml`.
-  Fixing these is welcome, and wants a Windows machine to verify on.
+The unit suite runs and gates on Linux, macOS, and Windows in CI. Windows
+filesystem semantics differ in ways that matter here (a directory cannot be
+renamed while a handle is open to a file inside it); the recorded evidence
+behind the vault's Windows branches lives in `research/windows-fs-probe.mjs`.
 
 ## Style
 
