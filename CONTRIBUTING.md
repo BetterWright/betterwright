@@ -34,6 +34,16 @@ For the complete managed-browser integration suite, install the runtime and run
 `BETTERWRIGHT_REQUIRE_BROWSER=1 BETTERWRIGHT_CHROMIUM_ROOT=off npm test`.
 The policy, vault, prompt, and challenge suites run anywhere.
 
+Two notes on running the suite locally:
+
+- **Do not run the tests as root.** Several tests simulate an unwritable
+  directory with `chmod`, which root bypasses; they detect this and skip, so a
+  root run reports green while leaving those paths unexercised.
+- **Windows is known-red.** Around fifty unit tests — the vault suite and the
+  profile-lock recovery paths — fail on Windows today. CI runs the Windows leg
+  for visibility but does not gate on it; see the `continue-on-error` note in
+  `.github/workflows/ci.yml`.
+
 ## Style
 
 - Runtime and CLI sources are TypeScript 7 ESM compiled to ordinary ESM

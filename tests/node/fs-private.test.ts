@@ -28,15 +28,33 @@ test("mkdirPrivate creates the full path owner-only", () => {
   if (posix) assert.equal(mode(nested), PRIVATE_DIR_MODE);
 });
 
-test("mkdirPrivate tightens a directory that already exists too openly", () => {
+test("mkdirPrivate tightens every directory it creates, umask notwithstanding", () => {
   const root = makeTempDir("bw-fs-private-");
-  const dir = path.join(root, "loose");
-  fs.mkdirSync(dir, { mode: 0o777 });
-  if (posix) fs.chmodSync(dir, 0o777);
+  const previous = process.umask(0o022);
+  try {
+    mkdirPrivate(path.join(root, "a", "b", "c"));
+  } finally {
+    process.umask(previous);
+  }
+  // `mode` is masked by the umask, so without the follow-up chmod these would
+  // land as 0o755 — and the intermediate links are as exposed as the leaf.
+  if (posix) {
+    assert.equal(mode(path.join(root, "a")), PRIVATE_DIR_MODE);
+    assert.equal(mode(path.join(root, "a", "b")), PRIVATE_DIR_MODE);
+    assert.equal(mode(path.join(root, "a", "b", "c")), PRIVATE_DIR_MODE);
+  }
+});
+
+test("mkdirPrivate leaves an existing directory's mode alone", () => {
+  const root = makeTempDir("bw-fs-private-");
+  const dir = path.join(root, "users-own-directory");
+  fs.mkdirSync(dir, { mode: 0o755 });
+  if (posix) fs.chmodSync(dir, 0o755);
   mkdirPrivate(dir);
-  // mkdirSync's `mode` is ignored for an existing entry, which is exactly the
-  // case the helper's follow-up chmod exists to cover.
-  if (posix) assert.equal(mode(dir), PRIVATE_DIR_MODE);
+  // Callers pass parents BetterWright does not own — `acquireProfileLock` hands
+  // it the profile's parent, which is wherever the user pointed the profile.
+  // Clamping that to 0o700 would revoke access the user deliberately granted.
+  if (posix) assert.equal(mode(dir), 0o755);
 });
 
 test("writePrivate writes utf8 content owner-only", () => {
