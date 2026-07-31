@@ -20,7 +20,14 @@ export function makeTempDir(prefix) {
     after(() => {
       while (created.length) {
         // force:true so a directory a test already removed is not an error.
-        fs.rmSync(created.pop(), { recursive: true, force: true });
+        // The retries absorb Windows's transient EBUSY/EPERM, where an
+        // antivirus or indexer briefly holds freshly written files open.
+        fs.rmSync(created.pop(), {
+          recursive: true,
+          force: true,
+          maxRetries: 10,
+          retryDelay: 100,
+        });
       }
     });
   }

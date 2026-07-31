@@ -92,9 +92,12 @@ test("init detects only the agent hosts that exist", () => {
 });
 
 test("every agent host target names a real marker and a way to wire it", () => {
+  // path.join(home) normalizes the separators so the prefix check also holds
+  // on Windows, where the markers come back with backslashes.
+  const home = path.join("/home/example");
   for (const target of agentHostTargets("/home/example")) {
     assert.ok(target.id && target.label && target.how, `${target.id} is incomplete`);
-    assert.ok(target.marker.startsWith("/home/example"));
+    assert.ok(target.marker.startsWith(home));
     assert.ok(
       target.skillTarget || target.codexFile,
       `${target.id} has no way to be installed`,

@@ -408,17 +408,31 @@ test("BetterWright rejects an invalid profile name at construction", () => {
 // Daemon: one per (home, profile)
 // ---------------------------------------------------------------------------
 
+// On Windows the daemon deliberately binds a named pipe instead of a Unix
+// socket path (`\\.\pipe\betterwright-<hash>`), so the socket-path assertions
+// are platform-split. The info file and log stay ordinary files everywhere.
+const windowsPipes = process.platform === "win32";
+
 test("daemon paths keep their historical names for the default profile", () => {
   const home = "/tmp/bw-home";
-  assert.equal(daemonSocketPath(home), path.join(home, "daemon.sock"));
+  if (windowsPipes) {
+    assert.match(daemonSocketPath(home), /^\\\\\.\\pipe\\betterwright-[0-9a-f]+$/);
+    assert.equal(daemonSocketPath(home), daemonSocketPath(home, null));
+  } else {
+    assert.equal(daemonSocketPath(home), path.join(home, "daemon.sock"));
+    assert.equal(daemonSocketPath(home, null), path.join(home, "daemon.sock"));
+  }
   assert.equal(daemonInfoPath(home), path.join(home, "daemon.json"));
   assert.equal(daemonLogPath(home), path.join(home, "daemon.log"));
-  assert.equal(daemonSocketPath(home, null), path.join(home, "daemon.sock"));
 });
 
 test("each named profile gets its own socket, info file, and log", () => {
   const home = "/tmp/bw-home";
-  assert.equal(daemonSocketPath(home, "social"), path.join(home, "daemon-social.sock"));
+  if (windowsPipes) {
+    assert.match(daemonSocketPath(home, "social"), /^\\\\\.\\pipe\\betterwright-[0-9a-f]+$/);
+  } else {
+    assert.equal(daemonSocketPath(home, "social"), path.join(home, "daemon-social.sock"));
+  }
   assert.equal(daemonInfoPath(home, "social"), path.join(home, "daemon-social.json"));
   assert.equal(daemonLogPath(home, "social"), path.join(home, "daemon-social.log"));
   const paths = new Set([

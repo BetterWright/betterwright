@@ -1466,13 +1466,25 @@ test("Windows process identity uses bounded locale-independent creation ticks", 
   assert.equal(await _windowsProcessIdentityForTest(0, execute, systemRoot), null);
   assert.equal(calls.length, 1, "invalid PIDs must not launch PowerShell");
 
-  for (const unsafeRoot of [undefined, "Windows", "\\\\server\\share", "C:\\Windows\\..\\Temp"]) {
+  for (const unsafeRoot of ["Windows", "\\\\server\\share", "C:\\Windows\\..\\Temp"]) {
     assert.equal(
       await _windowsProcessIdentityForTest(4242, execute, unsafeRoot),
       null,
     );
   }
   assert.equal(calls.length, 1, "unsafe system roots must not launch PowerShell");
+
+  // Passing no root falls back to the machine's own %SystemRoot%. On Windows
+  // that is legitimately present, so the lookup proceeds; everywhere else the
+  // variable is absent and the fallback correctly refuses.
+  const fromEnvironment = await _windowsProcessIdentityForTest(4242, execute, undefined);
+  if (process.platform === "win32") {
+    assert.equal(fromEnvironment, "win32:638885440001234567");
+    assert.equal(calls.length, 2);
+  } else {
+    assert.equal(fromEnvironment, null);
+    assert.equal(calls.length, 1);
+  }
 });
 
 test("a lock is recoverable when its live PID has a different identity", async (t) => {

@@ -15,11 +15,30 @@
 //   - `handle.stat()` and `fs.stat()` must agree on dev+ino for the same
 //     file, or `verifyLockOwnership`'s identity check cannot work on NTFS.
 //
-// Recorded output: see below — pasted verbatim from the probe's CI run. If
-// you re-run the probe and see different output, update this block; these
-// lines are the evidence the Windows branches cite.
+// Recorded output — pasted verbatim from the probe's first CI run
+// (windows-latest, Node v22.23.1, GitHub Actions run 30625390611,
+// 2026-07-31). If you re-run the probe and see different output, update
+// this block; these lines are the evidence the Windows branches cite.
 //
-//   (pending — the block is filled in from the first windows-latest run)
+//   PROBE rename-dir-with-open-child-handle: EPERM
+//   PROBE rename-dir-after-close: ok
+//   PROBE rename-dir-onto-existing-empty-dir: EPERM
+//   PROBE rename-file-over-existing-file: ok
+//   PROBE rename-file-over-open-destination: EPERM
+//   PROBE open-directory-read: ok
+//   PROBE handle-vs-path-stat-identity: dev=true ino=true
+//   PROBE rm-dir-with-open-child-handle: ok
+//   PROBE utimes-via-open-handle: ok
+//
+// Two of these deserve a note beyond the lock fix they motivated:
+//   - `rm` of a directory tree succeeds even with an open child handle
+//     (NTFS POSIX-delete semantics); only *renaming* the directory is
+//     blocked. Cleanup paths need no reordering.
+//   - Replacing a file whose destination is concurrently open for reading
+//     fails with EPERM, so `atomicWrite` can race a concurrent reader on
+//     Windows. The vault's readers hold files open only momentarily
+//     (readBoundedFile closes in `finally`), so retrying writes there is
+//     left until evidence says otherwise.
 
 import fs from "node:fs";
 import { open, rename, rm, stat, utimes } from "node:fs/promises";
