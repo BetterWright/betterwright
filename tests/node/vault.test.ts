@@ -1317,8 +1317,16 @@ test("a replaced live lock is detected without deleting its replacement", async 
     const operation = context.vault.handleRequest("list", {}, EXAMPLE);
     await lockAcquired;
 
-    const displaced = `${context.vault.paths.lock}.displaced`;
-    await rename(context.vault.paths.lock, displaced);
+    // Displace the live lock out from under its owner. Windows cannot rename
+    // a directory whose lease handle is open inside it — that pin is real
+    // product behavior — but *deleting* it works there (NTFS POSIX-delete;
+    // see research/windows-fs-probe.mjs), and produces the same theft: the
+    // owner's lock is gone and a stranger's has taken its place.
+    if (process.platform === "win32") {
+      await rm(context.vault.paths.lock, { recursive: true, force: true });
+    } else {
+      await rename(context.vault.paths.lock, `${context.vault.paths.lock}.displaced`);
+    }
     await mkdir(context.vault.paths.lock, { mode: 0o700 });
     const replacementOwner = path.join(context.vault.paths.lock, "owner.json");
     await writeFile(

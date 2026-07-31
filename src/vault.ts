@@ -986,6 +986,31 @@ function startLockHeartbeat(lockPath, token, handle, staleMs) {
   };
 }
 
+// Windows refuses to rename a directory while any process holds a file
+// inside it open (research/windows-fs-probe.mjs) — and contenders polling
+// readLockDirectory open the lock's owner.json for a few milliseconds at a
+// time, so a retire rename can lose that race repeatedly but never for long.
+// Retry briefly; the pin vanishes as soon as the reader's descriptor closes.
+// Elsewhere a rename never fails for this reason and the first attempt wins.
+async function renameOutlastingReaders(from, to) {
+  let delay = 5;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await rename(from, to);
+    } catch (error) {
+      if (
+        process.platform !== "win32" ||
+        !["EPERM", "EACCES", "EBUSY"].includes(error?.code) ||
+        attempt >= 20
+      ) {
+        throw error;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(50, delay * 2);
+  }
+}
+
 async function retireOwnedLock(lockPath, token, handle, retired) {
   // `handle` is null only on the Windows path where the publish rename
   // succeeded but opening the lease afterwards failed; the token check alone
@@ -1013,7 +1038,7 @@ async function retireOwnedLock(lockPath, token, handle, retired) {
   if (process.platform === "win32" && handle) {
     await handle.close().catch(() => {});
   }
-  await rename(lockPath, retired);
+  await renameOutlastingReaders(lockPath, retired);
   try {
     await syncDirectory(path.dirname(lockPath));
   } finally {
