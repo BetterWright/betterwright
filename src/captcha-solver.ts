@@ -11,6 +11,15 @@
 //   status "processing"  → needs another stage or vision handoff
 //   status "error"       → rejected, timed out, or unsupported
 
+import {
+  hostIs,
+  isGoogleHost,
+  isRecord,
+  normalizedText,
+  parsedUrl,
+  stringValue,
+} from "./untrusted-value.js";
+
 export const CAPTCHA_SOLVE_STATUSES = Object.freeze({
   READY: "ready",
   PROCESSING: "processing",
@@ -54,45 +63,6 @@ const CHECKBOX_TEXT =
 const MANAGED_TEXT =
   /checking your browser|just a moment|performing security verification|enable javascript and cookies|ddos protection by cloudflare|attention required/i;
 
-function isRecord(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function stringValue(value) {
-  if (value == null) return "";
-  try {
-    return String(value);
-  } catch {
-    return "";
-  }
-}
-
-function normalizedText(value) {
-  return stringValue(value)
-    .toLowerCase()
-    .replace(/[‘’]/g, "'")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 100_000);
-}
-
-function parsedUrl(value) {
-  try {
-    return new URL(stringValue(value));
-  } catch {
-    return null;
-  }
-}
-
-function hostIs(host, domain) {
-  return host === domain || host.endsWith(`.${domain}`);
-}
-
-function isGoogleHost(host) {
-  if (hostIs(host, "google.com")) return true;
-  return /(?:^|\.)google\.(?:[a-z]{2,3}|co\.[a-z]{2}|com\.[a-z]{2})$/.test(host);
-}
-
 function providerFromUrl(url) {
   const parsed = parsedUrl(url);
   const host = parsed?.hostname.toLowerCase() || "";
@@ -134,6 +104,10 @@ export function classifyChallengeStage(metadata: any = {}) {
     })),
     {
       kind: "main",
+      // The main document has no frame index; null keeps this shape union-
+      // compatible with the frame entries above so callers can read `.index`
+      // off either without narrowing.
+      index: null,
       url: stringValue(main.url ?? input.url),
       title: stringValue(main.title ?? input.title),
       text: stringValue(main.text ?? input.text),

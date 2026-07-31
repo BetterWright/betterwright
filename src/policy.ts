@@ -7,6 +7,9 @@
 // check.
 
 import net from "node:net";
+// Annotating the public methods with the published declaration types keeps the
+// hand-written `types/` surface (see AGENTS.md) checked against this file.
+import type { NetworkDecision } from "../types/policy.js";
 
 export const METADATA_HOSTNAMES = new Set([
   "metadata.google.internal",
@@ -220,7 +223,7 @@ export class NetworkPolicy {
     return decision;
   }
 
-  checkHost(hostname, port) {
+  checkHost(hostname, port): NetworkDecision {
     if (this.isMetadata(hostname))
       return { allowed: false, reason: "cloud metadata endpoint" };
 

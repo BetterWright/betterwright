@@ -12,6 +12,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 
 const CONFIG_FILE = "config.json";
@@ -90,11 +91,6 @@ export function saveLiveViewPassword(password, home = defaultHome()) {
   config.liveView = section;
   fs.mkdirSync(home, { recursive: true });
   const file = liveViewConfigPath(home);
-  fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  try {
-    fs.chmodSync(file, 0o600); // writeFileSync mode is ignored when the file exists
-  } catch {
-    /* best effort on exotic filesystems */
-  }
+  writePrivate(file, `${JSON.stringify(config, null, 2)}\n`);
   return file;
 }

@@ -1,0 +1,85 @@
+name: Feature request
+description: Suggest a capability or a change to how BetterWright behaves.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        BetterWright is deliberately small. Before writing, please read the
+        **Scope** section of
+        [CONTRIBUTING.md](https://github.com/BetterWright/betterwright/blob/main/CONTRIBUTING.md#scope):
+        changes that would turn it into a tool primarily for evading anti-bot
+        systems at scale, bulk account creation, or credential stuffing are out
+        of scope. Changes that make authorized automation safer, clearer, or
+        more reliable are welcome.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        What are you trying to do, and where does BetterWright get in the way
+        today? Describe the situation rather than the solution — a concrete task
+        that failed or was awkward is the most useful thing you can write here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+      description: >-
+        Sketch the behaviour. If it is a new flag, option, or API, show the call
+        you want to be able to make.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of BetterWright
+      options:
+        - "CLI (run / repl / exec / sessions / close)"
+        - "The built-in agent (betterwright exec)"
+        - MCP server
+        - Agent skill / instructions
+        - "TypeScript API (client, policy, agent)"
+        - Network policy and the guard proxy
+        - Credential vault and trusted filling
+        - CAPTCHA and challenge helpers
+        - Live view and human handoff
+        - "Browser runtime (Chromium fork, CloakBrowser, stealth)"
+        - Profiles and session persistence
+        - Setup, doctor, packaging
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: >-
+        Existing flags, `page.*` calls straight through Playwright, a skill pack
+        (`betterwright skills list`), or a workaround in your own code — and why
+        it was not enough.
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints this has to respect
+      description: >-
+        These are enforced invariants, not preferences. Tick the ones your
+        proposal touches so the discussion can start in the right place.
+      options:
+        - label: It does not need a browser connection that bypasses the SOCKS guard proxy.
+        - label: It does not need secret values to be returned into model-authored snippet code.
+        - label: It does not need a new runtime dependency (the existing ones are exact-pinned and coupled to a browser build).
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Links, prior art in other tools, or a willingness to send the PR.

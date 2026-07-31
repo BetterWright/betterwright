@@ -6,12 +6,20 @@
 // this benchmark measures. The browser runtime itself was already at parity in
 // benchmarks/browser-agent-headtohead.
 //
-//   node benchmarks/exec-headtohead/run.js [--only <substr>] [--timeout <ms>]
+//   REFERENCE_CLI=<cli> node benchmarks/exec-headtohead/run.js \
+//     [--only <substr>] [--timeout <ms>] [--raw <file>]
 //
-// Writes results.json next to this file; REPORT.md is authored from it.
+// The comparison CLI is not vendored and not named here. Set REFERENCE_CLI to a
+// CLI installed on your own machine that takes
+// `<cli> exec -m <provider/model> --effort <e> "<task>"`; the script exits with
+// an explanation if it is unset. Only the BetterWright column is reproducible
+// from this repository, which is why REPORT.md is a development case study
+// rather than a benchmark.
 //
-// The comparison CLI is named by REFERENCE_CLI (default "reference-agent"); it
-// is expected to take `<cli> exec -m <provider/model> --effort <e> "<task>"`.
+// Writes an aggregate results.json next to this file: per-scenario outcome,
+// timings, turn counts, and BetterWright token usage. Agent answers, model
+// transcripts, and local artifact paths are deliberately NOT persisted there —
+// pass `--raw <file>` to dump them to a path of your choosing while debugging.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -22,13 +30,27 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
 const MODEL = "gpt-5.6-sol";
 const EFFORT = "low";
-const REFERENCE_CLI = process.env.REFERENCE_CLI || "reference-agent";
+const REFERENCE_CLI = process.env.REFERENCE_CLI;
 
 const argv = process.argv.slice(2);
-const onlyIndex = argv.indexOf("--only");
-const only = onlyIndex !== -1 ? argv[onlyIndex + 1] : null;
-const timeoutIndex = argv.indexOf("--timeout");
-const TIMEOUT_MS = timeoutIndex !== -1 ? Number(argv[timeoutIndex + 1]) : 150_000;
+const flag = (name) => {
+  const index = argv.indexOf(name);
+  return index !== -1 ? argv[index + 1] : null;
+};
+const only = flag("--only");
+const RAW_OUT = flag("--raw");
+const TIMEOUT_MS = flag("--timeout") !== null ? Number(flag("--timeout")) : 150_000;
+
+if (!REFERENCE_CLI) {
+  process.stderr.write(
+    "REFERENCE_CLI is not set.\n\n" +
+      "This comparison needs a second agent CLI that this repository does not ship\n" +
+      "and does not name. Set REFERENCE_CLI to one installed on your own machine\n" +
+      'that accepts `<cli> exec -m <provider/model> --effort <e> "<task>"`:\n\n' +
+      "  REFERENCE_CLI=your-cli node benchmarks/exec-headtohead/run.js\n",
+  );
+  process.exit(1);
+}
 
 // Varied scenarios, escalating from a trivial baseline to multi-step,
 // multi-tab, form interaction, and synthesis.
@@ -208,23 +230,146 @@ async function runReference(task) {
   };
 }
 
+// results.json is a published artifact, so it carries outcomes and numbers
+// only. Answers, transcripts (`raw`) and local artifact paths (`proof`) stay in
+// memory for the live stderr log and go to disk only via `--raw`.
+function publicTask(task, bw, reference) {
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    id: task.id,
+    scenario: task.scenario,
+    betterwright: {
+      elapsed_ms: num(bw.elapsedMs),
+      completed: bw.ok === true,
+      timed_out: bw.timedOut === true,
+      model_turns: num(bw.steps),
+      tool_calls: num(bw.toolCalls),
+      tokens: bw.usage
+        ? {
+            input: num(bw.usage.inputTokens),
+            output: num(bw.usage.outputTokens),
+            cache_read: num(bw.usage.cacheReadTokens),
+            cache_write: num(bw.usage.cacheWriteTokens),
+            context_end: num(bw.usage.context),
+          }
+        : null,
+    },
+    reference: {
+      elapsed_ms: num(reference.elapsedMs),
+      completed: reference.ok === true,
+      timed_out: reference.timedOut === true,
+      repl_blocks: num(reference.steps),
+    },
+  };
+}
+
+function elapsedStats(values) {
+  const v = values.filter((x) => typeof x === "number" && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const mid = v.length >> 1;
+  return {
+    count: v.length,
+    median_ms: v.length % 2 ? v[mid] : Math.round((v[mid - 1] + v[mid]) / 2),
+    mean_ms: Math.round(v.reduce((a, b) => a + b, 0) / v.length),
+    min_ms: v[0],
+    max_ms: v[v.length - 1],
+  };
+}
+
+function buildResults(tasks) {
+  const totalTokens = (key) => tasks.reduce((sum, t) => sum + (t.betterwright.tokens?.[key] ?? 0), 0);
+  return {
+    schema_version: "betterwright-exec-headtohead-public-results-v1",
+    comparison: "betterwright exec vs an unnamed reference agent CLI",
+    result_kind: "single recorded run of the 15-scenario battery",
+    reproducible: false,
+    scenarios_defined_in: "run.ts",
+    agent: { model: MODEL, effort: EFFORT },
+    measurement: {
+      betterwright_elapsed_ms: "wall clock of one `betterwright exec` child process",
+      reference_elapsed_ms: "wall clock of one reference-CLI child process",
+      completed:
+        "the harness returned an answer without erroring or timing out; NOT a correctness judgement",
+      betterwright_model_turns: "true model-turn count reported by the agent",
+      reference_repl_blocks:
+        "count of `repl(` calls seen in stdout, a proxy for turns; null when not visible",
+      timeout_ms: TIMEOUT_MS,
+    },
+    summary: {
+      scenarios: tasks.length,
+      betterwright: {
+        completed: tasks.filter((t) => t.betterwright.completed).length,
+        timed_out: tasks.filter((t) => t.betterwright.timed_out).length,
+        elapsed: elapsedStats(tasks.map((t) => t.betterwright.elapsed_ms)),
+      },
+      reference: {
+        completed: tasks.filter((t) => t.reference.completed).length,
+        timed_out: tasks.filter((t) => t.reference.timed_out).length,
+        elapsed: elapsedStats(tasks.map((t) => t.reference.elapsed_ms)),
+      },
+      betterwright_faster_on: tasks.filter(
+        (t) =>
+          t.betterwright.elapsed_ms !== null &&
+          t.reference.elapsed_ms !== null &&
+          t.betterwright.elapsed_ms < t.reference.elapsed_ms,
+      ).length,
+      betterwright_tokens_total: {
+        input: totalTokens("input"),
+        output: totalTokens("output"),
+        cache_read: totalTokens("cache_read"),
+        cache_write: totalTokens("cache_write"),
+      },
+    },
+    tasks,
+    privacy: {
+      contains_agent_answers: false,
+      contains_agent_transcripts: false,
+      contains_screenshots: false,
+      contains_local_paths: false,
+    },
+    notes: [
+      "This is a development case study, not a benchmark: the reference agent is unnamed and is not vendored, so only the BetterWright column can be reproduced from this repository.",
+      "`completed` records that a harness finished and returned something. Correctness was assessed by hand and is tabulated in REPORT.md, not here.",
+      "One run per scenario per side. LLM latency variance is large on interactive scenarios; single-run timings are not significant on their own.",
+      "Reference `repl_blocks` and BetterWright `model_turns` count different things and are not directly comparable.",
+    ],
+  };
+}
+
 async function main() {
-  const tasks = only ? TASKS.filter((t) => t.id.includes(only) || t.scenario.includes(only)) : TASKS;
-  const results = [];
-  for (const t of tasks) {
+  const selected = only ? TASKS.filter((t) => t.id.includes(only) || t.scenario.includes(only)) : TASKS;
+  const tasks = [];
+  const raw = [];
+  for (const t of selected) {
     process.stderr.write(`\n### ${t.id} — ${t.scenario}\n`);
     process.stderr.write("  betterwright… ");
     const bw = await runBetterwright(t.task);
     process.stderr.write(`${(bw.elapsedMs / 1000).toFixed(1)}s ${bw.ok ? "ok" : "FAIL"} (${bw.steps} steps)\n`);
+    process.stderr.write(`    answer: ${String(bw.answer).replace(/\s+/g, " ").slice(0, 160)}\n`);
     process.stderr.write("  reference…… ");
     const reference = await runReference(t.task);
     process.stderr.write(
       `${(reference.elapsedMs / 1000).toFixed(1)}s ${reference.ok ? "ok" : "FAIL"} (${reference.steps} steps)\n`,
     );
-    results.push({ ...t, betterwright: bw, reference });
-    fs.writeFileSync(path.join(HERE, "results.json"), JSON.stringify({ model: MODEL, effort: EFFORT, results }, null, 2));
+    process.stderr.write(`    answer: ${String(reference.answer).replace(/\s+/g, " ").slice(0, 160)}\n`);
+
+    tasks.push(publicTask(t, bw, reference));
+    raw.push({ ...t, betterwright: bw, reference });
+    // Rewritten after every scenario so an interrupted run still leaves a
+    // readable partial result.
+    fs.writeFileSync(
+      path.join(HERE, "results.json"),
+      `${JSON.stringify(buildResults(tasks), null, 2)}\n`,
+    );
+    if (RAW_OUT) {
+      fs.writeFileSync(path.resolve(RAW_OUT), `${JSON.stringify({ model: MODEL, effort: EFFORT, results: raw }, null, 2)}\n`);
+    }
   }
   process.stderr.write("\nDone. results.json written.\n");
+  if (RAW_OUT) {
+    process.stderr.write(`Raw transcripts written to ${path.resolve(RAW_OUT)} — do not commit them.\n`);
+  }
+  process.stderr.write("Correctness is not machine-scored; score the answers above by hand.\n");
 }
 
 main();

@@ -7,8 +7,8 @@
 // public bot-score pages and scrapes their headline verdicts.
 //
 // Usage:
-//   node scripts/stealth-report.js [--live] [--headed-only|--headless-only]
-//   node scripts/stealth-report.js --json > report.json
+//   node research/stealth-report.js [--live] [--headed-only|--headless-only]
+//   node research/stealth-report.js --json > report.json
 
 import fs from "node:fs";
 import http from "node:http";

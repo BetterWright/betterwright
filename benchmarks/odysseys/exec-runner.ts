@@ -4,7 +4,7 @@
 //   node benchmarks/odysseys/exec-runner.js run \
 //     --tasks benchmarks/odysseys/odysseys.json \
 //     --manifest benchmarks/odysseys/full-200.json \
-//     --output benchmarks/odysseys/runs/full-200-gpt56sol-high \
+//     --output benchmarks/odysseys/runs/full-200 \
 //     --model gpt-5.6-sol --effort high \
 //     --concurrency 8
 //
@@ -236,8 +236,9 @@ async function main(argv = process.argv.slice(2)) {
     effort: cli.effort || BENCHMARK_EFFORT,
     systemPromptPath: path.resolve(cli.systemPrompt || path.join(HERE, "agent-prompt.md")),
   };
-  // Default 8-wide: enough parallelism without thrashing a dedicated host
-  // (20-wide OOM'd). Each task still gets its own Chromium + isolated home.
+  // Default 8-wide. Each task holds its own Chromium and isolated home, so
+  // memory scales with concurrency; in our runs a single host ran out of memory
+  // at 20-wide. Raise it only after measuring peak RSS under load.
   const concurrency = Number(cli.concurrency || 8);
   const staggerMs = Number(cli.staggerMs || 600);
   console.log(

@@ -47,7 +47,10 @@ function decodeJwtPayload(token) {
   try {
     const segment = String(token).split(".")[1];
     if (!segment) return {};
-    return JSON.parse(Buffer.from(segment, "base64").toString("utf8"));
+    // JWT segments are base64url. Node's "base64" decoder happens to accept the
+    // URL-safe alphabet too, but naming the real encoding keeps this correct on
+    // its own terms rather than by decoder leniency.
+    return JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
   } catch {
     return {};
   }

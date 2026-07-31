@@ -61,6 +61,38 @@ task JSON SHA-256: 9e12bc981aa8bac167987f2e762669f3efa16a3ded2ea75609cfcba888aa0
 sample manifest SHA-256: e9e5ba077fdab5c0397b3671cb8e833a28094c40a1a8422199cbca033b75e42b
 ```
 
+## Manifests
+
+A manifest is a list of task IDs with their difficulty level and partition. It
+does not contain task text — it selects rows out of whichever dataset file
+`--tasks` points at, so a manifest and a dataset snapshot only work together if
+their task IDs match.
+
+Online-Mind2Web revises tasks in place and marks a revision by appending a
+`_MMDDYY` suffix to the task ID, so the *same* task base has different IDs in
+different snapshots. That is why more than one full-300 manifest is checked in.
+
+| Manifest | Tasks | Pinned to | Use it for |
+| --- | ---: | --- | --- |
+| [`sample-50.json`](sample-50.json) | 50 | 2025-11-23 snapshot | The stratified 35 development + 15 holdout sample |
+| [`full-300.json`](full-300.json) | 300 | 2025-11-23 snapshot | Reproducing the recorded 278/300 result |
+| [`full-300-2026-07-23.json`](full-300-2026-07-23.json) | 300 | Dataset export taken 2026-07-23 | Running against newer task revisions |
+
+Both full manifests cover the **same 300 task bases**; they differ only in which
+revision of each task they name. 27 IDs carry a newer suffix in the 2026-07-23
+manifest (and four of those tasks changed difficulty level upstream). Nothing
+has been re-judged against it, so it has **no recorded result** — use
+`full-300.json` for any comparison against the numbers in
+[`REPORT.md`](REPORT.md).
+
+```text
+full-300.json            SHA-256: dfd0db63bc59e336949718dc004ed4a97e31a93fb9ee86ce56e807f4172aa252
+full-300-2026-07-23.json SHA-256: 0805228b441d45f41d5b9af9f2f3932226ab06d8a01ad376bd65d7ec0877a72c
+```
+
+Regenerate a full manifest for any snapshot with `runner.js full` (below); the
+`--manifest` path you pass is the file it writes.
+
 ## Run it
 
 Set `TASKS` to an Online-Mind2Web JSON array (or `{ "tasks": [...] }`) with

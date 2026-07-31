@@ -6,7 +6,7 @@
 //
 //   node benchmarks/online-mind2web/exec-runner.js run \
 //     --tasks /path/to/Online-Mind2Web.json \
-//     --manifest benchmarks/online-mind2web/full-300-current.json \
+//     --manifest benchmarks/online-mind2web/full-300-2026-07-23.json \
 //     --output benchmarks/online-mind2web/runs/exec-v1-300 \
 //     --concurrency 50
 //

@@ -1,0 +1,13 @@
+# Normalize line endings to LF in the repository and in every working tree.
+#
+# Git for Windows checks out with `core.autocrlf=true` by default, which
+# rewrites text files to CRLF on disk. `tests/node/skill-md.test.ts` compares
+# the checked-in SKILL.md byte-for-byte against freshly generated (LF) output,
+# so a CRLF working tree fails a test that has nothing to do with Windows.
+# Pinning eol=lf here fixes that for contributors as well as CI.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending normalized.
+*.png binary
+*.svg text eol=lf
+*.patch text eol=lf

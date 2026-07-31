@@ -90,14 +90,14 @@
     "test": "npm run build:harness && node --test tests/node/*.test.js",
     "test:unit": "npm run build:harness && node scripts/run-unit-tests.js",
     "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
-    "lint": "biome ci src bin scripts tests benchmarks examples",
+    "lint": "biome ci src bin scripts research tests benchmarks examples",
     "check:versions": "npm run build:tools && node scripts/check-versions.js",
     "check:package": "npm run build && node scripts/check-package.js",
     "release:check": "npm run check:versions && npm run lint && npm run typecheck && npm run check:build && npm run test:unit && npm run test:types && npm run check:package",
     "prepublishOnly": "npm run release:check"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.18.0"
   },
   "packageManager": "npm@11.5.1",
   "publishConfig": {

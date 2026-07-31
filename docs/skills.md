@@ -1,15 +1,17 @@
 # Skill packs
 
-BetterWright is an add-on: a host agent (Claude Code, Codex, a Pi package, or
-any MCP client) drives it. One static operator prompt can teach that agent the
-mechanics of the browser, but it cannot carry the specifics of every site and
-password manager without bloating every request. Skill packs solve that — small
-Markdown files the host agent reads **on demand**, only when a page or task
-makes them relevant.
+Whoever drives the browser needs more than the mechanics of the browser. One
+static operator prompt can teach a model to observe, act, and verify, but it
+cannot carry the specifics of every site and password manager without bloating
+every request. Skill packs solve that — small Markdown files read **on demand**,
+only when a page or task makes them relevant.
 
-Per-site and per-provider guidance stays true to BetterWright's role: the packs
-are plain files the controlling agent reads with the file tool it already has.
-BetterWright never becomes an agent itself.
+They serve both shapes BetterWright is used in. **Integrated**, a host agent
+(Claude Code, Codex, a Pi package, any MCP client) reads a pack as a plain file
+with the file tool it already has. **Standalone**, BetterWright's own agent loop
+— `betterwright exec`, the interactive console, `runAgentTask()` — reads the
+same packs from the same directories. One set of files, one format, either
+driver.
 
 ## What a pack looks like
 
@@ -41,10 +43,11 @@ autoInject:
 Keep `SKILL.md` short; link sibling `./reference.md` files for depth so the
 agent pulls detail in only when it needs it.
 
-## How the host agent finds them
+## How an agent finds them
 
-Every run result carries a `skills` array listing packs whose `autoInject.url`
-patterns match any open page:
+Every run result — and every observation the built-in loop feeds its model —
+carries a `skills` array listing packs whose `autoInject.url` patterns match any
+open page:
 
 ```json
 {
@@ -56,10 +59,15 @@ patterns match any open page:
 }
 ```
 
-The operator prompt tells the agent to read the named `path` (with its own file
-tool, or `betterwright skills show <name>`) before improvising site-specific
+The operator prompt — the same text `betterwright skill` prints and the built-in
+loop runs on — tells whoever is driving to read the named `path` (with its own
+file tool, or `betterwright skills show <name>`) before improvising site-specific
 behavior, and to read the `credential-manager` pack before any login, signup,
 or checkout.
+
+The built-in loop has one extra path in: a pack whose `autoInject.keywords`
+match the task text is loaded into that run's system prompt before the first
+step, so guidance the task plainly needs costs no round-trip to fetch.
 
 ## Packaged and user packs
 

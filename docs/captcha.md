@@ -1,6 +1,6 @@
 # Native CAPTCHA helpers
 
-![A puzzle piece completing a "verify you are human" challenge](assets/captcha.png)
+![A puzzle piece completing a "verify you are human" challenge](https://raw.githubusercontent.com/BetterWright/betterwright/main/docs/assets/captcha.png)
 
 BetterWright solves simple CAPTCHAs **inside the existing browser session**. It
 does not send sitekeys, tokens, screenshots, or API keys to a third-party

@@ -54,8 +54,8 @@ the command that fixes it; a `!` is something optional you have not set up.
 `doctor --json` prints the raw report for scripts, and `--quiet` prints only
 the lines that need attention.
 
-Upgrade the npm package with `npm update betterwright` or
-`npm install betterwright@latest`, then run `betterwright update` so the
+Upgrade the npm package with `npm install -g betterwright@latest` (or
+`npm update -g betterwright`), then run `betterwright update` so the
 pinned Chromium fork matches that package. Package updates are intentional
 rather than automatic, so application lockfiles continue to control when a
 new BetterWright version is adopted.
@@ -232,4 +232,4 @@ await bw.run("await page.goto('https://example.com')");
   detected forms, and pending generated-password commits.
 - [Native CAPTCHA helpers](captcha.md) — resumable handling for authorized flows.
 - [Architecture](architecture.md) — how it works and what it does/doesn't secure.
-- [Examples](../examples) — runnable JavaScript scripts.
+- [Examples](../examples) — runnable TypeScript scripts.

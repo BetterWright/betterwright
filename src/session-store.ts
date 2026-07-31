@@ -25,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { defaultDaemonHome, sessionName } from "./daemon.js";
+import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { resolveProfileName } from "./profile-name.js";
 
 const STORE_VERSION = 1;
@@ -126,7 +127,7 @@ export function loadTranscript(home, session, profile?: unknown) {
 /** Elide and persist a transcript (atomic write, private permissions). */
 export function saveTranscript(home, session, messages, options: any = {}, profile?: unknown) {
   const dir = storeDir(home, session, profile);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  mkdirPrivate(dir);
   const file = transcriptPath(home, session, profile);
   const payload = JSON.stringify({
     version: STORE_VERSION,
@@ -135,8 +136,10 @@ export function saveTranscript(home, session, messages, options: any = {}, profi
     savedAt: new Date().toISOString(),
     messages: elideTranscript(messages, options),
   });
+  // Write private *before* the rename: the transcript is owner-only from the
+  // moment it exists, with no window where it is readable under its final name.
   const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, payload, { encoding: "utf8", mode: 0o600 });
+  writePrivate(tmp, payload);
   fs.renameSync(tmp, file);
   return file;
 }

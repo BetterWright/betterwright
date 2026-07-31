@@ -631,7 +631,7 @@ async function atomicWrite(file, contents) {
     await handle.sync();
     await handle.close();
     handle = null;
-    await rename(temporary, file);
+    await renameOutlastingReaders(temporary, file);
     await chmod(file, FILE_MODE);
     await syncDirectory(directory);
   } catch (error) {
@@ -888,11 +888,19 @@ async function quarantineStaleLock(lockPath, staleMs) {
     return true;
   } catch (error) {
     if (isMissing(error)) return true;
-    if (
-      isRenameCollision(error) ||
-      (isWindowsRenameDestinationError(error) && (await pathExists(tombstone)))
-    ) {
-      return false;
+    if (isRenameCollision(error)) return false;
+    if (isWindowsRenameDestinationError(error)) {
+      // Another contender's tombstone won the race: stand down.
+      if (await pathExists(tombstone)) return false;
+      // Windows also refuses to rename a directory whose owner still holds
+      // the lease handle open inside it (research/windows-fs-probe.mjs). An
+      // open lease is stronger evidence of life than the heartbeat that made
+      // the lock look stale, so if the lock is still there, treat the owner
+      // as alive and keep waiting. If it is gone, the owner released (or a
+      // contender quarantined it) mid-race, which is the same outcome as our
+      // own rename finding nothing — report it reclaimed so the caller
+      // retries acquisition.
+      return !(await pathExists(lockPath));
     }
     throw error;
   }
@@ -978,21 +986,60 @@ function startLockHeartbeat(lockPath, token, handle, staleMs) {
   };
 }
 
+// Windows refuses a rename whenever another process pins a path it touches:
+// a directory cannot move while any file inside it is held open, and a file
+// cannot be renamed over an open destination (research/windows-fs-probe.mjs).
+// Both pins here are momentary — contenders polling readLockDirectory hold
+// the lock's owner.json for a few milliseconds per poll, and a concurrent
+// vault read (or an antivirus scan) holds vault.enc about as long — so a
+// rename can lose that race repeatedly but never for long. Retry briefly;
+// the pin vanishes as soon as the reader's descriptor closes. The lock's
+// publish rename deliberately does not come through here: EPERM there is
+// the collision signal that tells a contender the lock is already taken.
+async function renameOutlastingReaders(from, to) {
+  if (process.platform !== "win32") return rename(from, to);
+  let delay = 5;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await rename(from, to);
+    } catch (error) {
+      if (!["EPERM", "EACCES", "EBUSY"].includes(error?.code) || attempt >= 20) {
+        throw error;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(50, delay * 2);
+  }
+}
+
 async function retireOwnedLock(lockPath, token, handle, retired) {
+  // `handle` is null only on the Windows path where the publish rename
+  // succeeded but opening the lease afterwards failed; the token check alone
+  // then decides ownership, which is sound because the token never left this
+  // process.
   const [current, handleStats] = await Promise.all([
     readLockDirectory(lockPath),
-    handle.stat(),
+    handle ? handle.stat() : null,
   ]);
+  if (!current || current.owner?.token !== token || !current.ownerStats) {
+    return false;
+  }
   if (
-    !current ||
-    current.owner?.token !== token ||
-    !current.ownerStats ||
-    current.ownerStats.dev !== handleStats.dev ||
-    current.ownerStats.ino !== handleStats.ino
+    handleStats &&
+    (current.ownerStats.dev !== handleStats.dev ||
+      current.ownerStats.ino !== handleStats.ino)
   ) {
     return false;
   }
-  await rename(lockPath, retired);
+  // Windows cannot rename a directory while a handle is open to a file
+  // inside it (research/windows-fs-probe.mjs), so the lease closes first
+  // there. Nothing can steal the lock in the gap: contenders only reclaim
+  // locks whose lease has gone stale (lockIsReclaimable), and this one's
+  // heartbeat is fresh.
+  if (process.platform === "win32" && handle) {
+    await handle.close().catch(() => {});
+  }
+  await renameOutlastingReaders(lockPath, retired);
   try {
     await syncDirectory(path.dirname(lockPath));
   } finally {
@@ -1022,7 +1069,17 @@ async function createLockCandidate(lockPath, token) {
       })}\n`,
     );
     await syncDirectory(candidate);
-    const leaseHandle = await open(path.join(candidate, LOCK_OWNER_FILE), lockWriteFlags());
+    // POSIX opens the lease handle before the publish rename, so the handle
+    // provably references the exact inode this process created — the rename
+    // then carries that inode to the published path unchanged. Windows cannot
+    // do this: renaming a directory fails with EPERM while any handle is open
+    // to a file inside it (research/windows-fs-probe.mjs), so there the
+    // handle opens after publish and ownership is re-proven by token and
+    // file identity instead (see acquireLock).
+    const leaseHandle =
+      process.platform === "win32"
+        ? null
+        : await open(path.join(candidate, LOCK_OWNER_FILE), lockWriteFlags());
     return { path: candidate, leaseHandle };
   } catch (error) {
     await rm(candidate, { recursive: true, force: true }).catch(() => {});
@@ -1043,6 +1100,17 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
         try {
           await rename(candidate.path, paths.lock);
           published = true;
+          if (candidate.leaseHandle === null) {
+            // Windows: the lease handle could not be held across the publish
+            // rename, so acquire it now and prove it is really ours — the
+            // owner file at the published path must carry the token only this
+            // process knows, and the handle must be that same file (dev+ino).
+            candidate.leaseHandle = await open(
+              path.join(paths.lock, LOCK_OWNER_FILE),
+              lockWriteFlags(),
+            );
+            await verifyLockOwnership(paths.lock, token, candidate.leaseHandle);
+          }
           await afterPublish?.(paths.lock);
           break;
         } catch (error) {
@@ -1084,7 +1152,7 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
         } catch (error) {
           if (!isMissing(error)) throw error;
         } finally {
-          await candidate.leaseHandle.close().catch(() => {});
+          await candidate.leaseHandle?.close().catch(() => {});
         }
         if (compromise) throw compromise;
       };
@@ -1100,7 +1168,7 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
           retired,
         ).catch(() => {});
       }
-      await candidate.leaseHandle.close().catch(() => {});
+      await candidate.leaseHandle?.close().catch(() => {});
       await rm(candidate.path, { recursive: true, force: true }).catch(() => {});
       if (published) throw error;
       const contention =

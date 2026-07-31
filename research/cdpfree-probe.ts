@@ -8,8 +8,8 @@
 // comparison probe, not the production BetterWright runtime.
 //
 // Usage:
-//   node scripts/cdpfree-probe.js [--browser /path/to/binary] [--headed]
-//   node scripts/cdpfree-probe.js --url https://example.com --selector h1
+//   node research/cdpfree-probe.js [--browser /path/to/binary] [--headed]
+//   node research/cdpfree-probe.js --url https://example.com --selector h1
 
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";

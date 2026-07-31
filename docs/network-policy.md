@@ -1,6 +1,6 @@
 # Network policy
 
-![The policy blocks private and metadata addresses while public traffic flows through](assets/network-policy.png)
+![The policy blocks private and metadata addresses while public traffic flows through](https://raw.githubusercontent.com/BetterWright/betterwright/main/docs/assets/network-policy.png)
 
 Every request the browser makes is authorized before it goes out — page
 navigations, subresources (scripts, images, XHR/fetch), WebSocket upgrades, and

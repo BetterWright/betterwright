@@ -56,7 +56,7 @@ function diffTouchedPages(result) {
   const next = Array.isArray(result?.pages) ? result.pages : [];
   const touched = [];
   for (const p of next) {
-    if (!p || p.type !== "Page") continue;
+    if (p?.type !== "Page") continue;
     const prev = prevPages.get(p.pageId);
     if ((!prev || prev.url !== p.url) && !p.closed && p.url && p.url !== "about:blank") {
       touched.push(p);
@@ -73,7 +73,7 @@ const MAX_EVIDENCE_PER_STEP = 5;
 async function captureStepEvidence(result) {
   const touched = diffTouchedPages(result);
   if (!touched.length) return;
-  const activeId = (result.pages || []).find((p) => p && p.active)?.pageId || null;
+  const activeId = (result.pages || []).find((p) => p?.active)?.pageId || null;
   const picks = touched.filter((p) => p.pageId !== activeId).slice(0, MAX_EVIDENCE_PER_STEP);
   if (!picks.length) return;
   const stepNo = traceIndex;
@@ -152,6 +152,7 @@ async function captureFinalState() {
     "for (let __i = 0; __i < pages.length; __i++) {",
     "  try {",
     "    await usePage(__i);",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: source code sent to the browser sandbox, where the placeholder is interpolated
     "    const __s = await screenshot({ name: `final-tab-${__i}` });",
     "    __inv.push({ index: __i, url: page.url(), title: await page.title(), path: __s.path });",
     "  } catch (__e) { /* tab closed mid-capture */ }",

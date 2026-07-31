@@ -129,7 +129,7 @@ export function forkFontsDir(forkBinary) {
 
 /**
  * Point the fork's fontconfig at the bundled macOS-metric font set
- * (scripts/assemble-mac-fonts.sh; ships as <artifact>/fonts/ttf next to the
+ * (research/assemble-mac-fonts.sh; ships as <artifact>/fonts/ttf next to the
  * binary). The conf is generated at launch so absolute paths follow wherever
  * the artifact is deployed. Returns null when no font bundle is present —
  * the fork then exposes the host fontconfig, which is a known Linux tell.

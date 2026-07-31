@@ -1,0 +1,21 @@
+# Default owner for everything.
+#
+# The commit history has no single unambiguous handle — it carries several
+# contributor identities (@CuriosityOS, @SSHdotCodes, and others) under a
+# shared author address — so ownership is assigned to the org team rather than
+# to a person. Create the @BetterWright/maintainers team (or replace it here
+# with the correct handle) before enabling "Require review from Code Owners",
+# otherwise GitHub silently requests no review at all.
+*                           @BetterWright/maintainers
+
+# Security-boundary and release-critical paths. Listed separately so they stay
+# owned even if the catch-all above is ever narrowed.
+/src/guard-proxy.ts         @BetterWright/maintainers
+/src/policy.ts              @BetterWright/maintainers
+/src/vault.ts               @BetterWright/maintainers
+/src/worker.ts              @BetterWright/maintainers
+/types/                     @BetterWright/maintainers
+/scripts/                   @BetterWright/maintainers
+/.github/                   @BetterWright/maintainers
+/SECURITY.md                @BetterWright/maintainers
+/package.json               @BetterWright/maintainers

@@ -34,7 +34,7 @@ whole path works by loading a real page.
 | [Live view & handoff](live-view.md) | Watch/coach/take over in a browser tab; hosting presets, password gate, security model |
 | [CAPTCHA helpers](captcha.md) | Local checkbox/Turnstile/slider solving; vision handoff for image grids |
 | [Network policy](network-policy.md) | What the browser may reach; the unliftable metadata floor |
-| [Skill packs](skills.md) | Per-site / per-password-manager guidance the host agent reads on demand |
+| [Skill packs](skills.md) | Per-site / per-password-manager guidance the driving agent reads on demand — your own or the built-in loop |
 | [Agent guidance](agent-prompt.md) | The operator prompt and its guardrail options |
 
 ## Under the hood
@@ -44,4 +44,5 @@ whole path works by loading a real page.
 | [Architecture & security model](architecture.md) | The worker process, the RPC loop, what is and isn't a security boundary |
 | [Cloaking V2](cloaking-v2.md) | The coherent-fingerprint approach; launch modes and egress matching |
 | [Chromium fork](chromium-fork.md) | BetterWright's own Chromium build: farbling, platform masking, discovery |
+| [Chromium fork patches](chromium-fork-patches.md) | What each source patch in the pinned Chromium 150 build changes, and why |
 | [Headed / headless](attach-mode.md) | Display modes over one persistent profile |

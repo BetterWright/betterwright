@@ -3,6 +3,8 @@
 Thanks for helping improve BetterWright. This is a small, deliberately-scoped
 project; the notes below keep it consistent.
 
+Participation is governed by our [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Repository layout
 
 ```
@@ -14,11 +16,14 @@ bin/betterwright.ts  The Node CLI
 dist/                Generated ESM JavaScript (not committed)
 tests/node/          Node tests
 docs/                Documentation
-examples/            Runnable JavaScript scripts
-scripts/             Maintenance scripts
+examples/typescript/ Runnable TypeScript scripts
+scripts/             Build and release scripts
+research/            Internal probes and operator tools (not shipped)
 ```
 
 ## Running the tests
+
+The supported Node version is in [`.nvmrc`](.nvmrc); `nvm use` picks it up.
 
 ```bash
 npm ci
@@ -29,6 +34,16 @@ For the complete managed-browser integration suite, install the runtime and run
 `BETTERWRIGHT_REQUIRE_BROWSER=1 BETTERWRIGHT_CHROMIUM_ROOT=off npm test`.
 The policy, vault, prompt, and challenge suites run anywhere.
 
+One note on running the suite locally: **do not run the tests as root.**
+Several tests simulate an unwritable directory with `chmod`, which root
+bypasses; they detect this and skip, so a root run reports green while
+leaving those paths unexercised.
+
+The unit suite runs and gates on Linux, macOS, and Windows in CI. Windows
+filesystem semantics differ in ways that matter here (a directory cannot be
+renamed while a handle is open to a file inside it); the recorded evidence
+behind the vault's Windows branches lives in `research/windows-fs-probe.mjs`.
+
 ## Style
 
 - Runtime and CLI sources are TypeScript 7 ESM compiled to ordinary ESM
@@ -36,8 +51,9 @@ The policy, vault, prompt, and challenge suites run anywhere.
   Keep NodeNext import specifiers ending in `.js`, because that is the emitted
   filename Node loads.
 - Runtime dependencies stay exact-pinned. `npm run lint` covers `src`, `bin`,
-  `scripts`, and `tests`; `npm run typecheck` checks implementation sources;
-  `npm run test:types` verifies the hand-written published declarations.
+  `scripts`, `research`, `tests`, `benchmarks`, and `examples`;
+  `npm run typecheck` checks implementation sources; `npm run test:types`
+  verifies the hand-written published declarations.
 - Comments explain *why*, not *what*. Match the surrounding code.
 
 ## Scope

@@ -23,6 +23,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { RunAgentTaskOptions } from "../types/agent.js";
 import { uncachedInputTokens } from "./agent-usage.js";
 import { codexAccessToken, codexHome, grokAccessToken, loadCodexAuth, loadGrokAuth } from "./auth.js";
 import {
@@ -586,7 +587,7 @@ async function completeWithRetry(model, request, deadline, stopSignal) {
  *   host-owned viewer is reused without re-announcing it.
  * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
  */
-export async function runAgentTask(options: any = {}) {
+export async function runAgentTask(options: RunAgentTaskOptions) {
   const task = String(options.task || "").trim();
   if (!task) throw new Error("runAgentTask requires a non-empty `task`.");
 

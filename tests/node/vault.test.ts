@@ -5,6 +5,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rename,
   rm,
@@ -34,7 +35,10 @@ async function fixture(options = {}) {
     root,
     dir,
     vault: new LocalCredentialVault({ dir, ...options }),
-    cleanup: () => rm(root, { recursive: true, force: true }),
+    // The retries absorb Windows's closed-but-delete-pending entries, which
+    // keep the parent directory ENOTEMPTY for a moment after handles close.
+    cleanup: () =>
+      rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
   };
 }
 
@@ -60,7 +64,16 @@ function childSave(directory, username, { barrier = null } = {}) {
       process.env.TEST_VAULT_BARRIER &&
       !existsSync(process.env.TEST_VAULT_BARRIER)
     ) await new Promise((resolve) => setTimeout(resolve, 5));
-    const vault = new LocalCredentialVault(process.env.TEST_VAULT_DIR);
+    // These tests serialize up to 24 child processes through one lock, and on
+    // a two-core Windows runner every release's retire rename must also
+    // outlast the other children's polls pinning the lock directory — the
+    // last writer in line can legitimately wait longer than the 10s
+    // production default. The tests assert that serialization is correct,
+    // not that it is fast, so give the children a stress-sized budget.
+    const vault = new LocalCredentialVault({
+      dir: process.env.TEST_VAULT_DIR,
+      lockTimeoutMs: 30_000,
+    });
     await vault.handleRequest(
       "save",
       { username: process.env.TEST_VAULT_USER, password: "child-process-secret" },
@@ -172,10 +185,14 @@ test("encrypts all records, keeps files owner-only, and returns metadata only", 
       assert.doesNotMatch(diskText, /private operator note/);
       assert.doesNotMatch(diskText, /alice@example\.com/);
     }
-    for (const file of [context.vault.paths.key, context.vault.paths.data, context.vault.paths.audit]) {
-      assert.equal((await stat(file)).mode & 0o777, 0o600);
+    // POSIX permission bits do not exist on Windows (stat reports 0o666/0o777
+    // regardless), so assert them only where they are meaningful.
+    if (process.platform !== "win32") {
+      for (const file of [context.vault.paths.key, context.vault.paths.data, context.vault.paths.audit]) {
+        assert.equal((await stat(file)).mode & 0o777, 0o600);
+      }
+      assert.equal((await stat(context.dir)).mode & 0o777, 0o700);
     }
-    assert.equal((await stat(context.dir)).mode & 0o777, 0o700);
     for (const line of audit.trim().split("\n")) assert.doesNotThrow(() => JSON.parse(line));
   } finally {
     await context.cleanup();
@@ -1254,6 +1271,29 @@ test("concurrent instances and processes serialize without dropping records", as
   }
 });
 
+test("a reader holding the data file open does not fail a concurrent save", async () => {
+  const context = await fixture();
+  try {
+    await saveLogin(context.vault, "first", "first-secret");
+    // Pin vault.enc the way a concurrent list or an antivirus scan would.
+    // Windows refuses to rename the freshly written ciphertext over an open
+    // destination (research/windows-fs-probe.mjs), so on that platform the
+    // save below succeeds only because atomicWrite outlasts this descriptor.
+    const reader = await open(path.join(context.dir, "vault.enc"), "r");
+    const release = setTimeout(() => void reader.close().catch(() => {}), 150);
+    try {
+      await saveLogin(context.vault, "second", "second-secret");
+    } finally {
+      clearTimeout(release);
+      await reader.close().catch(() => {});
+    }
+    const listed = await context.vault.handleRequest("list", {}, EXAMPLE);
+    assert.equal(listed.credentials.length, 2);
+  } finally {
+    await context.cleanup();
+  }
+});
+
 test("simultaneous stale-lock recovery cannot unlink a fresh writer lock", async () => {
   const context = await fixture();
   try {
@@ -1310,8 +1350,16 @@ test("a replaced live lock is detected without deleting its replacement", async 
     const operation = context.vault.handleRequest("list", {}, EXAMPLE);
     await lockAcquired;
 
-    const displaced = `${context.vault.paths.lock}.displaced`;
-    await rename(context.vault.paths.lock, displaced);
+    // Displace the live lock out from under its owner. Windows cannot rename
+    // a directory whose lease handle is open inside it — that pin is real
+    // product behavior — but *deleting* it works there (NTFS POSIX-delete;
+    // see research/windows-fs-probe.mjs), and produces the same theft: the
+    // owner's lock is gone and a stranger's has taken its place.
+    if (process.platform === "win32") {
+      await rm(context.vault.paths.lock, { recursive: true, force: true });
+    } else {
+      await rename(context.vault.paths.lock, `${context.vault.paths.lock}.displaced`);
+    }
     await mkdir(context.vault.paths.lock, { mode: 0o700 });
     const replacementOwner = path.join(context.vault.paths.lock, "owner.json");
     await writeFile(
@@ -1466,13 +1514,25 @@ test("Windows process identity uses bounded locale-independent creation ticks", 
   assert.equal(await _windowsProcessIdentityForTest(0, execute, systemRoot), null);
   assert.equal(calls.length, 1, "invalid PIDs must not launch PowerShell");
 
-  for (const unsafeRoot of [undefined, "Windows", "\\\\server\\share", "C:\\Windows\\..\\Temp"]) {
+  for (const unsafeRoot of ["Windows", "\\\\server\\share", "C:\\Windows\\..\\Temp"]) {
     assert.equal(
       await _windowsProcessIdentityForTest(4242, execute, unsafeRoot),
       null,
     );
   }
   assert.equal(calls.length, 1, "unsafe system roots must not launch PowerShell");
+
+  // Passing no root falls back to the machine's own %SystemRoot%. On Windows
+  // that is legitimately present, so the lookup proceeds; everywhere else the
+  // variable is absent and the fallback correctly refuses.
+  const fromEnvironment = await _windowsProcessIdentityForTest(4242, execute, undefined);
+  if (process.platform === "win32") {
+    assert.equal(fromEnvironment, "win32:638885440001234567");
+    assert.equal(calls.length, 2);
+  } else {
+    assert.equal(fromEnvironment, null);
+    assert.equal(calls.length, 1);
+  }
 });
 
 test("a lock is recoverable when its live PID has a different identity", async (t) => {

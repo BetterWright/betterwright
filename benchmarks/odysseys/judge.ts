@@ -6,7 +6,7 @@
 //   node benchmarks/odysseys/judge.js \
 //     --tasks benchmarks/odysseys/odysseys.json \
 //     --manifest benchmarks/odysseys/full-200.json \
-//     --output benchmarks/odysseys/runs/full-200-gpt56sol-high \
+//     --output benchmarks/odysseys/runs/full-200 \
 //     --concurrency 4
 
 import { spawn } from "node:child_process";

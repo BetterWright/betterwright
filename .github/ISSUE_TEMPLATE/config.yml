@@ -1,0 +1,25 @@
+# Blank issues stay off: every report needs the doctor output and the browser
+# mode to be triageable at all, and the two forms above collect them.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/BetterWright/betterwright/security/advisories/new
+    about: >-
+      Never open a public issue for a sandbox escape, a network-floor bypass, or
+      a credential leak. Use GitHub's private advisory flow — the process is in
+      SECURITY.md. Conduct concerns use this same private channel; title them
+      "Code of Conduct".
+  - name: Security model and threat model
+    url: https://github.com/BetterWright/betterwright/blob/main/SECURITY.md
+    about: >-
+      What the network floor, the sandbox, and the vault do and do not defend
+      against. Read this before reporting "the sandbox is not a security
+      boundary" — it says so itself.
+  - name: Setup and troubleshooting
+    url: https://github.com/BetterWright/betterwright/blob/main/SETUP.md
+    about: >-
+      Installation, agent wiring, and policy configuration. Run `betterwright
+      doctor` first — it names the fix for most setup problems.
+  - name: Documentation
+    url: https://github.com/BetterWright/betterwright/tree/main/docs
+    about: Architecture, browser recipes, live view, skills, and the agent guide.

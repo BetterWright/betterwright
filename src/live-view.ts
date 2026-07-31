@@ -586,6 +586,20 @@ export function createLiveViewServer({
     await teardownSession(previous);
   }
 
+  // Every frame delivery goes through here so one rule can hold everywhere:
+  // a client never receives the same encoded frame twice. Three paths can
+  // otherwise race to resend the latest frame — the broadcast, the repaint a
+  // viewer gets when its tab becomes visible again, and the instant first
+  // paint on connect — and two of them firing for one frame is just a wasted
+  // repaint. Identity comparison is deliberate: a genuinely new frame is a
+  // new buffer even when its pixels are identical.
+  function sendFrame(client, encoded) {
+    if (client.lastFrameSent === encoded) return;
+    if (client.bufferedAmount >= BACKPRESSURE_LIMIT) return;
+    client.lastFrameSent = encoded;
+    client.sendRaw(encoded);
+  }
+
   function deliverFrame(encoded, meta) {
     if (
       !lastMeta ||
@@ -599,7 +613,7 @@ export function createLiveViewServer({
     lastFrameEncoded = encoded;
     for (const client of clients) {
       if (client.viewerHidden) continue;
-      if (client.bufferedAmount < BACKPRESSURE_LIMIT) client.sendRaw(encoded);
+      sendFrame(client, encoded);
     }
   }
 
@@ -950,12 +964,8 @@ export function createLiveViewServer({
       // A hidden viewer tab drops frames on the floor anyway; stop paying to
       // send them. On return it repaints from the latest frame immediately.
       client.viewerHidden = message.hidden === true;
-      if (
-        !client.viewerHidden &&
-        lastFrameEncoded &&
-        client.bufferedAmount < BACKPRESSURE_LIMIT
-      ) {
-        client.sendRaw(lastFrameEncoded);
+      if (!client.viewerHidden && lastFrameEncoded) {
+        sendFrame(client, lastFrameEncoded);
       }
       return;
     }
@@ -1013,7 +1023,7 @@ export function createLiveViewServer({
     for (const [id, thumb] of thumbCache) {
       client.sendText(JSON.stringify({ t: "thumb", id, thumb }));
     }
-    if (lastFrameEncoded) client.sendRaw(lastFrameEncoded);
+    if (lastFrameEncoded) sendFrame(client, lastFrameEncoded);
     void ensureStreaming()
       .then(() => {
         broadcastMeta();

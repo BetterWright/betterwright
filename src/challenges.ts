@@ -1,3 +1,12 @@
+import {
+  hostIs,
+  isGoogleHost,
+  isRecord,
+  normalizedText,
+  parsedUrl,
+  stringValue,
+} from "./untrusted-value.js";
+
 const NATIVE_CAPTCHA_HELPERS = Object.freeze([
   "captcha.solve",
   "captcha.detect",
@@ -25,45 +34,6 @@ const SEARCH_CHALLENGE_ADVICE =
   "clears, resume the original action and continue the task. Never repeat the " +
   "same failed action or rotate identities/search engines; after three unresolved " +
   "stages, use a host web-research tool, first-party route, or human handoff.";
-
-function isRecord(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function stringValue(value) {
-  if (value == null) return "";
-  try {
-    return String(value);
-  } catch {
-    return "";
-  }
-}
-
-function normalizedText(value) {
-  return stringValue(value)
-    .toLowerCase()
-    .replace(/[‘’]/g, "'")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 100_000);
-}
-
-function parsedUrl(value) {
-  try {
-    return new URL(stringValue(value));
-  } catch {
-    return null;
-  }
-}
-
-function hostIs(host, domain) {
-  return host === domain || host.endsWith(`.${domain}`);
-}
-
-function isGoogleHost(host) {
-  if (hostIs(host, "google.com")) return true;
-  return /(?:^|\.)google\.(?:[a-z]{2,3}|co\.[a-z]{2}|com\.[a-z]{2})$/.test(host);
-}
 
 function normalizeSource(value, kind, index = null, fallback: any = {}) {
   const source = isRecord(value) ? value : {};

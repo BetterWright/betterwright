@@ -8,16 +8,35 @@ on:
 permissions:
   contents: read
 
+# Supersede a pull request's own earlier runs; never cancel a push to main.
+# Pull requests group by number, so every push to the same PR shares one group
+# and the newest run wins. Everything else groups by commit SHA, which gives
+# each main push a group of exactly one — nothing can ever land in it to cancel
+# it — and `cancel-in-progress` is additionally gated on the event so a
+# workflow_dispatch or a tag build cannot be interrupted either.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Node version policy. The two branch-protected jobs below and
+# publish-npm.yml pin the *same* exact version, so a release can never be built
+# on a runtime CI has not proven green (publish-npm.yml used to pin 22.14.0
+# against a floating "22" here). The pin is the package's engines floor, which
+# makes the published tarball provably buildable at the oldest Node we claim to
+# support; "Cross-platform unit tests" floats 22 and 24 so newer runtimes are
+# still covered. Keep this value in step with publish-npm.yml.
+
 jobs:
   package-integrity:
     # Keep this display name stable because main branch protection requires it.
     name: Worker copies in sync
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.18.0"
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check:versions
@@ -36,14 +55,30 @@ jobs:
     # Keep this display name stable because main branch protection requires it.
     name: Node tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.18.0"
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
+      # CloakBrowser unpacks a ~200 MB Chromium into ~/.cloakbrowser (see
+      # getCacheDir/getBinaryDir in the package), which this job re-downloaded on
+      # every run. The key is the exact pin from package.json, so a deliberate
+      # bump of that dependency invalidates the cache by construction. The setup
+      # step still runs on a hit: it verifies the cached binary is present and
+      # launch-ready and re-downloads if it is not, so a truncated or stale cache
+      # entry degrades to today's behaviour rather than to a false green.
+      - name: Read the pinned CloakBrowser version
+        id: cloak_pin
+        run: echo "version=$(node -p "require('./package.json').dependencies.cloakbrowser")" >> "$GITHUB_OUTPUT"
+      - name: Cache the managed CloakBrowser download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cloakbrowser
+          key: cloakbrowser-${{ runner.os }}-${{ steps.cloak_pin.outputs.version }}
       - name: Install managed CloakBrowser
         run: node dist/bin/betterwright.js setup --cloak-only
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
@@ -54,3 +89,104 @@ jobs:
           BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Test managed CloakBrowser headed mode
         run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js
+
+  cross-platform:
+    # A NEW job, deliberately not a matrix over the two jobs above. Branch
+    # protection on main requires the literal check names "Worker copies in
+    # sync" and "Node tests"; GitHub appends matrix values to a job's display
+    # name ("Node tests (windows-latest, 24)"), so turning either of those into
+    # a matrix would make the required checks unmatchable and block every merge.
+    # Platform and version coverage therefore lives here, and the two protected
+    # jobs stay single-runner and untouched. All six matrix legs are themselves
+    # required checks now ("Cross-platform unit tests (<os>, <node>)"), so
+    # renaming this job or changing the matrix values means updating branch
+    # protection in the same breath — otherwise merges block on a check that
+    # can never report.
+    name: Cross-platform unit tests
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      # One red platform must not hide the state of the other five.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22", "24"]
+        # No `exclude`. Node 22 and 24 both ship prebuilt binaries for
+        # linux-x64, darwin-arm64 (macos-latest), and win32-x64, and every
+        # command below is browser-free, so all six combinations are expected
+        # to work. The browser-dependent suites stay on the Linux-only "Node
+        # tests" job on purpose: the managed browser is a ~200 MB download per
+        # runner and the headed test needs xvfb.
+    steps:
+      # Line endings need no special handling here: .gitattributes pins
+      # `* text=auto eol=lf`, so Git for Windows checks out LF despite its
+      # default autocrlf, and tests/node/skill-md.test.ts (which compares the
+      # checked-in SKILL.md byte-for-byte against freshly generated LF output)
+      # sees the same bytes on every platform.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # Build first so a broken emit fails before the slower checks, then
+      # type-check (runtime, tools, and the shipped examples), then the unit
+      # suite. Only the deterministic, browser-free work runs here.
+      - run: npm run build
+      - run: npm run typecheck
+      # Windows gates like every other platform. When this job first ran it
+      # found ~50 failures there (the vault lock could not survive Windows's
+      # no-renaming-a-directory-with-open-handles rule); those are fixed —
+      # research/windows-fs-probe.mjs records the filesystem semantics the
+      # fixes are built on.
+      - run: npm run test:unit
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.18.0"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # Report-only, deliberately, and split so the two halves can be read
+      # apart.
+      #
+      # Runtime dependencies are exact-pinned and Dependabot is configured to
+      # leave them alone (.github/dependabot.yml): playwright-core and
+      # cloakbrowser each couple to a specific browser build, and tldts carries
+      # the Public Suffix List snapshot that decides credential base-domain
+      # scope. An advisory against one of those cannot be applied by bumping a
+      # caret — it needs a deliberate, browser-coupled release — so gating on it
+      # would block every unrelated pull request on work nobody can do that day.
+      # That same policy is why the audit exists at all: with Dependabot silent
+      # on runtime deps, this job is the only automated signal a human gets.
+      # `continue-on-error` keeps a finding loud (the step goes orange and the
+      # summary below names it) without letting a third-party publish take the
+      # repository offline. The job itself is a required check — that requires
+      # the audit to have *run* on every merge, not to be clean, because the
+      # job succeeds regardless of findings.
+      - name: Audit runtime dependencies
+        id: runtime
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+      - name: Audit development dependencies
+        id: dev
+        continue-on-error: true
+        run: npm audit --audit-level=high
+      - name: Summarise
+        run: |
+          {
+            echo "### Dependency audit (advisory — never gates a merge)"
+            echo
+            echo "| Scope | \`--audit-level=high\` |"
+            echo "| --- | --- |"
+            echo "| Runtime (\`--omit=dev\`) | ${{ steps.runtime.outcome == 'success' && 'clean' || '**findings — see the step log**' }} |"
+            echo "| All dependencies | ${{ steps.dev.outcome == 'success' && 'clean' || '**findings — see the step log**' }} |"
+            echo
+            echo "A runtime finding needs a deliberate pin bump across package.json,"
+            echo "\`src/doctor.ts\`, and publish-npm.yml — see \`npm run check:versions\`."
+          } >> "$GITHUB_STEP_SUMMARY"

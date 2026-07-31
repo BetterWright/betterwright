@@ -1,0 +1,166 @@
+name: Bug report
+description: Something in BetterWright behaves incorrectly.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report.
+
+        **Do not file a security issue here.** A way to reach a blocked
+        metadata endpoint or private address from inside a `run()` snippet, a
+        credential leaking out of the vault, or anything else in
+        [SECURITY.md](https://github.com/BetterWright/betterwright/blob/main/SECURITY.md)
+        goes through GitHub's private **Report a vulnerability** flow instead.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: I am on the latest `betterwright` release, or I have said below why I am not.
+          required: true
+        - label: This is not a security report (see above).
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: BetterWright version
+      description: Output of `betterwright --version`.
+      placeholder: "1.5.2"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`. BetterWright needs Node 22.18 or newer.
+      placeholder: "v22.18.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Linux x64
+        - Linux arm64
+        - Windows x64
+        - WSL
+        - Docker / container
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Which browser was in use
+      description: >-
+        The `Browser → In use` line of `betterwright doctor`. `chromium-fork` is
+        the default wherever a fork artifact exists (macOS arm64, Linux x64,
+        Windows x64); `cloak` is the managed CloakBrowser fallback.
+      options:
+        - chromium-fork (BetterWright's Chromium fork)
+        - cloak (managed CloakBrowser)
+        - A binary I supplied via BETTERWRIGHT_CHROMIUM_PATH or CLOAKBROWSER_BINARY_PATH
+        - Not sure — the doctor output below says
+    validations:
+      required: true
+
+  - type: dropdown
+    id: display
+    attributes:
+      label: Headed or headless
+      description: >-
+        The default is auto — headed when a display is available, otherwise
+        headless. `--headed` and `BETTERWRIGHT_HEADLESS=0/1` override it.
+      options:
+        - Headless
+        - Headed (a visible window, or xvfb)
+        - Default (auto) — I did not set either
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: How were you driving BetterWright
+      description: Pick the closest one; add detail in the reproduction below.
+      options:
+        - "CLI: betterwright run / repl"
+        - "CLI: betterwright exec (the built-in agent)"
+        - "MCP: betterwright mcp, from an MCP client"
+        - "Agent skill (SKILL.md), driven by Claude Code / Codex / Cursor"
+        - "Library: importing betterwright from TypeScript or JavaScript"
+        - "betterwright view (live view)"
+        - "betterwright setup / update / init / doctor"
+        - "betterwright vault"
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`betterwright doctor` output"
+      description: >-
+        Paste the whole thing — it resolves the runtime, the managed browser and
+        its version, the agent integrations, the model backends, and the vault
+        in one shot. `betterwright doctor --json` is fine too. It prints paths
+        under your home directory and the names of configured backends, but no
+        secrets; redact anything you would rather not share.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >-
+        The smallest sequence that shows the problem. A concrete snippet beats a
+        description — for example `betterwright run -c "await
+        page.goto('https://example.com'); return page.title()"`. Include any
+        network flags (`--block-private-network`, `--allow-host`), the session
+        or profile name if it is not the default, and the site if it is public.
+      placeholder: |
+        1. betterwright close --all
+        2. betterwright run -c "..."
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Errors and logs
+      description: >-
+        Stack traces, the JSON result envelope, or relevant lines from
+        `~/.betterwright/daemon.log`. Secrets the vault handled are redacted
+        from result envelopes, but check anything you paste from a log.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: >-
+        Screenshots, whether it is intermittent, whether it reproduces after
+        `betterwright close --all`, whether `--no-daemon` changes it, or whether
+        it only happens with `--stealth` / `patchright-core` installed.
