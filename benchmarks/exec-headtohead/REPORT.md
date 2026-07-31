@@ -1,66 +1,92 @@
-# `betterwright exec` vs a reference agent — agent-scaffold head-to-head
+# `betterwright exec` vs a reference agent — a development case study
 
-**Date:** 2026-07-19 (15-scenario battery, three full rounds)
-**Model (both sides):** `gpt-5.6-sol` — **reasoning effort `low`**
-**BetterWright:** `betterwright exec "<task>" --model gpt-5.6-sol` (codex OAuth →
-ChatGPT backend Responses API, direct). The runs predate the current model
-selector and were invoked as `--model codex`, a shortcut today's CLI rejects in
-favor of real model ids — the command above is the equivalent current
-invocation.
-**Reference:** the reference agent's own CLI, `exec -m openai-codex/gpt-5.6-sol
---effort low "<task>"`, with an explicit **no-subagents instruction** appended to
-every task (BetterWright has no subagents, so the reference's child-session
-machinery is prompt-disabled for fairness; it has no CLI flag for it).
+**This is not a benchmark, and it is not reproducible as published.** It is the
+record of a development exercise: BetterWright's `exec` agent was run against a
+second agent CLI over a 15-scenario battery, the places where `exec` lost were
+diagnosed, fixes were shipped, and the battery was re-run. The result is a
+useful account of *what was wrong and what changed*. It is not evidence that one
+agent is better than another, and it should not be read that way.
 
-The comparison agent is intentionally unnamed. Reproducing its column requires
-setting `REFERENCE_CLI` to a CLI installed on your own machine (the runner's
-`reference-agent` default is a placeholder that exists nowhere); only the
-BetterWright column is independently reproducible as published.
+**Date:** 2026-07-19 (15 scenarios, three rounds)
+**Model, both sides:** `gpt-5.6-sol` at reasoning effort `low`
+**BetterWright:** `betterwright exec "<task>" --model gpt-5.6-sol`. The runs
+predate the current model selector and were invoked as `--model codex`, a
+shortcut today's CLI rejects in favour of real model ids; the command above is
+the equivalent current invocation.
+**Reference:** a second agent's own CLI, `exec -m openai-codex/gpt-5.6-sol
+--effort low "<task>"`, with a no-subagents instruction appended to every task
+(BetterWright has no subagents, so the reference's child-session machinery was
+prompt-disabled; it has no CLI flag for it).
 
-Both harnesses drive the **same model at the same effort**, so this isolates the
-**agent scaffold** — the loop shape, how work is batched, and how a task ends —
-not the model and not the browser runtime (already at parity in
-[`../browser-agent-headtohead`](../browser-agent-headtohead/REPORT.md)).
+## What you can and cannot conclude from this
+
+**You cannot conclude anything comparative.** The reference agent is not named,
+not vendored, and not pinned to a version, so nobody can re-run its column. Its
+numbers here are unauditable. Beyond that:
+
+- Each cell is a **single run**. LLM latency variance on these scenarios is
+  large — one scenario spread across 20s/54s/90s between rounds — so most
+  individual timing differences are inside the noise.
+- Correctness was **assessed by hand**, not machine-scored. The `completed`
+  flags in [`results.json`](results.json) record only that a harness returned
+  something without erroring.
+- The BetterWright side was **iterated against this battery** across the three
+  rounds while the reference side was not. Round-3 numbers are therefore
+  measured after tuning on the same 15 scenarios that produce them. That is the
+  definition of fitting to your test set, and it is why the comparison table is
+  presented below as a development log rather than a score.
+- Two scenarios were affected by an external site being down or rate-limited.
+
+**You can conclude something about BetterWright.** The BetterWright column is
+reproducible from this repository, the defects the exercise found were real and
+are described concretely below, and the fixes for them are in the shipped code
+with unit tests. That is the value of this document.
 
 ## The battery
 
-15 scenarios across the complexity range: trivial baseline, dynamic extract,
-static lookup, multi-step navigation, 2-way and 3-way multi-tab compares,
-synthesis, form/search interaction, large-table extraction, pagination,
-cross-site multi-hop, form fill + submit, and three complex ones — a login →
-cart → checkout flow with computation (saucedemo), a 10-item aggregate + share
-computation (HN), and table-row arithmetic (Wikipedia population gap).
+15 scenarios spanning: trivial baseline, dynamic extract, static lookup,
+multi-step navigation, 2-way and 3-way multi-tab compares, synthesis,
+form/search interaction, large-table extraction, pagination, cross-site
+multi-hop, form fill and submit, and three complex flows — login → cart →
+checkout with computation, a 10-item aggregate with a share computation, and
+table-row arithmetic. They are defined in [`run.ts`](run.ts).
 
-## What changed between rounds (the iteration)
+## What the exercise found, and what was fixed
 
-**Round 1 (baseline)** exposed three structural advantages on the reference side:
+Round 1 exposed three structural defects in `exec`, all since fixed:
 
-1. **Turn count.** BetterWright's floor was 2 model turns (act → `done`), and
-   simple lookups cost 2–3 turns vs the reference's collapsed single-block shape. Every
-   turn is a full `gpt-5.6-sol` round-trip (~4–8s), so BW lost every trivial
-   task by 3–7s.
-2. **Password rule too blunt.** `exec` mode has no vault, and the operator
-   prompt banned typing *any* password — so BW refused the saucedemo login even
-   though the user's task supplied the demo credentials. The reference just typed them.
-3. **Giving up on transient errors.** BW retried a 503 twice and reported
-   blocked; the reference ground on and completed.
+1. **A two-turn floor.** Every task cost at least two model turns (act, then a
+   separate `done`), and each turn is a full model round-trip. Simple lookups
+   paid 2–3 turns for work that needed one.
 
-Fixes shipped (harness + prompt, all unit-tested):
+   *Fix:* a `browser` call whose code returns `{ finalAnswer: "…" }` ends the
+   task in that same turn. Read-only tasks now cost one model turn. A guard
+   ignores `finalAnswer` on an errored run. After round 2 surfaced a
+   wrong-table-row answer, the prompt additionally requires the code to check
+   that the extracted values satisfy the request — matching a ranked row by its
+   own rank cell rather than by position — before finishing.
 
-- **Single-call finish:** a `browser` call whose code returns
-  `{ finalAnswer: "…" }` ends the task in that same turn — no `done`
-  round-trip. Read-only tasks now cost **one** model turn. A guard ignores
-  `finalAnswer` on an errored run, and (after round 2 caught a bad table row)
-  the prompt requires the code to **check the extracted values satisfy the
-  request** (match a ranked row by its own rank cell, not position) before
-  finishing.
-- **Task-supplied credentials are fillable:** vault/password-manager secrets
-  remain untypeable, but a credential the user wrote into the task itself is
-  not protected — fill it and proceed.
-- **Transient 5xx/timeouts:** keep retrying with growing backoff for 30–60s
-  before treating a site as down.
+2. **A password rule that was too blunt.** `exec` mode has no vault, and the
+   operator prompt banned typing *any* password, so the agent refused a demo
+   login even though the user's own task text supplied the credentials.
 
-## Results (round 3, after the fixes)
+   *Fix:* vault and password-manager secrets remain untypeable; a credential the
+   user wrote into the task itself is not a protected secret, and is filled.
+
+3. **Giving up on transient errors.** A 503 was retried twice and then reported
+   as blocked.
+
+   *Fix:* transient 5xx and timeouts retry with growing backoff for 30–60s
+   before a site is treated as down.
+
+These three are the substantive output of the exercise. They were found by
+running a second implementation alongside and asking why it did better, which is
+a good way to find defects and a poor way to produce a ranking.
+
+## Round-3 log (after the fixes)
+
+Read this as "what the two harnesses did on one afternoon", not as a
+leaderboard. Single runs; bold marks the faster cell only.
 
 | # | Scenario | BetterWright | Reference | Correct |
 |---|----------|-------------:|------:|:---|
@@ -75,72 +101,66 @@ Fixes shipped (harness + prompt, all unit-tested):
 | 9 | Large-table extraction | **25.6s · 3** | 17.9s · 1 | both |
 | 10 | Pagination | 14.6s · 2 | **12.3s** · 2 | both |
 | 11 | Deep multi-hop (cross-site) | **29.2s · 3** | 39.4s · 3 | both |
-| 12 | Form fill + submit | 87.1s · 3 | 113.5s · 8 | site down (503): BW reported honestly; the reference answered **unconfirmed** |
+| 12 | Form fill + submit | 87.1s · 3 | 113.5s · 8 | site down (503): BW reported the failure; the reference answered unconfirmed |
 | 13 | Login + cart + checkout | **50.7s · 5** | 64.2s · 13 | both ($17.98) |
 | 14 | Aggregate + compute (10 items) | 24.4s · 2 | **17.9s** · 3 | both |
 | 15 | Table rows + arithmetic | **22.5s · 2** | 150.0s **TIMEOUT** | BW only |
 
-**Correctness: BetterWright 14/15** (sole miss = a genuinely down site,
-reported honestly) — **reference 12/15** (population-gap timeout, unconfirmed
-form-fill answer, and its checkout "answer" was a bare image path).
+By hand-assessed correctness in this round: BetterWright 14/15 (its one miss was
+a genuinely down site, reported as such), reference 12/15 (one timeout, one
+unconfirmed form-fill answer, and a checkout "answer" that was a bare image
+path). Round 2, with a healthier form-fill site, showed the same shape.
 
-Round-2 numbers (same code except the round-3 table-check/backoff tweaks) tell
-the same story with a healthier form-fill site: **BW median 10.2s vs reference
-14.7s, BW faster on 10 of 15.** Averaged over both post-fix rounds, BW is
-faster on 9 of the 14 non-environmental scenarios.
+Caveats that apply to every row: single run, BetterWright tuned against these
+scenarios and the reference not, reference unversioned and unnamed, and
+`Steps` means different things on the two sides — a true model-turn count for
+BetterWright, and a count of `repl(` calls in stdout as a rough proxy for the
+reference.
 
-## Where each side wins now
+## Observations worth keeping
 
-**BetterWright wins:** everything single-call-able (trivial/lookup/multi-step
-nav — now ~5–9s, reliably *faster* than the reference), table extraction with
-verification, cross-site hops, and — decisively — the **complex interactive
-flows**: login+cart+checkout in 5 turns vs the reference's 13, form fill in 3 vs 8.
-The observe/act/verify discipline pays off exactly where the page fights back.
+Stated as observations from this exercise, not as measured general properties:
 
-**The reference still wins:** multi-tab fact compares (it collapses everything into one
-big repl block; BW spends 2–3 turns when extraction targets are uncertain) and
-the Wikipedia search-box flow, where BW's snapshot-heavy caution is high
-variance (20s/54s/90s across rounds). These are the residual cost of BW's
-check-before-finish discipline — the same discipline that kept BW correct where
-the reference timed out or answered unverified.
+- The scenarios that became fast for BetterWright are the ones the single-call
+  finish applies to: trivial lookups, static facts, single-hop navigation.
+- The complex interactive flows were where BetterWright used markedly fewer
+  turns — checkout in 5 versus 13, form fill in 3 versus 8. The observe/act/
+  verify discipline costs turns on easy work and saves them when the page
+  fights back.
+- Multi-tab fact comparison was the consistent gap in the other direction: the
+  reference collapses the whole comparison into one code block, while
+  BetterWright spends 2–3 turns when the extraction targets are uncertain. Both
+  sides were always correct on those.
+- BetterWright's snapshot-heavy caution on the search-box flow was high variance
+  (20s/54s/90s across rounds). A later adjustment — parse article text rather
+  than snapshot the whole encyclopedia page — brought that scenario to 31.3s/4
+  steps against 25.8s/5.
 
-A post-round-3 recheck (after a nudge to parse article text instead of
-snapshotting encyclopedia pages) brought wiki-search to **31.3s/4 steps vs
-25.8s/5** — near parity — and confirmed hn-top/hn-top3 at parity (7.9s/9.7s vs
-8.3s/8.9s). The multi-tab compares remain the one structural gap: ~30–36s
-(2–3 turns) vs the reference's 12–20s single block, with both sides always correct.
-
-## Token usage (BetterWright, round 3, measured live)
+## Token usage (BetterWright, measured live)
 
 | Task | Steps | Input (uncached) | Cache read | Output | Context end |
 |------|:---:|---:|---:|---:|---:|
 | baseline-title | 1 | ~2.6K | 0 | ~0.1K | ~2.6K |
 | saucedemo-checkout | 5 | ~8–10K | ~15–20K | ~0.9K | ~8–10K |
 
-The reference exposes no per-task token counts (its daemon log is HTTP timings
-only).
+Only BetterWright's numbers are available; the reference exposes no per-task
+token counts.
 
-## Reproduce
+## Running it
+
+The reference CLI is not shipped or named here, so [`run.ts`](run.ts) requires
+you to supply one via `REFERENCE_CLI` and exits with an explanation if it is
+unset:
 
 ```bash
-betterwright auth --login codex        # one-time OAuth (ChatGPT / Codex plan)
-node benchmarks/exec-headtohead/run.js            # all 15 scenarios, both harnesses
-node benchmarks/exec-headtohead/run.js --only saucedemo  # a subset
+betterwright auth --login codex                   # one-time OAuth
+REFERENCE_CLI=your-cli node benchmarks/exec-headtohead/run.js
+REFERENCE_CLI=your-cli node benchmarks/exec-headtohead/run.js --only saucedemo
 ```
 
-Raw per-task output (answers, step counts, timings, proof paths) is written to
-`results.json` next to the runner.
-
-## Caveats
-
-- Dynamic tasks (HN, releases) depend on live pages; the harnesses run minutes
-  apart but landed on identical answers in every compared cell.
-- "Steps" for the reference is a proxy (its `repl(` call count, `null` when the block
-  count isn't visible in output); for BetterWright it is the real model-turn
-  count.
-- Single run per cell per round; LLM-latency variance is real (±2–3s small
-  tasks, much larger on interactive flows — see the wiki-search spread).
-  Cross-round patterns (single-call wins, compare-task gap, interactive-flow
-  wins) reproduced in every round.
-- httpbin.org was flaky-to-down during rounds 1 and 3; treat form-fill timing
-  as environmental.
+[`results.json`](results.json) holds per-scenario outcomes, timings, turn counts
+and BetterWright token usage. It deliberately contains no agent answers, no
+model transcripts, and no local artifact paths; pass `--raw <file>` to dump
+those to a path of your choosing while debugging, and do not commit the result.
+Correctness is not machine-scored — the runner prints each side's answer so you
+can score it yourself.

@@ -7,7 +7,7 @@ policy-guarded session, and a human can watch it live, message it, take the
 controls, or complete a step the agent cannot (MFA, a resistant CAPTCHA, a
 consequential click) — then hand control straight back.
 
-Three surfaces, one server:
+Six surfaces, one server:
 
 | Surface | What it does |
 | --- | --- |

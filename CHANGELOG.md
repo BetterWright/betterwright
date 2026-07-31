@@ -9,6 +9,38 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- `CODE_OF_CONDUCT.md`, GitHub issue forms, a pull-request template, and
+  `CODEOWNERS`.
+- A cross-platform CI job covering Linux, macOS, and Windows on Node 22 and 24,
+  an advisory dependency-audit job, per-job timeouts, and cancellation of
+  superseded pull-request runs.
+- `.nvmrc` and `.gitattributes`, the latter pinning LF so the byte-exact
+  `SKILL.md` test passes in a Windows working tree.
+
+### Changed
+
+- `engines.node` is now `>=22.18.0`, the version the shipped TypeScript
+  examples already required. CI and the publish workflow build on that same
+  version, which previously differed from each other.
+- Documented benchmark results now carry their methodology: the Online-Mind2Web
+  figure is labelled self-judged and best-validated rather than one-shot, and
+  the unsubstantiated observation-token claim was replaced with a description
+  of what the snapshot compressor actually prunes.
+- Operator and research tooling moved from `scripts/` to `research/`, which is
+  documented as unsupported and is not part of the build.
+- Documentation images are referenced by absolute URL so they render from the
+  published npm tarball, which does not ship them.
+
+### Fixed
+
+- The JWT payload decoder names `base64url` explicitly instead of relying on
+  Node's lenient `base64` decoder accepting the URL-safe alphabet.
+- `NetworkPolicy.checkHost`, `downloadPolicyFromEnv`, and the daemon's identity
+  platform are typed against the published declarations, so an implementation
+  that drifts from `types/` now fails the build.
+
 ## [1.5.2] - 2026-07-30
 
 ### Changed
@@ -302,6 +334,13 @@ number to be reused.
   oversized request lines are refused, `unhandledRejection` is survived, and
   `uncaughtException` closes gracefully with exit 1.
 
+## [1.2.0] - 2026-07-24 [YANKED]
+
+### Added
+
+- A Cloudflare-hosted managed Live View relay with account keys, quotas, and
+  billing safeguards. Withdrawn by 1.1.4; the version number is retired on npm.
+
 ## [1.1.4] - 2026-07-24
 
 ### Removed
@@ -309,13 +348,6 @@ number to be reused.
 - The managed Live View relay and BetterWright account/API-key flows shipped in
   1.2.0, restoring the 1.1.3 local-only Live View behavior. Users on 1.2.0
   should update.
-
-## [1.2.0] - 2026-07-24 [YANKED]
-
-### Added
-
-- A Cloudflare-hosted managed Live View relay with account keys, quotas, and
-  billing safeguards. Withdrawn by 1.1.4; the version number is retired on npm.
 
 ## [1.1.3] - 2026-07-24
 
@@ -330,12 +362,13 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.5.2...HEAD
 [1.5.2]: https://github.com/BetterWright/betterwright/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/BetterWright/betterwright/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/BetterWright/betterwright/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/BetterWright/betterwright/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/BetterWright/betterwright/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/BetterWright/betterwright/compare/v1.1.4...v1.3.0
-[1.1.4]: https://github.com/BetterWright/betterwright/releases/tag/v1.1.4
 [1.2.0]: https://github.com/BetterWright/betterwright/releases/tag/v1.2.0
+[1.1.4]: https://github.com/BetterWright/betterwright/releases/tag/v1.1.4
 [1.1.3]: https://github.com/BetterWright/betterwright/compare/v1.1.2...v1.1.3

@@ -18,14 +18,24 @@ jobs:
     name: Publish trusted package
     runs-on: ubuntu-latest
     environment: npm
+    # Downloads two browsers and runs the full integration suite before it
+    # publishes. Generous, but bounded: a hung browser launch should fail the
+    # release rather than hold the npm environment open for six hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
+      # Must equal the pin in ci.yml's branch-protected jobs. This used to be
+      # 22.14.0 while CI floated "22", so the artifact that actually reached
+      # npm was the one build nothing had tested. 22.18.0 is the package's
+      # engines floor (Node's type stripping, which the shipped
+      # examples/typescript/ run on, needs >= 22.18) and satisfies npm 11's own
+      # >= 22.9.0 requirement below.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22.14.0"
+          node-version: "22.18.0"
           registry-url: "https://registry.npmjs.org"
       - name: Install Trusted Publishing capable npm
         run: npm install --global npm@11.5.1

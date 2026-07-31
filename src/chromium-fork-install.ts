@@ -5,7 +5,7 @@
 // Pattern matches Playwright/Cloak: the npm package is the driver; the
 // browser zip is fetched from a pinned GitHub Release and verified
 // with SHA-256 before extract. Apple-licensed fonts are intentionally not
-// in the public zip (see scripts/assemble-mac-fonts.sh).
+// in the public zip (see research/assemble-mac-fonts.sh).
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";

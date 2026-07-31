@@ -8,12 +8,17 @@
       "tests/**",
       "benchmarks/**",
       "examples/**",
+      "research/**",
       "!!tests/manual/**",
       "!!tests/node/fixtures/**",
       // Benchmark run artifacts (browser profiles, traces) are not our code.
       "!!benchmarks/*/runs/**",
+      // Third-party benchmark datasets: data, not source, and large enough to
+      // trip the file-size limit.
+      "!!benchmarks/**/*.json",
       // Emitted next to the .ts input by the dev projects; lint the source.
       "!!scripts/**/*.js",
+      "!!research/**/*.js",
       "!!tests/**/*.js",
       "!!benchmarks/**/*.js"
     ]
@@ -35,7 +40,8 @@
         "bin/**/*.ts",
         "scripts/**/*.ts",
         "tests/**/*.ts",
-        "benchmarks/**/*.ts"
+        "benchmarks/**/*.ts",
+        "research/**/*.ts"
       ],
       "linter": {
         "rules": {

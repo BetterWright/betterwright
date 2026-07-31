@@ -35,9 +35,9 @@
     "skipLibCheck": false
   },
   "include": [
-    "scripts/cdpfree-probe.ts",
-    "scripts/stealth-report.ts",
-    "scripts/warm-profile.ts",
+    "research/cdpfree-probe.ts",
+    "research/stealth-report.ts",
+    "research/warm-profile.ts",
     "tests/node/**/*.ts",
     "benchmarks/**/*.ts"
   ],

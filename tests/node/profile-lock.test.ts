@@ -159,6 +159,13 @@ test("degrades to the persistent profile unlocked when the lock cannot be create
     t.skip("permission simulation is a no-op for root");
     return;
   }
+  // Windows has no POSIX mode bits: chmod on a directory does not remove write
+  // access, so the lock would succeed and the assertions below would not hold.
+  // `process.geteuid` is undefined there, so the root check above misses it.
+  if (process.platform === "win32") {
+    t.skip("permission simulation is a no-op on Windows");
+    return;
+  }
   const { root, profileDir, runtimeDir } = makeRoot();
   fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(root, 0o500);

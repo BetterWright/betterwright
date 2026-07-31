@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/betterwright?color=cb3837&logo=npm)](https://www.npmjs.com/package/betterwright)
 [![CI](https://github.com/BetterWright/betterwright/actions/workflows/ci.yml/badge.svg)](https://github.com/BetterWright/betterwright/actions/workflows/ci.yml)
-[![node](https://img.shields.io/node/v/betterwright?color=339933&logo=node.js&logoColor=white)](package.json)
+[![node](https://img.shields.io/node/v/betterwright?color=339933&logo=node.js&logoColor=white)](#install)
 [![license](https://img.shields.io/npm/l/betterwright)](LICENSE)
 
 One persistent, policy-guarded browser your agent returns to turn after turn.
@@ -28,7 +28,7 @@ betterwright run -c "await page.goto('https://example.com'); return page.title()
 machine, and proves it works by loading a real page. One command, no choices to
 make up front.
 
-**30–75% fewer observation tokens** than a standard accessibility dump ·
+**Compressed snapshots** instead of raw HTML or a full accessibility dump ·
 read-only tasks finish in **one model turn** · persistent sessions so you
 don't re-pay login and navigation cost every step.
 
@@ -111,18 +111,18 @@ screenshot, and prints **one JSON object** — answer, steps, token usage,
 proof path.
 
 **Models are selected by real id**, not by adapter nickname. Pass the model
-id you want (`gpt-5.6-sol`, `claude-opus-5`, `qwen3.5:9b`, …). BetterWright
+id you want (`gpt-5.6-sol`, `claude-opus-4-8`, `qwen3:8b`, …). BetterWright
 probes running local servers (Ollama, vLLM), OpenRouter when keyed, and native
 Claude / Codex / Grok routes; if exactly one source exposes that id, it uses
-it. Prefix the source only to pin a collision (`ollama/qwen3.5:9b`). The words
+it. Prefix the source only to pin a collision (`ollama/qwen3:8b`). The words
 `claude`, `codex`, and `grok` alone are **not** model shortcuts.
 
 | You have… | Typical start |
 | --- | --- |
 | ChatGPT / Codex subscription | `betterwright auth --login codex` → `--model gpt-5.6-sol` |
-| Anthropic API key | `ANTHROPIC_API_KEY=…` → `--model claude-opus-5` |
-| xAI (OAuth or API key) | `betterwright auth --login grok` or `XAI_API_KEY` → `--model grok-4.5` |
-| Local [Ollama](https://ollama.com) | pull a tool-calling model → `--model qwen3.5:9b` or `ollama/…` |
+| Anthropic API key | `ANTHROPIC_API_KEY=…` → `--model claude-opus-4-8` |
+| xAI (OAuth or API key) | `betterwright auth --login grok` or `XAI_API_KEY` → `--model grok-4.3` |
+| Local [Ollama](https://ollama.com) | pull a tool-calling model → `--model qwen3:8b` or `ollama/…` |
 | Local vLLM | serve with tool-calling enabled → `--model <id>` or `vllm/<id>` |
 | [OpenRouter](https://openrouter.ai) | `OPENROUTER_API_KEY=…` → `--model <author/model>` |
 | Any OpenAI-compatible `/v1` | `--base-url https://host/v1 --model <id>` |
@@ -133,7 +133,7 @@ betterwright models
 betterwright models ollama
 
 # Local Ollama — no API key; default base http://127.0.0.1:11434/v1
-betterwright exec "check example.com" --model ollama/qwen3.5:9b
+betterwright exec "check example.com" --model ollama/qwen3:8b
 
 # OpenRouter — bare author/model id when unambiguous
 OPENROUTER_API_KEY=… betterwright exec "check example.com" \
@@ -176,7 +176,7 @@ BetterWright's whole observation stack is built around that problem:
 
 | Mechanism | Token effect |
 | --- | --- |
-| **Compressed agent snapshots** | A distilled accessibility tree — not raw HTML — measuring **30–75% fewer tokens** than standard tree output, with `[ref=eN]` markers the model acts on directly instead of re-deriving selectors |
+| **Compressed agent snapshots** | Playwright's `mode: "ai"` accessibility tree with everything an agent cannot act on pruned out — `/url` property lines, refs on non-actionable roles, bare `generic` wrappers, duplicated text, names past 100 characters — leaving `[ref=eN]` markers the model acts on directly instead of re-deriving selectors |
 | **Diff mode** | After an action, return **only what changed** — not the page again |
 | **Interactive-only filter** | Drop static text nodes; keep what the agent can click, fill, or read |
 | **Scoped truncation** | Hints about *where* to look next instead of a silently clipped wall |
@@ -230,9 +230,9 @@ step from what it sees, in a browser that must still be there next turn:
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
 | [**Human-shaped input**](docs/browser-api.md#human-shaped-interactions) | Curved pointer movement, paced typing, eased wheel — no extra dependency |
-| [**Cloaking V2**](docs/cloaking-v2.md) | Coherent native fingerprint: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; live reCAPTCHA v3 returns 0.9 headed and headless |
+| [**Cloaking V2**](docs/cloaking-v2.md) | Coherent native fingerprint: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; the two public reCAPTCHA v3 score-detector demos in the stealth report return a server-verified 0.9 headed and headless |
 | [**Native Chromium fork**](docs/chromium-fork.md) | Optional BetterWright-built Chromium: per-profile-stable canvas/audio farbling, platform masking, macOS-metric fonts. Auto-detected at `~/.betterwright/chromium/` on macOS arm64, Linux x64, and Windows x64 |
-| [**Skill packs**](docs/skills.md) | Per-site and per-password-manager guidance the host agent reads on demand — surfaced automatically when an open page matches |
+| [**Skill packs**](docs/skills.md) | Per-site and per-password-manager guidance the driving agent reads on demand — your own or the built-in loop — surfaced automatically when an open page matches |
 | [**Download approval**](docs/browser-api.md) | Denied by default; a trusted host approves one download run at a time |
 | [**Operator guidance**](docs/agent-prompt.md) | `betterwright skill` / `agentSystemPrompt()` — decisive action on authorized tasks, with optional confirmation/spending guardrails |
 
@@ -317,7 +317,15 @@ server reads too. See
 | [The built-in agent](docs/agent.md) | [CAPTCHA helpers](docs/captcha.md) | [Chromium fork](docs/chromium-fork.md) |
 | [JavaScript API](docs/javascript.md) | [Network policy](docs/network-policy.md) | [Headed / headless](docs/attach-mode.md) |
 | [Browser API (snippet globals)](docs/browser-api.md) | [Skill packs](docs/skills.md) | [Operator guidance](docs/agent-prompt.md) |
-| [CAPTCHA recipes](docs/browser-recipes.md) | | Benchmarks: [Online-Mind2Web, 92.7%](benchmarks/online-mind2web/REPORT.md) · [agent head-to-head](benchmarks/exec-headtohead/REPORT.md) |
+| [CAPTCHA recipes](docs/browser-recipes.md) | | Benchmarks: [Online-Mind2Web, 92.7% self-judged](benchmarks/online-mind2web/REPORT.md) · [agent head-to-head](benchmarks/exec-headtohead/REPORT.md) |
+
+The Online-Mind2Web figure is 278/300 on the pinned 2025-11-23 snapshot, scored
+by BetterWright's own strict multimodal judge — **not** an official
+Online-Mind2Web human evaluation or leaderboard result. It is also an iterative
+best-validated campaign, combining retained validated outcomes across targeted
+reruns, rather than a one-shot 300-task run. The
+[report](benchmarks/online-mind2web/REPORT.md) states the method, the dataset
+and manifest hashes, and the failed task ids.
 
 ## Scope and responsible use
 

@@ -126,7 +126,7 @@ than automating Google or Bing's public search UI.
 
 ## Screenshots and artifacts
 
-![A completed task with a proof checkmark and captured screenshots](assets/proof.png)
+![A completed task with a proof checkmark and captured screenshots](https://raw.githubusercontent.com/BetterWright/betterwright/main/docs/assets/proof.png)
 
 `screenshot(options)` captures the current page and records it as an artifact.
 

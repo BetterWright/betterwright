@@ -1040,7 +1040,11 @@ test("live-view config file round-trips a hashed password and sanitizes input", 
   assert.equal(written.liveView.expose, "tailscale");
   assert.equal(written.liveView.password, undefined);
   assert.equal(written.liveView.passwordHash, hashLiveViewPassword("hunter22"));
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // Only the permission bits are POSIX-specific; the rest of this test is
+  // meaningful everywhere, so guard the assertion rather than the whole test.
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  }
 
   const loaded = loadLiveViewConfig(home);
   assert.deepEqual(loaded, {

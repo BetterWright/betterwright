@@ -4,12 +4,12 @@
 
 ```
 ┌─────────────────────────────┐       JSON lines over stdio       ┌──────────────────────────┐
-│ Client (compiled ESM)       │  ────────  execute  ───────────▶ │ Compiled Node worker     │
+│ Client (compiled ESM)       │  ──────────  execute  ─────────▶  │ Compiled Node worker     │
 │                             │                                   │                          │
-│ • owns the worker           │  ◀────  guard / vault RPC  ─────  │ • managed Cloak browser  │
-│ • NetworkPolicy            │  ───────  rpc_response  ────────▶ │ • sandbox (node:vm)      │
-│ • vault (local or custom)  │                                   │ • per-session pages      │
-│ • result envelope          │  ◀─────────  result  ───────────── │ • transport SOCKS proxy  │
+│ • owns the worker           │  ◀─────  guard / vault RPC  ────  │ • fork or Cloak browser  │
+│ • NetworkPolicy             │  ───────  rpc_response  ───────▶  │ • sandbox (node:vm)      │
+│ • vault (local or custom)   │                                   │ • per-session pages      │
+│ • result envelope           │  ◀──────────  result  ──────────  │ • transport SOCKS proxy  │
 └─────────────────────────────┘                                   └──────────────────────────┘
 ```
 

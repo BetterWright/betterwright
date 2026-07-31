@@ -5,14 +5,18 @@
 # fingerprint scripts probe) from THIS macOS host into the artifact's
 # fonts/ttf directory. Run on macOS, then ship the artifact to Linux:
 #
-#   scripts/assemble-mac-fonts.sh artifacts/linux-x64/fonts/ttf
+#   research/assemble-mac-fonts.sh artifacts/linux-x64/fonts/ttf
 #
 # At launch the worker writes a fontconfig file pointing at this directory
 # and starts the fork with FONTCONFIG_FILE set, so font enumeration and
 # measureText metrics match a Mac instead of a bare Linux server.
 #
-# Note: several of these fonts are Apple-licensed. This is an authorized
-# lab artifact for the program's own test VMs — do not redistribute.
+# LICENSING: the files this script copies are Apple-licensed system fonts. It
+# reads them from the macOS host it runs on and never fetches or vendors them.
+# The resulting fonts/ttf directory MUST NOT be redistributed, published, or
+# committed; it is local output only, and the terms that apply to it are
+# Apple's, not this project's. Nothing produced here is part of the published
+# BetterWright package.
 
 set -euo pipefail
 

@@ -1,15 +1,16 @@
 # BetterWright vs a reference runtime — head-to-head
 
-A physical, runtime-vs-runtime comparison on this machine. Both `betterwright`
-and the reference CLI accept raw browser-automation JavaScript, so this isolates
-the **browser runtime** (navigation, snapshot, tabs, redaction) from any LLM.
-All tasks are login-free and deterministic. Reproduce with
-[`run.sh`](run.sh).
+A runtime-vs-runtime comparison. Both `betterwright` and the reference CLI
+accept raw browser-automation JavaScript, so this isolates the **browser
+runtime** (navigation, snapshot, tabs, redaction) from any LLM. All tasks are
+login-free and deterministic. [`run.sh`](run.sh) runs them.
 
-The comparison agent is intentionally unnamed. Reproducing its column requires
-setting `REFERENCE_CLI` to a CLI installed on your own machine (the script's
-`reference-agent` default is a placeholder that exists nowhere); only the
-BetterWright column is independently reproducible as published.
+**Only the BetterWright column is reproducible from this repository.** The
+reference runtime is not named, not vendored, and not version-pinned here, so
+its numbers cannot be audited and nothing comparative should be concluded from
+them. To reproduce that column you must set `REFERENCE_CLI` to a CLI installed
+on your own machine; `run.sh` exits with an explanation if it is unset, and
+`run.sh --betterwright-only` runs the reproducible half alone.
 
 Environment: macOS (Darwin 25.6), BetterWright CloakBrowser 145 headless,
 reference CLI against its always-on daemon browser. Recorded 2026-07-18.

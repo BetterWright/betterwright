@@ -8,6 +8,7 @@ npm-debug.log*
 # `../fixtures/*`, and moving the output would break every one of those
 # relative contracts.
 scripts/*.js
+research/*.js
 tests/node/**/*.js
 benchmarks/*/*.js
 *.tsbuildinfo
@@ -29,18 +30,25 @@ benchmarks/online-mind2web/runs/
 benchmarks/online-mind2web/tasks.local.json
 benchmarks/odysseys/runs/
 
-# Editor / OS
+# Editor / OS / agent tooling
 .DS_Store
 *.swp
 .idea/
 .vscode/
+.claude/
 
-# Local dev scratch (probes, font artifacts, handoff notes)
+# Scratch output every checkout produces
 .tmp/
 tmp/
 artifacts/
 *.tmp.mjs
-logs/
-captcha-probe/
-tests/manual/
+
+# Private notes, kept out of the repo as well as out of the tarball.
+# scripts/check-package.ts refuses to publish these because v1.1.4 shipped an
+# internal handoff note carrying an operator's residential egress IP; they also
+# carry session context and competitor research. That is a repo-wide hazard,
+# not one developer's preference, so it stays in the shared ignore file.
+# One developer's own scratch directories belong in .git/info/exclude instead.
 internal/
+HANDOFF-*
+*-handoff.md

@@ -100,8 +100,14 @@ Flags:
 | `--protocol <name>` | `chat` | `chat` for Chat Completions (widest compatibility), or `responses` when the server implements it |
 | `--allow-insecure-model-endpoint` | off | Allow a key over non-loopback plain HTTP; HTTPS and loopback HTTP work without it |
 | `--effort <level>` (alias `--reasoning`) | `low` | Reasoning effort: `low`/`medium`/`high`/`xhigh`/`max` where the model supports it |
-| `--session <name>` | `default` | Browser session name |
+| `--session <name>` | `default` | Parallel lanes inside one identity; the browser and the conversation both persist under that name |
+| `--profile <name>` | the shared profile | A separate identity: its own cookies, its own daemon, its own `exec` history (`BETTERWRIGHT_PROFILE` sets one for the whole shell; the flag wins) |
 | `--headed` | off | Show the managed browser |
+| `--live-view` | off | Start the viewer at step 0 and print its URL (see [live-view.md](live-view.md)) |
+| `--stdin` | off | Read the task from stdin instead of an argument — no second round of shell parsing |
+| `--fresh` | off | Forget this session's `exec` conversation and start the transcript over; the browser and its logins are untouched |
+| `--close` | off | Close the session after this task instead of leaving it live |
+| `--no-daemon` | off | Do not use the background session daemon; the browser lives and dies with this command |
 
 Network flags (`--block-private-network`, `--allow-host`, …) work the same as on
 `run`/`repl`.

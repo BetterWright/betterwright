@@ -48,7 +48,7 @@ const from = {x: box.x + box.width / 2, y: box.y + box.height / 2};
 return captcha.drag(from, {x: from.x + 280, y: from.y}, {steps: 24});
 ```
 
-## Attach a text challenge to Pi vision
+## Attach a text challenge to the model's vision
 
 ```js
 const image = page.locator('img[src*="captcha" i], img[alt*="captcha" i]').first();

@@ -13,6 +13,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { mkdirPrivate } from "./fs-private.js";
 
 export const PROFILE_LOCK_STALE_MS = 60_000;
 export const PROFILE_LOCK_HEARTBEAT_MS = 15_000;
@@ -29,10 +30,6 @@ function processAlive(pid) {
   } catch (error) {
     return error?.code === "EPERM";
   }
-}
-
-function mkdirPrivate(dir) {
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 // The lock lives beside the profile it guards, so this marker is reserved in

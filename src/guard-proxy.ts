@@ -115,6 +115,98 @@ function completeSocks5Reply(buffer) {
   return buffer.length >= 4 + addressLength + 2 ? buffer[1] : null;
 }
 
+// Upstream-proxy handshake steps shared by the two call sites that speak to an
+// upstream: the Cloaking V2 geo lookup and the guard's own egress tunnel.
+//
+// Deliberately NOT shared: how the CONNECT target address is encoded. The geo
+// lookup asks the upstream to resolve a hostname, while the egress tunnel only
+// ever sends an already-validated literal IP so the local DNS-rebinding check
+// stays authoritative. Keeping that difference at the call sites makes it
+// visible rather than burying a security property in a shared parameter.
+
+const SOCKS5_AUTH_NONE = 0;
+const SOCKS5_AUTH_USERPASS = 2;
+const SOCKS5_MAX_CREDENTIAL_BYTES = 255;
+
+/** SOCKS5 method greeting: offer user/password only when we have credentials. */
+function socks5Greeting(wantsAuth: boolean): Buffer {
+  return wantsAuth
+    ? Buffer.from([5, 2, SOCKS5_AUTH_NONE, SOCKS5_AUTH_USERPASS])
+    : Buffer.from([5, 1, SOCKS5_AUTH_NONE]);
+}
+
+/** Second byte of a two-byte SOCKS5 reply, or null while it is still short. */
+function socks5StatusByte(buffer: Buffer): number | null {
+  return buffer.length >= 2 ? buffer[1] : null;
+}
+
+/**
+ * Drive the SOCKS5 greeting and, when the upstream selects it, the RFC 1929
+ * user/password sub-negotiation. Leaves the socket ready for a CONNECT
+ * request. `readReply` and `fail` are supplied by the caller so each path keeps
+ * its own buffering and error-tagging conventions.
+ */
+async function negotiateSocks5Auth(
+  socket,
+  upstream,
+  readReply: (until: (buffer: Buffer) => unknown) => Promise<any>,
+  fail: (error: Error) => never,
+  label: string,
+): Promise<void> {
+  const wantsAuth = Boolean(upstream.username || upstream.password);
+  socket.write(socks5Greeting(wantsAuth));
+  const method = await readReply(socks5StatusByte);
+  if (method === SOCKS5_AUTH_USERPASS) {
+    const username = Buffer.from(upstream.username, "utf8");
+    const password = Buffer.from(upstream.password, "utf8");
+    if (
+      username.length > SOCKS5_MAX_CREDENTIAL_BYTES ||
+      password.length > SOCKS5_MAX_CREDENTIAL_BYTES
+    ) {
+      fail(new Error(`${label} credentials too long`));
+    }
+    socket.write(
+      Buffer.concat([
+        Buffer.from([1, username.length]),
+        username,
+        Buffer.from([password.length]),
+        password,
+      ]),
+    );
+    const authStatus = await readReply(socks5StatusByte);
+    if (authStatus !== 0) fail(new Error(`${label} authentication failed`));
+  } else if (method !== SOCKS5_AUTH_NONE) {
+    fail(new Error(`${label} offered no usable authentication method`));
+  }
+}
+
+/** CONNECT request head for an HTTP upstream, with Basic auth when configured. */
+function httpConnectRequest(authority: string, upstream): string {
+  const headers = [`CONNECT ${authority} HTTP/1.1`, `Host: ${authority}`];
+  if (upstream.username || upstream.password) {
+    const credentials = Buffer.from(
+      `${upstream.username}:${upstream.password}`,
+    ).toString("base64");
+    headers.push(`Proxy-Authorization: Basic ${credentials}`);
+  }
+  return `${headers.join("\r\n")}\r\n\r\n`;
+}
+
+/**
+ * Read the CONNECT status line once the whole header block has arrived. Returns
+ * null while more bytes are needed, so bytes past the header terminator (which
+ * are already tunneled traffic) stay on the socket.
+ */
+function httpConnectStatusLine(buffer: Buffer): string | null {
+  if (buffer.indexOf("\r\n\r\n") === -1) return null;
+  return buffer.subarray(0, buffer.indexOf("\r\n")).toString("latin1");
+}
+
+/** Whether a CONNECT status line reports 200. */
+function httpConnectAccepted(status: string): boolean {
+  return /^HTTP\/\d(?:\.\d)?\s+200/i.test(status);
+}
+
 /**
  * Minimal plain-HTTP GET tunneled through an upstream egress proxy. Used by
  * Cloaking V2 geo-identity resolution: the lookup must originate from the
@@ -181,66 +273,27 @@ export async function httpGetViaProxy(
       }).catch((error) => fail(error));
 
     if (upstream.protocol === "socks5") {
-      const wantsAuth = Boolean(upstream.username || upstream.password);
-      socket.write(wantsAuth ? Buffer.from([5, 2, 0, 2]) : Buffer.from([5, 1, 0]));
-      const method = await readProxyReply((reply) =>
-        reply.length >= 2 ? reply[1] : null,
-      );
-      if (method === 2) {
-        const username = Buffer.from(upstream.username, "utf8");
-        const password = Buffer.from(upstream.password, "utf8");
-        if (username.length > 255 || password.length > 255) {
-          fail(new Error("Upstream proxy credentials too long"));
-        }
-        socket.write(
-          Buffer.concat([
-            Buffer.from([1, username.length]),
-            username,
-            Buffer.from([password.length]),
-            password,
-          ]),
-        );
-        const authStatus = await readProxyReply((reply) =>
-          reply.length >= 2 ? reply[1] : null,
-        );
-        if (authStatus !== 0) {
-          fail(new Error("Upstream proxy authentication failed"));
-        }
-      } else if (method !== 0) {
-        fail(new Error("Upstream proxy offered no usable authentication method"));
-      }
+      await negotiateSocks5Auth(socket, upstream, readProxyReply, fail, "Upstream proxy");
+      // The geo lookup asks the upstream to resolve the hostname (ATYP 3): the
+      // answer must reflect the egress IP's geography, not ours, so resolving
+      // locally would defeat the lookup.
       const host = Buffer.from(url.hostname, "utf8");
-      if (host.length > 255) fail(new Error("Geo lookup hostname is too long"));
+      if (host.length > SOCKS5_MAX_CREDENTIAL_BYTES) {
+        fail(new Error("Geo lookup hostname is too long"));
+      }
       const portBytes = Buffer.alloc(2);
       portBytes.writeUInt16BE(port);
       socket.write(
-        Buffer.concat([
-          Buffer.from([5, 1, 0, 3, host.length]),
-          host,
-          portBytes,
-        ]),
+        Buffer.concat([Buffer.from([5, 1, 0, 3, host.length]), host, portBytes]),
       );
       const replyStatus = await readProxyReply(completeSocks5Reply);
       if (replyStatus !== 0) {
         fail(new Error(`Upstream proxy refused geo CONNECT (reply ${replyStatus})`));
       }
     } else {
-      const headers = [`CONNECT ${authority} HTTP/1.1`, `Host: ${authority}`];
-      if (upstream.username || upstream.password) {
-        headers.push(
-          `Proxy-Authorization: Basic ${Buffer.from(
-            `${upstream.username}:${upstream.password}`,
-          ).toString("base64")}`,
-        );
-      }
-      socket.write(`${headers.join("\r\n")}\r\n\r\n`);
-      const connectStatus = await readProxyReply((reply) => {
-        const end = reply.indexOf("\r\n\r\n");
-        return end === -1
-          ? null
-          : reply.subarray(0, reply.indexOf("\r\n")).toString("latin1");
-      });
-      if (!/^HTTP\/\d(?:\.\d)?\s+200/i.test(connectStatus)) {
+      socket.write(httpConnectRequest(authority, upstream));
+      const connectStatus = await readProxyReply(httpConnectStatusLine);
+      if (!httpConnectAccepted(connectStatus)) {
         fail(new Error(`Upstream proxy refused geo CONNECT: ${connectStatus}`));
       }
     }
@@ -622,70 +675,34 @@ export function createGuardProxy(
     });
   }
 
+  // Tag and throw: every upstream failure reaches the browser as the same
+  // guard-proxy error class regardless of which handshake step produced it.
+  const failUpstream = (error: Error): never => {
+    (error as any).code = "BW_PROXY_UPSTREAM";
+    throw error;
+  };
+
   async function tunnelHttpUpstream(socket, host, port) {
     const authority = `${net.isIP(host) === 6 ? `[${host}]` : host}:${port}`;
-    const headers = [`CONNECT ${authority} HTTP/1.1`, `Host: ${authority}`];
-    if (upstream.username || upstream.password) {
-      const credentials = Buffer.from(
-        `${upstream.username}:${upstream.password}`,
-      ).toString("base64");
-      headers.push(`Proxy-Authorization: Basic ${credentials}`);
-    }
-    socket.write(`${headers.join("\r\n")}\r\n\r\n`);
+    socket.write(httpConnectRequest(authority, upstream));
     // One buffered read for the whole header block: the status line and the
     // terminating CRLF can arrive in any fragmentation, and bytes past the
     // header terminator (already TLS traffic) must stay on the socket.
-    const status = await readUpstreamReply(socket, (buffer) => {
-      const end = buffer.indexOf("\r\n\r\n");
-      if (end === -1) return null;
-      return buffer.subarray(0, buffer.indexOf("\r\n")).toString("latin1");
-    });
-    const match = /^HTTP\/\d(?:\.\d)?\s+(\d{3})/i.exec(status);
-    if (match?.[1] !== "200") {
-      const error = new Error(`Upstream egress proxy refused CONNECT: ${status}`);
-      error.code = "BW_PROXY_UPSTREAM";
-      throw error;
+    const status = await readUpstreamReply(socket, httpConnectStatusLine);
+    if (!httpConnectAccepted(status)) {
+      failUpstream(new Error(`Upstream egress proxy refused CONNECT: ${status}`));
     }
     return socket;
   }
 
   async function tunnelSocks5Upstream(socket, host, port) {
-    const wantsAuth = Boolean(upstream.username || upstream.password);
-    socket.write(
-      wantsAuth ? Buffer.from([5, 2, 0, 2]) : Buffer.from([5, 1, 0]),
+    await negotiateSocks5Auth(
+      socket,
+      upstream,
+      (until) => readUpstreamReply(socket, until),
+      failUpstream,
+      "Upstream egress proxy",
     );
-    const method = await readUpstreamReply(socket, (buffer) =>
-      buffer.length >= 2 ? buffer[1] : null,
-    );
-    if (method === 2) {
-      const username = Buffer.from(upstream.username, "utf8");
-      const password = Buffer.from(upstream.password, "utf8");
-      if (username.length > 255 || password.length > 255) {
-        const error = new Error("Upstream egress proxy credentials too long");
-        error.code = "BW_PROXY_UPSTREAM";
-        throw error;
-      }
-      socket.write(
-        Buffer.concat([
-          Buffer.from([1, username.length]),
-          username,
-          Buffer.from([password.length]),
-          password,
-        ]),
-      );
-      const authStatus = await readUpstreamReply(socket, (buffer) =>
-        buffer.length >= 2 ? buffer[1] : null,
-      );
-      if (authStatus !== 0) {
-        const error = new Error("Upstream egress proxy authentication failed");
-        error.code = "BW_PROXY_UPSTREAM";
-        throw error;
-      }
-    } else if (method !== 0) {
-      const error = new Error("Upstream egress proxy offered no usable auth method");
-      error.code = "BW_PROXY_UPSTREAM";
-      throw error;
-    }
     // CONNECT to the validated literal IP — the upstream never resolves names,
     // so the local DNS-rebinding validation stays authoritative.
     const family = net.isIP(host);

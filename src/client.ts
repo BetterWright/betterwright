@@ -12,6 +12,10 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+// The published declarations are hand-written (see AGENTS.md). Typing the
+// implementation against them turns a drift between the two into a compile
+// error instead of something only a consumer would notice.
+import type { BetterWrightOptions } from "../types/public.js";
 import { resolveChromiumArgs } from "./chromium-args.js";
 import {
   assertRotationPreservesMatchMode,
@@ -310,7 +314,7 @@ export class BetterWright {
    *   bind `0.0.0.0` with a LAN `publicHost` so printed URLs open from another
    *   machine on the network. Pass `{host:"127.0.0.1"}` for loopback-only.
    */
-  constructor(options: any = {}) {
+  constructor(options: BetterWrightOptions = {}) {
     this.home = options.home || defaultHome();
     // null == the historical `browser/profile`. A validated name scopes the
     // profile directory and, through it, the profile lock — nothing else.

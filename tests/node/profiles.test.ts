@@ -854,7 +854,9 @@ test("a session name can never reach a profile's transcript namespace", () => {
   assert.ok(!transcriptPath(home, "@social").includes(`${path.sep}@social${path.sep}`));
 });
 
-test("the profiles directory is created owner-only", () => {
+// POSIX permission bits do not exist on Windows, which reports 0o666/0o777
+// regardless of the mode a directory was created with.
+test("the profiles directory is created owner-only", { skip: process.platform === "win32" }, () => {
   const browser = makeTempDir("bw-profiles-");
   const lock = acquireProfileLock(profileDirFor(browser, "social"), path.join(browser, "runtime"));
   try {

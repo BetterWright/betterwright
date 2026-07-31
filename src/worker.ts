@@ -76,6 +76,7 @@ import {
   installForkIdentityEmulation,
   prepareForkFontsConfig,
 } from "./fork-identity.js";
+import { mkdirPrivate, writePrivate, writePrivateBytes } from "./fs-private.js";
 import {
   createGuardProxy,
   httpGetViaProxy,
@@ -124,6 +125,18 @@ const MAX_TRACKED_ARTIFACTS = 500;
 const MAX_RESULT_ENVELOPE_CHARS = 28_000;
 const QUESTION_PAGE_HOLD_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_OUTPUT_LIMIT = 12_000;
+/**
+ * How long a single element interaction waits before giving up. Playwright's
+ * own default is 30s, which is long enough that an agent burns a step budget
+ * waiting on an element that is never going to appear; 10s is past the point
+ * where a slow-but-real element resolves.
+ */
+const DEFAULT_ACTION_TIMEOUT_MS = 10_000;
+/**
+ * Hard ceiling on graceful shutdown. If the browser or a page handler wedges,
+ * the process still exits rather than lingering and holding the profile lock.
+ */
+const SHUTDOWN_FAILSAFE_MS = 15_000;
 const DEFAULT_ARTIFACT_QUOTA = 100 * 1024 * 1024;
 const DEFAULT_DOWNLOAD_LIMIT = 50 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_LIMIT = 10 * 1024 * 1024;
@@ -331,33 +344,6 @@ function sendResult(message) {
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function mkdirPrivate(dir) {
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  try {
-    fs.chmodSync(dir, 0o700);
-  } catch {
-    /* best effort on Windows */
-  }
-}
-
-function writePrivate(file, content) {
-  fs.writeFileSync(file, content, { encoding: "utf8", mode: 0o600 });
-  try {
-    fs.chmodSync(file, 0o600);
-  } catch {
-    /* best effort on Windows */
-  }
-}
-
-function writePrivateBytes(file, content) {
-  fs.writeFileSync(file, content, { mode: 0o600 });
-  try {
-    fs.chmodSync(file, 0o600);
-  } catch {
-    /* best effort on Windows */
-  }
 }
 
 function fingerprintSeedForProfile(profileDir) {
@@ -835,7 +821,7 @@ async function addScreenshotAnnotations(page, fullPage) {
   const tree = await page.locator("body").ariaSnapshot({
     mode: "ai",
     boxes: true,
-    timeout: 10_000,
+    timeout: DEFAULT_ACTION_TIMEOUT_MS,
   });
   let boxes = parseAnnotationBoxes(tree);
   if (!fullPage) {
@@ -1147,7 +1133,7 @@ async function snapshotPage(page, options: any = {}) {
       : page.locator("body");
   let text = await scope.ariaSnapshot({
     mode: "ai",
-    timeout: Number(options?.timeout || 10_000),
+    timeout: Number(options?.timeout || DEFAULT_ACTION_TIMEOUT_MS),
     ...(depth > 0 ? { depth } : {}),
   });
   // Playwright's aria snapshot includes filled input values, including
@@ -1246,7 +1232,7 @@ function unwrapHumanTarget(page, value) {
   );
 }
 
-async function humanTargetBox(page, value, timeout = 10_000, inputLikeOverride) {
+async function humanTargetBox(page, value, timeout = DEFAULT_ACTION_TIMEOUT_MS, inputLikeOverride) {
   const target = unwrapHumanTarget(page, value);
   if (typeof target?.boundingBox !== "function") {
     return { target: null, box: target, inputLike: false };
@@ -1268,7 +1254,7 @@ async function humanTargetBox(page, value, timeout = 10_000, inputLikeOverride) 
 }
 
 async function humanClickTarget(page, session, value, options: any = {}) {
-  const timeout = Math.max(1, Number(options?.timeout) || 10_000);
+  const timeout = Math.max(1, Number(options?.timeout) || DEFAULT_ACTION_TIMEOUT_MS);
   const { box, inputLike } = await humanTargetBox(
     page,
     value,
@@ -1471,7 +1457,7 @@ async function ensureBrowser(config) {
       );
     }
 
-    // Bundled macOS-metric fonts (scripts/assemble-mac-fonts.sh) ride the
+    // Bundled macOS-metric fonts (research/assemble-mac-fonts.sh) ride the
     // artifact next to the binary; generated conf keeps paths absolute to
     // the deployment location. Absent bundle: host fontconfig, a known tell.
     let forkEnv = null;
@@ -2864,24 +2850,24 @@ async function fillCredentialField(page, frame, session, target, value) {
   const locator = explicit ? frame.locator(explicit).first() : target;
   if (!locator) throw new Error("A credential field target is required to fill.");
   if (typeof locator.waitFor === "function")
-    await locator.waitFor({ state: "visible", timeout: 10_000 });
-  else await locator.waitForElementState?.("visible", { timeout: 10_000 });
+    await locator.waitFor({ state: "visible", timeout: DEFAULT_ACTION_TIMEOUT_MS });
+  else await locator.waitForElementState?.("visible", { timeout: DEFAULT_ACTION_TIMEOUT_MS });
   try {
     await humanClickTarget(page, session, locator, {
-      timeout: 10_000,
+      timeout: DEFAULT_ACTION_TIMEOUT_MS,
       inputLike: true,
     });
   } catch {
-    await locator.focus({ timeout: 10_000 }).catch(() => {});
+    await locator.focus({ timeout: DEFAULT_ACTION_TIMEOUT_MS }).catch(() => {});
   }
-  await locator.fill(String(value), { timeout: 10_000 });
+  await locator.fill(String(value), { timeout: DEFAULT_ACTION_TIMEOUT_MS });
   return locator;
 }
 
 async function resolveExplicitCredentialTarget(scope, selector, label) {
   try {
     const handle = await scope.locator(selector).first().elementHandle({
-      timeout: 10_000,
+      timeout: DEFAULT_ACTION_TIMEOUT_MS,
     });
     if (!handle) throw new Error("target was not found");
     return handle;
@@ -3280,7 +3266,7 @@ async function performCredentialFill(
       explicit.submit || (fields.submit === true ? detection?.submit : null);
     if (submitTarget) {
       await humanClickTarget(page, session, submitTarget, {
-        timeout: 10_000,
+        timeout: DEFAULT_ACTION_TIMEOUT_MS,
         inputLike: false,
       });
       submitted = true;
@@ -5156,7 +5142,7 @@ input.on("line", (line) => {
 // (e.g. a browser transport died mid-teardown), force the exit after a grace
 // period so self-hosters cannot leak orphaned workers holding ports.
 function exitAfterShutdown(code) {
-  const failsafe = setTimeout(() => process.exit(code), 15_000);
+  const failsafe = setTimeout(() => process.exit(code), SHUTDOWN_FAILSAFE_MS);
   failsafe.unref?.();
   void shutdown().finally(() => process.exit(code));
 }

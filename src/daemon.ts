@@ -277,6 +277,16 @@ export function orphanGraceMs() {
  * the JSON of this canonical form — build both the signature and the actual
  * BetterWright construction from the same object and they can never drift.
  */
+// The identity platform reaches the daemon already validated — `BetterWright`
+// throws on anything else at construction — so an unrecognized value here means
+// a hand-written config, and null (host default) is the safe reading of it.
+function identityPlatform(value): "macos" | "windows" | "linux" | null {
+  const platform = value ? String(value) : "";
+  return platform === "macos" || platform === "windows" || platform === "linux"
+    ? platform
+    : null;
+}
+
 export function normalizeDaemonConfig(config: any = {}) {
   const policy = config.policy && typeof config.policy === "object" ? config.policy : {};
   const cloak = config.cloak && typeof config.cloak === "object" ? config.cloak : {};
@@ -311,7 +321,7 @@ export function normalizeDaemonConfig(config: any = {}) {
       locale: cloak.locale ? String(cloak.locale) : null,
       timezone: cloak.timezone ? String(cloak.timezone) : null,
       headedInvisible: cloak.headedInvisible === true,
-      platform: cloak.platform ? String(cloak.platform) : null,
+      platform: identityPlatform(cloak.platform),
       stealthRuntimeFix: cloak.stealthRuntimeFix === true,
     },
   };

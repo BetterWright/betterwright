@@ -47,7 +47,7 @@
 // them directly — you never hand it a file path or guess a MIME type.
 
 import { createRequire } from "node:module";
-
+import type { DownloadPolicy } from "../types/common.js";
 import {
   BetterWright,
   NetworkPolicy,
@@ -88,11 +88,15 @@ export function policyFromEnv(env = process.env) {
   });
 }
 
-export function downloadPolicyFromEnv(env = process.env) {
+function isDownloadPolicy(value: string): value is DownloadPolicy {
+  return value === "ask" || value === "allow" || value === "deny";
+}
+
+export function downloadPolicyFromEnv(env = process.env): DownloadPolicy {
   const policy = String(env.BETTERWRIGHT_DOWNLOAD_POLICY || "ask")
     .trim()
     .toLowerCase();
-  if (!["ask", "allow", "deny"].includes(policy)) {
+  if (!isDownloadPolicy(policy)) {
     throw new Error('BETTERWRIGHT_DOWNLOAD_POLICY must be "ask", "allow", or "deny".');
   }
   return policy;

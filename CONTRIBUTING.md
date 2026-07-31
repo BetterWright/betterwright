@@ -3,6 +3,8 @@
 Thanks for helping improve BetterWright. This is a small, deliberately-scoped
 project; the notes below keep it consistent.
 
+Participation is governed by our [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Repository layout
 
 ```
@@ -14,11 +16,14 @@ bin/betterwright.ts  The Node CLI
 dist/                Generated ESM JavaScript (not committed)
 tests/node/          Node tests
 docs/                Documentation
-examples/            Runnable JavaScript scripts
-scripts/             Maintenance scripts
+examples/typescript/ Runnable TypeScript scripts
+scripts/             Build and release scripts
+research/            Internal probes and operator tools (not shipped)
 ```
 
 ## Running the tests
+
+The supported Node version is in [`.nvmrc`](.nvmrc); `nvm use` picks it up.
 
 ```bash
 npm ci
@@ -36,8 +41,9 @@ The policy, vault, prompt, and challenge suites run anywhere.
   Keep NodeNext import specifiers ending in `.js`, because that is the emitted
   filename Node loads.
 - Runtime dependencies stay exact-pinned. `npm run lint` covers `src`, `bin`,
-  `scripts`, and `tests`; `npm run typecheck` checks implementation sources;
-  `npm run test:types` verifies the hand-written published declarations.
+  `scripts`, `research`, `tests`, `benchmarks`, and `examples`;
+  `npm run typecheck` checks implementation sources; `npm run test:types`
+  verifies the hand-written published declarations.
 - Comments explain *why*, not *what*. Match the surrounding code.
 
 ## Scope

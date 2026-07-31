@@ -65,6 +65,17 @@ test("isJwtExpired respects exp with skew", () => {
   assert.equal(isJwtExpired("not-a-jwt"), true);
 });
 
+// Claim values that encode to the base64url-only alphabet ("-" and "_") must
+// survive the decode. Guards the payload decoder against being narrowed to
+// strict base64, which would reject those characters outright.
+test("isJwtExpired decodes payloads carrying base64url-only characters", () => {
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const token = fakeJwt({ exp, email: "ÿþýü@example.com" });
+  const segment = token.split(".")[1];
+  assert.match(segment, /[-_]/, "fixture must exercise the URL-safe alphabet");
+  assert.equal(isJwtExpired(token), false);
+});
+
 // A fake OAuth issuer: serves the token endpoint for both the code exchange and
 // refresh, so the whole login flow runs without touching the network.
 function fakeIssuer(handler) {
