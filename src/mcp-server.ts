@@ -54,7 +54,7 @@ import {
 } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
 import { doctorReport } from "./doctor.js";
-import { loadLiveViewConfig } from "./live-view-config.js";
+import { isLoopbackHost, liveViewFromEnv } from "./live-view-config.js";
 import { importOptionalPeer } from "./optional-peer.js";
 import { piImageArtifacts, piImageContent } from "./pi.js";
 import { resolveProfileName } from "./profile-name.js";
@@ -116,41 +116,10 @@ export function profileFromEnv(env = process.env) {
   return resolveProfileName(String(env.BETTERWRIGHT_PROFILE || "").trim() || undefined);
 }
 
-export function liveViewFromEnv(env = process.env, fileConfig = loadLiveViewConfig()) {
-  // Default bind is LAN-reachable (0.0.0.0). Non-loopback still requires the
-  // deployer opt-in BETTERWRIGHT_LIVE_VIEW=1 for MCP exposure. Persistent
-  // settings from <home>/config.json apply beneath the env overrides, so
-  // `betterwright view --set-password` also protects MCP-started views.
-  const host =
-    String(env.BETTERWRIGHT_LIVE_VIEW_HOST || "").trim() ||
-    (typeof fileConfig.host === "string" && fileConfig.host) ||
-    "0.0.0.0";
-  return {
-    enabled: boolEnv(env, "BETTERWRIGHT_LIVE_VIEW"),
-    host,
-    port:
-      Number(env.BETTERWRIGHT_LIVE_VIEW_PORT) || Number(fileConfig.port) || 0,
-    publicHost:
-      String(env.BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST || "").trim() ||
-      fileConfig.publicHost ||
-      undefined,
-    expose:
-      String(env.BETTERWRIGHT_LIVE_VIEW_EXPOSE || "").trim().toLowerCase() ||
-      fileConfig.expose ||
-      undefined,
-    password:
-      String(env.BETTERWRIGHT_LIVE_VIEW_PASSWORD || "") ||
-      fileConfig.password ||
-      undefined,
-    passwordHash: fileConfig.passwordHash || undefined,
-  };
-}
-
-function isLoopbackHost(host) {
-  return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(
-    String(host || "").toLowerCase(),
-  );
-}
+// The live-view hosting resolver moved to live-view-config.ts so the Pi
+// extension shares it; re-exported here because this module has always been
+// its public home (types/mcp-server.d.ts, tests).
+export { liveViewFromEnv };
 
 // The summary keys deliberately match a single documented shape (snake_case
 // duration_ms included) so MCP clients see one contract.

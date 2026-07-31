@@ -16,6 +16,7 @@ import { defaultHome } from "./home.js";
 
 const CONFIG_FILE = "config.json";
 const PASSWORD_HASH_PATTERN = /^(sha256:)?[0-9a-f]{64}$/i;
+const TRUE_ENV_VALUES = ["1", "true", "yes", "on"];
 
 export function liveViewConfigPath(home = defaultHome()) {
   return path.join(home, CONFIG_FILE);
@@ -69,6 +70,51 @@ export function loadLiveViewConfig(home = defaultHome()) {
   if (Number.isFinite(Number(section.quality))) out.quality = Number(section.quality);
   if (Number.isFinite(Number(section.maxWidth))) out.maxWidth = Number(section.maxWidth);
   return out;
+}
+
+/**
+ * Resolve the live-view hosting settings an agent surface (the MCP server or
+ * the Pi extension) starts viewers with: env vars over the persistent
+ * `liveView` section of <home>/config.json. Default bind is LAN-reachable
+ * (0.0.0.0), but agent-started views that reach beyond loopback still require
+ * the deployer opt-in BETTERWRIGHT_LIVE_VIEW=1 — enforced by the callers, not
+ * here. Because config.json applies beneath the env overrides,
+ * `betterwright view --set-password` also protects agent-started views.
+ */
+export function liveViewFromEnv(env = process.env, fileConfig = loadLiveViewConfig()) {
+  const host =
+    String(env.BETTERWRIGHT_LIVE_VIEW_HOST || "").trim() ||
+    (typeof fileConfig.host === "string" && fileConfig.host) ||
+    "0.0.0.0";
+  return {
+    enabled: TRUE_ENV_VALUES.includes(
+      String(env.BETTERWRIGHT_LIVE_VIEW || "")
+        .trim()
+        .toLowerCase(),
+    ),
+    host,
+    port:
+      Number(env.BETTERWRIGHT_LIVE_VIEW_PORT) || Number(fileConfig.port) || 0,
+    publicHost:
+      String(env.BETTERWRIGHT_LIVE_VIEW_PUBLIC_HOST || "").trim() ||
+      fileConfig.publicHost ||
+      undefined,
+    expose:
+      String(env.BETTERWRIGHT_LIVE_VIEW_EXPOSE || "").trim().toLowerCase() ||
+      fileConfig.expose ||
+      undefined,
+    password:
+      String(env.BETTERWRIGHT_LIVE_VIEW_PASSWORD || "") ||
+      fileConfig.password ||
+      undefined,
+    passwordHash: fileConfig.passwordHash || undefined,
+  };
+}
+
+export function isLoopbackHost(host) {
+  return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(
+    String(host || "").toLowerCase(),
+  );
 }
 
 /**

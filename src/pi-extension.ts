@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { BetterWright } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
+import { isLoopbackHost, liveViewFromEnv } from "./live-view-config.js";
 import {
   piImageArtifacts,
   piImageContent,
@@ -11,6 +12,8 @@ import {
 import { agentSystemPrompt } from "./prompt.js";
 import { piBrowserToolParameters, piLoginToolParameters } from "./tool-schemas.js";
 
+// browser_handoff is deliberately absent: the live view (and a pending human
+// handoff) must stay reachable after the step budget deactivates browsing.
 const BROWSER_TOOL_NAMES = new Set([
   "browser",
   "browser_download",
@@ -72,6 +75,33 @@ export const PI_EVIDENCE_PARAMETERS = {
   required: ["operation"],
 };
 
+export const PI_HANDOFF_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    action: {
+      type: "string",
+      enum: ["start", "status", "stop", "wait"],
+      default: "start",
+      description:
+        "start/status/stop the live view, or wait until the user finishes a handoff.",
+    },
+    reason: {
+      type: "string",
+      description: "Why the user is needed — shown in the viewer during a handoff.",
+    },
+    interactive: {
+      type: "boolean",
+      default: true,
+      description: "Let the viewer control the browser (default true).",
+    },
+    timeout: {
+      type: "number",
+      description: "For wait: seconds until the handoff times out (default 1800).",
+    },
+  },
+};
+
 const TOOL_DESCRIPTION =
   "Run async Playwright JavaScript in a persistent, policy-guarded browser. " +
   "The page global is the active Page; pages is an array of open Pages. " +
@@ -86,6 +116,14 @@ const TOOL_DESCRIPTION =
   "include iframes and off-screen content — do not scroll to read or guess " +
   "refs/URLs. Use openPage and Promise.all for independent multi-site research. " +
   "A trailing expression returns automatically; statement blocks must return.";
+
+const HANDOFF_DESCRIPTION =
+  "Live view of this browser — the user watches, chats, or takes over (human handoff); call anytime mid-session. " +
+  "Start FIRST when the user asks to watch ('live view', 'show me', 'share the browser') and keep working — the view follows your session. " +
+  "action 'start' returns the URL — relay it VERBATIM, never log or share it elsewhere; re-issue 'start' anytime to re-share the same URL (it stays valid across viewer reconnects and worker restarts). " +
+  "Messages the user types in the viewer chat arrive automatically as user messages; your browser-step notes mirror into that chat — write them for the user. " +
+  "When human hands are needed in the page (MFA/passkey, a captcha.solve()-resistant CAPTCHA, a login the vault cannot fill, a consequential step), use 'wait' with a reason: it blocks until the user clicks Done or Cancel — re-observe with snapshot({diff:true}) before acting again. " +
+  "'stop' ends the view — never one the user asked for while they may still watch.";
 
 function envBoolean(name, fallback) {
   const raw = String(process.env[name] || "").trim().toLowerCase();
@@ -137,6 +175,26 @@ function resolvedBrowserOptions(options) {
     ...(timeout ? { defaultTimeout: timeout } : {}),
     ...(downloadPolicy ? { downloadPolicy } : {}),
   };
+}
+
+// waitForHandoff can block for the whole human wait; honor Pi's abort signal
+// without leaking a listener. An abandoned worker-side wait expires on its
+// own timeout — the view itself stays up.
+function raceAbort(promise, signal) {
+  if (signal.aborted) {
+    // Nothing else will ever observe the abandoned wait; swallow its
+    // eventual settlement so it cannot surface as an unhandled rejection.
+    promise.catch(() => {});
+    return Promise.reject(new Error("Browser handoff wait cancelled."));
+  }
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(new Error("Browser handoff wait cancelled."));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([promise, aborted]).finally(() => {
+    signal.removeEventListener("abort", onAbort);
+  });
 }
 
 function mergeObservation(result, observation) {
@@ -412,9 +470,16 @@ export function createPiExtension(options: any = {}) {
     const startUrl = normalizedStartUrl(
       options.startUrl ?? process.env.BETTERWRIGHT_PI_START_URL,
     );
+    const liveView = options.liveView || liveViewFromEnv();
+    const chatPollMs =
+      options.chatPollMs ??
+      envPositiveInteger("BETTERWRIGHT_PI_CHAT_POLL_SECONDS", 3) * 1000;
     let browser = options.browser || null;
     let startPromise = null;
     let pendingStartWarning = "";
+    let liveViewActive = false;
+    let chatPollTimer = null;
+    let chatPollFailures = 0;
     let stepCount = 0;
     let checklistInitialized = false;
     let completionNudges = 0;
@@ -495,6 +560,162 @@ export function createPiExtension(options: any = {}) {
       );
     }
 
+    // Viewer-chat plumbing. While a live view runs, freeform messages the
+    // human types in the viewer dock are polled here and delivered to Pi as
+    // follow-up user guidance — triggerTurn wakes an idle agent, so the dock
+    // is a real back-channel between turns, not just during tool calls. The
+    // poller must never crash the extension: transient failures (a worker
+    // restart mid-poll, a laptop asleep) back off and retry, and the timers
+    // are unref'd so they never hold the process open.
+    function stopChatPolling() {
+      if (chatPollTimer) clearTimeout(chatPollTimer);
+      chatPollTimer = null;
+      chatPollFailures = 0;
+    }
+
+    function scheduleChatPoll() {
+      if (!liveViewActive || chatPollTimer) return;
+      const delay = Math.min(chatPollMs * 2 ** chatPollFailures, 30_000);
+      chatPollTimer = setTimeout(pollViewerChat, delay);
+      if (typeof chatPollTimer.unref === "function") chatPollTimer.unref();
+    }
+
+    async function pollViewerChat() {
+      chatPollTimer = null;
+      if (!liveViewActive || !browser) return;
+      try {
+        const drained = await browser.liveViewDrainChat();
+        const texts = (Array.isArray(drained?.messages) ? drained.messages : [])
+          .map((message) => String(message?.text || "").trim())
+          .filter(Boolean);
+        chatPollFailures = 0;
+        if (texts.length && typeof pi.sendMessage === "function") {
+          pi.sendMessage(
+            {
+              customType: "betterwright-live-view-chat",
+              content:
+                "The user typed in the live-view chat — treat these as fresh " +
+                `user instructions:\n${texts.map((text) => `- ${text}`).join("\n")}`,
+              display: true,
+              details: { messages: texts },
+            },
+            { deliverAs: "followUp", triggerTurn: true },
+          );
+        }
+      } catch {
+        chatPollFailures = Math.min(chatPollFailures + 1, 4);
+      }
+      scheduleChatPoll();
+    }
+
+    async function executeHandoff(params, signal) {
+      if (signal?.aborted) throw new Error("Browser handoff cancelled.");
+      const action = String(params.action || "start");
+      const instance = await getBrowser();
+      if (typeof instance.startLiveView !== "function") {
+        throw new Error("This BetterWright build has no live view available.");
+      }
+      if (action === "stop") {
+        liveViewActive = false;
+        stopChatPolling();
+        const stopped = await instance.stopLiveView();
+        return {
+          content: [{ type: "text", text: JSON.stringify(stopped, null, 2) }],
+          details: { ok: stopped?.ok !== false, error: stopped?.error },
+        };
+      }
+      if (action === "status") {
+        const status = await instance.liveViewStatus();
+        liveViewActive = Boolean(status?.running);
+        if (liveViewActive) scheduleChatPoll();
+        else stopChatPolling();
+        // Never echo the token or URL on status; start already returned the URL.
+        const { token: _token, url: _url, ...safe } = status || {};
+        return {
+          content: [{ type: "text", text: JSON.stringify(safe, null, 2) }],
+          details: { ok: status?.ok !== false, error: status?.error },
+        };
+      }
+      if (action === "wait") {
+        const status = await instance.liveViewStatus();
+        if (!status?.running) {
+          throw new Error(
+            'No live view is running; use {action: "start"} and relay the URL first.',
+          );
+        }
+        liveViewActive = true;
+        scheduleChatPoll();
+        // The worker resolves {action: "timeout"} on expiry — a normal,
+        // resumable result — so an interrupted human (laptop asleep
+        // mid-handoff) never surfaces as a tool error; simply wait again.
+        const waiting = instance.waitForHandoff({
+          session,
+          prompt: String(params.reason || ""),
+          ...(params.timeout ? { timeout: Number(params.timeout) } : {}),
+        });
+        const result = signal ? await raceAbort(waiting, signal) : await waiting;
+        const guidance =
+          result?.action === "done"
+            ? "\nThe user finished. Re-observe with snapshot({diff: true}) before acting — the page may have changed under their hands."
+            : result?.action === "timeout"
+              ? "\nNobody finished the handoff in time. The view is still up; wait again or continue."
+              : "";
+        return {
+          content: [
+            { type: "text", text: `${JSON.stringify(result, null, 2)}${guidance}` },
+          ],
+          details: { ok: result?.ok !== false, error: result?.error },
+        };
+      }
+      if (action !== "start") {
+        throw new Error(`Unknown browser_handoff action: ${action}`);
+      }
+      // Same deployer opt-in as the MCP server: a bind that reaches beyond
+      // this machine (lan or tailscale) requires BETTERWRIGHT_LIVE_VIEW=1;
+      // loopback never does.
+      const reachesBeyondThisMachine = liveView.expose
+        ? liveView.expose !== "local"
+        : !isLoopbackHost(liveView.host);
+      if (reachesBeyondThisMachine && !liveView.enabled) {
+        throw new Error(
+          "The live view would be reachable beyond this machine; the deployer must " +
+            "set BETTERWRIGHT_LIVE_VIEW=1 to allow that (or set " +
+            "BETTERWRIGHT_LIVE_VIEW_EXPOSE=local for loopback-only).",
+        );
+      }
+      const view = await instance.startLiveView({
+        host: liveView.host,
+        port: liveView.port,
+        ...(liveView.publicHost ? { publicHost: liveView.publicHost } : {}),
+        ...(liveView.expose ? { expose: liveView.expose } : {}),
+        ...(liveView.password ? { password: liveView.password } : {}),
+        ...(liveView.passwordHash ? { passwordHash: liveView.passwordHash } : {}),
+        interactive: params.interactive !== false,
+        session,
+      });
+      if (!view?.ok || !view.url) {
+        throw new Error(view?.error || "The live view failed to start.");
+      }
+      liveViewActive = true;
+      scheduleChatPoll();
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Live view started: ${view.url}\n\n` +
+              "Relay that URL to the user verbatim (it embeds a capability " +
+              "token) and keep working — the view follows this browser " +
+              'session. Re-issue {action: "start"} anytime to re-share the ' +
+              "same URL. The user's viewer-chat messages arrive automatically " +
+              'as user messages; use {action: "wait"} when they must act in ' +
+              "the page themselves.",
+          },
+        ],
+        details: { ok: true },
+      };
+    }
+
     async function executeBrowser(toolName, params, signal, approvedDownloads) {
       if (signal?.aborted) throw new Error("Browser call cancelled.");
       if (requireEvidence && !checklistInitialized) {
@@ -510,6 +731,17 @@ export function createPiExtension(options: any = {}) {
       }
       const step = ++stepCount;
       const instance = await getBrowser();
+      // Mirror per-step notes into the viewer chat so watching feels alive
+      // (the MCP server does the same per tool call).
+      if (
+        liveViewActive &&
+        params.note &&
+        typeof instance.liveViewPostChat === "function"
+      ) {
+        await instance
+          .liveViewPostChat({ role: "agent", text: params.note, kind: "step" })
+          .catch(() => {});
+      }
       const result = await instance.run(`await overlays.dismiss();\n${params.code}`, {
         session,
         note: params.note,
@@ -764,6 +996,21 @@ export function createPiExtension(options: any = {}) {
       renderResult: summaryRenderResult,
     });
 
+    pi.registerTool({
+      name: "browser_handoff",
+      label: "BetterWright Live View",
+      description: HANDOFF_DESCRIPTION,
+      promptSnippet:
+        "Share a live, token-gated view of the browser where the user watches, chats, and can take over",
+      promptGuidelines: [
+        "Use browser_handoff start when the user asks to watch or share the browser (relay the URL verbatim; re-issue start to re-share it), and browser_handoff wait when the user must act in the page themselves (MFA, a resistant CAPTCHA) before you continue.",
+      ],
+      parameters: PI_HANDOFF_PARAMETERS,
+      execute: (_id, params, signal) => executeHandoff(params, signal),
+      renderCall: makeRenderCall("browser_handoff"),
+      renderResult: summaryRenderResult,
+    });
+
     pi.on("before_agent_start", (event) => ({
       systemPrompt: `${String(event.systemPrompt || "")}\n\n${agentSystemPrompt(options.guardrails)}`,
     }));
@@ -799,6 +1046,8 @@ export function createPiExtension(options: any = {}) {
     });
 
     pi.on("session_shutdown", async () => {
+      liveViewActive = false;
+      stopChatPolling();
       if (browser && options.closeBrowserOnShutdown !== false) await browser.close();
       browser = null;
       startPromise = null;

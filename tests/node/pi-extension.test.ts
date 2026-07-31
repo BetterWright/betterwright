@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import {
   createPiExtension,
+  PI_HANDOFF_PARAMETERS,
   PI_LOGIN_PARAMETERS,
 } from "../../dist/src/pi-extension.js";
 
@@ -19,7 +20,13 @@ class FakePi {
     this.tools = new Map();
     this.handlers = new Map();
     this.messages = [];
-    this.activeTools = ["read", "browser", "browser_download", "browser_evidence"];
+    this.activeTools = [
+      "read",
+      "browser",
+      "browser_download",
+      "browser_evidence",
+      "browser_handoff",
+    ];
   }
 
   registerTool(tool) {
@@ -117,6 +124,65 @@ class FakeBrowser {
   }
 }
 
+// Live-view-capable fake, mirroring mcp-server.test.ts's handoffBrowser().
+function liveViewBrowser(overrides: Record<string, any> = {}) {
+  const browser: any = new FakeBrowser({});
+  browser.liveViewCalls = { start: [], stop: 0, status: 0, waits: [] };
+  browser.chatQueue = [];
+  browser.posted = [];
+  browser.running = false;
+  browser.startLiveView = async (options) => {
+    browser.liveViewCalls.start.push(options);
+    browser.running = true;
+    return {
+      ok: true,
+      url: "http://127.0.0.1:7788/?t=secret",
+      host: "127.0.0.1",
+      port: 7788,
+      token: "secret",
+      interactive: true,
+      viewers: 0,
+    };
+  };
+  browser.stopLiveView = async () => {
+    browser.liveViewCalls.stop += 1;
+    browser.running = false;
+    return { ok: true, running: false };
+  };
+  browser.liveViewStatus = async () => {
+    browser.liveViewCalls.status += 1;
+    return {
+      ok: true,
+      running: browser.running,
+      url: "http://127.0.0.1:7788/?t=secret",
+      token: "secret",
+      viewers: 1,
+      handoff: { active: false },
+    };
+  };
+  browser.waitForHandoff = async (options) => {
+    browser.liveViewCalls.waits.push(options);
+    return { ok: true, action: "done", note: "logged in" };
+  };
+  browser.liveViewPostChat = async (options) => {
+    browser.posted.push(options);
+    return { ok: true };
+  };
+  browser.liveViewDrainChat = async () => ({
+    ok: true,
+    messages: browser.chatQueue.splice(0),
+  });
+  return Object.assign(browser, overrides);
+}
+
+async function until(condition, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("condition never became true");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 async function fixture() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "betterwright-pi-ext-"));
   const screenshot = path.join(dir, "browser.png");
@@ -142,6 +208,7 @@ test("native Pi extension registers persistent tools and records its supplied st
       "browser_login",
       "browser_evidence",
       "browser_download",
+      "browser_handoff",
     ]);
     for (const tool of pi.tools.values()) {
       assert.equal(typeof tool.renderCall, "function");
@@ -301,7 +368,9 @@ test("native Pi extension enforces its browser step budget", async () => {
     const tool = pi.tools.get("browser");
     const first = await tool.execute("call-1", { code: "return 1" });
     assert.equal(first.details.budgetExhausted, true);
-    assert.deepEqual(pi.activeTools, ["read"]);
+    // The live view must survive budget exhaustion: a pending handoff (or a
+    // user still watching) may not be cut off with the browsing tools.
+    assert.deepEqual(pi.activeTools, ["read", "browser_handoff"]);
     await assert.rejects(
       tool.execute("call-2", { code: "return 2" }),
       /step budget \(1\) is exhausted/,
@@ -458,4 +527,128 @@ test("native Pi extension reports invalid configuration and recovers from start 
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test("native Pi extension shares the live view, mirrors chat both ways, and strips secrets from status", async () => {
+  const browser = liveViewBrowser();
+  const pi = new FakePi();
+  createPiExtension({
+    browser,
+    autoScreenshot: false,
+    chatPollMs: 5,
+    liveView: { enabled: true, host: "0.0.0.0", port: 0 },
+  })(pi);
+  const tool = pi.tools.get("browser_handoff");
+  assert.deepEqual(PI_HANDOFF_PARAMETERS.properties.action.enum, [
+    "start",
+    "status",
+    "stop",
+    "wait",
+  ]);
+
+  const started = await tool.execute("call-1", { action: "start" });
+  assert.match(started.content[0].text, /Live view started: http:\/\/127\.0\.0\.1:7788\/\?t=secret/);
+  assert.match(started.content[0].text, /verbatim/);
+  assert.equal(browser.liveViewCalls.start[0].session, "pi");
+  assert.equal(browser.liveViewCalls.start[0].interactive, true);
+
+  // Re-issuing start re-shares the same URL (tmux reattach, lost scrollback).
+  const reshared = await tool.execute("call-2", { action: "start" });
+  assert.equal(browser.liveViewCalls.start.length, 2);
+  assert.match(reshared.content[0].text, /t=secret/);
+
+  // Status must never echo the capability token or URL back to the model.
+  const status = await tool.execute("call-3", { action: "status" });
+  assert.doesNotMatch(status.content[0].text, /secret/);
+  assert.match(status.content[0].text, /"running": true/);
+
+  // Freeform viewer chat is polled and delivered as follow-up user guidance
+  // that wakes an idle agent.
+  browser.chatQueue.push({ text: "use the work account", at: 1 });
+  await until(() => pi.messages.length > 0);
+  assert.equal(pi.messages[0].message.customType, "betterwright-live-view-chat");
+  assert.match(pi.messages[0].message.content, /use the work account/);
+  assert.deepEqual(pi.messages[0].options, { deliverAs: "followUp", triggerTurn: true });
+
+  // Browser-step notes mirror into the viewer chat while the view runs.
+  await pi.tools
+    .get("browser")
+    .execute("call-4", { code: "return 1", note: "Opening the page" });
+  assert.deepEqual(browser.posted, [
+    { role: "agent", text: "Opening the page", kind: "step" },
+  ]);
+
+  // Stop ends the view and the chat polling with it.
+  await tool.execute("call-5", { action: "stop" });
+  assert.equal(browser.liveViewCalls.stop, 1);
+  browser.chatQueue.push({ text: "unheard", at: 2 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(pi.messages.length, 1);
+});
+
+test("native Pi extension requires the deployer opt-in for a non-loopback live view", async () => {
+  const cases = [
+    { liveView: { enabled: false, host: "0.0.0.0", port: 0 } },
+    { liveView: { enabled: false, expose: "tailscale", host: "0.0.0.0", port: 0 } },
+  ];
+  for (const { liveView } of cases) {
+    const pi = new FakePi();
+    createPiExtension({ browser: liveViewBrowser(), autoScreenshot: false, liveView })(pi);
+    await assert.rejects(
+      pi.tools.get("browser_handoff").execute("call-1", { action: "start" }),
+      /BETTERWRIGHT_LIVE_VIEW=1/,
+    );
+  }
+
+  // Loopback-only exposure never needs the opt-in.
+  const browser = liveViewBrowser();
+  const pi = new FakePi();
+  createPiExtension({
+    browser,
+    autoScreenshot: false,
+    liveView: { enabled: false, expose: "local", host: "0.0.0.0", port: 0 },
+  })(pi);
+  const started = await pi.tools
+    .get("browser_handoff")
+    .execute("call-2", { action: "start" });
+  assert.match(started.content[0].text, /Live view started/);
+  assert.equal(browser.liveViewCalls.start[0].expose, "local");
+});
+
+test("native Pi extension waits for a human handoff and reports resumable outcomes", async () => {
+  const browser = liveViewBrowser();
+  const pi = new FakePi();
+  createPiExtension({
+    browser,
+    autoScreenshot: false,
+    chatPollMs: 5,
+    liveView: { enabled: true, host: "0.0.0.0", port: 0 },
+  })(pi);
+  const tool = pi.tools.get("browser_handoff");
+
+  // A wait without a running view is a usage error, not a silent hang.
+  await assert.rejects(
+    tool.execute("call-1", { action: "wait", reason: "MFA" }),
+    /No live view is running/,
+  );
+
+  await tool.execute("call-2", { action: "start" });
+  const done = await tool.execute("call-3", {
+    action: "wait",
+    reason: "Approve the MFA prompt",
+    timeout: 60,
+  });
+  assert.deepEqual(browser.liveViewCalls.waits, [
+    { session: "pi", prompt: "Approve the MFA prompt", timeout: 60 },
+  ]);
+  assert.match(done.content[0].text, /"action": "done"/);
+  assert.match(done.content[0].text, /snapshot\(\{diff: true\}\)/);
+
+  // A timeout is a normal, resumable result — never a tool error.
+  browser.waitForHandoff = async () => ({ ok: true, action: "timeout", note: "" });
+  const timedOut = await tool.execute("call-4", { action: "wait" });
+  assert.equal(timedOut.details.ok, true);
+  assert.match(timedOut.content[0].text, /wait again or continue/);
+
+  await tool.execute("call-5", { action: "stop" });
 });

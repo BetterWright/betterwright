@@ -69,7 +69,8 @@ npm install -g betterwright @modelcontextprotocol/sdk
 claude mcp add betterwright -- npx betterwright mcp
 betterwright mcp --check           # why does my client show no tools?
 
-# Pi Coding Agent (native persistent tools, trusted login, approval-gated downloads)
+# Pi Coding Agent (native persistent tools, trusted login, approval-gated
+# downloads, live view / human handoff via browser_handoff)
 pi install npm:betterwright
 ```
 
