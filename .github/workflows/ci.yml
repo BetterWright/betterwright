@@ -101,15 +101,6 @@ jobs:
     name: Cross-platform unit tests
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
-    # Windows reports but does not block. Roughly fifty unit tests fail there
-    # today — the whole vault suite plus the profile-lock recovery paths — and
-    # they failed before this job existed; it is the first Windows signal the
-    # repository has ever had, not a regression it introduced. Gating merges on
-    # a known-red platform would stop every unrelated pull request, and deleting
-    # the leg would hide a platform the package claims to support. So it runs,
-    # stays visible, and is tracked separately until the failures are fixed.
-    # Flip this to `false` in the same change that fixes the last one.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       # One red platform must not hide the state of the other five.
       fail-fast: false
@@ -139,7 +130,36 @@ jobs:
       # suite. Only the deterministic, browser-free work runs here.
       - run: npm run build
       - run: npm run typecheck
-      - run: npm run test:unit
+
+      - name: Unit tests
+        if: runner.os != 'Windows'
+        run: npm run test:unit
+
+      # Windows reports without gating. Roughly fifty unit tests fail there
+      # today — the whole vault suite plus the profile-lock recovery paths — and
+      # every one of them failed before this job existed; it is the first
+      # Windows signal the repository has ever had, not a regression it
+      # introduced. Two ways to express that are worse than this one: gating on
+      # it stalls every unrelated pull request on a known-red platform, and
+      # dropping the leg hides a platform the package claims to support. A third
+      # — letting the check stay red forever — is worst of all, because a check
+      # nobody can ever make green is a check everybody learns to ignore.
+      #
+      # So the run is non-gating but never silent: a failure surfaces as a
+      # warning annotation and a job-summary line. Delete this pair of steps and
+      # drop the `if:` above in the same change that fixes the last failure.
+      - name: Unit tests (Windows, non-gating)
+        id: windows_unit
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: npm run test:unit
+
+      - name: Report the Windows result
+        if: runner.os == 'Windows' && steps.windows_unit.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning title=Windows unit tests failed (known, non-gating)::Node ${{ matrix.node }} on windows-latest. These failures predate this job and do not block the merge; see the note in .github/workflows/ci.yml."
+          echo "⚠️ **Windows unit tests failed on Node ${{ matrix.node }}** — known and non-gating. See the \`Unit tests (Windows, non-gating)\` step for the list." >> "$GITHUB_STEP_SUMMARY"
 
   audit:
     name: Dependency audit

@@ -41,8 +41,9 @@ Two notes on running the suite locally:
   root run reports green while leaving those paths unexercised.
 - **Windows is known-red.** Around fifty unit tests — the vault suite and the
   profile-lock recovery paths — fail on Windows today. CI runs the Windows leg
-  for visibility but does not gate on it; see the `continue-on-error` note in
-  `.github/workflows/ci.yml`.
+  and reports a failure as a warning annotation, but does not gate on it; see
+  the `Unit tests (Windows, non-gating)` step in `.github/workflows/ci.yml`.
+  Fixing these is welcome, and wants a Windows machine to verify on.
 
 ## Style
 
