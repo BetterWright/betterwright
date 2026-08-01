@@ -96,6 +96,7 @@ import {
   inspectControls,
   inspectMedia,
 } from "./page-inspect.js";
+import { parkingEnabled, parkSession, unparkSession } from "./page-park.js";
 import {
   acquireProfileLock,
   PROFILE_LOCK_HEARTBEAT_MS,
@@ -192,6 +193,71 @@ function soleExecutingSession() {
   for (const key of activeExecutionCounts.keys()) return key;
   return null;
 }
+
+// --- background-page parking (src/page-park.ts) -----------------------------
+//
+// A headless target never becomes hidden, so an open page renders forever
+// whether or not anything is driving it. `wakeSessionPages` and
+// `quietSessionPages` bracket every execution entry point: pages are woken
+// before model code runs and quieted once the last execution on the session
+// unwinds, which confines the parked window to the model's own thinking time.
+
+/**
+ * How long a session must sit idle before its pages are parked.
+ *
+ * Parking exists to cover a model turn, which is seconds. An agent's own
+ * back-to-back calls are milliseconds apart, and parking between those buys
+ * nothing while putting two CDP round trips on the critical path of every
+ * step — measured as a p90 of 2.4 s once a fast loop started colliding with
+ * the park it had just triggered. Waiting first means a tight loop never parks
+ * at all and a real pause still does.
+ */
+const PARK_IDLE_DELAY_MS = 750;
+const pendingParkTimers = new Map();
+
+function cancelPendingPark(sessionId) {
+  const timer = pendingParkTimers.get(sessionId);
+  if (!timer) return;
+  clearTimeout(timer);
+  pendingParkTimers.delete(sessionId);
+}
+
+async function wakeSessionPages(session) {
+  cancelPendingPark(session.id);
+  if (!browserContext) return;
+  // Deliberately not gated on `parkingEnabled`: a session parked under one
+  // setting must still wake if the setting changed under it (a live view
+  // opening mid-run is the case that matters).
+  await unparkSession(session).catch(() => {});
+}
+
+function quietSessionPages(session) {
+  cancelPendingPark(session.id);
+  if (!browserContext) return;
+  if (
+    !parkingEnabled({
+      config: launchConfig,
+      headless: launchConfig?.headless !== false,
+      liveView: Boolean(liveView),
+    })
+  )
+    return;
+  const timer = setTimeout(() => {
+    pendingParkTimers.delete(session.id);
+    // Re-checked here, not only at schedule time: an execution may have
+    // started during the delay, and parking under it would disable script
+    // beneath running model code.
+    if (!browserContext || sessionIsExecuting(session.id)) return;
+    void parkSession(session, {
+      newCDPSession: (page) => browserContext.newCDPSession(page),
+      isBusy: (page) => vaultCapture?.isBusy(page) === true,
+    }).catch(() => {});
+  }, PARK_IDLE_DELAY_MS);
+  // A pending park must never be the reason the worker stays alive.
+  timer.unref?.();
+  pendingParkTimers.set(session.id, timer);
+}
+
 let downloadCdpSession = null;
 let downloadGuardReady = false;
 let currentDownloadBehavior = "deny";
@@ -3334,6 +3400,7 @@ async function credentialFill(message) {
   try {
     assertRedactionCapacity();
     await ensureBrowser(message.config);
+    await wakeSessionPages(session);
     await ensureSessionPage(session);
     const result = await performCredentialFill(session, spec);
     assertRedactionCapacity();
@@ -3365,6 +3432,7 @@ async function credentialFill(message) {
   } finally {
     stampModelActivity(session);
     endExecutionFor(session.id);
+    quietSessionPages(session);
     session.execution = { requestId: null, pendingRecovery: null, generationStarted: false };
   }
 }
@@ -3384,6 +3452,7 @@ async function credentialPending(message) {
       throw new Error("pending credential action must be list, commit, or discard.");
     }
     await ensureBrowser(message.config);
+    await wakeSessionPages(session);
     await ensureSessionPage(session);
     let publicResult;
     if (action === "list") {
@@ -3431,6 +3500,7 @@ async function credentialPending(message) {
     );
   } finally {
     endExecutionFor(session.id);
+    quietSessionPages(session);
   }
 }
 
@@ -4646,6 +4716,7 @@ async function execute(message) {
   try {
     assertRedactionCapacity();
     await ensureBrowser(message.config);
+    await wakeSessionPages(session);
     downloadPolicy = normalizeDownloadPolicy(message.config.downloadPolicy);
     if (downloadPolicy === "deny" && message.approvedDownloads === true) {
       throw new Error("Downloads are disabled by downloadPolicy=deny.");
@@ -4824,6 +4895,7 @@ async function execute(message) {
     }
     liveView?.setAgentState("idle");
     endExecutionFor(session.id);
+    quietSessionPages(session);
     session.execution = { requestId: null, pendingRecovery: null, generationStarted: false };
     if (restartWorker)
       setImmediate(() => {
@@ -4893,6 +4965,10 @@ async function liveViewStart(message) {
     await ensureBrowser(message.config);
     const options = message.options && typeof message.options === "object" ? message.options : {};
     const view = ensureLiveView(options.session);
+    // A viewer is about to watch these pages, so nothing may stay parked: the
+    // stream would show a still frame of a page whose script is switched off.
+    // `parkingEnabled` keeps them awake from here on while the view runs.
+    for (const session of sessions.values()) await wakeSessionPages(session);
     const info = await view.start(options);
     sendResult({ type: "result", id: message.id, ...info });
   } catch (error) {
@@ -5102,6 +5178,7 @@ async function sessionClose(message) {
       pagesClosed += 1;
       void page.close().catch(() => {});
     }
+    cancelPendingPark(sessionId);
     sessions.delete(sessionId);
   }
   sendResult({
@@ -5198,6 +5275,7 @@ const idleReaper = setInterval(() => {
       continue;
     for (const page of session.pages.values())
       void page.close().catch(() => {});
+    cancelPendingPark(sessionId);
     sessions.delete(sessionId);
   }
 }, 60_000);

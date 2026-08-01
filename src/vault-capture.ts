@@ -423,6 +423,25 @@ export function installVaultCapture(context, deps: any = {}) {
         dropPrompt(promptId, false);
       }
     },
+    /**
+     * Whether this page has credential work in flight: a captured password
+     * waiting on its success gate, or a save prompt on screen.
+     *
+     * Page parking (src/page-park.ts) asks before it quiets a page. It has to:
+     * parking disables script execution for the whole renderer, isolated worlds
+     * included, and this sensor lives in one. A capture's success gate is
+     * decided by what happens *after* the submit — the navigation, or the app
+     * tearing down the form — which is exactly the window between two
+     * executions that parking would otherwise cover. Quieting the page there
+     * would drop logins on the floor.
+     */
+    isBusy(page) {
+      if (state.pendingByPage.get(page)?.size) return true;
+      for (const prompt of state.prompts.values()) {
+        if (prompt.page === page) return true;
+      }
+      return false;
+    },
     /** Test introspection: parked captures and live prompts. */
     _state: state,
   };

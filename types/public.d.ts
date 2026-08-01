@@ -99,6 +99,22 @@ export interface BetterWrightOptions {
    */
   chromiumArgs?: string[];
   /**
+   * Quiet each session's pages between executions (default `true`).
+   *
+   * A headless Chromium target never becomes hidden — `document.visibilityState`
+   * stays `"visible"` for the life of the page — so every open page keeps its
+   * frame loop running at the host refresh rate whether or not anything is
+   * driving it. Parking disables page script and pauses animation timelines
+   * once a session's last execution unwinds, and restores both before the next
+   * one begins, so the quiet window is exactly the model's thinking time.
+   *
+   * Never applies in headed mode or while a live view is streaming. The one
+   * behavior change: a page animated by a `requestAnimationFrame` chain does
+   * not resume that chain after being parked (CSS/Web Animations do). Also
+   * settable per host with `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`.
+   */
+  parkBackgroundPages?: boolean;
+  /**
    * Defaults for `startLiveView()`. Binds `0.0.0.0` with a LAN `publicHost` by
    * default so printed URLs open from another machine on the network. Pass
    * `{host:"127.0.0.1"}` for loopback-only.

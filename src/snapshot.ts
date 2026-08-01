@@ -435,16 +435,55 @@ export function diffSnapshots(previous, current) {
   if (before.length > MAX_DIFF_LINES || after.length > MAX_DIFF_LINES)
     return { changed: true, tooLarge: true };
 
-  // Longest-common-subsequence table over the changed region.
+  // A one-sided change — the overwhelmingly common case once the shared prefix
+  // and suffix are gone — is entirely additions or entirely removals. Answering
+  // it here skips the table, which is the only expensive thing in this
+  // function.
+  if (!before.length || !after.length) {
+    const out = before
+      .map((line) => `- ${line}`)
+      .concat(after.map((line) => `+ ${line}`));
+    return {
+      changed: true,
+      diff: out.join("\n"),
+      additions: after.length,
+      removals: before.length,
+    };
+  }
+
+  // Intern the lines so the table loop compares small integers instead of
+  // strings. Snapshot lines repeat heavily (indent + role + name), and the
+  // comparison runs `before.length * after.length` times, so this is where the
+  // time goes.
+  const ids = new Map();
+  const idOf = (line) => {
+    let id = ids.get(line);
+    if (id === undefined) {
+      id = ids.size;
+      ids.set(line, id);
+    }
+    return id;
+  };
+  const beforeIds = new Int32Array(before.length);
+  const afterIds = new Int32Array(after.length);
+  for (let k = 0; k < before.length; k += 1) beforeIds[k] = idOf(before[k]);
+  for (let k = 0; k < after.length; k += 1) afterIds[k] = idOf(after[k]);
+
+  // Longest-common-subsequence table over the changed region. Every entry is a
+  // subsequence length, so it cannot exceed MAX_DIFF_LINES — Uint16Array holds
+  // it exactly and halves a table that reaches 18 MB at the size cap.
   const rows = before.length + 1;
   const cols = after.length + 1;
-  const table = new Uint32Array(rows * cols);
+  const table = new Uint16Array(rows * cols);
   for (let i = before.length - 1; i >= 0; i -= 1) {
+    const rowBase = i * cols;
+    const nextBase = rowBase + cols;
+    const beforeId = beforeIds[i];
     for (let j = after.length - 1; j >= 0; j -= 1) {
-      table[i * cols + j] =
-        before[i] === after[j]
-          ? table[(i + 1) * cols + j + 1] + 1
-          : Math.max(table[(i + 1) * cols + j], table[i * cols + j + 1]);
+      table[rowBase + j] =
+        beforeId === afterIds[j]
+          ? table[nextBase + j + 1] + 1
+          : Math.max(table[nextBase + j], table[rowBase + j + 1]);
     }
   }
   const out = [];
@@ -453,7 +492,7 @@ export function diffSnapshots(previous, current) {
   let i = 0;
   let j = 0;
   while (i < before.length && j < after.length) {
-    if (before[i] === after[j]) {
+    if (beforeIds[i] === afterIds[j]) {
       i += 1;
       j += 1;
     } else if (table[(i + 1) * cols + j] >= table[i * cols + j + 1]) {
