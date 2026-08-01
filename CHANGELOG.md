@@ -9,6 +9,64 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-07-31
+
+A performance release. No API removals and no behavior flags to set: 1.6.1 is a
+drop-in replacement for 1.6.0.
+
+### Added
+
+- **Idle sessions no longer burn CPU.** A headless Chromium target never becomes
+  hidden — `document.visibilityState` stays `"visible"` for the life of the page
+  — so every open page kept its frame loop running at the host refresh rate
+  (measured at ~120 fps) whether or not anything was driving it. A session with
+  five ordinary animated tabs burned **~110% CPU while completely idle**, and
+  four agents made that four times over. BetterWright now parks a session's
+  pages once its last execution unwinds — page script is disabled and animation
+  timelines are set to rate zero — and restores them before the next execution
+  begins, so the quiet window is exactly the model's thinking time.
+
+  Measured on the pinned fork (150.0.7871.129), idling with tabs open:
+
+  | scenario | 1.6.0 | 1.6.1 |
+  | --- | --- | --- |
+  | 1 session, 5 tabs | 97% CPU, 1845 MB | **25% CPU, 1709 MB** |
+  | 4 sessions, 3 tabs each | 129% CPU, 3805 MB | **53% CPU, 3529 MB** |
+
+  Parking never applies in headed mode or while a live view is streaming — a
+  frozen page is a bug when a human is watching one — and it waits for the
+  session to be genuinely idle (750 ms), so an agent's back-to-back calls never
+  pay for it. Pages with credential capture in flight are left running, because
+  the vault sensor lives in an isolated world and script execution is disabled
+  per renderer, not per world. Turn it off with `parkBackgroundPages: false` or
+  `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`.
+
+  The one behavior change: a page animated by a `requestAnimationFrame` chain
+  does not resume that chain after being parked, because the pending callback
+  never fires and so nothing re-registers it. Everything else — in-page state,
+  `setInterval`/`setTimeout`, CSS and Web Animations, clicks, typing,
+  navigation, screenshots, network, newly registered `requestAnimationFrame`
+  callbacks — resumes normally.
+
+### Changed
+
+- `diffSnapshots` interns snapshot lines before building its LCS table, so the
+  inner loop compares integers instead of strings, and stores the table as
+  `Uint16Array` rather than `Uint32Array` — subsequence lengths are bounded by
+  the 3000-line cap, so the wider type was never needed. A one-sided change
+  (everything added, or everything removed) now skips the table entirely. At
+  the size cap the transient allocation drops from 34 MB to 17 MB per call.
+  Output is unchanged: a randomized suite checks it line for line, tie-breaks
+  included, against the 1.6.0 implementation.
+
+### Fixed
+
+- Parking exposed, and this release fixes, an ordering hazard in how the worker
+  brackets executions: work queued as one execution unwinds could land after
+  the next one had already started. Park/wake now reconcile toward a recorded
+  intent rather than deciding from the state at call time, so whoever asks last
+  wins regardless of the order the CDP traffic lands in.
+
 ## [1.6.0] - 2026-07-31
 
 ### Added
@@ -387,7 +445,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/BetterWright/betterwright/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/BetterWright/betterwright/compare/v1.5.2...v1.6.0
 [1.5.2]: https://github.com/BetterWright/betterwright/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/BetterWright/betterwright/compare/v1.5.0...v1.5.1

@@ -217,6 +217,7 @@ export class BetterWright {
   declare timezone: string | null;
   declare headedInvisible: boolean;
   declare chromiumArgs: string[];
+  declare parkBackgroundPages: boolean | undefined;
   declare platform: "macos" | "windows" | "linux" | null;
   declare defaultTimeout: number;
   declare liveView: Record<string, any>;
@@ -309,6 +310,16 @@ export class BetterWright {
    *   with a `TypeError`, and a switch already present in the managed list is
    *   dropped (with a warning on the next result) so BetterWright's value
    *   always wins.
+   * @param {boolean} [options.parkBackgroundPages=true] quiet each session's
+   *   pages between executions — page script is disabled and animation
+   *   timelines are paused while the model is thinking, and restored before the
+   *   next call runs. A headless target never becomes hidden, so without this
+   *   every open page renders at the host refresh rate for the life of the
+   *   session; parking is what keeps an idle session near zero CPU. Never
+   *   applies in headed mode or while a live view is streaming. The one
+   *   behavior change: a page animated by a `requestAnimationFrame` chain does
+   *   not resume that chain after being parked (CSS/Web Animations do). Set
+   *   `false`, or `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`, to opt out.
    * @param {object} [options.liveView] defaults for {@link startLiveView}:
    *   `{host, port, interactive, quality, maxWidth, publicHost}`. Defaults to
    *   bind `0.0.0.0` with a LAN `publicHost` so printed URLs open from another
@@ -352,6 +363,13 @@ export class BetterWright {
     // rather than an opaque browser launch failure several calls later. The
     // environment is re-read at launch, so this is validation, not capture.
     this.chromiumArgs = resolveChromiumArgs(options.chromiumArgs);
+    // Tri-state on purpose: `undefined` leaves the decision to the worker,
+    // which also consults BETTERWRIGHT_PARK_BACKGROUND_PAGES and refuses to
+    // park anything a human can see (headed, or a live view streaming).
+    this.parkBackgroundPages =
+      options.parkBackgroundPages === undefined
+        ? undefined
+        : options.parkBackgroundPages !== false;
     if (
       options.platform != null &&
       !["macos", "windows", "linux"].includes(options.platform)
@@ -437,6 +455,7 @@ export class BetterWright {
       headedInvisible: this.headedInvisible,
       platform: this.platform,
       chromiumArgs: this.chromiumArgs,
+      parkBackgroundPages: this.parkBackgroundPages,
       headless: this.headless,
       credentialCapture: this.credentialCapture,
       searchMinIntervalMs: this.searchMinIntervalMs,

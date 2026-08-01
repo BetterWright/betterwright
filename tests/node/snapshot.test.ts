@@ -302,3 +302,130 @@ test("diffSnapshots flags oversized inputs instead of stalling", () => {
   assert.equal(result.changed, true);
   assert.equal(result.tooLarge, true);
 });
+
+// The diff table is the only allocation in this file that scales with the
+// square of the input, so it grew a fast path (one-sided changes skip the
+// table entirely) and line interning (integer compares in the inner loop).
+// These pin the output against a straightforward reference so the
+// optimizations cannot quietly change which lines are reported.
+
+/**
+ * The 1.6.0 implementation, verbatim: shared prefix/suffix trimming, a full
+ * Uint32 table, and string comparisons in the inner loop. The optimized version
+ * must agree with it line for line — including which side of an LCS tie it
+ * picks, which the trimming step influences.
+ */
+function referenceDiff(previous, current) {
+  if (previous === current) return { changed: false };
+  let before = String(previous).split("\n");
+  let after = String(current).split("\n");
+  let start = 0;
+  while (
+    start < before.length &&
+    start < after.length &&
+    before[start] === after[start]
+  )
+    start += 1;
+  let endBefore = before.length;
+  let endAfter = after.length;
+  while (
+    endBefore > start &&
+    endAfter > start &&
+    before[endBefore - 1] === after[endAfter - 1]
+  ) {
+    endBefore -= 1;
+    endAfter -= 1;
+  }
+  before = before.slice(start, endBefore);
+  after = after.slice(start, endAfter);
+  if (before.length > 3_000 || after.length > 3_000)
+    return { changed: true, tooLarge: true };
+  const cols = after.length + 1;
+  const table = new Uint32Array((before.length + 1) * cols);
+  for (let i = before.length - 1; i >= 0; i -= 1) {
+    for (let j = after.length - 1; j >= 0; j -= 1) {
+      table[i * cols + j] =
+        before[i] === after[j]
+          ? table[(i + 1) * cols + j + 1] + 1
+          : Math.max(table[(i + 1) * cols + j], table[i * cols + j + 1]);
+    }
+  }
+  const out = [];
+  let additions = 0;
+  let removals = 0;
+  let i = 0;
+  let j = 0;
+  while (i < before.length && j < after.length) {
+    if (before[i] === after[j]) {
+      i += 1;
+      j += 1;
+    } else if (table[(i + 1) * cols + j] >= table[i * cols + j + 1]) {
+      out.push(`- ${before[i]}`);
+      removals += 1;
+      i += 1;
+    } else {
+      out.push(`+ ${after[j]}`);
+      additions += 1;
+      j += 1;
+    }
+  }
+  for (; i < before.length; i += 1) {
+    out.push(`- ${before[i]}`);
+    removals += 1;
+  }
+  for (; j < after.length; j += 1) {
+    out.push(`+ ${after[j]}`);
+    additions += 1;
+  }
+  return { changed: true, diff: out.join("\n"), additions, removals };
+}
+
+test("diffSnapshots still agrees line-for-line with the 1.6.0 algorithm", () => {
+  // Deterministic PRNG: a failure here must be reproducible.
+  let seed = 0x2f6e2b1;
+  const random = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  // A small alphabet makes repeated lines — and therefore interning
+  // collisions and LCS ties — common rather than rare.
+  const line = () => `- item ${Math.floor(random() * 6)}`;
+  for (let round = 0; round < 200; round += 1) {
+    const before = Array.from({ length: Math.floor(random() * 12) }, line);
+    const after = before
+      .filter(() => random() > 0.3)
+      .flatMap((entry) => (random() > 0.75 ? [line(), entry] : [entry]));
+    const previous = before.join("\n");
+    const current = after.join("\n");
+    assert.deepEqual(
+      diffSnapshots(previous, current),
+      referenceDiff(previous, current),
+      `round ${round}: ${JSON.stringify({ previous, current })}`,
+    );
+  }
+});
+
+test("a purely one-sided change reports every line without building a table", () => {
+  const before = ["- a", "- b", "- c"].join("\n");
+  const after = ["- a", "- x", "- y", "- b", "- c"].join("\n");
+  assert.deepEqual(diffSnapshots(before, after), referenceDiff(before, after));
+
+  // Nothing in common at all: all removals, then all additions.
+  const removedAll = diffSnapshots("- a\n- b", "- c\n- d");
+  assert.deepEqual(removedAll, {
+    changed: true,
+    diff: "- - a\n- - b\n+ - c\n+ - d",
+    additions: 2,
+    removals: 2,
+  });
+});
+
+test("a diff at the size cap stays within the halved table budget", () => {
+  const before = Array.from({ length: 3_000 }, (_, i) => `- a${i}`).join("\n");
+  const after = Array.from({ length: 3_000 }, (_, i) => `- b${i}`).join("\n");
+  const result = diffSnapshots(before, after);
+  assert.equal(result.changed, true);
+  assert.equal(result.tooLarge, undefined);
+  assert.equal(result.additions, 3_000);
+  assert.equal(result.removals, 3_000);
+});

@@ -48,6 +48,12 @@ export class BetterWright {
   platform: "macos" | "windows" | "linux" | null;
   /** Validated extra Chromium switches, from the option and the environment. */
   chromiumArgs: string[];
+  /**
+   * Explicit page-parking choice, or `undefined` to leave it to the worker
+   * (which also reads `BETTERWRIGHT_PARK_BACKGROUND_PAGES` and never parks a
+   * browser a human can see).
+   */
+  parkBackgroundPages: boolean | undefined;
   defaultTimeout: number;
   liveView: LiveViewOptions;
 

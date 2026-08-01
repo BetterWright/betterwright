@@ -164,6 +164,34 @@ logins in that profile are lost).
 macOS arm64, Linux x64, and Windows x64 hosts all get the fork artifact with
 one config and no platform branching in deployment code.
 
+### Idle CPU and page parking
+
+A headless Chromium page is never "hidden". `document.visibilityState` stays
+`"visible"` for the life of the target, so none of the machinery a headed
+browser uses to stop paying for background tabs ever engages: the frame loop
+free-runs at the host refresh rate, and any page with a spinner, a carousel, or
+a canvas keeps a core busy for as long as the session lives. Nothing in the
+launch arguments changes this.
+
+So BetterWright parks a session's pages once its last execution unwinds —
+disabling page script and setting animation timelines to rate zero — and
+restores them before the next execution starts. The parked window is the model's
+thinking time, which is where all of the waste was. An idle five-tab session
+drops from ~97% CPU to ~25%.
+
+This is on by default and needs no configuration. It never applies in headed
+mode or while a live view is streaming, it waits 750 ms so an agent's
+back-to-back calls never pay for it, and it leaves pages with credential capture
+in flight running. The one visible difference is that a page animated by a
+`requestAnimationFrame` chain does not resume that chain after being parked;
+timers, CSS animations, in-page state, and everything else do. To opt out:
+
+```bash
+export BETTERWRIGHT_PARK_BACKGROUND_PAGES=0
+```
+
+or `new BetterWright({ parkBackgroundPages: false })`.
+
 ## Your first run
 
 A snippet is a string of async Playwright JavaScript. The last expression is
