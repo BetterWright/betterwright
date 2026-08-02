@@ -9,6 +9,27 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-08-02
+
+A performance release. No API changes: 1.6.2 is a drop-in replacement for
+1.6.1.
+
+### Changed
+
+- `NetworkPolicy.check` — the per-request hot path behind the guard proxy —
+  no longer re-parses its private/loopback CIDR literals on every call: the
+  ranges are parsed once at module load. Allow/block host entries are parsed
+  (lowercase, trim, port split, bracket strip) once and cached in a bounded
+  map instead of on every host check, and the scheme test uses a `Set` rather
+  than allocating an array per call. Measured at 300k checks: 409 ms → 311 ms.
+- `filterInteractive` replaces its backwards ancestor scan — quadratic on
+  large snapshots, because every interactive line rescanned toward the root —
+  with parent links from a single monotonic-stack pass, stopping early on
+  ancestors already kept. Indents and property-line tests are computed once
+  per line instead of inside two inner loops. A 3000-line snapshot filters in
+  0.3 ms instead of 22 ms; output is unchanged, verified line for line against
+  the previous implementation by a randomized differential suite.
+
 ## [1.6.1] - 2026-07-31
 
 A performance release. No API removals and no behavior flags to set: 1.6.1 is a
@@ -445,7 +466,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/BetterWright/betterwright/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/BetterWright/betterwright/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/BetterWright/betterwright/compare/v1.5.2...v1.6.0
 [1.5.2]: https://github.com/BetterWright/betterwright/compare/v1.5.1...v1.5.2

@@ -15,6 +15,8 @@ function indentOf(line) {
   return count;
 }
 
+const PROPERTY_LINE = /^\s*- \//;
+
 /**
  * Reduce an aria snapshot to interactive elements plus the ancestor lines
  * needed to keep the tree readable. Property lines (`- /url: …`) survive when
@@ -22,33 +24,48 @@ function indentOf(line) {
  */
 export function filterInteractive(text) {
   const lines = String(text).split("\n");
-  const keep = new Array(lines.length).fill(false);
-  for (let i = 0; i < lines.length; i += 1) {
+  const count = lines.length;
+  const keep = new Uint8Array(count);
+  // Ancestors already walked, so a second element under the same subtree stops
+  // as soon as it reaches a marked ancestor instead of re-walking to the root.
+  const walked = new Uint8Array(count);
+  const indents = new Int32Array(count);
+  const property = new Uint8Array(count);
+  // Nearest preceding line with a smaller indent, from one monotonic-stack
+  // pass. Replaces a backwards scan per interactive line (quadratic on big
+  // snapshots) with a constant-time parent link.
+  const parent = new Int32Array(count);
+  const stack: number[] = [];
+  for (let i = 0; i < count; i += 1) {
     const line = lines[i];
-    const isProperty = /^\s*- \//.test(line);
+    const indent = indentOf(line);
+    indents[i] = indent;
+    property[i] = PROPERTY_LINE.test(line) ? 1 : 0;
+    while (stack.length && indents[stack[stack.length - 1]] >= indent)
+      stack.pop();
+    parent[i] = stack.length ? stack[stack.length - 1] : -1;
+    stack.push(i);
+  }
+  for (let i = 0; i < count; i += 1) {
+    const line = lines[i];
     if (
-      isProperty ||
+      property[i] ||
       !(INTERACTIVE_ROLE.test(line) || line.includes("[cursor=pointer]"))
     )
       continue;
-    keep[i] = true;
-    let indent = indentOf(line);
+    keep[i] = 1;
     // Walk up the tree keeping each ancestor once.
-    for (let j = i - 1; j >= 0 && indent > 0; j -= 1) {
-      const parentIndent = indentOf(lines[j]);
-      if (parentIndent < indent) {
-        keep[j] = true;
-        indent = parentIndent;
-      }
+    for (let j = parent[i]; j >= 0 && !walked[j]; j = parent[j]) {
+      keep[j] = 1;
+      walked[j] = 1;
     }
     // Keep property lines nested directly under this element.
-    for (let j = i + 1; j < lines.length; j += 1) {
-      if (!/^\s*- \//.test(lines[j]) || indentOf(lines[j]) <= indentOf(line))
-        break;
-      keep[j] = true;
+    for (let j = i + 1; j < count; j += 1) {
+      if (!property[j] || indents[j] <= indents[i]) break;
+      keep[j] = 1;
     }
   }
-  const kept = lines.filter((_, i) => keep[i]);
+  const kept = lines.filter((_, i) => keep[i] === 1);
   return kept.length ? kept.join("\n") : "(no interactive elements)";
 }
 

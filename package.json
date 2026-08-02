@@ -1,6 +1,6 @@
 {
   "name": "betterwright",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "A persistent, policy-guarded Playwright browser for AI agents with network controls, trusted credential filling, proof screenshots, and CAPTCHA helpers.",
   "type": "module",
   "main": "dist/src/index.js",
