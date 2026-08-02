@@ -41,6 +41,27 @@ function inCidr4(value, base, bits) {
   return (value & mask) === (base & mask);
 }
 
+// Parsed once: `check` runs on every browser request, and re-parsing these
+// literals per call cost more than the comparisons themselves.
+const cidr4 = (address, bits) => ({ base: ipv4ToInt(address) ?? 0, bits });
+const LOOPBACK_CIDR4 = cidr4("127.0.0.0", 8);
+const PRIVATE_CIDRS4 = [
+  cidr4("10.0.0.0", 8),
+  cidr4("172.16.0.0", 12),
+  cidr4("192.168.0.0", 16),
+  cidr4("169.254.0.0", 16),
+  cidr4("100.64.0.0", 10),
+  cidr4("0.0.0.0", 8),
+  // Documentation, benchmarking, multicast, and reserved ranges are
+  // classified as non-public, matching the conformance vectors.
+  cidr4("192.0.2.0", 24),
+  cidr4("198.18.0.0", 15),
+  cidr4("198.51.100.0", 24),
+  cidr4("203.0.113.0", 24),
+  cidr4("224.0.0.0", 4),
+  cidr4("240.0.0.0", 4),
+];
+
 function ipv4FromMappedIpv6(host) {
   let bare = host.replace(/^\[|\]$/g, "").toLowerCase();
   const dottedIndex = bare.lastIndexOf(":");
@@ -80,24 +101,9 @@ function categorizeIpv4(host) {
   const value = ipv4ToInt(host);
   if (value === null) return "public";
   if (METADATA_ADDRESSES.has(host)) return "metadata";
-  if (inCidr4(value, ipv4ToInt("127.0.0.0"), 8)) return "loopback";
-  if (
-    inCidr4(value, ipv4ToInt("10.0.0.0"), 8) ||
-    inCidr4(value, ipv4ToInt("172.16.0.0"), 12) ||
-    inCidr4(value, ipv4ToInt("192.168.0.0"), 16) ||
-    inCidr4(value, ipv4ToInt("169.254.0.0"), 16) ||
-    inCidr4(value, ipv4ToInt("100.64.0.0"), 10) ||
-    inCidr4(value, ipv4ToInt("0.0.0.0"), 8) ||
-    // Documentation, benchmarking, multicast, and reserved ranges are
-    // classified as non-public, matching the conformance vectors.
-    inCidr4(value, ipv4ToInt("192.0.2.0"), 24) ||
-    inCidr4(value, ipv4ToInt("198.18.0.0"), 15) ||
-    inCidr4(value, ipv4ToInt("198.51.100.0"), 24) ||
-    inCidr4(value, ipv4ToInt("203.0.113.0"), 24) ||
-    inCidr4(value, ipv4ToInt("224.0.0.0"), 4) ||
-    inCidr4(value, ipv4ToInt("240.0.0.0"), 4)
-  )
-    return "private";
+  if (inCidr4(value, LOOPBACK_CIDR4.base, LOOPBACK_CIDR4.bits)) return "loopback";
+  for (const range of PRIVATE_CIDRS4)
+    if (inCidr4(value, range.base, range.bits)) return "private";
   return "public";
 }
 
@@ -140,6 +146,41 @@ function categorizeIp(host) {
   return null;
 }
 
+const BROWSER_SCHEMES = new Set(["http", "https", "ws", "wss"]);
+
+// Allow/block entries are plain strings that stay stable for a policy's life,
+// so their parse is cached globally rather than repeated for every host check.
+// Bounded so a caller that pushes generated entries cannot grow it without end.
+const MAX_HOST_ENTRY_CACHE = 1_024;
+const hostEntryCache = new Map<string, { host: string; suffix: string; port: number | null } | null>();
+
+function parseHostEntry(entry) {
+  const key = String(entry || "");
+  const cached = hostEntryCache.get(key);
+  if (cached !== undefined) return cached;
+  const parsed = buildHostEntry(key);
+  if (hostEntryCache.size >= MAX_HOST_ENTRY_CACHE) hostEntryCache.clear();
+  hostEntryCache.set(key, parsed);
+  return parsed;
+}
+
+function buildHostEntry(raw) {
+  const entry = raw.toLowerCase().trim();
+  if (!entry) return null;
+  let entryHost = entry;
+  let entryPort = null;
+  if (entry.includes(":") && !entry.startsWith("[")) {
+    const index = entry.lastIndexOf(":");
+    const portText = entry.slice(index + 1);
+    if (/^\d+$/.test(portText)) {
+      entryHost = entry.slice(0, index);
+      entryPort = Number(portText);
+    }
+  }
+  entryHost = entryHost.replace(/^\[|\]$/g, "");
+  return { host: entryHost, suffix: `.${entryHost}`, port: entryPort };
+}
+
 export class NetworkPolicy {
   declare allowPrivateNetwork: boolean;
   declare allowLoopback: boolean;
@@ -161,24 +202,11 @@ export class NetworkPolicy {
   }
 
   hostMatches(entry, hostname, port) {
-    entry = String(entry || "")
-      .toLowerCase()
-      .trim();
-    if (!entry) return false;
-    let entryHost = entry;
-    let entryPort = null;
-    if (entry.includes(":") && !entry.startsWith("[")) {
-      const index = entry.lastIndexOf(":");
-      const portText = entry.slice(index + 1);
-      if (/^\d+$/.test(portText)) {
-        entryHost = entry.slice(0, index);
-        entryPort = Number(portText);
-      }
-    }
-    if (entryPort !== null && port !== entryPort) return false;
-    entryHost = entryHost.replace(/^\[|\]$/g, "");
+    const parsed = parseHostEntry(entry);
+    if (!parsed) return false;
+    if (parsed.port !== null && port !== parsed.port) return false;
     hostname = hostname.replace(/^\[|\]$/g, "");
-    return hostname === entryHost || hostname.endsWith(`.${entryHost}`);
+    return hostname === parsed.host || hostname.endsWith(parsed.suffix);
   }
 
   isMetadata(hostname) {
@@ -199,7 +227,7 @@ export class NetworkPolicy {
     if (scheme === "about" && url.toLowerCase() === "about:blank")
       return { allowed: true };
     if (scheme === "data" || scheme === "blob") return { allowed: true };
-    if (!["http", "https", "ws", "wss"].includes(scheme)) {
+    if (!BROWSER_SCHEMES.has(scheme)) {
       return { allowed: false, reason: `unsupported browser URL scheme: ${scheme}` };
     }
 
