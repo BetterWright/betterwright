@@ -180,6 +180,36 @@ When the challenge clears, verify the current application state before resuming.
 Replay the original action only if it is idempotent or the state proves it did
 not already complete; never duplicate a submission, purchase, or message.
 
+## When detection runs
+
+Every `run()` result is scanned for a challenge, but the scan is staged. Stage 1
+always reads the main frame — its title, its body text, its filled provider
+response fields, and the geometry and (same-origin) text of its child frames.
+Stage 2 reads every frame individually, which costs a round trip per frame and
+so runs only when something already points at a challenge:
+
+- a provider frame or main-document URL (reCAPTCHA, hCaptcha, Turnstile, the
+  Cloudflare challenge platform, Google `/sorry`, Bing challenge paths);
+- main-frame or same-origin-frame text that the detector matches;
+- a 403, 429 or 503 document response — main frame **or** subframe — within the
+  last 10 seconds;
+- a challenge still unresolved at the end of the previous `run()`;
+- any frame stage 1 could not read (cross-origin) whose URL is challenge-shaped
+  — the commercial vendors that do not name a provider in their frame URL
+  (DataDome, Arkose/FunCaptcha, AWS WAF, PerimeterX, GeeTest) as well as
+  self-hosted `…/captcha/…`, `…/challenge…`, `…/verify…` endpoints;
+- up to three unreadable cross-origin frames regardless of what their URLs say.
+
+`captcha.solve()` and `captcha.detect()` never stage: they always read every
+frame.
+
+**Accepted limitation.** A page carrying **more than three** cross-origin frames
+whose URLs are entirely unremarkable, where one of them is a challenge
+identifiable only by its text, is not detected automatically. Text is the only
+evidence in that case and reading it is exactly the per-frame cost the staging
+exists to avoid. Call `captcha.detect()` explicitly if you are working a page
+you expect to challenge you from an opaque embedded frame.
+
 ## Efficiency
 
 The solver adds no worker processes, ONNX/TensorFlow runtimes, or OCR binaries.

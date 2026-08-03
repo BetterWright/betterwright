@@ -370,6 +370,234 @@ no single delta is quoted. Phase B is graded on these metrics, so treat
 60.3–60.6 ms and 33.3–36.7 ms as its baselines and require a win far larger than
 10%.
 
+## Phase B results
+
+`phase-b-51eebd0` and `phase-b-repeat-51eebd0` — 2026-08-03, same machine, Node
+v26.5.0, linux-x64, 8 CPUs, branch `perf/challenge-staging`: the staged
+challenge scan (`challengeScanNeeded` / `frameUrlLooksLikeChallenge` in
+`src/challenges.ts`, the two-stage `collectChallengeMetadata` in
+`src/worker.ts`) plus the two sandbox hoists (the realm factory `vm.Script`,
+`src/compile-code.ts`'s statement-first heuristic). Two full-fidelity runs back
+to back, same as every other recorded phase.
+
+**These two keys were re-recorded after code review** (`--force`), against the
+reviewed revision rather than the first cut. Four review fixes move numbers in
+this table and the reasoning below is written against the reviewed code:
+
+1. Stage 1 is **four concurrent reads**, not one evaluate — `page.title()`,
+   `locator("body").innerText()`, the token evaluate, and the frame-descriptor
+   walk — so one slow field can no longer blank the other three. Title and text
+   go back through Playwright's utility world, which page script cannot patch.
+2. Stage 2 reads each frame's text and checkbox state through **locators**, not
+   an in-page evaluate: two parallel round trips per frame instead of one, in
+   exchange for utility-world isolation and shadow-DOM piercing.
+3. The gate opens for **unread cross-origin frames** — any frame whose URL is
+   challenge-shaped, plus up to `CHALLENGE_UNREAD_FRAME_BUDGET` (3) of them
+   unconditionally. This is a detection fix, and it is why the C fixture's 10
+   and 24 frames still skip while a 1–3 frame page no longer does.
+4. Unmatched frames resolve their geometry through `frameElement()` instead of
+   borrowing a sibling descriptor.
+
+**Both keys carry the Phase A commit `51eebd0` because Phase B was still
+uncommitted when the runs were taken** (`working_tree_dirty: true`, as with
+every other run in the file). The key names the tree the run started from, not
+the code under test; the branch field is what distinguishes these two runs.
+
+| Metric (p50) | baseline | phase-a | phase-b | phase-b-repeat | delta |
+|---|---|---|---|---|---|
+| **A.** Per-action latency (n=100) | 7.60 ms | 7.36 ms | 7.56 ms | 7.50 ms | flat |
+| **A'.** Per-action latency, late-session (n=100) | 6.45 ms | 6.19 ms | 7.52 ms | 6.96 ms | **+0.5 to +1.1 ms** |
+| **B.** Page-load wall time (n=10) | 715.8 ms | 713.8 ms | 721.0 ms | 711.7 ms | ±noise, fixture-dominated |
+| **B.** In-page navigation time (n=10) | 695 ms | 691 ms | 697 ms | 686 ms | ±noise |
+| **C.** Per-action, 10 cross-site iframes (n=30) | 36.68 ms | 35.41 ms | **8.99 ms** | **8.64 ms** | **−74% to −76%** |
+| **C.** Per-action, 24 cross-site iframes (n=30) | 60.57 ms | 66.08 ms | **11.64 ms** | **9.38 ms** | **−81% to −86%** |
+
+The C rows are quoted against the **full recorded band** rather than one arm,
+because the Phase A section established that band as ~10% wide: C10 has spanned
+33.31–36.68 ms and C24 60.28–66.08 ms across the four pre-Phase-B runs.
+
+| Derived (against the adjacent A' control) | recorded band, 4 runs | phase-b | phase-b-repeat | delta |
+|---|---|---|---|---|
+| **Iframe tax per action, 10 frames (p50)** | +26.81 to +30.23 ms | **+1.47 ms** | **+1.68 ms** | **−94% to −95%** |
+| **Iframe tax per action, 24 frames (p50)** | +53.78 to +59.89 ms | **+4.12 ms** | **+2.42 ms** | **−92% to −96%** |
+| Per-frame cost, 10 frames | 2.68–3.02 ms | 0.15 ms | 0.17 ms | |
+| Per-frame cost, 24 frames | 2.24–2.50 ms | 0.17 ms | 0.10 ms | |
+| Session drift (A' − A, p50) | −11.6% to −15.9% | −0.5% | −7.2% | see below |
+
+| Control (Phase A metrics, untouched by Phase B) | phase-a | phase-b | phase-b-repeat |
+|---|---|---|---|
+| **`route`** guard RPCs / load | 1 p50, mean 2.0 (1–6) | 1 p50, mean 1.8 (1–5) | 1 p50, mean 1.9 (1–6) |
+| **`transport`** guard RPCs / load | 0 p50, mean 0.8 (0–3) | 0 p50, mean 0.9 (0–4) | 0 p50, mean 1.0 (0–4) |
+| Fixture requests / load | **51** (enforced) | **51** (enforced) | **51** (enforced) |
+
+### Reading Phase B
+
+**The iframe tax collapsed by an order of magnitude, and it cleared the recorded
+variance by roughly ten times that variance.** The Phase A section set the bar:
+"treat 60.3–60.6 ms and 33.3–36.7 ms as its baselines and require a win far
+larger than 10%." C24 went to 9.38–11.64 ms and C10 to 8.64–8.99 ms. The tax
+derived against the adjacent A' control fell from +54 ms to +2.4–4.1 ms at 24
+frames and from +30 ms to +1.5–1.7 ms at 10. The C10 arms agree to within
+0.35 ms; C24 spans 2.3 ms between arms, which is the widest disagreement in this
+table and is why that row is quoted as a band.
+
+**Frame-count scaling is now flat inside the noise, which is the shape the
+staging predicts.** The baseline's headline structural finding was a sublinear
+but steep 2.26–3.02 ms *per frame*; Phase B reports 0.10–0.17 ms per frame, and
+the 10-frame and 24-frame tax bands (+1.47/+1.68 and +2.42/+4.12) nearly
+overlap. A 2.4x frame count now buys ~1–2 ms, because no per-frame round trip is
+being made at all. **Do not read the residual as a per-frame cost** — it is
+dominated by the fixed part of stage 1 plus the in-page descriptor walk.
+
+**The residual tax is stage 1, and it is charged whether or not the gate
+fires.** Stage 1's descriptor evaluate still enumerates `iframe, frame` elements
+and computes `getBoundingClientRect` + `getComputedStyle` for each (up to
+`CHALLENGE_FRAME_LIMIT`), attempts `contentDocument` on each to collect the
+same-origin text the gate judges, and the worker still calls `page.frames()` and
+maps their URLs. That is one round trip plus in-page work, which is why it costs
+~0.15 ms/frame instead of the ~2.3–3.0 ms of the old per-frame CDP walk. It is
+also the floor this design can reach without giving the gate less to look at
+than the detector needs.
+
+**Per-action latency did not improve, and A' cost about a millisecond — that is
+the review's price and it is worth paying.** A's p50 is 7.56/7.50 ms against a
+7.35–7.60 ms pre-Phase-B band: flat. A' is 7.52/6.96 ms against 6.19–6.50 ms:
+up 0.5–1.1 ms, and the session-drift row moved with it (−0.5%/−7.2% against a
+prior −11.6% to −15.9%), which is the same fact seen from the other side — A'
+rose relative to A. The cause is structural, not noise: stage 1 issues four
+concurrent round trips per action where the pre-review cut issued one, so a
+per-action floor that was 6.2–6.5 ms is now ~7 ms. What that buys is that a page
+slow enough to lose one read no longer loses the other three — in particular an
+empty `tokens` would re-report an already-solved challenge and burn the solver's
+three-attempt budget — and that title and body text are read in Playwright's
+utility world, where page script cannot patch `innerText` to hide its own
+interstitial. Against a 30–54 ms frame-walk win, a ~1 ms floor is the right
+trade; against the pre-review cut's headline "−2% on A", it means **the sandbox
+hoists' contribution is no longer visible in this metric.** Do not quote an A
+win from this table.
+
+**Nothing in the Phase A control rows moved, which is the negative result this
+table needs.** Phase B touches no guard path, and `route`/`transport` stayed at
+a p50 of 1 and 0, means of 1.8–1.9 and 0.9–1.0, with the fixture still serving
+its enforced 51 requests per load. (The `route` mean of 2.9 seen in the
+pre-review Phase B run — one load costing 15 RPCs — did not recur; both arms
+here match Phase A's 1.9–2.0.)
+
+**Page-load wall time did not move and was not expected to.** 721.0 and 711.7 ms
+against 713.8–716.2 ms is inside the spread this file records for a metric that
+is ~690 ms of fixture navigation and `networkidle` settling.
+
+### Gate verification: the gate did not fire
+
+The tax collapsing is consistent with the gate skipping stage 2, but it is not
+*proof* of it — a stage 2 that ran and did nothing would look similar enough to
+be worth ruling out, and a detection regression would look like a win. So the
+gate was checked directly rather than inferred from the clock.
+
+**Trace (pre-review revision).** `dist/src/worker.js` was temporarily patched at
+two points — the `options.gate` call site in `collectChallengeMetadata` and the
+entry to `collectFrameMetadata` itself — to append one NDJSON record per gate
+decision and per stage-2 invocation under a `BW_GATE_TRACE` env var.
+`collectFrameMetadata` was instrumented as well as the gate because the gate's
+own return value only proves what happened at *that* call site; the entry
+counter catches stage 2 arriving by any other path (the captcha-solving paths
+call `collectChallengeMetadata` ungated by design). The harness was then run
+under `--quick --iframes 10,24`.
+
+| Instrumented quick run | Value |
+|---|---|
+| Gate decisions recorded | **90** |
+| … returning `true` (scan stage 2) | **0** |
+| … returning `false` (skip stage 2) | **90** |
+| … reached with no gate function (ungated path) | **0** |
+| **`collectFrameMetadata` invocations** | **0** |
+| Decisions on the 0-frame pages (A, A', B) | 60 — all skip |
+| Decisions on the 10-frame page | 15 — all skip |
+| Decisions on the 24-frame page | 15 — all skip |
+| Same-origin frame texts read by stage 1 | 0, on every decision |
+| Main-frame `<iframe>` descriptors seen by stage 1 | 0 / 10 / 24 |
+
+Two rows carry the argument. **Stage 2 ran zero times** across the whole
+battery, so the C rows above are measuring a page whose per-frame walk genuinely
+did not happen. And **stage 1 saw 10 and 24 iframe descriptors on the respective
+pages** — the skip was a decision taken with the frames in hand, not a blindness
+to frames that were never enumerated. The `sameOrigin: 0` row confirms the
+design assumption the fixture was built to exercise: the frames are cross-site
+OOPIFs, opaque to stage 1's evaluate, so all the gate ever learned about them
+was their URL.
+
+**Replay (reviewed revision).** That trace predates review fix 3, which changed
+what the gate is given: frames now carry a `readable` flag, and an unread frame
+opens the gate either on URL shape or on the unread-frame budget. The trace was
+therefore re-checked rather than assumed, by replaying the fixture's exact frame
+sets through the shipped `challengeScanNeeded` in `dist/`:
+
+| Fixture page | Unread cross-site frames | `challengeScanNeeded` |
+|---|---|---|
+| A / A' / B (`/static`, `/page`) | 0 | `false` |
+| C10 (`/frames?n=10`) | 10 | `false` |
+| C24 (`/frames?n=24`) | 24 | `false` |
+
+All three still skip: the fixture frame URLs (`http://127.0.0.{2,3}:<port>/frame/<n>`)
+match no provider and carry no challenge-shaped token, and 10 and 24 are both
+over the 3-frame unread budget. **A page with 1–3 such frames would now scan** —
+that is the detection fix working, and it means this fixture is measuring the
+frame-heavy case specifically. A 2-frame variant of the C fixture would show the
+gate opening and stage 2's new cost; the harness does not have one.
+
+**Positive control: the gate does fire.** An all-skip trace is also what a
+permanently-false gate would produce, so the bot-challenge integration tests in
+`tests/node/browser.test.js` are the counter-evidence. Against the reviewed
+build all 13 challenge/captcha tests pass, including
+`iframe-only bot challenges are detected` and the new
+`bot challenges in a cross-origin frame are detected` — an out-of-process
+`127.0.0.2` frame whose URL names no provider, which only the unread-frame
+budget can reach, and which the pre-review gate missed.
+
+The instrumentation was removed by rebuilding `dist/` from source; `grep` for
+`BW_GATE_TRACE` in `dist/src/worker.js` returns 0 matches. The instrumented
+`--quick` run was deliberately **not** kept in `results.json`: its numbers
+include a synchronous `appendFileSync` per gate decision, and a quick run is not
+full-fidelity anyway.
+
+### Caveats specific to Phase B
+
+- **This harness measures the benign frame-heavy case only.** A page that
+  carries a challenge — or merely 1–3 opaque cross-origin frames — now pays
+  stage 1 plus stage 2 on every execute. Stage 2 was also rewritten: two
+  parallel locator reads per frame (`innerText`, checkbox `count`) plus one
+  shared descriptor walk on the parent, against five sequential CDP round trips
+  before (`frameElement`, rect/style, `dispose`, `innerText`, checkbox count).
+  Challenged pages should be faster too, but **no number in this table is
+  evidence of that**. It would need a fixture with a provider frame, which the
+  harness does not have.
+- **The gate is a detection surface, and the benchmark cannot see detection
+  regressions.** A gate that wrongly skipped would show up here as a *larger*
+  win — which is exactly what happened before review: the pre-review C rows were
+  0.5–2.5 ms lower than these, and part of that gap was a gate that skipped
+  cross-origin challenge frames. What constrains it now is
+  `tests/node/challenge-scan-gate.test.ts` — which feeds the gate
+  production-fidelity inputs (same-origin frames with text, cross-origin frames
+  with a bare URL) and compares against the detector run over the **full** frame
+  metadata the old unconditional scan produced, asserting that the only
+  divergence is the documented over-budget unread-frame case — plus the 13
+  integration tests used as the positive control above. Read the win only
+  together with those.
+- **A constant background load was present for every run in this file.** A
+  `sunshine` process held ~150% CPU (of 8 cores) from 16:10 local on 2026-08-02
+  onward, which covers the baseline (02:45Z), Phase A (03:13Z) and Phase B
+  (04:51Z / 04:52Z) runs alike. Absolute millisecond figures here are therefore
+  *not* the idle-machine floor the "How to run" section asks for, but the load
+  was the same for every arm, so the cross-run comparisons — which is all the
+  deltas above claim — hold. Anyone re-recording an absolute baseline should do
+  it on a genuinely idle machine.
+- **The C rows are now small enough that A' precision starts to matter.** The
+  residual tax (1.5–4.1 ms) is of the same order as A's own stdev (1.6–2.4 ms).
+  It is still a p50 of 30 samples against a p50 of 100, so it is a real
+  central-tendency difference, but quote it as the band across both runs rather
+  than as any single figure — and note that A' itself moved this round, so the
+  derived tax is a difference of two numbers that both changed.
+
 ## Files
 
 - [`run.ts`](run.ts) — the harness. Compiled to `run.js` by `npm run

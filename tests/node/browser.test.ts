@@ -28,13 +28,16 @@ function tempHome() {
   return makeTempDir("betterwright-test-");
 }
 
-async function listen(handler) {
+// Chromium's site isolation keys on scheme + eTLD+1 and ignores the port, so a
+// caller that needs a genuinely cross-site frame has to pass a distinct
+// loopback address, not just a distinct port.
+async function listen(handler, host = "127.0.0.1") {
   const server = http.createServer(handler);
-  server.listen(0, "127.0.0.1");
+  server.listen(0, host);
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
   return {
-    origin: `http://127.0.0.1:${port}`,
+    origin: `http://${host}:${port}`,
     port,
     async close() {
       server.closeAllConnections?.();
@@ -1166,6 +1169,43 @@ test("iframe-only bot challenges are detected", opts, async () => {
     assert.equal(result.challenges?.[0]?.detectedIn, "frame");
   } finally {
     await bw.close();
+  }
+});
+
+// The staged scan reads same-origin frame text without a round trip, so the
+// srcdoc case above never exercises the hard half. A real out-of-process frame
+// is opaque to that read, and this one names no provider anywhere in its URL:
+// only the gate's unread-frame budget can reach it.
+test("bot challenges in a cross-origin frame are detected", opts, async () => {
+  const embed = await listen((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" });
+    response.end("<!doctype html><body><h1>Verify you are human</h1></body>");
+  }, "127.0.0.2");
+  const site = await listen((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" });
+    response.end(
+      `<!doctype html><body><h1>Checkout</h1>` +
+        `<iframe width="320" height="120" src="${embed.origin}/w/9f3.html"></iframe>` +
+        `</body>`,
+    );
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      const frames = page.frames();
+      return frames.map(frame => frame.url());
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.ok(
+      result.result.some((url) => url.startsWith(embed.origin)),
+      `the challenge frame never attached: ${JSON.stringify(result.result)}`,
+    );
+    assert.equal(result.challenges?.[0]?.detectedIn, "frame");
+  } finally {
+    await bw.close();
+    await site.close();
+    await embed.close();
   }
 });
 
