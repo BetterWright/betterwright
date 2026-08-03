@@ -9,6 +9,20 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- Challenge detection is now staged. Every `run()` still reads the main frame's
+  title, text and provider response tokens, but the per-frame walk — one round
+  trip per frame, previously paid on every action — runs only when something
+  already points at a challenge: a provider URL, matching main or same-origin
+  frame text, a recent 403/429/503 document response, a challenge left
+  unresolved by the previous action, or an unreadable cross-origin frame.
+  Benign iframes no longer tax every agent action. `captcha.solve()` and
+  `captcha.detect()` are unchanged and always read every frame. See
+  "When detection runs" in `docs/captcha.md`, including the one accepted
+  limitation: a page with more than three opaque cross-origin frames where the
+  challenge is identifiable only by the text inside one of them.
+
 ## [1.6.2] - 2026-08-02
 
 A performance release. No API changes: 1.6.2 is a drop-in replacement for

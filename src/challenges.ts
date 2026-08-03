@@ -75,6 +75,24 @@ function providerForPage(url) {
   return host || "unknown";
 }
 
+// Provider host/path shapes shared by the full detector (challengeUrlSignal)
+// and the cheap URL-only gate (frameUrlLooksLikeChallenge). Both must read the
+// same constants: a gate that misses a URL the detector would match turns into
+// a silent false negative once the frame scan is staged behind it.
+const GOOGLE_SORRY_PATH = /^\/sorry(?:\/|$)/;
+const BING_CHALLENGE_PATH = /\/(?:captcha|challenge|turing)(?:\/|$)/;
+const RECAPTCHA_FRAME_PATH = /\/recaptcha\/(?:api2|enterprise)\/(?:anchor|bframe)(?:\/|$)/;
+const HCAPTCHA_CHALLENGE_QUERY = /(?:^|[?&#])frame=challenge(?:[&#]|$)/;
+const HCAPTCHA_CHALLENGE_PATH = /(?:^|\/)(?:hcaptcha-)?challenge(?:\.html)?(?:\/|$)/;
+const HCAPTCHA_IMAGE_PROMPT =
+  /(?:please )?(?:click|select|choose) (?:all|each|every|the) (?:image|images|square|squares)\b/;
+const CLOUDFLARE_PLATFORM_PATH = "/cdn-cgi/challenge-platform/";
+const TURNSTILE_PATH = "/turnstile/";
+
+function isRecaptchaHost(host) {
+  return isGoogleHost(host) || hostIs(host, "recaptcha.net");
+}
+
 function explicitInvisible(url) {
   let decoded = stringValue(url).toLowerCase();
   try {
@@ -102,17 +120,15 @@ function challengeUrlSignal(source, includeInvisible = false) {
   const path = parsed.pathname.toLowerCase();
   const whole = `${path}${parsed.search}${parsed.hash}`.toLowerCase();
 
-  if (isGoogleHost(host) && /^\/sorry(?:\/|$)/.test(path)) {
+  if (isGoogleHost(host) && GOOGLE_SORRY_PATH.test(path)) {
     return { provider: "google", signal: "google_sorry_url", source };
   }
-  if (hostIs(host, "bing.com") && /\/(?:captcha|challenge|turing)(?:\/|$)/.test(path)) {
+  if (hostIs(host, "bing.com") && BING_CHALLENGE_PATH.test(path)) {
     return { provider: "bing", signal: "bing_challenge_url", source };
   }
 
-  const recaptchaHost = isGoogleHost(host) || hostIs(host, "recaptcha.net");
-  const recaptchaFrame = /\/recaptcha\/(?:api2|enterprise)\/(?:anchor|bframe)(?:\/|$)/.test(
-    path,
-  );
+  const recaptchaHost = isRecaptchaHost(host);
+  const recaptchaFrame = RECAPTCHA_FRAME_PATH.test(path);
   if (recaptchaHost && recaptchaFrame) {
     if (!includeInvisible && path.endsWith("/anchor") && explicitInvisible(source.url)) return null;
     return { provider: "recaptcha", signal: "recaptcha_frame_url", source };
@@ -121,20 +137,17 @@ function challengeUrlSignal(source, includeInvisible = false) {
   const hcaptchaFrameText = normalizedText(`${source.title}\n${source.text}`);
   const hcaptchaChallengeFrame =
     hostIs(host, "hcaptcha.com") &&
-    (/(?:^|[?&#])frame=challenge(?:[&#]|$)/.test(whole) ||
-      /(?:^|\/)(?:hcaptcha-)?challenge(?:\.html)?(?:\/|$)/.test(path) ||
-      (path.includes("/captcha/") &&
-        /(?:please )?(?:click|select|choose) (?:all|each|every|the) (?:image|images|square|squares)\b/.test(
-          hcaptchaFrameText,
-        )));
+    (HCAPTCHA_CHALLENGE_QUERY.test(whole) ||
+      HCAPTCHA_CHALLENGE_PATH.test(path) ||
+      (path.includes("/captcha/") && HCAPTCHA_IMAGE_PROMPT.test(hcaptchaFrameText)));
   if (hcaptchaChallengeFrame) {
     return { provider: "hcaptcha", signal: "hcaptcha_frame_url", source };
   }
 
-  const cloudflarePlatform = path.includes("/cdn-cgi/challenge-platform/");
+  const cloudflarePlatform = path.includes(CLOUDFLARE_PLATFORM_PATH);
   const turnstileFrame =
     hostIs(host, "challenges.cloudflare.com") &&
-    (cloudflarePlatform || path.includes("/turnstile/"));
+    (cloudflarePlatform || path.includes(TURNSTILE_PATH));
   if (turnstileFrame) {
     if (!includeInvisible && explicitInvisible(source.url)) return null;
     return { provider: "turnstile", signal: "turnstile_frame_url", source };
@@ -231,6 +244,64 @@ function challengeResult(main, match) {
   };
 }
 
+/**
+ * URL-only "this frame might be a challenge" test, built from the same provider
+ * host/path constants as `challengeUrlSignal`. It is deliberately broader than
+ * the detector — it cannot see frame text, visibility, or `size=invisible`, so
+ * it must never narrow past what a later full scan could match. Callers use it
+ * to decide whether the expensive per-frame scan is worth running at all.
+ */
+export function frameUrlLooksLikeChallenge(url) {
+  const parsed = parsedUrl(url);
+  if (!parsed) return false;
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+  if (path.includes(CLOUDFLARE_PLATFORM_PATH)) return true;
+  if (hostIs(host, "challenges.cloudflare.com")) return true;
+  if (hostIs(host, "hcaptcha.com")) return true;
+  if (isGoogleHost(host) && GOOGLE_SORRY_PATH.test(path)) return true;
+  if (hostIs(host, "bing.com") && BING_CHALLENGE_PATH.test(path)) return true;
+  return isRecaptchaHost(host) && RECAPTCHA_FRAME_PATH.test(path);
+}
+
+// Gate-only shapes, deliberately outside `challengeUrlSignal`. The detector
+// names a provider from these frames only after reading their *text* (they end
+// up as `providerForPage`'s host fallback in genericTextSignal), so the URL
+// alone must never report a challenge — but it is exactly what the gate has to
+// judge, because these frames are cross-origin and their text costs a round
+// trip. Commercial vendors whose challenge frame URL names no provider the
+// detector knows:
+const VENDOR_CHALLENGE_HOSTS = [
+  "captcha-delivery.com", // DataDome
+  "datadome.co",
+  "arkoselabs.com", // Arkose Labs / FunCaptcha
+  "funcaptcha.com",
+  "awswaf.com", // AWS WAF Captcha
+  "px-cdn.net", // PerimeterX / HUMAN
+  "perimeterx.net",
+  "geetest.com",
+];
+// …plus any host or path that says "captcha" in the usual words, which is what
+// self-hosted challenge endpoints are almost always called. Separator-anchored
+// so `recaptcha.example.com` and `challenges.cloudflare.com.evil.test` — the
+// lookalikes `frameUrlLooksLikeChallenge` must reject — do not match a bare
+// substring.
+const CHALLENGE_URL_TOKEN =
+  /(?:^|[.\-/_])(?:captcha|challenge|turing|verify|human|bot[-_]?check)(?:[.\-/_]|$)/;
+
+/**
+ * Whether an unread frame's URL is challenge-shaped enough to be worth reading.
+ * Not a detection: it only decides whether the frame's text gets fetched at all.
+ */
+function frameUrlSuggestsChallenge(url) {
+  if (frameUrlLooksLikeChallenge(url)) return true;
+  const parsed = parsedUrl(url);
+  if (!parsed) return false;
+  const host = parsed.hostname.toLowerCase();
+  if (VENDOR_CHALLENGE_HOSTS.some((vendor) => hostIs(host, vendor))) return true;
+  return CHALLENGE_URL_TOKEN.test(`${host}${parsed.pathname.toLowerCase()}`);
+}
+
 export function isPublicSearchNavigation(url) {
   const parsed = parsedUrl(url);
   if (!parsed) return false;
@@ -267,6 +338,81 @@ export function detectBotChallenge(metadata: any = {}) {
     firstMatch(sources, challengeUrlSignal) ||
     firstMatch(sources, genericTextSignal);
   return match ? challengeResult(main, match) : null;
+}
+
+/**
+ * How long after a 403/429/503 main-document response the next scan still
+ * treats the page as possibly serving an interstitial.
+ */
+export const CHALLENGE_BLOCK_WINDOW_MS = 10_000;
+
+/**
+ * How many frames whose text the caller could not read the gate will pay to
+ * read anyway. Text is the only thing that identifies a challenge in a
+ * cross-origin frame whose URL names no provider, so up to this many unread
+ * frames force the scan unconditionally — the scan then costs less than the
+ * round trips the gate saves elsewhere. Past the budget only
+ * `frameUrlSuggestsChallenge` speaks for an unread frame, which is the one
+ * accepted narrowing in this design (see docs/captcha.md).
+ */
+export const CHALLENGE_UNREAD_FRAME_BUDGET = 3;
+
+/**
+ * Decide whether the caller should pay for a full per-frame challenge scan.
+ *
+ * Reading a frame costs a round trip each, so the scan runs only once something
+ * already points at a challenge. Every condition covers a way a challenge can
+ * exist that the others would miss, ordered cheapest first:
+ *
+ *   - `openProviders` — a challenge was still open after the previous scan.
+ *     Only a completed full scan may rewrite that set, so this both keeps
+ *     watching an unsolved challenge and guarantees the set drains once the
+ *     page clears.
+ *   - `blockedAt` — the site just answered a document with a block status, and
+ *     the interstitial it swapped in may not have rendered recognizable text
+ *     yet.
+ *   - a main or frame URL that `frameUrlLooksLikeChallenge` recognizes.
+ *   - `detectBotChallenge` over the main frame plus whatever `frames` carry.
+ *     Callers pass every frame the full scan would read, with as much of its
+ *     text and visibility as they already have; adding fields to a source can
+ *     only widen a match, never narrow it, so a "no" here is at least as
+ *     complete as the answer the reported metadata would have produced.
+ *   - frames the caller could not read at all (`readable !== true`). Their text
+ *     is exactly what the previous condition is missing, so they are judged on
+ *     URL shape and, up to `CHALLENGE_UNREAD_FRAME_BUDGET` of them, read
+ *     regardless. A frame the caller knows to be invisible is exempt: both
+ *     `challengeUrlSignal` and `genericTextSignal` drop `visible === false`
+ *     frames, so reading one could not change the reported metadata.
+ *
+ * Pure: the caller supplies `now` and the already-read frames, so the decision
+ * is reproducible from its inputs alone.
+ */
+export function challengeScanNeeded(state: any = {}) {
+  const input: any = isRecord(state) ? state : {};
+  const openProviders = input.openProviders;
+  const openCount = openProviders
+    ? (openProviders.size ?? openProviders.length ?? 0)
+    : 0;
+  if (openCount > 0) return true;
+
+  const blockedAt = typeof input.blockedAt === "number" ? input.blockedAt : 0;
+  const now = typeof input.now === "number" ? input.now : Date.now();
+  if (blockedAt > 0 && now - blockedAt <= CHALLENGE_BLOCK_WINDOW_MS) return true;
+
+  const main = isRecord(input.main) ? input.main : {};
+  const frames = (Array.isArray(input.frames) ? input.frames : []).filter(isRecord);
+  if (frameUrlLooksLikeChallenge(main.url)) return true;
+  if (frames.some((frame: any) => frameUrlLooksLikeChallenge(frame.url))) return true;
+
+  const unread = frames.filter(
+    (frame: any) => frame.readable !== true && frame.visible !== false,
+  );
+  if (unread.length > 0 && unread.length <= CHALLENGE_UNREAD_FRAME_BUDGET) return true;
+  if (unread.some((frame: any) => frameUrlSuggestsChallenge(frame.url))) return true;
+
+  return Boolean(
+    detectBotChallenge({ main, frames, solvedProviders: input.solvedProviders }),
+  );
 }
 
 export { PUBLIC_SEARCH_BLOCK_ADVICE, SEARCH_CHALLENGE_ADVICE };
