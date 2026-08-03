@@ -311,6 +311,314 @@
           }
         }
       }
+    },
+    "phase-a-cee1d46": {
+      "metadata": {
+        "label": "phase-a",
+        "date": "2026-08-03T03:11:06.944Z",
+        "commit": "cee1d46",
+        "branch": "perf/guard-cache",
+        "working_tree_dirty": true,
+        "node": "v26.5.0",
+        "platform": "linux-x64",
+        "cpus": 8,
+        "quick_mode": false,
+        "betterwright_version": "1.6.2"
+      },
+      "config": {
+        "action_iterations": 100,
+        "action_warmup": 5,
+        "load_iterations": 10,
+        "load_warmup": 1,
+        "challenge_iterations": 30,
+        "challenge_warmup": 3,
+        "subresources": 50,
+        "origins": 4,
+        "iframe_counts": [
+          10,
+          24
+        ],
+        "frame_hosts": [
+          "127.0.0.2",
+          "127.0.0.3"
+        ],
+        "connections_dropped_between_loads": true,
+        "snippet": "return page.title()"
+      },
+      "per_action_latency": {
+        "count": 100,
+        "p50_ms": 7.36,
+        "p95_ms": 10.73,
+        "mean_ms": 7.64,
+        "stdev_ms": 1.52,
+        "min_ms": 4.69,
+        "max_ms": 11.75
+      },
+      "per_action_latency_after": {
+        "count": 100,
+        "p50_ms": 6.19,
+        "p95_ms": 8.03,
+        "mean_ms": 6.23,
+        "stdev_ms": 1.26,
+        "min_ms": 4.24,
+        "max_ms": 11.36
+      },
+      "session_drift": {
+        "note": "A' minus A: monotonic per-session cost growth, measured so it is not charged to the iframes",
+        "p50_delta_ms": -1.17,
+        "p50_delta_pct": -15.9
+      },
+      "page_load": {
+        "wall_time": {
+          "count": 10,
+          "p50_ms": 713.77,
+          "p95_ms": 750.38,
+          "mean_ms": 722.31,
+          "stdev_ms": 16.74,
+          "min_ms": 699.05,
+          "max_ms": 750.38
+        },
+        "navigation_time": {
+          "count": 10,
+          "p50_ms": 691,
+          "p95_ms": 726,
+          "mean_ms": 699.8,
+          "stdev_ms": 16.23,
+          "min_ms": 679,
+          "max_ms": 726
+        },
+        "guard_rpcs_per_load": {
+          "note": "route = context.route('**/*') interception, one per HTTP request, exact. transport = the SOCKS proxy's per-connection hostname + per-resolved-IP guards; connection-scoped and therefore variable, since Chromium decides how many sockets to open.",
+          "route": {
+            "count": 10,
+            "p50": 1,
+            "mean": 2,
+            "min": 1,
+            "max": 6
+          },
+          "transport": {
+            "count": 10,
+            "p50": 0,
+            "mean": 0.8,
+            "min": 0,
+            "max": 3
+          },
+          "total": {
+            "count": 10,
+            "p50": 1,
+            "mean": 2.8,
+            "min": 1,
+            "max": 9
+          }
+        },
+        "route_guard_rpcs_per_subresource": 0.04,
+        "fixture_requests_per_load": {
+          "count": 10,
+          "p50": 51,
+          "mean": 51,
+          "min": 51,
+          "max": 51
+        },
+        "first_load": {
+          "note": "n=1 warmup load, discarded from the series; kept only as a sanity reading",
+          "guard_rpcs_route": 6,
+          "guard_rpcs_transport": 5,
+          "fixture_requests": 51,
+          "wall_ms": 754.11
+        }
+      },
+      "challenge_scan": [
+        {
+          "frames": 10,
+          "cross_site_frames": 10,
+          "count": 30,
+          "p50_ms": 35.41,
+          "p95_ms": 45.04,
+          "mean_ms": 36.34,
+          "stdev_ms": 5.35,
+          "min_ms": 30.64,
+          "max_ms": 57.45
+        },
+        {
+          "frames": 24,
+          "cross_site_frames": 24,
+          "count": 30,
+          "p50_ms": 66.08,
+          "p95_ms": 79.12,
+          "mean_ms": 67.01,
+          "stdev_ms": 6.18,
+          "min_ms": 57.02,
+          "max_ms": 82.59
+        }
+      ],
+      "derived": {
+        "iframe_overhead": {
+          "frames_10": {
+            "p50_ms": 29.22,
+            "p95_ms": 37.01,
+            "per_frame_p50_ms": 2.92
+          },
+          "frames_24": {
+            "p50_ms": 59.89,
+            "p95_ms": 71.09,
+            "per_frame_p50_ms": 2.5
+          }
+        }
+      }
+    },
+    "phase-a-repeat-cee1d46": {
+      "metadata": {
+        "label": "phase-a-repeat",
+        "date": "2026-08-03T03:13:44.196Z",
+        "commit": "cee1d46",
+        "branch": "perf/guard-cache",
+        "working_tree_dirty": true,
+        "node": "v26.5.0",
+        "platform": "linux-x64",
+        "cpus": 8,
+        "quick_mode": false,
+        "betterwright_version": "1.6.2"
+      },
+      "config": {
+        "action_iterations": 100,
+        "action_warmup": 5,
+        "load_iterations": 10,
+        "load_warmup": 1,
+        "challenge_iterations": 30,
+        "challenge_warmup": 3,
+        "subresources": 50,
+        "origins": 4,
+        "iframe_counts": [
+          10,
+          24
+        ],
+        "frame_hosts": [
+          "127.0.0.2",
+          "127.0.0.3"
+        ],
+        "connections_dropped_between_loads": true,
+        "snippet": "return page.title()"
+      },
+      "per_action_latency": {
+        "count": 100,
+        "p50_ms": 7.35,
+        "p95_ms": 9.26,
+        "mean_ms": 7.3,
+        "stdev_ms": 1.46,
+        "min_ms": 4.26,
+        "max_ms": 13.81
+      },
+      "per_action_latency_after": {
+        "count": 100,
+        "p50_ms": 6.5,
+        "p95_ms": 8.77,
+        "mean_ms": 6.53,
+        "stdev_ms": 1.28,
+        "min_ms": 4.29,
+        "max_ms": 11.4
+      },
+      "session_drift": {
+        "note": "A' minus A: monotonic per-session cost growth, measured so it is not charged to the iframes",
+        "p50_delta_ms": -0.85,
+        "p50_delta_pct": -11.56
+      },
+      "page_load": {
+        "wall_time": {
+          "count": 10,
+          "p50_ms": 716.24,
+          "p95_ms": 725.62,
+          "mean_ms": 715.59,
+          "stdev_ms": 8.17,
+          "min_ms": 700.72,
+          "max_ms": 725.62
+        },
+        "navigation_time": {
+          "count": 10,
+          "p50_ms": 689,
+          "p95_ms": 704,
+          "mean_ms": 692.4,
+          "stdev_ms": 7.34,
+          "min_ms": 681,
+          "max_ms": 704
+        },
+        "guard_rpcs_per_load": {
+          "note": "route = context.route('**/*') interception, one per HTTP request, exact. transport = the SOCKS proxy's per-connection hostname + per-resolved-IP guards; connection-scoped and therefore variable, since Chromium decides how many sockets to open.",
+          "route": {
+            "count": 10,
+            "p50": 1,
+            "mean": 2,
+            "min": 1,
+            "max": 6
+          },
+          "transport": {
+            "count": 10,
+            "p50": 0,
+            "mean": 0.9,
+            "min": 0,
+            "max": 4
+          },
+          "total": {
+            "count": 10,
+            "p50": 1,
+            "mean": 2.9,
+            "min": 1,
+            "max": 10
+          }
+        },
+        "route_guard_rpcs_per_subresource": 0.04,
+        "fixture_requests_per_load": {
+          "count": 10,
+          "p50": 51,
+          "mean": 51,
+          "min": 51,
+          "max": 51
+        },
+        "first_load": {
+          "note": "n=1 warmup load, discarded from the series; kept only as a sanity reading",
+          "guard_rpcs_route": 5,
+          "guard_rpcs_transport": 3,
+          "fixture_requests": 51,
+          "wall_ms": 725.65
+        }
+      },
+      "challenge_scan": [
+        {
+          "frames": 10,
+          "cross_site_frames": 10,
+          "count": 30,
+          "p50_ms": 33.31,
+          "p95_ms": 46.22,
+          "mean_ms": 34.23,
+          "stdev_ms": 4.8,
+          "min_ms": 27.1,
+          "max_ms": 49.49
+        },
+        {
+          "frames": 24,
+          "cross_site_frames": 24,
+          "count": 30,
+          "p50_ms": 60.28,
+          "p95_ms": 71.96,
+          "mean_ms": 61.54,
+          "stdev_ms": 5.52,
+          "min_ms": 52.15,
+          "max_ms": 79.37
+        }
+      ],
+      "derived": {
+        "iframe_overhead": {
+          "frames_10": {
+            "p50_ms": 26.81,
+            "p95_ms": 37.45,
+            "per_frame_p50_ms": 2.68
+          },
+          "frames_24": {
+            "p50_ms": 53.78,
+            "p95_ms": 63.19,
+            "per_frame_p50_ms": 2.24
+          }
+        }
+      }
     }
   }
 }

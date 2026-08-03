@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import { createGuardProxy } from "../../dist/src/guard-proxy.js";
+import { createGuardUrl } from "../../dist/src/guard-url.js";
 
 const IPV6_ONE = "2001:db8:0:0:0:0:0:1";
 const IPV6_TWO = "2001:db8:0:0:0:0:0:2";
@@ -567,5 +568,245 @@ test("SOCKS5 replies preserve policy, reachability, and address errors", async (
         await proxy.close();
       }
     });
+  }
+});
+
+// --- Guard decision cache, driven through the proxy -------------------------
+//
+// These run the worker's real guardUrl (src/guard-url.ts) in front of the
+// proxy, so what is asserted is the shipped cache, not a stand-in: how many
+// times the client is actually consulted, and that caching never lets a
+// connection reach an address no live decision covered.
+
+const ALLOW = { allowed: true, cacheable: true };
+
+function cachedGuardProxy(
+  transport,
+  decide: (payload?: any) => any = () => ALLOW,
+  cacheOptions = {},
+) {
+  const rpcs = [];
+  const rpc = async (_method, payload) => {
+    rpcs.push(payload);
+    return decide(payload);
+  };
+  const proxy = createGuardProxy({
+    guardUrl: createGuardUrl({ rpc, ...cacheOptions }),
+    executeId: () => "guard-proxy-test",
+    transport,
+  });
+  return { proxy, rpcs, urls: () => rpcs.map((payload) => payload.url) };
+}
+
+function addressTransport(resolve, extra: Record<string, any> = {}) {
+  const dialed = [];
+  return {
+    dialed,
+    transport: {
+      lookup: async () => resolve(),
+      connect: async ({ host }) => {
+        dialed.push(host);
+        return new PassThrough();
+      },
+      delay: async () => {},
+      ...extra,
+    },
+  };
+}
+
+test("a first connection guards the host and every address, a second guards nothing", async () => {
+  const { dialed, transport } = addressTransport(() => [
+    { address: "192.0.2.1", family: 4 },
+    { address: "192.0.2.2", family: 4 },
+  ]);
+  const { proxy, rpcs, urls } = cachedGuardProxy(transport);
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "cached.test"), 0);
+    assert.deepEqual(urls(), [
+      "https://cached.test:443/",
+      "https://192.0.2.1:443/",
+      "https://192.0.2.2:443/",
+    ]);
+    assert.deepEqual(dialed, ["192.0.2.1"]);
+
+    assert.equal(await socksConnect(port, "cached.test"), 0);
+    assert.equal(rpcs.length, 3, "every decision must have been served from the cache");
+    assert.deepEqual(dialed, ["192.0.2.1", "192.0.2.1"]);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("decisions the client does not mark cacheable are re-asked every time", async () => {
+  for (const decision of [{ allowed: true }, { allowed: true, cacheable: false }]) {
+    const { transport } = addressTransport(() => [
+      { address: "192.0.2.1", family: 4 },
+      { address: "192.0.2.2", family: 4 },
+    ]);
+    const { proxy, rpcs } = cachedGuardProxy(transport, () => decision);
+    try {
+      const port = await proxy.ensure();
+      assert.equal(await socksConnect(port, "uncached.test"), 0);
+      assert.equal(rpcs.length, 3);
+      assert.equal(await socksConnect(port, "uncached.test"), 0);
+      assert.equal(
+        rpcs.length,
+        6,
+        `${JSON.stringify(decision)} must reach the client on every connection`,
+      );
+    } finally {
+      await proxy.close();
+    }
+  }
+});
+
+test("a rebound hostname is guarded again at its new address", async () => {
+  let resolved = [{ address: "192.0.2.1", family: 4 }];
+  const { dialed, transport } = addressTransport(() => resolved);
+  const { proxy, urls } = cachedGuardProxy(transport);
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "rebind.test"), 0);
+    assert.deepEqual(urls(), ["https://rebind.test:443/", "https://192.0.2.1:443/"]);
+
+    // The name is cached; the address it now resolves to is not, so the new
+    // literal is decided before anything connects to it.
+    resolved = [{ address: "198.51.100.7", family: 4 }];
+    assert.equal(await socksConnect(port, "rebind.test"), 0);
+    assert.deepEqual(urls(), [
+      "https://rebind.test:443/",
+      "https://192.0.2.1:443/",
+      "https://198.51.100.7:443/",
+    ]);
+    assert.deepEqual(dialed, ["192.0.2.1", "198.51.100.7"]);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("one blocked address blocks the connection, and the block is cached", async () => {
+  let clock = 1_000;
+  const { dialed, transport } = addressTransport(
+    () => [
+      { address: "192.0.2.1", family: 4 },
+      { address: "192.0.2.66", family: 4 },
+      { address: "192.0.2.3", family: 4 },
+    ],
+    { now: () => clock, failureCooldownMs: 1, failureBackoffBaseMs: 1 },
+  );
+  const { proxy, rpcs, urls } = cachedGuardProxy(transport, (payload) =>
+    payload.url.includes("192.0.2.66")
+      ? { allowed: false, reason: "test policy", cacheable: true }
+      : ALLOW,
+  );
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "mixed.test"), 2);
+    assert.deepEqual(
+      urls(),
+      [
+        "https://mixed.test:443/",
+        "https://192.0.2.1:443/",
+        "https://192.0.2.66:443/",
+        "https://192.0.2.3:443/",
+      ],
+      "validation stays exhaustive: every address is decided, even after a denial",
+    );
+    assert.deepEqual(dialed, [], "a denied address must stop the whole connection");
+
+    clock += 5;
+    assert.equal(await socksConnect(port, "mixed.test"), 2);
+    assert.equal(rpcs.length, 4, "the denial must be cached like any other decision");
+    assert.deepEqual(dialed, []);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("a denial in address order wins over a rejection that settles first", async () => {
+  // The addresses are guarded in parallel, so the error a caller sees must come
+  // from address order rather than from whichever guard finished first.
+  const settleOrder = [];
+  const later = async (value) => {
+    await new Promise((resolve) => setImmediate(resolve));
+    settleOrder.push("first");
+    return value;
+  };
+  const { transport } = addressTransport(
+    () => [
+      { address: "192.0.2.1", family: 4 },
+      { address: "192.0.2.2", family: 4 },
+    ],
+    { failureBackoffBaseMs: 1 },
+  );
+  const { proxy } = cachedGuardProxy(transport, (payload) => {
+    if (payload.url.includes("192.0.2.1"))
+      return later({ allowed: false, reason: "test policy" });
+    if (payload.url.includes("192.0.2.2")) {
+      settleOrder.push("second");
+      throw new Error("guard RPC failed");
+    }
+    return { allowed: true };
+  });
+  try {
+    const port = await proxy.ensure();
+    // 2 is "blocked by policy"; 1 would mean the RPC rejection won the race.
+    assert.equal(await socksConnect(port, "ordered.test"), 2);
+    assert.deepEqual(settleOrder, ["second", "first"]);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("a failed guard RPC is never cached, so the next attempt asks again", async () => {
+  let clock = 1_000;
+  let failNext = true;
+  const { dialed, transport } = addressTransport(() => [{ address: "192.0.2.1", family: 4 }], {
+    now: () => clock,
+    failureCooldownMs: 1,
+    failureBackoffBaseMs: 1,
+  });
+  const { proxy, rpcs } = cachedGuardProxy(transport, (payload) => {
+    if (payload.url.includes("192.0.2.1") && failNext) {
+      failNext = false;
+      throw new Error("guard RPC failed");
+    }
+    return ALLOW;
+  });
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "flaky.test"), 1);
+    assert.equal(rpcs.length, 2);
+    assert.deepEqual(dialed, []);
+
+    clock += 5;
+    assert.equal(await socksConnect(port, "flaky.test"), 0);
+    assert.equal(rpcs.length, 3, "the address must be re-decided, not remembered as failed");
+    assert.deepEqual(dialed, ["192.0.2.1"]);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("an expired decision is re-asked before the next connection", async () => {
+  let cacheClock = 0;
+  const { transport } = addressTransport(() => [{ address: "192.0.2.1", family: 4 }]);
+  const { proxy, rpcs } = cachedGuardProxy(transport, () => ALLOW, {
+    now: () => cacheClock,
+    ttlMs: 5_000,
+  });
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "ttl.test"), 0);
+    assert.equal(rpcs.length, 2);
+    cacheClock += 5_000;
+    assert.equal(await socksConnect(port, "ttl.test"), 0);
+    assert.equal(rpcs.length, 2);
+    cacheClock += 1;
+    assert.equal(await socksConnect(port, "ttl.test"), 0);
+    assert.equal(rpcs.length, 4, "both the host and its address must be re-decided");
+  } finally {
+    await proxy.close();
   }
 });

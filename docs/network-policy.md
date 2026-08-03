@@ -81,6 +81,36 @@ new NetworkPolicy({ custom: onlyGetNavigations });
 An `allowed: true` returned from the hook still cannot reach a metadata endpoint
 — that floor is re-checked after the hook.
 
+## Decision caching
+
+A page pulling 200 subresources would otherwise ask the client 200 times about
+the same few hosts, so the worker keeps a short-lived cache of guard decisions,
+keyed by scheme + host + port and held for at most 5 seconds. Allows and denies
+are both cached; a failed check never is.
+
+Only decisions from a stock `NetworkPolicy` with no `custom` hook are eligible —
+the client decides, per policy, whether its answers may be cached at all:
+
+- **A `custom` hook, a `NetworkPolicy` subclass, or any other object with a
+  `check` method is never cached.** Every request reaches your hook, so a policy
+  that decides on `details`, time, or external state keeps working exactly as
+  written.
+- **Installing a hook mid-session empties the cache**, so it governs hosts the
+  browser has already contacted rather than only new ones. The first check that
+  reaches the client after the change is what carries the flush, and navigations
+  are never cached — so in practice the next page load does it. A request to an
+  already-cached host with no such check in between falls back to the 5-second
+  expiry below.
+- **Mutating `allowHosts` or `blockHosts` mid-session takes up to 5 seconds to
+  take effect** for a host the browser has already contacted. Hosts not yet seen
+  (and every host after the entry expires) use the new lists immediately. Unlike
+  installing a hook, editing these lists does not change the *shape* of the
+  policy, so nothing in a decision marks it as changed and there is nothing for a
+  flush to key off — the expiry is the whole mechanism.
+
+If a change must apply immediately and you cannot wait for either, construct the
+policy the way you want it before the browser launches, or close the session.
+
 ## Why metadata endpoints are unliftable
 
 A server-side agent usually runs on a cloud instance whose metadata service

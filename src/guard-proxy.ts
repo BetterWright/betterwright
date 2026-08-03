@@ -543,18 +543,27 @@ export function createGuardProxy(
 
     // Validate every answer, then connect to one of these exact literals. This
     // closes both redirect-hop and DNS-rebinding gaps: Chromium never performs a
-    // second target lookup outside this guarded worker.
-    for (const candidate of addresses) {
-      const decision = await guardUrl(
-        transportUrl(candidate.address, port),
-        {
-          method: "CONNECT",
-          resourceType: "transport-address",
-          resolvedFrom: host,
-        },
-        attribution,
-      );
-      if (!decision?.allowed) throw proxyBlockedError(decision?.reason);
+    // second target lookup outside this guarded worker. The checks are issued as
+    // one parallel wave but remain exhaustive: every address is decided before
+    // any connect, and failures are reported in address order — not settle order
+    // — so the error a caller sees does not depend on guard timing.
+    const decisions = await Promise.allSettled(
+      addresses.map((candidate) =>
+        guardUrl(
+          transportUrl(candidate.address, port),
+          {
+            method: "CONNECT",
+            resourceType: "transport-address",
+            resolvedFrom: host,
+          },
+          attribution,
+        ),
+      ),
+    );
+    for (const settled of decisions) {
+      if (settled.status === "rejected") throw settled.reason;
+      if (!settled.value?.allowed)
+        throw proxyBlockedError(settled.value?.reason);
     }
     return addresses;
   }

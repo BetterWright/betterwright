@@ -82,6 +82,7 @@ import {
   httpGetViaProxy,
   parseUpstreamProxy,
 } from "./guard-proxy.js";
+import { createGuardUrl } from "./guard-url.js";
 import {
   movePointer,
   pointInside,
@@ -485,30 +486,11 @@ function rpc(method, payload, executeId): Promise<any> {
   });
 }
 
-async function guardUrl(url, details, executeId): Promise<any> {
-  let scheme = "";
-  try {
-    scheme = new URL(url).protocol.toLowerCase();
-  } catch {
-    return { allowed: false, reason: "invalid URL" };
-  }
-  if (scheme === "about:" && url === "about:blank") return { allowed: true };
-  if (scheme === "data:" || scheme === "blob:") return { allowed: true };
-  if (!["http:", "https:", "ws:", "wss:"].includes(scheme)) {
-    return {
-      allowed: false,
-      reason: `unsupported browser URL scheme: ${scheme}`,
-    };
-  }
-  const fullUrl = Boolean(
-    details?.isNavigation ||
-    details?.resourceType === "document" ||
-    details?.resourceType === "download" ||
-    scheme === "ws:" ||
-    scheme === "wss:",
-  );
-  return rpc("guard", { url, ...details, fullUrl }, executeId);
-}
+// Scheme handling, the RPC, and the decision cache live in guard-url.ts: this
+// file is a process entrypoint, so keeping them out of it is what lets the
+// security contract be unit-tested. One instance per worker process — that is
+// one BetterWright, and so one policy.
+const guardUrl = createGuardUrl({ rpc });
 
 function transportExecuteId() {
   // Attribution for the transport guard. With several sessions executing at

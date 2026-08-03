@@ -673,6 +673,28 @@ export class BetterWright {
     return this._pending.get(executionId)?.child === child;
   }
 
+  /**
+   * Whether the worker may cache this policy's guard decisions by
+   * scheme/host/port. A stock `NetworkPolicy` running its own `check` with no
+   * `custom` hook is the only shape whose verdict depends on nothing but those
+   * three fields (src/policy.ts); anything that can consult `details`, time, or
+   * external state must be re-asked per request.
+   *
+   * Must be read per RPC, never memoized: `policy`, `policy.custom`, and
+   * `policy.check` are all public and mutable, so a hook installed — or a whole
+   * policy swapped in — after construction has to invalidate cacheability at
+   * once. Method identity is checked too, since `constructor` identity alone
+   * still admits an own-property `check` override and Proxy decorators.
+   */
+  get _policyCacheable() {
+    const policy = this.policy;
+    return (
+      policy?.constructor === NetworkPolicy &&
+      policy.check === NetworkPolicy.prototype.check &&
+      !policy.custom
+    );
+  }
+
   async _serviceRpc(message, child = this._process) {
     const requestId = String(message.requestId || "");
     let response;
@@ -683,7 +705,10 @@ export class BetterWright {
       let result;
       if (message.method === "guard") {
         const { url, ...details } = payload;
-        result = this.policy.check(url, details);
+        // Copy rather than annotate: policy.check may return a shared or frozen
+        // object, and `cacheable` is an envelope field, not part of the public
+        // NetworkDecision the policy produced.
+        result = { ...this.policy.check(url, details), cacheable: this._policyCacheable };
       } else if (message.method === "vault") {
         if (!this.vault)
           throw new Error(

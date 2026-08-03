@@ -280,6 +280,96 @@ Caveats when comparing runs:
 - Only run this on an idle machine. A browser build, a test suite, or a video
   call in the background will swamp the per-action numbers.
 
+## Phase A results
+
+`phase-a-cee1d46` and `phase-a-repeat-cee1d46` — 2026-08-03, same machine, Node
+v26.5.0, linux-x64, 8 CPUs, branch `perf/guard-cache`: worker-side guard
+decision cache (`src/guard-url.ts`) plus parallel resolved-IP validation
+(`src/guard-proxy.ts`). Two full-fidelity runs back to back, for the same reason
+the baseline has a `repeat`.
+
+| Metric (p50) | baseline | phase-a | repeat | delta |
+|---|---|---|---|---|
+| **A.** Per-action latency (n=100) | 7.60 ms | 7.36 ms | 7.35 ms | −3.2% |
+| **A'.** Per-action latency, late-session (n=100) | 6.45 ms | 6.19 ms | 6.50 ms | ±noise |
+| **B.** Page-load wall time (n=10) | 715.8 ms | 713.8 ms | 716.2 ms | −0.3% |
+| **B.** In-page navigation time (n=10) | 695 ms | 691 ms | 689 ms | −0.7% |
+| **C.** Per-action, 10 cross-site iframes (n=30) | 36.68 ms | 35.41 ms | 33.31 ms | ±noise (−3.5% / −9.2%) |
+| **C.** Per-action, 24 cross-site iframes (n=30) | 60.57 ms | 66.08 ms | 60.28 ms | see below |
+
+| Guard RPCs per load (n=10) | baseline p50 | phase-a p50 | baseline mean | phase-a mean | delta (mean) |
+|---|---|---|---|---|---|
+| **`route`** — one per HTTP request | **51** (51–51) | **1** (1–6) | 51 | 2.0 | **−96.1%** |
+| **`transport`** — per-connection hostname + IP | **44** (36–48) | **0** (0–3) | 42.8 | 0.8 | **−98.1%** |
+| `total` | 95 | 1 | 93.8 | 2.8 | −97.0% |
+
+| Assertion | baseline | phase-a |
+|---|---|---|
+| Fixture requests per load (n=10) | **51** — min 51, max 51 | **51** — min 51, max 51 (enforced) |
+| Route guard RPCs per subresource | 1.02 | **0.04** |
+| Warmup (cold-cache) load: route / transport | 51 / 46 | 6 / 5 — repeat 5 / 3 |
+
+| Derived (against the adjacent A' control) | baseline | phase-a | repeat |
+|---|---|---|---|
+| Iframe tax per action, 10 frames (p50) | +30.23 ms | +29.22 ms | +26.81 ms |
+| Iframe tax per action, 24 frames (p50) | +54.12 ms | +59.89 ms | +53.78 ms |
+| Session drift (A' − A, p50) | −15.1% | −15.9% | −11.6% |
+
+### Reading Phase A
+
+**The route bucket — the one the baseline called "exact, treat any movement as
+real" — went from a flat 51 to a p50 of 1, and the fixture still served exactly
+51 requests on every measured load.** That cross-check is the whole reason to
+believe the number: the subresources were genuinely re-fetched, the guard simply
+stopped costing a stdio round-trip. The steady-state 1 is the cache-busted
+document, which is a `fullUrl` check and therefore *never* cacheable by
+construction — so 1/load is the floor this design can reach, and it reaches it.
+The mean of 2.0 rather than 1.0 is the 5 s TTL amortising: a load cycle is
+~1.25 s, so roughly every fourth load re-pays first contact (loads 4 and 8 in the
+first run). That is the TTL doing its job against mutable `allowHosts`, not a
+miss. Cold-cache cost is 5–6 route RPCs, and tracing the payload URLs shows why
+it is 5–6 and not a fixed 5: one document plus one miss per distinct origin
+(4), plus occasionally one *duplicate* miss when two same-origin subresources
+are in flight before the first RPC resolves. There is no single-flight
+coalescing, so concurrent first contacts to one key can each miss. It is bounded
+by connection concurrency, costs at most a handful of RPCs once per key per TTL,
+and is worth noting rather than fixing now.
+
+**Two caveats keep the transport row honest.** Its collapse to a p50 of 0 is
+real but this fixture flatters its *shape*: every origin is a literal IP, so
+`transportUrl(host, port)` and `transportUrl(address, port)` produce the same
+cache key, which makes the per-IP `transport-address` check a guaranteed hit —
+zero of them appear in a traced load. Against a real hostname with N A-records
+the keys differ, so first contact costs 1 + N and every repeat contact costs 0;
+still a collapse, just not to zero on the first connection. And **the parallel
+IP validation is not measured by this harness at all** — loopback resolves to a
+single address, so there is nothing to overlap, and the cache turns the check
+into a hit regardless. That half of Phase A needs a multi-A-record target to
+show up anywhere, and no number in this table is evidence for or against it.
+
+**Wall time did not move, exactly as the baseline predicted, and per-action
+latency is flat-to-marginally-better.** 715.8 → 713.8/716.2 ms: 50 removed
+round-trips are invisible against ~695 ms of fixture navigation and `networkidle`
+settling, which is why the counts and not the clock are the Phase A metrics. The
+~3% dip in A is within the ±2% the baseline records for repeated runs; do not
+bank it.
+
+**Neither challenge-scan row carries a Phase A signal — both are noise.** Phase A
+touches nothing in `collectChallengeMetadata` or `collectFrameMetadata`, so any
+movement here is run-to-run spread, and the two rows are quoted as ranges rather
+than deltas for that reason. C24 is the one that needed a second run: the first
+Phase A run put the 24-frame page at 66.08 ms, +9.1% over baseline — outside the
+±0.4% spread the Variance section claims for that metric. The repeat came back at
+60.28 ms against a 60.57 ms baseline (−0.5%). Across the four recorded full runs
+the 24-frame p50 has spanned 60.28–66.08 ms and the 10-frame p50 has spanned
+33.31–36.68 ms — **~10% for both, so the earlier claim that the 24-frame figure
+is the steadier of the two challenge-scan points (<1%) is wrong** until more runs
+say otherwise. The C10 arms straddle that whole band (−3.5% for the first run,
+−9.2% for the repeat, and +1.1% if the means are compared instead), which is why
+no single delta is quoted. Phase B is graded on these metrics, so treat
+60.3–60.6 ms and 33.3–36.7 ms as its baselines and require a win far larger than
+10%.
+
 ## Files
 
 - [`run.ts`](run.ts) — the harness. Compiled to `run.js` by `npm run
