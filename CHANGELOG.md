@@ -9,7 +9,46 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-08-03
+
+A performance release, continuing 1.6.2. No API changes: 1.6.3 is a drop-in
+replacement for 1.6.2. The theme is round trips — between the worker and the
+client, and between the worker and the browser.
+
+### Added
+
+- `benchmarks/perf`, a regression harness for this work: per-action latency
+  with an adjacent late-session control so per-session drift is not charged to
+  the thing being measured, guard RPCs counted at the client boundary and
+  bucketed by origin, and the challenge-scan tax at 10 and 24 genuinely
+  cross-site frames. Fixture servers count their own requests and the run fails
+  if a load is not exactly the expected size, so a browser-cache artifact cannot
+  be mistaken for a win.
+
 ### Changed
+
+- Guard decisions are cached in the worker. Every browser connection previously
+  cost a full RPC to the client process per policy check — one per HTTP request,
+  plus one per hostname and one *serial* RPC per resolved IP in the SOCKS guard.
+  For a stock `NetworkPolicy` the verdict is a pure function of scheme, host and
+  port, so those answers are now cached (5 s, 2048 entries). On a 50-subresource
+  page load: **95 guard RPCs to 1**.
+
+  The client, which is the only process the policy lives in, decides per
+  response whether it may be cached at all — a `custom` hook, a subclass, an
+  instance-patched `check` or any other object is never eligible, checked per
+  RPC rather than once at construction. Full-URL checks (navigations, documents,
+  downloads, websockets) are never cached in either direction, and a failed
+  check is never cached, so the transport still fails closed on retry.
+  Mutating `allowHosts`/`blockHosts` mid-session takes up to 5 s to apply to a
+  host already contacted; installing a `custom` hook empties the cache instead,
+  so it governs hosts already seen. See "Decision caching" in
+  `docs/network-policy.md`.
+
+- Resolved addresses are validated in one parallel wave rather than serially.
+  Every address is still decided before any connect, and failures are reported
+  in address order rather than settle order, so which error a caller sees does
+  not depend on guard timing.
 
 - Challenge detection is now staged. Every `run()` still reads the main frame's
   title, text and provider response tokens, but the per-frame walk — one round
@@ -22,6 +61,25 @@ Releases before 1.1.3 predate this file; their notes live on the
   "When detection runs" in `docs/captcha.md`, including the one accepted
   limitation: a page with more than three opaque cross-origin frames where the
   challenge is identifiable only by the text inside one of them.
+
+  On the benchmark fixture the per-action iframe tax falls from **+27–30 ms to
+  +1.5–1.7 ms at 10 cross-site frames**, and from **+54–60 ms to +2.4–4.1 ms at
+  24**. Stage 2 also dropped from about five round trips per frame to two, and
+  now reads frame text and checked state through utility-world locators, so page
+  script cannot shape what the detector sees — detection is harder to fool than
+  it was before, not just cheaper.
+
+- The sandbox no longer recompiles its constant realm factory on every execute;
+  the `vm.Script` is built once at module load. Snippet compilation moved to
+  `src/compile-code.ts`, which tries the statement form first for snippets that
+  cannot begin an expression. Which form runs is unchanged — including the
+  sloppy-mode cases where `let` is an identifier (`let.x`, `let in o`,
+  `let instanceof X`), which must stay expression-first — and a seeded
+  differential corpus evaluates both orders to prove it.
+
+  This shows up on trivial snippets rather than real ones: on a quiet page,
+  per-action latency is unchanged within noise, because a snippet that touches
+  the page is dominated by its round trip rather than by compilation.
 
 ## [1.6.2] - 2026-08-02
 
@@ -480,7 +538,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.6.3...HEAD
+[1.6.3]: https://github.com/BetterWright/betterwright/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/BetterWright/betterwright/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/BetterWright/betterwright/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/BetterWright/betterwright/compare/v1.5.2...v1.6.0
