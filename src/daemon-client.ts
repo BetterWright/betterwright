@@ -30,6 +30,11 @@ import { profileLabel, resolveProfileName } from "./profile-name.js";
 const CONNECT_TIMEOUT_MS = 1_000;
 const SPAWN_WAIT_MS = 8_000;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
+// Probe a freshly spawned daemon eagerly, then back off to the steady interval.
+// The deadline (SPAWN_WAIT_MS) is what bounds the wait; these only decide how
+// much of it a fast start has to sit through.
+const SPAWN_RETRY_MIN_MS = 25;
+const SPAWN_RETRY_MAX_MS = 100;
 // The daemon's stderr log is append-only across restarts; roll it over once it
 // gets large so a long-lived install cannot fill a disk with it.
 const LOG_ROTATE_BYTES = 4 * 1024 * 1024;
@@ -210,10 +215,12 @@ async function connectWithSpawn({ home, socketPath, cliPath, config, profile, sp
   }
   spawnDaemon({ home, cliPath, config, profile });
   const deadline = Date.now() + SPAWN_WAIT_MS;
+  let retryMs = SPAWN_RETRY_MIN_MS;
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
     socket = await connectOnce(socketPath, 500);
     if (socket) return socket;
+    await new Promise((resolve) => setTimeout(resolve, retryMs));
+    retryMs = Math.min(retryMs * 2, SPAWN_RETRY_MAX_MS);
   }
   return null;
 }

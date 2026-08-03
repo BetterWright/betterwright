@@ -9,6 +9,7 @@ import {
   pendingCredentialRecovery,
 } from "../../dist/src/credential-constants.js";
 import { BetterWright, LocalCredentialVault } from "../../dist/src/index.js";
+import { NetworkPolicy } from "../../dist/src/policy.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 test("the encrypted local credential vault is enabled by default and can be replaced or disabled", async () => {
@@ -405,5 +406,113 @@ test("CLOAKBROWSER_BINARY_PATH remains the only binary override", async () => {
     await browser.close();
     if (previous === undefined) delete process.env.CLOAKBROWSER_BINARY_PATH;
     else process.env.CLOAKBROWSER_BINARY_PATH = previous;
+  }
+});
+
+test("only a stock NetworkPolicy's guard decisions are marked cacheable", async () => {
+  // The worker caches a guard decision only when the client says it may, and
+  // the client may only say so for the one policy shape whose verdict depends
+  // on nothing but scheme, host, and port. Anything that can consult `details`,
+  // time, or external state — a custom hook, a subclass, a duck-typed object —
+  // must reach the policy on every request.
+  class TighterPolicy extends NetworkPolicy {}
+  const shared = Object.freeze({ allowed: true, reason: "shared verdict" });
+  const patchedCheck = new NetworkPolicy();
+  patchedCheck.check = () => shared;
+  const grafted = Object.create(NetworkPolicy.prototype);
+  grafted.custom = null;
+  grafted.check = () => shared;
+  const proxied = new Proxy(new NetworkPolicy(), {
+    get: (target, prop, receiver) =>
+      prop === "check"
+        ? () => shared
+        : Reflect.get(target, prop, receiver),
+  });
+  const cases = [
+    { name: "default policy", options: {}, cacheable: true },
+    { name: "stock NetworkPolicy", options: { policy: new NetworkPolicy() }, cacheable: true },
+    {
+      name: "custom hook",
+      options: { policy: new NetworkPolicy({ custom: () => shared }) },
+      cacheable: false,
+    },
+    { name: "subclass", options: { policy: new TighterPolicy() }, cacheable: false },
+    {
+      name: "duck-typed check",
+      options: { policy: { check: () => shared } },
+      cacheable: false,
+    },
+    // Exact-constructor identity alone would pass all three of these: an own
+    // property shadows the prototype's check, and a Proxy forwards constructor
+    // and custom to its target while intercepting check.
+    { name: "instance-patched check", options: { policy: patchedCheck }, cacheable: false },
+    { name: "grafted prototype", options: { policy: grafted }, cacheable: false },
+    { name: "proxy decorator", options: { policy: proxied }, cacheable: false },
+  ];
+
+  for (const item of cases) {
+    const bw = new BetterWright({ vault: false, ...item.options });
+    const sent = [];
+    bw._send = (message) => sent.push(message);
+    try {
+      assert.equal(bw._policyCacheable, item.cacheable, item.name);
+      await bw._serviceRpc({
+        requestId: "guard-1",
+        method: "guard",
+        payload: { url: "https://example.com/a", resourceType: "image", fullUrl: false },
+      });
+      const response = sent.at(-1);
+      assert.equal(response.ok, true, item.name);
+      assert.equal(response.result.cacheable, item.cacheable, item.name);
+      assert.equal(response.result.allowed, true, item.name);
+    } finally {
+      await bw.close();
+    }
+  }
+  // Annotating the decision must never write through to the policy's own object.
+  assert.deepEqual(shared, { allowed: true, reason: "shared verdict" });
+  assert.equal("cacheable" in shared, false);
+});
+
+test("cacheability follows mid-session policy mutation, not construction", async () => {
+  // `policy`, `policy.custom`, and `policy.check` are all public and mutable,
+  // and docs/network-policy.md advertises mid-session policy edits. A hook
+  // installed after construction must stop the worker caching immediately —
+  // memoizing the flag would keep serving pre-hook verdicts for up to the cache
+  // TTL, and forever for hosts that keep being refreshed as cacheable.
+  const guard = async (bw) => {
+    const sent = [];
+    bw._send = (message) => sent.push(message);
+    await bw._serviceRpc({
+      requestId: "guard-1",
+      method: "guard",
+      payload: { url: "https://example.com/a", resourceType: "image", fullUrl: false },
+    });
+    return sent.at(-1).result;
+  };
+
+  const policy = new NetworkPolicy();
+  const bw = new BetterWright({ vault: false, policy });
+  try {
+    assert.equal((await guard(bw)).cacheable, true);
+
+    policy.custom = () => ({ allowed: false, reason: "hook says no" });
+    const hooked = await guard(bw);
+    assert.equal(hooked.cacheable, false);
+    assert.equal(hooked.allowed, false);
+
+    policy.custom = null;
+    assert.equal((await guard(bw)).cacheable, true);
+
+    policy.check = () => ({ allowed: true, reason: "patched" });
+    assert.equal((await guard(bw)).cacheable, false);
+
+    bw.policy = new NetworkPolicy();
+    assert.equal((await guard(bw)).cacheable, true);
+
+    bw.policy = new NetworkPolicy({ custom: () => ({ allowed: true, reason: "swapped" }) });
+    assert.equal((await guard(bw)).cacheable, false);
+  } finally {
+    await bw.close();
   }
 });

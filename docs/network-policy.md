@@ -81,6 +81,24 @@ new NetworkPolicy({ custom: onlyGetNavigations });
 An `allowed: true` returned from the hook still cannot reach a metadata endpoint
 — that floor is re-checked after the hook.
 
+## Decision caching
+
+A page pulling 200 subresources would otherwise ask the client 200 times about
+the same few hosts, so the worker keeps a short-lived cache of guard decisions,
+keyed by scheme + host + port and held for at most 5 seconds. Allows and denies
+are both cached; a failed check never is.
+
+Only decisions from a stock `NetworkPolicy` with no `custom` hook are eligible —
+the client decides, per policy, whether its answers may be cached at all:
+
+- **Mutating `allowHosts` or `blockHosts` mid-session takes up to 5 seconds to
+  take effect** for a host the browser has already contacted. Hosts not yet seen
+  (and every host after the entry expires) use the new lists immediately.
+- **A `custom` hook, a `NetworkPolicy` subclass, or any other object with a
+  `check` method is never cached.** Every request reaches your hook, so a policy
+  that decides on `details`, time, or external state keeps working exactly as
+  written.
+
 ## Why metadata endpoints are unliftable
 
 A server-side agent usually runs on a cloud instance whose metadata service

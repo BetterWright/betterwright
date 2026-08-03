@@ -83,8 +83,13 @@ The controls that hold even if a snippet found a way around the JS facades:
    DNS-rebinding and redirect-hop bypasses: Chromium never does a second,
    unguarded lookup. WebRTC is pinned to the proxy path so it can't send UDP
    around it.
-2. **The policy, failing closed.** `NetworkPolicy` answers every `guard`. If it
-   errors, the request is denied. Metadata endpoints can't be allowlisted.
+2. **The policy, failing closed.** `NetworkPolicy` answers every `guard` the
+   worker cannot serve from its short-lived (≤5 s) decision cache. Navigations,
+   documents, downloads and WebSocket upgrades always reach it, and only a stock
+   policy's host-scoped answers are ever reused — a `custom` hook, a subclass or
+   any other `check` implementation is asked every time (see
+   [network-policy.md](network-policy.md)). If it errors, the request is denied
+   and nothing is cached. Metadata endpoints can't be allowlisted.
 
 These are independent of the sandbox and of each other. See
 [network-policy.md](network-policy.md) for the metadata-endpoint rationale in
