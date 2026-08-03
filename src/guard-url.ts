@@ -22,8 +22,16 @@
 //     re-derive that equivalence and could drift from it.
 //   - Failures are never cached. An RPC rejection propagates unchanged and
 //     leaves no entry, so the transport still fails closed on the next attempt.
-//   - allowHosts/blockHosts are public mutable arrays, so entries expire after
-//     `ttlMs` instead of living for the session.
+//   - A response that is not cacheable empties the cache. Declining to write
+//     new entries would still leave the old ones answering for hosts the
+//     browser had already contacted, so a `custom` hook installed mid-session
+//     would govern only new hosts — which is not what "never cached" means.
+//     Any navigation is an uncacheable check, so a page load flushes.
+//   - allowHosts/blockHosts are public mutable arrays, and a mutation is
+//     invisible from here: the verdict shape is unchanged, so nothing in a
+//     response marks it. Those converge on `ttlMs` instead. The same bound
+//     covers the one case the flush above cannot see — an already-cached host
+//     re-checked with no uncacheable check in between.
 //   - The cache belongs to the guard it was created with. A worker process
 //     serves one BetterWright and therefore one policy, so decisions made under
 //     one policy can never answer for another.
@@ -103,10 +111,26 @@ export function createGuardUrl({
       if (cached) return { ...cached };
     }
     const response = await rpc("guard", { url, ...details, fullUrl }, executeId);
-    if (key && response?.cacheable === true) {
-      const decision: GuardDecision = { allowed: response.allowed === true };
-      if (typeof response.reason === "string") decision.reason = response.reason;
-      cacheSet(key, decision);
+    if (response?.cacheable === true) {
+      if (key) {
+        const decision: GuardDecision = { allowed: response.allowed === true };
+        if (typeof response.reason === "string") decision.reason = response.reason;
+        cacheSet(key, decision);
+      }
+    } else if (cache.size) {
+      // The client just said this policy is not cacheable, and every entry
+      // below was decided back when it was. Refusing to write new entries is
+      // not enough on its own: a `custom` hook installed mid-session — or a
+      // whole policy swapped in — has to govern the hosts already contacted,
+      // not just the ones that happen to be new. Drop them now instead of
+      // letting them answer for the rest of their TTL.
+      //
+      // Navigations, documents, downloads and websockets are never cacheable,
+      // so any page load reaches this and flushes. What it cannot reach is a
+      // request to an already-cached host made with no uncacheable check in
+      // between; that one still converges on `ttlMs`, the same bound as an
+      // allowHosts/blockHosts mutation.
+      cache.clear();
     }
     return response;
   };

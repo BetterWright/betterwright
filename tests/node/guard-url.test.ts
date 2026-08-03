@@ -376,3 +376,99 @@ test("a cached guard decides every URL exactly as NetworkPolicy.check does", asy
     }
   }
 });
+
+// A hook installed after the browser has already contacted a host is the case
+// that made "a custom policy is never cached" untrue: refusing to write new
+// entries still left the old ones answering. These pin the flush that fixes it,
+// and the bound on what the flush cannot reach.
+
+test("a custom hook installed mid-session governs hosts already cached", async () => {
+  // The clock never advances, so nothing here can be the TTL doing the work.
+  const clock = 0;
+  const policy = new NetworkPolicy();
+  const { bw, guardUrl, rpcCount } = clientGuard(policy, { now: () => clock, ttlMs: 5_000 });
+  try {
+    assert.equal((await guardUrl("https://seen.example/a", {}, "e1")).allowed, true);
+    assert.equal((await guardUrl("https://seen.example/b", {}, "e1")).allowed, true);
+    assert.equal(rpcCount(), 1, "the second check was served from the cache");
+
+    policy.custom = () => ({ allowed: false, reason: "custom deny" });
+
+    // Any navigation is an uncacheable check, so it reaches the client, comes
+    // back not-cacheable, and empties the cache.
+    const navigation = await guardUrl(
+      "https://elsewhere.example/page",
+      { isNavigation: true },
+      "e1",
+    );
+    assert.equal(navigation.allowed, false);
+
+    const revisited = await guardUrl("https://seen.example/c", {}, "e1");
+    assert.equal(revisited.allowed, false, "the hook now decides the cached host");
+    assert.match(revisited.reason, /custom deny/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("an uncacheable response empties the cache even for an unrelated host", async () => {
+  const clock = 0;
+  const { rpc, calls } = recordingRpc((payload) =>
+    payload.fullUrl ? { allowed: true } : { allowed: true, cacheable: true },
+  );
+  const guardUrl = createGuardUrl({ rpc, now: () => clock, ttlMs: 5_000 });
+
+  await guardUrl("https://a.example/1", {}, "e1");
+  await guardUrl("https://b.example/1", {}, "e1");
+  assert.equal(calls.length, 2);
+  await guardUrl("https://a.example/2", {}, "e1");
+  assert.equal(calls.length, 2, "both hosts are cached");
+
+  await guardUrl("https://c.example/page", { isNavigation: true }, "e1");
+  assert.equal(calls.length, 3);
+
+  await guardUrl("https://a.example/3", {}, "e1");
+  await guardUrl("https://b.example/2", {}, "e1");
+  assert.equal(calls.length, 5, "the flush dropped every entry, not just one");
+});
+
+test("a cacheable response never flushes: normal operation keeps its cache", async () => {
+  // The flush must key off cacheability, not off the check being full-URL — a
+  // stock policy answers navigations with cacheable:true, and a page load
+  // interleaves those with subresources constantly.
+  const clock = 0;
+  const policy = new NetworkPolicy();
+  const { bw, guardUrl, rpcCount } = clientGuard(policy, { now: () => clock, ttlMs: 5_000 });
+  try {
+    await guardUrl("https://keep.example/sub", {}, "e1");
+    assert.equal(rpcCount(), 1);
+    await guardUrl("https://keep.example/page", { isNavigation: true }, "e1");
+    assert.equal(rpcCount(), 2, "navigations always reach the client");
+    await guardUrl("https://keep.example/sub2", {}, "e1");
+    assert.equal(rpcCount(), 2, "the host entry survived the navigation");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("without an uncacheable check in between, a new hook waits for the TTL", async () => {
+  // The honest bound: the flush needs a response to ride on. A host re-checked
+  // with nothing uncacheable in between converges on ttlMs, exactly like an
+  // allowHosts/blockHosts mutation.
+  let clock = 0;
+  const policy = new NetworkPolicy();
+  const { bw, guardUrl } = clientGuard(policy, { now: () => clock, ttlMs: 5_000 });
+  try {
+    assert.equal((await guardUrl("https://quiet.example/a", {}, "e1")).allowed, true);
+    policy.custom = () => ({ allowed: false, reason: "custom deny" });
+    assert.equal(
+      (await guardUrl("https://quiet.example/b", {}, "e1")).allowed,
+      true,
+      "still stale: nothing has reached the client to carry the flush",
+    );
+    clock += 5_001;
+    assert.equal((await guardUrl("https://quiet.example/c", {}, "e1")).allowed, false);
+  } finally {
+    await bw.close();
+  }
+});
