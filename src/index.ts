@@ -31,6 +31,11 @@ export {
 export { detectBotChallenge } from "./challenges.js";
 export { BetterWright, BrowserError } from "./client.js";
 export {
+  runLolcode,
+  runLolcodeCli,
+  runLolcodeModule,
+} from "./lolcode.js";
+export {
   piImageArtifacts,
   piImageContent,
   piPrimaryImageArtifact,
