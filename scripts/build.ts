@@ -11,6 +11,10 @@ const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");
 
 fs.rmSync(dist, { recursive: true, force: true });
 
+const lolcodeSource = path.join(root, "lolcode");
+const lolcodeOutput = path.join(dist, "lolcode");
+fs.cpSync(lolcodeSource, lolcodeOutput, { recursive: true });
+
 const result = spawnSync(process.execPath, [tsc, "--project", "tsconfig.json"], {
   cwd: root,
   stdio: "inherit",

@@ -67,6 +67,8 @@ try {
     "dist/src/index.js",
     "dist/src/vault.js",
     "dist/src/worker.js",
+    "dist/lolcode/cli.lol",
+    "dist/lolcode/api.lol",
     "types/index.d.ts",
     "types/vault.d.ts",
     "types/captcha-solver.d.ts",
@@ -163,6 +165,7 @@ try {
         "const pi = await import('betterwright/pi');",
         "const piExtension = await import('betterwright/pi-extension');",
         "const mcp = await import('betterwright/mcp-server');",
+        "const lolcode = await import('betterwright/lolcode');",
         "const vault = await import('betterwright/vault');",
         "if (typeof root.BetterWright !== 'function') throw new Error('missing BetterWright');",
         "if (typeof root.LocalCredentialVault !== 'function') throw new Error('missing LocalCredentialVault');",
@@ -172,6 +175,7 @@ try {
         "if (typeof pi.piImageContent !== 'function') throw new Error('missing Pi export');",
         "if (typeof piExtension.default !== 'function') throw new Error('missing Pi extension');",
         "if (typeof vault.createLocalCredentialVault !== 'function') throw new Error('missing vault export');",
+        "if (typeof lolcode.runLolcode !== 'function') throw new Error('missing LOLCODE export');",
         // The owner-only reads are a supported surface now; a missing method
         // means `betterwright vault` would be broken in the published package.
         "const v = vault.createLocalCredentialVault({ home: '/tmp/betterwright-package-vault' });",
@@ -193,6 +197,7 @@ try {
       "import type { Guardrails } from 'betterwright/prompt';",
       "import { METADATA_RESOLVER_RULES } from 'betterwright/worker';",
       "import { runMcpServer } from 'betterwright/mcp-server';",
+      "import { runLolcode, type LolcodeOptions } from 'betterwright/lolcode';",
       "import { createLocalCredentialVault, type VaultRevealedRecord } from 'betterwright/vault';",
       "const policy = new NetworkPolicy();",
       "const browser = new BetterWright({ policy, browser: 'cloak' });",
@@ -204,7 +209,8 @@ try {
       "const decision: NetworkDecision = policy.check('https://example.com');",
       "const blocks: PiImageContentBlock[] = [];",
       "const guardrails: Guardrails = { passwordManager: '1Password' };",
-      "void [result, decision, blocks, guardrails, createPiExtension, METADATA_RESOLVER_RULES, runMcpServer, vault, noVault];",
+      "const lolcodeOptions: LolcodeOptions = { argv: [], host: {} };",
+      "void [result, decision, blocks, guardrails, createPiExtension, METADATA_RESOLVER_RULES, runMcpServer, vault, noVault, runLolcode, lolcodeOptions];",
     ].join("\n"),
   );
   const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");
