@@ -74,6 +74,7 @@ import {
   resolveCoreDir,
 } from "../src/doctor.js";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.js";
+import { runLolcodeCli } from "../src/lolcode.js";
 import { profileLabel, resolveProfileName } from "../src/profile-name.js";
 // `agentSystemPrompt` comes from the light prompt module, not index.js, which
 // would drag the whole browser/worker/vault graph in just to print a skill.
@@ -1943,7 +1944,15 @@ async function main() {
   }
 }
 
-main().then(
+async function runApplication() {
+  if (process.env.BETTERWRIGHT_LOLCODE_NATIVE === "1") return main();
+  return runLolcodeCli(process.argv.slice(2), {
+    cliEntry: CLI_PATH,
+    cwd: process.cwd(),
+  });
+}
+
+runApplication().then(
   (code) => process.exit(code),
   (error) => {
     console.error(error?.stack || String(error));
