@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
 
-import { createLiveViewServer, guessTailscaleHost } from "../../dist/src/live-view.js";
+import {
+  createLiveViewServer,
+  guessTailscaleHost,
+  normalizeViewerUrl,
+} from "../../dist/src/live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "../../dist/src/live-view-html.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -53,7 +57,7 @@ function fakeCdp(respond = {}) {
 }
 
 function makeServer(
-  { pages, cdp, newCDPSession, preferredPage, html, loginHtml }: Record<string, any> = {},
+  { pages, cdp, newCDPSession, preferredPage, html, loginHtml, openPage }: Record<string, any> = {},
 ) {
   const activity = [];
   const pageList = pages || [{ id: "page-1", page: fakePage(), sessionId: "default", active: true }];
@@ -64,6 +68,7 @@ function makeServer(
     listPages: () => pageList,
     preferredPage: preferredPage || (() => null),
     newCDPSession: newCDPSession || (async () => session),
+    openPage,
     onHumanActivity: (page) => activity.push(page),
   });
   return { server, cdp: session, pages: pageList, activity };
@@ -1170,5 +1175,212 @@ test("a garbage token option is ignored and a fresh one is minted", async () => 
     assert.ok(info.token.length >= 24);
   } finally {
     await parts.server.stop();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Viewer browser controls: address bar, back/forward/reload, new/close tab.
+
+test("normalizeViewerUrl behaves like an omnibox and blocks non-web schemes", () => {
+  assert.equal(normalizeViewerUrl("https://example.com/a?b=c"), "https://example.com/a?b=c");
+  assert.equal(normalizeViewerUrl("  example.com  "), "https://example.com/");
+  assert.equal(normalizeViewerUrl("news.ycombinator.com/item?id=1"), "https://news.ycombinator.com/item?id=1");
+  assert.equal(normalizeViewerUrl("localhost:3000/dash"), "http://localhost:3000/dash");
+  assert.equal(normalizeViewerUrl("localhost"), "https://localhost/");
+  assert.equal(normalizeViewerUrl("about:blank"), "about:blank");
+  // Anything that doesn't look like an address becomes a web search.
+  assert.equal(
+    normalizeViewerUrl("what is love"),
+    "https://www.google.com/search?q=what%20is%20love",
+  );
+  // Forbidden schemes resolve to "" — never navigated.
+  for (const evil of [
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "chrome://settings",
+    "data:text/html,<script>1</script>",
+    "vbscript:x",
+    "",
+    "   ",
+  ]) {
+    assert.equal(normalizeViewerUrl(evil), "", `must reject: ${evil}`);
+  }
+});
+
+test("nav back/forward/reload drive CDP history; navstate reaches viewers", async () => {
+  const cdp = fakeCdp({
+    "Page.getNavigationHistory": {
+      currentIndex: 1,
+      entries: [
+        { id: 11, url: "https://one.example/" },
+        { id: 22, url: "https://two.example/" },
+        { id: 33, url: "https://three.example/" },
+      ],
+    },
+  });
+  const { server, info, activity } = await startedServer({ cdp });
+  try {
+    const client = await connect(info);
+    await nextMessage(client, (message) => message.t === "hello");
+    // Mid-history: both directions available. Pushed on connect, but that can
+    // share a TCP batch with hello — ask for a deterministic re-push instead.
+    const navStatePromise = nextMessage(client, (message) => message.t === "navstate");
+    client.send(JSON.stringify({ t: "refresh" }));
+    const navState = await navStatePromise;
+    assert.equal(navState.canGoBack, true);
+    assert.equal(navState.canGoForward, true);
+
+    client.send(JSON.stringify({ t: "nav", action: "back" }));
+    let deadline = Date.now() + 2_000;
+    while (
+      !cdp.calls.some((call) => call.method === "Page.navigateToHistoryEntry") &&
+      Date.now() < deadline
+    )
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const back = cdp.calls.find((call) => call.method === "Page.navigateToHistoryEntry");
+    assert.equal(back.params.entryId, 11);
+
+    client.send(JSON.stringify({ t: "nav", action: "forward" }));
+    deadline = Date.now() + 2_000;
+    while (
+      cdp.calls.filter((call) => call.method === "Page.navigateToHistoryEntry").length < 2 &&
+      Date.now() < deadline
+    )
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const forward = cdp.calls.filter((call) => call.method === "Page.navigateToHistoryEntry")[1];
+    assert.equal(forward.params.entryId, 33);
+
+    client.send(JSON.stringify({ t: "nav", action: "reload" }));
+    deadline = Date.now() + 2_000;
+    while (!cdp.calls.some((call) => call.method === "Page.reload") && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(cdp.calls.some((call) => call.method === "Page.reload"));
+    // Toolbar navigation counts as human activity (keeps the session warm).
+    assert.ok(activity.length >= 3);
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("address-bar navigate normalizes input and refuses forbidden schemes", async () => {
+  const { server, info, cdp } = await startedServer();
+  try {
+    const client = await connect(info);
+    await nextMessage(client, (message) => message.t === "hello");
+    client.send(JSON.stringify({ t: "navigate", url: "example.com" }));
+    const deadline = Date.now() + 2_000;
+    while (!cdp.calls.some((call) => call.method === "Page.navigate") && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const nav = cdp.calls.find((call) => call.method === "Page.navigate");
+    assert.equal(nav.params.url, "https://example.com/");
+
+    const navsBefore = cdp.calls.filter((call) => call.method === "Page.navigate").length;
+    client.send(JSON.stringify({ t: "navigate", url: "javascript:alert(1)" }));
+    const toast = await nextMessage(client, (message) => message.t === "toast");
+    assert.match(toast.text, /http/i);
+    assert.equal(
+      cdp.calls.filter((call) => call.method === "Page.navigate").length,
+      navsBefore,
+      "a forbidden scheme must never reach Page.navigate",
+    );
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("the viewer opens tabs through openPage and closes them via the strip", async () => {
+  const closed = [];
+  const extraPage = {
+    ...fakePage("https://fresh.example/"),
+    close: async () => closed.push("page-2"),
+  };
+  const pages = [{ id: "page-1", page: fakePage(), sessionId: "default", active: true }];
+  let opened = 0;
+  const { server, info } = await startedServer({
+    pages,
+    newCDPSession: async () => fakeCdp(),
+    openPage: async () => {
+      opened += 1;
+      pages.push({ id: "page-2", page: extraPage, sessionId: "default", active: false });
+      return extraPage;
+    },
+  });
+  try {
+    const client = await connect(info);
+    const hello = await nextMessage(client, (message) => message.t === "hello");
+    assert.equal(hello.caps.newTab, true);
+
+    client.send(JSON.stringify({ t: "newtab" }));
+    // The new tab is adopted and the stream follows it.
+    await nextMessage(
+      client,
+      (message) =>
+        message.t === "tabs" &&
+        message.tabs.some((tab) => tab.id === "page-2" && tab.streaming),
+    );
+    assert.equal(opened, 1);
+
+    client.send(JSON.stringify({ t: "closetab", id: "page-2" }));
+    const deadline = Date.now() + 2_000;
+    while (closed.length === 0 && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(closed, ["page-2"]);
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("without openPage the + capability is off and newtab is refused politely", async () => {
+  const { server, info } = await startedServer();
+  try {
+    const client = await connect(info);
+    const hello = await nextMessage(client, (message) => message.t === "hello");
+    assert.equal(hello.caps.newTab, false);
+    client.send(JSON.stringify({ t: "newtab" }));
+    const toast = await nextMessage(client, (message) => message.t === "toast");
+    assert.match(toast.text, /cannot open new tabs/);
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("watch-only servers reject navigation, new tabs, and tab closing", async () => {
+  const closed = [];
+  const pages = [
+    {
+      id: "page-1",
+      page: { ...fakePage(), close: async () => closed.push("page-1") },
+      sessionId: "default",
+      active: true,
+    },
+  ];
+  const { server, info, cdp } = await startedServer({
+    pages,
+    interactive: false,
+    openPage: async () => fakePage(),
+  });
+  try {
+    const client = await connect(info);
+    await nextMessage(client, (message) => message.t === "hello");
+    for (const message of [
+      { t: "nav", action: "reload" },
+      { t: "navigate", url: "https://example.com/" },
+      { t: "newtab" },
+      { t: "closetab", id: "page-1" },
+    ]) {
+      client.send(JSON.stringify(message));
+      const toast = await nextMessage(client, (value) => value.t === "toast");
+      assert.match(toast.text, /watch-only/);
+    }
+    assert.ok(!cdp.calls.some((call) => call.method === "Page.reload"));
+    assert.ok(!cdp.calls.some((call) => call.method === "Page.navigate"));
+    assert.equal(closed.length, 0);
+    client.close();
+  } finally {
+    await server.stop();
   }
 });

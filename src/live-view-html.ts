@@ -6,11 +6,15 @@
 // brand chrome — the brand orange (#FF7A1A from favicon.svg) on layered
 // near-blacks, executed with T3 Code's surface craft: surfaces separated
 // by 2–4% luminance steps, hairline warm-white borders (7%/12%), buttons
-// with an inset top highlight and a soft colored drop shadow, a bare
-// dot-and-text live status (their "Working" idiom), and a session dock
-// modeled on the T3 chat composer: always-on chat (message the agent while
-// watching it work), elevated handoff / ask modes, ghost-cancel / solid-done
-// actions. Status indicators are diamonds, echoing the glyph in the logo.
+// with an inset top highlight and a soft colored drop shadow, and a bare
+// dot-and-text live status (their "Working" idiom). Status indicators are
+// diamonds, echoing the glyph in the logo.
+//
+// Layout: real browser chrome up top — a tab strip with per-tab close and a
+// new-tab button, then a toolbar with back / forward / reload and an editable
+// address bar — a full-height stream, and a collapsible activity panel on the
+// right for chat. Handoff and ask elevate into a prominent action bar under
+// the toolbar instead of hiding in the chat dock.
 //
 // The inner <script> deliberately avoids template literals so this file can
 // wrap the whole document in one backtick string without escape noise.
@@ -133,7 +137,7 @@ export function liveViewHtml() {
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    margin: 0; padding: 14px; background: var(--bg); color: var(--text);
     font: 13px/1.45 "DM Sans Variable", "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased; overflow: hidden;
   }
@@ -145,11 +149,15 @@ export function liveViewHtml() {
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
   }
   .spacer { flex: 1; }
+  button { font: inherit; }
+  button:focus-visible, .tab:focus-visible, input:focus-visible {
+    outline: 2px solid var(--orange); outline-offset: 1px;
+  }
 
   /* ---- brand bar ---- */
   #brandbar {
-    display: flex; align-items: center; gap: 10px; height: 44px;
-    padding: 0 14px; flex: none;
+    display: flex; align-items: center; gap: 10px; height: 42px;
+    padding: 0 12px 0 14px; flex: none;
   }
   #brandbar .logo { width: 19px; height: 19px; flex: none; display: block; }
   .wordmark { font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; color: var(--text); }
@@ -180,19 +188,36 @@ export function liveViewHtml() {
     50%, 90% { opacity: 0.45; }
     100% { opacity: 1; }
   }
+  #panelToggle {
+    position: relative; display: inline-flex; align-items: center; gap: 7px;
+    height: 30px; padding: 0 11px; border-radius: 9px; cursor: pointer;
+    background: none; border: 1px solid transparent; color: var(--dim); font-size: 12.5px;
+  }
+  #panelToggle:hover { background: var(--fill); color: var(--text); }
+  #panelToggle.open { background: var(--fill); border-color: var(--line); color: var(--text); }
+  #panelToggle svg { width: 15px; height: 15px; display: block; }
+  #unread {
+    display: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: var(--orange); color: #170b02; font-size: 10.5px; font-weight: 700;
+    line-height: 16px; text-align: center;
+  }
+  #unread.active { display: block; }
 
   /* ---- tab strip: Chrome-style, active tab connected to the toolbar ---- */
-  #tabStrip { flex: none; padding: 4px 10px 0; border-bottom: 1px solid var(--line); }
+  #tabStrip {
+    display: flex; align-items: flex-end; gap: 4px;
+    padding: 4px 10px 0; border-bottom: 1px solid var(--line); flex: none;
+  }
   #tabRow {
     display: flex; align-items: flex-end; gap: 2px;
-    overflow-x: auto; scrollbar-width: none; min-height: 33px;
+    overflow-x: auto; scrollbar-width: none; min-height: 33px; min-width: 0;
   }
   #tabRow::-webkit-scrollbar { display: none; }
   .tab {
     display: flex; align-items: center; gap: 8px; height: 32px;
-    padding: 0 13px; border-radius: 9px 9px 0 0;
+    padding: 0 9px 0 13px; border-radius: 9px 9px 0 0;
     border: 1px solid transparent; border-bottom: none;
-    font-size: 12.5px; color: var(--dim); cursor: pointer;
+    font-size: 12.5px; color: var(--dim); cursor: pointer; user-select: none;
     max-width: 220px; min-width: 0; flex: 0 1 auto; background: none;
     transition: background 0.12s ease, color 0.12s ease;
   }
@@ -208,6 +233,24 @@ export function liveViewHtml() {
   }
   .tab.active .tdot { background: var(--orange); }
   .tab .tlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab .tclose {
+    display: none; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 6px; flex: none;
+    border: none; background: none; color: var(--faint); cursor: pointer; padding: 0;
+  }
+  .tab:hover .tclose, .tab.active .tclose { display: inline-flex; }
+  .tab .tclose:hover { background: var(--fill-strong); color: var(--text); }
+  .tab .tclose svg { width: 9px; height: 9px; display: block; }
+  #win.watchonly .tclose { display: none !important; }
+  #newTabBtn {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 28px; height: 28px; margin-bottom: 3px; border-radius: 8px;
+    border: none; background: none; color: var(--dim); cursor: pointer;
+  }
+  #newTabBtn:hover:not(:disabled) { background: var(--fill); color: var(--text); }
+  #newTabBtn:disabled { opacity: 0.4; cursor: default; }
+  #newTabBtn.hidden { display: none; }
+  #newTabBtn svg { width: 13px; height: 13px; display: block; }
   #tabPreview {
     display: none; position: fixed; z-index: 50; width: 224px; height: 140px;
     background: #000 center top / cover no-repeat;
@@ -215,59 +258,68 @@ export function liveViewHtml() {
     box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65); pointer-events: none;
   }
 
-  /* ---- toolbar: address pill + stream dims + control ---- */
+  /* ---- toolbar: nav cluster + address bar + control ---- */
   #toolbar {
-    display: flex; align-items: center; gap: 10px; height: 48px;
-    padding: 0 12px; background: var(--chrome);
+    display: flex; align-items: center; gap: 8px; height: 48px;
+    padding: 0 10px; background: var(--chrome);
     border-bottom: 1px solid var(--line); flex: none;
   }
+  .nav-btn {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 30px; height: 30px; border-radius: 9px; cursor: pointer;
+    border: none; background: none; color: var(--dim);
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .nav-btn:hover:not(:disabled) { background: var(--fill); color: var(--text); }
+  .nav-btn:active:not(:disabled) { background: var(--fill-strong); }
+  .nav-btn:disabled { opacity: 0.35; cursor: default; }
+  .nav-btn svg { width: 15px; height: 15px; display: block; }
   #addrPill {
     flex: 1; display: flex; align-items: center; gap: 9px; height: 32px;
     padding: 0 12px; min-width: 0;
     background: var(--fill); border: 1px solid var(--line); border-radius: 10px;
+    transition: border-color 0.12s ease, background 0.12s ease;
   }
+  #addrPill:focus-within { border-color: var(--orange-line); background: var(--inset); }
   #addrPill .glyph {
     width: 6px; height: 6px; border-radius: 1px; transform: rotate(45deg);
     border: 1.5px solid var(--orange); flex: none; opacity: 0.9;
   }
-  #pageUrl {
-    flex: 1; min-width: 0;
+  #addrInput {
+    flex: 1; min-width: 0; height: 100%; border: none; background: none; outline: none;
     font: 12px/1 "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
-    color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--dim); text-overflow: ellipsis;
   }
+  #addrInput:focus { color: var(--text); }
+  #addrInput::placeholder { color: var(--faint); }
+  #addrInput:read-only { cursor: default; }
   #dims {
     font: 11px/1 "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
     color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap;
   }
-  button {
-    height: 32px; padding: 0 12px; border-radius: 10px; font: inherit; font-size: 13px;
+  .btn {
+    height: 32px; padding: 0 12px; border-radius: 10px; font-size: 13px;
     font-weight: 500; background: var(--fill); color: var(--text);
     border: 1px solid var(--line); cursor: pointer;
     box-shadow: inset 0 1px rgba(255, 255, 255, 0.04);
     transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
   }
-  button:hover { background: var(--fill-strong); border-color: var(--line-strong); }
-  button:active { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25); }
-  button:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
-  button:focus-visible, .tab:focus-visible {
-    outline: 2px solid var(--orange); outline-offset: 1px;
-  }
-  #controlBtn, #handoffDone, #chatSend {
+  .btn:hover:not(:disabled) { background: var(--fill-strong); border-color: var(--line-strong); }
+  .btn:active:not(:disabled) { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25); }
+  .btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+  .btn.primary {
     background: var(--orange); border-color: var(--orange-active); color: #170b02; font-weight: 600;
     box-shadow: inset 0 1px rgba(255, 255, 255, 0.22), 0 1px 2px rgba(255, 122, 26, 0.24);
   }
-  #controlBtn:hover:not(:disabled), #handoffDone:hover, #chatSend:hover:not(:disabled) {
-    background: var(--orange-hover);
-  }
-  #controlBtn:active, #handoffDone:active, #chatSend:active {
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
-  }
+  .btn.primary:hover:not(:disabled) { background: var(--orange-hover); }
+  .btn.primary:active:not(:disabled) { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2); }
+  .btn.ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--dim); }
+  .btn.ghost:hover:not(:disabled) { background: var(--fill-strong); border-color: transparent; color: var(--text); }
   #controlBtn.control-on {
     background: transparent; border-color: var(--orange-line); color: var(--orange-fg);
-    box-shadow: none;
+    font-weight: 600; box-shadow: none;
   }
   #controlBtn.control-on:hover { background: var(--orange-soft); }
-  #controlBtn.control-on:active { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25); }
 
   /* ---- conflict strip ---- */
   #conflict {
@@ -277,9 +329,46 @@ export function liveViewHtml() {
   }
   #conflict.active { display: block; }
 
-  /* ---- viewport ---- */
+  /* ---- action bar: handoff / ask elevate here, front and center ---- */
+  #actionBar {
+    display: none; flex-direction: column; gap: 8px; flex: none;
+    padding: 10px 14px; background: var(--raised);
+    border-bottom: 1px solid rgba(255, 122, 26, 0.28);
+    box-shadow: 0 10px 28px -18px rgba(255, 122, 26, 0.35);
+  }
+  #actionBar.active { display: flex; animation: drop 0.15s ease-out; }
+  @keyframes drop { from { opacity: 0; transform: translateY(-5px); } }
+  .ab-row { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .ab-dot {
+    width: 7px; height: 7px; border-radius: 1.5px; transform: rotate(45deg);
+    background: var(--orange); flex: none; animation: statuspulse 2s infinite;
+  }
+  #abTitle { font-size: 13px; font-weight: 600; white-space: nowrap; }
+  #abDetail { color: var(--dim); overflow-wrap: anywhere; min-width: 0; }
+  #askChips { display: none; flex-wrap: wrap; }
+  #askChips.active { display: flex; }
+  .chip-btn {
+    height: 28px; padding: 0 11px; border-radius: 8px; font-size: 12px;
+    background: var(--fill); color: var(--text); border: 1px solid var(--line);
+    cursor: pointer;
+  }
+  .chip-btn:hover { background: var(--orange-soft); border-color: var(--orange-line); color: var(--orange-fg); }
+  #abInput {
+    flex: 1; min-width: 0; height: 32px; padding: 0 11px;
+    background: var(--fill); color: var(--text); font: inherit; font-size: 13px;
+    border: 1px solid var(--line); border-radius: 10px; outline: none;
+  }
+  #abInput::placeholder { color: var(--faint); }
+  #abInput:focus { border-color: var(--orange-line); }
+  #abSend { display: none; }
+  #abSend.active { display: inline-block; }
+  #handoffActions { display: none; gap: 8px; }
+  #handoffActions.active { display: flex; }
+
+  /* ---- main: stream + activity panel ---- */
+  #main { flex: 1; display: flex; min-height: 0; }
   #viewport {
-    flex: 1; position: relative; min-height: 0; background: #080809;
+    flex: 1; position: relative; min-width: 0; min-height: 0; background: #080809;
     display: flex; align-items: center; justify-content: center;
   }
   canvas { width: 100%; height: 100%; object-fit: contain; outline: none; display: block; }
@@ -295,50 +384,34 @@ export function liveViewHtml() {
     border: 2.5px solid var(--line-strong); border-top-color: var(--orange);
     animation: spin 0.9s linear infinite;
   }
+  #overlay.still .spin { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ---- session dock: always-on chat + elevated handoff/ask ---- */
-  #dock {
-    flex: none; display: flex; flex-direction: column; max-height: min(38vh, 320px);
-    padding: 0 12px 12px; border-top: 1px solid var(--line); background: var(--win);
+  /* ---- activity panel: chat lives here, out of the stream's way ---- */
+  #panel {
+    width: 320px; flex: none; display: flex; flex-direction: column; min-height: 0;
+    border-left: 1px solid var(--line); background: var(--win);
   }
-  #dock.elevated { animation: dock 0.15s ease-out; }
-  @keyframes dock { from { opacity: 0; transform: translateY(6px); } }
-  .h-card {
-    background: var(--raised); border: 1px solid var(--line);
-    border-radius: 16px; padding: 10px 12px 10px;
-    box-shadow: 0 18px 48px -20px rgba(0, 0, 0, 0.6), 0 4px 14px -7px rgba(0, 0, 0, 0.4);
-    transition: border-color 0.2s ease;
-    display: flex; flex-direction: column; min-height: 0; max-height: inherit;
+  #win.panel-closed #panel { display: none; }
+  #panelHead {
+    display: flex; align-items: center; gap: 8px; height: 40px; flex: none;
+    padding: 0 8px 0 14px; border-bottom: 1px solid var(--line);
+    font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--dim);
   }
-  #dock.elevated .h-card { border-color: rgba(255, 122, 26, 0.28); }
-  .h-card:focus-within { border-color: rgba(255, 122, 26, 0.5); }
-  #modeBar {
-    display: none; flex-direction: column; gap: 8px; margin-bottom: 8px;
-    padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  #panelClose {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 8px; border: none; background: none;
+    color: var(--faint); cursor: pointer;
   }
-  #modeBar.active { display: flex; }
-  .h-head { display: flex; align-items: baseline; gap: 9px; min-width: 0; flex-wrap: wrap; }
-  .h-dot {
-    width: 6px; height: 6px; border-radius: 1px; transform: rotate(45deg);
-    background: var(--orange); flex: none; align-self: center;
-    animation: statuspulse 2s infinite;
-  }
-  .h-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
-  #modeDetail { color: var(--dim); overflow-wrap: anywhere; flex: 1; min-width: 0; }
-  #askChips { display: none; flex-wrap: wrap; gap: 6px; }
-  #askChips.active { display: flex; }
-  .chip-btn {
-    height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px;
-    background: var(--fill); color: var(--text); border: 1px solid var(--line);
-    cursor: pointer; box-shadow: none;
-  }
-  .chip-btn:hover { background: var(--orange-soft); border-color: var(--orange-line); color: var(--orange-fg); }
+  #panelClose:hover { background: var(--fill); color: var(--text); }
+  #panelClose svg { width: 10px; height: 10px; display: block; }
   #chatLog {
-    flex: 1; min-height: 72px; max-height: 160px; overflow-y: auto;
-    display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 6px;
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 7px; padding: 12px;
     scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
   }
+  #chatEmpty { color: var(--faint); font-size: 12px; padding: 4px 2px; }
   .msg {
     display: flex; flex-direction: column; gap: 2px; max-width: 96%;
     animation: rise 0.12s ease-out;
@@ -364,7 +437,7 @@ export function liveViewHtml() {
     display: inline-block; margin-right: 6px; font-size: 10px; font-weight: 600;
     letter-spacing: 0.06em; text-transform: uppercase; color: var(--orange-fg);
   }
-  #composer { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  #composer { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; flex: none; }
   #chatInput {
     flex: 1; min-width: 0; height: 34px; padding: 0 10px;
     background: var(--fill); color: var(--text); font: inherit; font-size: 13px;
@@ -372,17 +445,15 @@ export function liveViewHtml() {
   }
   #chatInput::placeholder { color: var(--faint); }
   #chatInput:focus { border-color: var(--orange-line); }
-  #chatSend { height: 34px; padding: 0 14px; flex: none; }
-  .h-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-  .h-hint { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--faint); }
+  #chatSend { height: 34px; flex: none; }
+  #composerHint {
+    display: flex; align-items: center; gap: 6px; padding: 0 14px 10px; flex: none;
+    font-size: 11.5px; color: var(--faint);
+  }
   .kbd {
     font: 11px/1 "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, Menlo, monospace;
     color: var(--dim); border: 1px solid var(--line-strong); border-radius: 5px; padding: 2px 5px;
   }
-  #handoffActions { display: none; }
-  #handoffActions.active { display: flex; }
-  #handoffCancel { background: transparent; border-color: transparent; box-shadow: none; color: var(--dim); }
-  #handoffCancel:hover { background: var(--fill-strong); border-color: transparent; color: var(--text); }
 
   /* ---- toasts ---- */
   #toasts { position: fixed; right: 24px; top: 60px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
@@ -397,53 +468,93 @@ export function liveViewHtml() {
     transform: rotate(45deg); background: var(--orange);
   }
   @keyframes rise { from { opacity: 0; transform: translateY(5px); } }
+
+  @media (max-width: 900px) {
+    body { padding: 8px; }
+    #dims { display: none; }
+    #panel {
+      position: absolute; right: 0; top: 0; bottom: 0; z-index: 40;
+      border-radius: 0; box-shadow: -18px 0 40px rgba(0, 0, 0, 0.55);
+    }
+    #main { position: relative; }
+  }
 </style>
 </head>
 <body>
-<div id="win">
+<div id="win" class="panel-closed">
   <header id="brandbar">
     <svg class="logo" viewBox="0 0 1024 1024" aria-hidden="true"><path d="M 900 238 H 230 Q 145 238 145 323 V 790 H 358 L 615 522 L 756 665" fill="none" stroke="#FF7A1A" stroke-width="150" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M 900 238 H 230 Q 145 238 145 323 V 790 H 358 L 615 522 L 756 665" fill="none" stroke="#FFF4DF" stroke-width="24" stroke-linecap="butt" stroke-linejoin="miter"/><g transform="translate(828 705) rotate(45)"><rect x="-72" y="-72" width="144" height="144" fill="#FF7A1A"/><rect x="-46" y="-46" width="92" height="92" fill="#FFF4DF"/><rect x="-27" y="-27" width="54" height="54" fill="#FF7A1A"/></g></svg>
     <span class="wordmark">Better<span class="wm-w">Wright</span></span>
     <span class="product">Live view</span>
     <div class="spacer"></div>
     <span id="statusChip" class="chip idle"><span class="sdot"></span><span id="statusText">connecting…</span></span>
+    <button id="panelToggle" type="button" title="Chat with the agent">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 6v4.2a1.3 1.3 0 0 1-1.3 1.3H8.2L5.5 13.7v-2.2H3.8a1.3 1.3 0 0 1-1.3-1.3V6a1.3 1.3 0 0 1 1.3-1.3h8.4A1.3 1.3 0 0 1 13.5 6Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      <span>Chat</span>
+      <span id="unread">0</span>
+    </button>
   </header>
-  <div id="tabStrip"><div id="tabRow"></div></div>
+  <div id="tabStrip">
+    <div id="tabRow"></div>
+    <button id="newTabBtn" type="button" class="hidden" title="New tab">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+    <div class="spacer"></div>
+  </div>
   <div id="toolbar">
-    <div id="addrPill"><span class="glyph"></span><span id="pageUrl"></span></div>
+    <button id="navBack" type="button" class="nav-btn" title="Back (Alt+←)" disabled>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button id="navFwd" type="button" class="nav-btn" title="Forward (Alt+→)" disabled>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button id="navReload" type="button" class="nav-btn" title="Reload" disabled>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 8A5.2 5.2 0 1 1 11.6 4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M13.5 2.4v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div id="addrPill">
+      <span class="glyph"></span>
+      <input id="addrInput" placeholder="Search or type a URL" spellcheck="false" autocomplete="off" autocapitalize="off">
+    </div>
     <span id="dims"></span>
-    <button id="controlBtn" disabled>Take control</button>
+    <button id="controlBtn" type="button" class="btn primary" disabled>Take control</button>
   </div>
   <div id="conflict">The agent is driving right now — your clicks and keys may conflict with it.</div>
-  <div id="viewport">
-    <canvas id="screen" tabindex="0" width="1280" height="800"></canvas>
-    <div id="overlay"><div class="spin"></div><div id="overlayText">Connecting to the browser…</div></div>
-  </div>
-  <div id="dock">
-    <div class="h-card">
-      <div id="modeBar">
-        <div class="h-head">
-          <span class="h-dot"></span>
-          <span class="h-title" id="modeTitle">The agent needs you</span>
-          <span id="modeDetail"></span>
-        </div>
-        <div id="askChips"></div>
-        <div id="handoffActions" class="h-actions">
-          <span class="h-hint">Drive the browser, then resume</span>
-          <div class="spacer"></div>
-          <button id="handoffCancel">Cancel step</button>
-          <button id="handoffDone">Done — resume agent</button>
-        </div>
-      </div>
-      <div id="chatLog" aria-live="polite"></div>
-      <div id="composer">
-        <input id="chatInput" placeholder="Message the agent…" maxlength="2000" autocomplete="off">
-        <button id="chatSend" type="button">Send</button>
-      </div>
-      <div class="h-actions" style="margin-top:6px">
-        <span class="h-hint" id="composerHint"><span class="kbd">⏎</span> send · delivered next turn</span>
+  <div id="actionBar">
+    <div class="ab-row">
+      <span class="ab-dot"></span>
+      <span id="abTitle">The agent needs you</span>
+      <span id="abDetail"></span>
+    </div>
+    <div class="ab-row" id="askChips"></div>
+    <div class="ab-row">
+      <input id="abInput" maxlength="2000" autocomplete="off">
+      <button id="abSend" type="button" class="btn primary">Send answer</button>
+      <div id="handoffActions">
+        <button id="handoffCancel" type="button" class="btn ghost">Cancel step</button>
+        <button id="handoffDone" type="button" class="btn primary">Done — resume agent</button>
       </div>
     </div>
+  </div>
+  <div id="main">
+    <div id="viewport">
+      <canvas id="screen" tabindex="0" width="1280" height="800"></canvas>
+      <div id="overlay"><div class="spin"></div><div id="overlayText">Connecting to the browser…</div></div>
+    </div>
+    <aside id="panel">
+      <div id="panelHead">
+        <span>Session chat</span>
+        <div class="spacer"></div>
+        <button id="panelClose" type="button" title="Hide chat">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div id="chatLog" aria-live="polite"><div id="chatEmpty">Guide the agent while it works — messages are delivered at its next turn.</div></div>
+      <div id="composer">
+        <input id="chatInput" placeholder="Message the agent…" maxlength="2000" autocomplete="off">
+        <button id="chatSend" type="button" class="btn primary">Send</button>
+      </div>
+      <div id="composerHint"><span class="kbd">⏎</span> send · delivered next turn</div>
+    </aside>
   </div>
 </div>
 <div id="tabPreview"></div>
@@ -452,6 +563,7 @@ export function liveViewHtml() {
 (function () {
   "use strict";
   var token = new URLSearchParams(location.search).get("t") || "";
+  var win = document.getElementById("win");
   var canvas = document.getElementById("screen");
   // Opaque + desynchronized: skips alpha compositing and (where supported)
   // lets frames hit the display without waiting on the DOM raster pipeline.
@@ -461,19 +573,26 @@ export function liveViewHtml() {
   var chipText = document.getElementById("statusText");
   var controlBtn = document.getElementById("controlBtn");
   var tabRow = document.getElementById("tabRow");
+  var newTabBtn = document.getElementById("newTabBtn");
   var tabPreview = document.getElementById("tabPreview");
-  var pageUrl = document.getElementById("pageUrl");
+  var navBack = document.getElementById("navBack");
+  var navFwd = document.getElementById("navFwd");
+  var navReload = document.getElementById("navReload");
+  var addrInput = document.getElementById("addrInput");
   var dims = document.getElementById("dims");
-  var dock = document.getElementById("dock");
-  var modeBar = document.getElementById("modeBar");
-  var modeTitle = document.getElementById("modeTitle");
-  var modeDetail = document.getElementById("modeDetail");
+  var actionBar = document.getElementById("actionBar");
+  var abTitle = document.getElementById("abTitle");
+  var abDetail = document.getElementById("abDetail");
+  var abInput = document.getElementById("abInput");
+  var abSend = document.getElementById("abSend");
   var askChips = document.getElementById("askChips");
   var handoffActions = document.getElementById("handoffActions");
+  var panelToggle = document.getElementById("panelToggle");
+  var unreadEl = document.getElementById("unread");
   var chatLog = document.getElementById("chatLog");
+  var chatEmpty = document.getElementById("chatEmpty");
   var chatInput = document.getElementById("chatInput");
   var chatSend = document.getElementById("chatSend");
-  var composerHint = document.getElementById("composerHint");
   var overlay = document.getElementById("overlay");
   var overlayText = document.getElementById("overlayText");
   var conflict = document.getElementById("conflict");
@@ -489,6 +608,9 @@ export function liveViewHtml() {
   var askActive = false;
   var askOptions = [];
   var controlling = false;
+  var caps = { newTab: false };
+  var navState = { canGoBack: false, canGoForward: false };
+  var tabCount = 0;
   var frameCount = 0;
   var fps = 0;
   var lastDown = { time: 0, x: 0, y: 0, count: 0 };
@@ -499,6 +621,9 @@ export function liveViewHtml() {
   var thumbs = {}; // id -> data URL, pushed as per-tab deltas
   var previewTabId = null;
   var viewTimer = null;
+  var overlayMode = "connect"; // "connect" | "reconnect" | "empty" | "end" | ""
+  var unread = 0;
+  var panelOpen = false;
 
   function toast(text) {
     var el = document.createElement("div");
@@ -510,6 +635,10 @@ export function liveViewHtml() {
 
   function send(message) {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify(message));
+  }
+
+  function canControlNow() {
+    return interactiveAllowed || handoffActive;
   }
 
   function setStatus(state) {
@@ -525,37 +654,72 @@ export function liveViewHtml() {
   }
 
   function renderMeta() {
-    pageUrl.textContent = meta.url || "";
+    if (document.activeElement !== addrInput && addrInput.value !== (meta.url || "")) {
+      addrInput.value = meta.url || "";
+    }
     dims.textContent =
       meta.deviceWidth + "×" + meta.deviceHeight + (fps > 0 ? " · " + fps + " fps" : "");
   }
 
+  // ---- activity panel open/close, with an unread badge while closed ----
+  function setPanel(open, persist) {
+    panelOpen = open;
+    win.className = (open ? "" : "panel-closed") + (canControlNow() ? "" : " watchonly");
+    panelToggle.className = open ? "open" : "";
+    if (open) {
+      unread = 0;
+      unreadEl.className = "";
+      unreadEl.textContent = "0";
+    }
+    if (persist) {
+      try { localStorage.setItem("bwlv.panel", open ? "1" : "0"); } catch (error) { /* private mode */ }
+    }
+  }
+  panelToggle.addEventListener("click", function () { setPanel(!panelOpen, true); });
+  document.getElementById("panelClose").addEventListener("click", function () { setPanel(false, true); });
+
   function refreshControls() {
-    var canControl = interactiveAllowed || handoffActive;
+    var canControl = canControlNow();
     controlBtn.disabled = !canControl;
     controlBtn.title = canControl ? "" : "This live view is watch-only.";
     if (!canControl) controlling = false;
     if (handoffActive) controlling = true;
     controlBtn.textContent = controlling ? "Release control" : "Take control";
-    controlBtn.className = controlling ? "control-on" : "";
+    controlBtn.className = "btn primary" + (controlling ? " control-on" : "");
     canvas.className = controlling ? "controlling" : "";
     conflict.className =
       controlling && agentState === "driving" && !handoffActive ? "active" : "";
-    var elevated = handoffActive || askActive;
-    dock.className = elevated ? "elevated" : "";
-    modeBar.className = elevated ? "active" : "";
-    handoffActions.className = handoffActive ? "h-actions active" : "h-actions";
+
+    // Browser chrome mirrors the permission: watch-only viewers get a
+    // read-only address bar and inert nav / tab buttons.
+    var navReady = canControl && tabCount > 0;
+    navBack.disabled = !navReady || !navState.canGoBack;
+    navFwd.disabled = !navReady || !navState.canGoForward;
+    navReload.disabled = !navReady;
+    addrInput.readOnly = !canControl;
+    addrInput.title = canControl ? "" : "This live view is watch-only.";
+    newTabBtn.className = caps.newTab ? "" : "hidden";
+    newTabBtn.disabled = !canControl;
+    win.className = (panelOpen ? "" : "panel-closed") + (canControl ? "" : " watchonly");
+
+    // Handoff / ask elevate into the action bar.
     if (handoffActive) {
-      modeTitle.textContent = "The agent needs you";
-      chatInput.placeholder = "Optional note for after you resume…";
-      composerHint.innerHTML = "<span class='kbd'>⏎</span> send note · then Done to resume";
+      actionBar.className = "active";
+      abTitle.textContent = "The agent needs your hands";
+      abInput.placeholder = "Optional note for the agent…";
+      abSend.className = "";
+      handoffActions.className = "active";
+      askChips.className = "";
     } else if (askActive) {
-      modeTitle.textContent = "The agent is asking";
-      chatInput.placeholder = "Type your answer…";
-      composerHint.innerHTML = "<span class='kbd'>⏎</span> send answer";
+      actionBar.className = "active";
+      abTitle.textContent = "The agent is asking";
+      abInput.placeholder = "Type your answer…";
+      abSend.className = "active";
+      handoffActions.className = "";
+      renderAskChips(askOptions);
     } else {
-      chatInput.placeholder = "Message the agent…";
-      composerHint.innerHTML = "<span class='kbd'>⏎</span> send · delivered next turn";
+      actionBar.className = "";
+      askChips.className = "";
     }
     setStatus(handoffActive ? "handoff" : agentState);
   }
@@ -583,8 +747,14 @@ export function liveViewHtml() {
     bubble.appendChild(document.createTextNode(message.text));
     el.appendChild(who);
     el.appendChild(bubble);
+    if (chatEmpty) { chatEmpty.remove(); chatEmpty = null; }
     chatLog.appendChild(el);
     chatLog.scrollTop = chatLog.scrollHeight;
+    if (role !== "you" && !panelOpen) {
+      unread += 1;
+      unreadEl.textContent = unread > 99 ? "99+" : String(unread);
+      unreadEl.className = "active";
+    }
   }
 
   function renderAskChips(options) {
@@ -603,7 +773,7 @@ export function liveViewHtml() {
         btn.textContent = label;
         btn.addEventListener("click", function () {
           send({ t: "answer", text: label });
-          chatInput.value = "";
+          abInput.value = "";
         });
         askChips.appendChild(btn);
       })(askOptions[i]);
@@ -622,6 +792,41 @@ export function liveViewHtml() {
     controlling = !controlling;
     if (controlling) canvas.focus();
     refreshControls();
+  });
+
+  // ---- browser chrome: nav buttons, address bar, new tab ----
+  function sendNav(action) {
+    if (!canControlNow()) return;
+    send({ t: "nav", action: action });
+  }
+  navBack.addEventListener("click", function () { sendNav("back"); });
+  navFwd.addEventListener("click", function () { sendNav("forward"); });
+  navReload.addEventListener("click", function () { sendNav("reload"); });
+  newTabBtn.addEventListener("click", function () {
+    if (!canControlNow()) return;
+    send({ t: "newtab" });
+    addrInput.focus();
+    addrInput.select();
+  });
+  addrInput.addEventListener("focus", function () {
+    if (!addrInput.readOnly) addrInput.select();
+  });
+  addrInput.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (addrInput.readOnly) return;
+      var url = addrInput.value.trim();
+      if (url) send({ t: "navigate", url: url });
+      addrInput.blur();
+      canvas.focus();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      addrInput.value = meta.url || "";
+      addrInput.blur();
+    }
+  });
+  addrInput.addEventListener("blur", function () {
+    addrInput.value = meta.url || "";
   });
 
   // ---- frame pipeline: decode latest-wins, skip while the tab is hidden ----
@@ -696,22 +901,52 @@ export function liveViewHtml() {
     img.src = thumbs[id];
   }
   function makeTab(id) {
+    // The tab root is a div (not a button) so the close control can be a real
+    // button inside it without nesting interactive elements.
     var entry = { tab: null };
-    var el = document.createElement("button");
-    el.type = "button";
+    var el = document.createElement("div");
     el.className = "tab";
+    el.setAttribute("role", "button");
+    el.tabIndex = 0;
     var dot = document.createElement("span");
     dot.className = "tdot";
     var label = document.createElement("span");
     label.className = "tlabel";
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "tclose";
+    close.title = "Close tab";
+    close.innerHTML = "<svg viewBox='0 0 16 16' aria-hidden='true'><path d='m4 4 8 8M12 4l-8 8' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round'/></svg>";
+    close.addEventListener("click", function (event) {
+      event.stopPropagation();
+      if (!canControlNow()) return;
+      hidePreview();
+      send({ t: "closetab", id: id });
+    });
     el.appendChild(dot);
     el.appendChild(label);
-    el.addEventListener("click", function () {
+    el.appendChild(close);
+    var activate = function () {
       if (!entry.tab || entry.tab.streaming) return;
       hidePreview();
       send({ t: "tab", id: id });
       paintThumbPlaceholder(id);
       canvas.focus();
+    };
+    el.addEventListener("click", activate);
+    el.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate();
+      }
+    });
+    el.addEventListener("auxclick", function (event) {
+      // Middle click closes, like a real tab strip.
+      if (event.button === 1 && canControlNow()) {
+        event.preventDefault();
+        hidePreview();
+        send({ t: "closetab", id: id });
+      }
     });
     el.addEventListener("mouseenter", function () {
       if (entry.tab && !entry.tab.streaming) showPreview(id, el);
@@ -724,6 +959,7 @@ export function liveViewHtml() {
   function renderTabs(tabs) {
     var seen = {};
     var orderChanged = tabRow.children.length !== tabs.length;
+    tabCount = tabs.length;
     for (var i = 0; i < tabs.length; i += 1) {
       var tab = tabs[i];
       seen[tab.id] = true;
@@ -754,18 +990,44 @@ export function liveViewHtml() {
     if (orderChanged) {
       for (var j = 0; j < tabs.length; j += 1) tabRow.appendChild(tabEls[tabs[j].id].el);
     }
+    if (!tabs.length && !ended && ws && ws.readyState === 1) {
+      meta.url = "";
+      renderMeta();
+      showOverlay(
+        caps.newTab && canControlNow()
+          ? "No open tabs — press + to open one."
+          : "No open tabs.",
+        "empty"
+      );
+    } else if (tabs.length && overlayMode === "empty") {
+      hideOverlay();
+    }
+    refreshControls();
   }
 
-  // ---- session dock: chat + handoff/ask modes ----
+  // ---- action bar: handoff / ask ----
   function finishHandoff(kind) {
-    send({ t: kind, note: chatInput.value.trim() });
-    chatInput.value = "";
+    send({ t: kind, note: abInput.value.trim() });
+    abInput.value = "";
   }
   document.getElementById("handoffDone").addEventListener("click", function () {
     finishHandoff("done");
   });
   document.getElementById("handoffCancel").addEventListener("click", function () {
     finishHandoff("cancel");
+  });
+  function sendAbInput() {
+    var text = abInput.value.trim();
+    if (!text) return;
+    send({ t: askActive ? "answer" : "chat", text: text });
+    abInput.value = "";
+  }
+  abSend.addEventListener("click", sendAbInput);
+  abInput.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    if (askActive) sendAbInput();
+    else if (handoffActive) finishHandoff("done");
   });
   chatSend.addEventListener("click", sendChat);
   chatInput.addEventListener("keydown", function (event) {
@@ -779,7 +1041,7 @@ export function liveViewHtml() {
     var wasActive = handoffActive;
     handoffActive = Boolean(handoff && handoff.active);
     if (handoffActive) {
-      modeDetail.textContent = handoff.prompt || "The agent paused for you.";
+      abDetail.textContent = handoff.prompt || "The agent paused for you.";
       if (!wasActive) {
         toast("The agent handed you control.");
         canvas.focus();
@@ -794,14 +1056,14 @@ export function liveViewHtml() {
     var wasActive = askActive;
     askActive = Boolean(ask && ask.active);
     if (askActive) {
-      modeDetail.textContent = ask.question || "The agent has a question.";
-      renderAskChips(ask.options || []);
+      abDetail.textContent = ask.question || "The agent has a question.";
+      askOptions = ask.options || [];
       if (!wasActive) {
         toast("The agent is asking you something.");
-        chatInput.focus();
+        abInput.focus();
       }
     } else {
-      renderAskChips([]);
+      askOptions = [];
       if (wasActive) toast("Answer sent.");
     }
     refreshControls();
@@ -884,12 +1146,13 @@ export function liveViewHtml() {
   });
 
   function uiHasFocus() {
-    // Keys belong to the page unless a viewer control (chat box, tab button,
-    // dock buttons) is focused — then they must stay in the UI.
+    // Keys belong to the page unless a viewer control (chat box, tab, dock
+    // buttons) is focused — then they must stay in the UI.
     var active = document.activeElement;
     if (!active || active === canvas || active === document.body) return false;
     var tag = active.tagName;
-    return tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON";
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" ||
+      active.getAttribute("role") === "button";
   }
   function keyMessage(type, event) {
     var message = {
@@ -905,7 +1168,24 @@ export function liveViewHtml() {
     return message;
   }
   window.addEventListener("keydown", function (event) {
+    var accel = event.metaKey || event.ctrlKey;
+    // Browser-chrome shortcuts win over the page, like in a real browser.
+    if (accel && !event.shiftKey && !event.altKey && (event.key === "l" || event.key === "L")) {
+      if (canControlNow()) {
+        event.preventDefault();
+        addrInput.focus();
+        addrInput.select();
+        return;
+      }
+    }
     if (!controlling || uiHasFocus()) return;
+    if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); sendNav("back"); return; }
+    if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); sendNav("forward"); return; }
+    if (accel && !event.shiftKey && (event.key === "r" || event.key === "R")) {
+      event.preventDefault();
+      sendNav("reload");
+      return;
+    }
     event.preventDefault();
     send(keyMessage("keyDown", event));
   });
@@ -922,11 +1202,15 @@ export function liveViewHtml() {
   });
 
   // ---- connection with backoff + jitter ----
-  function showOverlay(text) {
+  function showOverlay(text, mode) {
+    overlayMode = mode || "connect";
     overlayText.textContent = text;
-    overlay.className = "active";
+    overlay.className = "active" + (overlayMode === "empty" || overlayMode === "end" ? " still" : "");
   }
-  function hideOverlay() { overlay.className = ""; }
+  function hideOverlay() {
+    overlayMode = "";
+    overlay.className = "";
+  }
 
   function connect() {
     if (ended) return;
@@ -951,10 +1235,17 @@ export function liveViewHtml() {
       try { message = JSON.parse(event.data); } catch (error) { return; }
       if (message.t === "hello" || message.t === "state") {
         agentState = message.agent === "driving" ? "driving" : message.agent === "handoff" ? "handoff" : "idle";
-        if (agentState === "handoff") agentState = "idle"; // the dock carries the handoff state
+        if (agentState === "handoff") agentState = "idle"; // the action bar carries the handoff state
         interactiveAllowed = Boolean(message.interactive);
+        if (message.caps) caps = { newTab: Boolean(message.caps.newTab) };
         applyHandoff(message.handoff);
         applyAsk(message.ask);
+      } else if (message.t === "navstate") {
+        navState = {
+          canGoBack: Boolean(message.canGoBack),
+          canGoForward: Boolean(message.canGoForward)
+        };
+        refreshControls();
       } else if (message.t === "chat") {
         if (Array.isArray(message.messages)) {
           for (var i = 0; i < message.messages.length; i += 1) appendChatMessage(message.messages[i]);
@@ -980,8 +1271,7 @@ export function liveViewHtml() {
       } else if (message.t === "bye") {
         ended = true;
         setStatus("off");
-        overlay.querySelector(".spin").style.display = "none";
-        showOverlay("Live view ended (" + (message.reason || "stopped") + "). You can close this tab.");
+        showOverlay("Live view ended (" + (message.reason || "stopped") + "). You can close this tab.", "end");
       }
     };
     ws.onclose = function () {
@@ -991,8 +1281,7 @@ export function liveViewHtml() {
         // stop would have sent "bye" long before this). Stop hammering.
         ended = true;
         setStatus("off");
-        overlay.querySelector(".spin").style.display = "none";
-        showOverlay("Live view ended (browser unreachable). You can close this tab.");
+        showOverlay("Live view ended (browser unreachable). You can close this tab.", "end");
         return;
       }
       setStatus("reconnecting");
@@ -1001,7 +1290,8 @@ export function liveViewHtml() {
       showOverlay(
         attempts < 3
           ? "Reconnecting to the browser…"
-          : "Browser unreachable (worker restarting or stopped). Retrying… (attempt " + attempts + ")"
+          : "Browser unreachable (worker restarting or stopped). Retrying… (attempt " + attempts + ")",
+        "reconnect"
       );
       setTimeout(connect, delay);
     };
@@ -1028,8 +1318,11 @@ export function liveViewHtml() {
     if (!document.hidden) pumpFrames();
   });
 
+  var savedPanel = null;
+  try { savedPanel = localStorage.getItem("bwlv.panel"); } catch (error) { /* private mode */ }
+  setPanel(savedPanel === null ? window.innerWidth >= 1050 : savedPanel === "1", false);
   setStatus("idle");
-  showOverlay("Connecting to the browser…");
+  showOverlay("Connecting to the browser…", "connect");
   renderMeta();
   connect();
 })();

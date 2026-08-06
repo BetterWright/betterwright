@@ -13,7 +13,7 @@ Six surfaces, one server:
 | --- | --- |
 | `betterwright exec "<task>" --live-view` | starts the viewer at step 0 and prints the URL, so you watch the whole run while the agent works |
 | interactive console `--live-view` or `/live` | `--live-view` starts a viewer before the first prompt; **`/live` opens one anytime mid-session**; `/live stop` closes it; `/new`, `/headed`, and `/headless` re-open the viewer when live is enabled |
-| the session dock (chat / ask / handoff) | always-on chat to guide the agent; `ask` questions appear as chips + a reply box; `handoff` elevates the dock with **Done** / **Cancel** and force-enables browser control |
+| the chat panel + action bar (chat / ask / handoff) | a collapsible side panel for chatting with the agent; `ask` and `handoff` elevate into an action bar under the toolbar — chips + a reply box for asks, **Done** / **Cancel** (and force-enabled browser control) for handoffs |
 | agent `live_view` tool | mid-task watch without pausing: the model can open the viewer whenever the user asks, relay the URL, and keep working (`handoff` still pauses for human hands) |
 | MCP `browser_handoff` | `action: "start"` anytime during an MCP session (watch or handoff) |
 | `betterwright view` | attaches to the **session daemon** when one is running (same tabs as `run`/`exec`/`skill` agents) and holds the viewer until Ctrl-C; if no daemon, starts a private browser for warm-up / remote-desktop |
@@ -47,22 +47,51 @@ idle page costs ~nothing; a busy one is roughly screen-share bandwidth
 
 While the agent is driving, the viewer defaults to watching; **Take control**
 enables your input with a visible warning that agent and human inputs can
-race. The bottom **session dock** is always available:
+race. The viewer wears real browser chrome, and three surfaces carry the
+human side of the session:
 
-- **Chat** — type freeform guidance ("use the work account", "skip that").
-  Messages are queued and delivered to the agent at the next turn boundary
-  (never mid-`browser` step), so the agent incorporates them safely. Over MCP
-  the boundary is each tool call: your messages arrive appended to the next
-  `browser` tool result (and in `browser_handoff` status), and the agent's
-  per-step notes are mirrored into this chat.
-- **Ask** — when the model calls `ask`, the dock elevates with the question and
-  optional choice chips; your reply (chip or text) unblocks the agent.
-- **Handoff** — when the model calls `handoff`, input is force-enabled and the
-  dock shows the reason plus **Done** / **Cancel**. An optional note (the chat
-  field) returns to the model verbatim.
+- **Chat panel** — a collapsible panel on the right (the **Chat** button in
+  the header, with an unread badge while closed). Type freeform guidance
+  ("use the work account", "skip that"). Messages are queued and delivered to
+  the agent at the next turn boundary (never mid-`browser` step), so the
+  agent incorporates them safely. Over MCP the boundary is each tool call:
+  your messages arrive appended to the next `browser` tool result (and in
+  `browser_handoff` status), and the agent's per-step notes are mirrored into
+  this chat.
+- **Ask** — when the model calls `ask`, an action bar drops in under the
+  toolbar with the question, optional choice chips, and a reply box; your
+  answer (chip or text) unblocks the agent.
+- **Handoff** — when the model calls `handoff`, input is force-enabled and
+  the action bar shows the reason plus **Done — resume agent** / **Cancel
+  step**. An optional note (the action bar's field) returns to the model
+  verbatim.
 
 Agent step notes (`browser`, `login`, …) and the final answer are mirrored into
 the same chat log so watching the run feels alive.
+
+## Browser controls
+
+The toolbar and tab strip work like the browser you're sitting at — anything
+you'd do in normal Chrome chrome, you can do to the streamed session:
+
+- **Address bar** — click (or **Ctrl/Cmd+L**) to edit; Enter navigates, Esc
+  reverts. Input behaves like an omnibox: full URLs pass through, bare hosts
+  get `https://`, `host:port` works, and anything else becomes a web search.
+  Only `http(s)` (and `about:blank`) can be opened — `file://`, `chrome://`,
+  `javascript:` and friends are refused server-side.
+- **Back / forward / reload** — real history navigation on the streamed tab
+  (the buttons enable and disable from the page's actual history). While
+  controlling, **Alt+←/→** and **Ctrl/Cmd+R** do the same.
+- **New tab** — the **+** button opens a fresh tab *in the viewed session*,
+  streams it immediately, and focuses the address bar. The tab is adopted
+  exactly like an agent-opened page: page limits, download tracking, and
+  policy all apply.
+- **Close tab** — the **×** on a tab (or middle-click) closes it.
+
+Every control is gated exactly like mouse/keyboard input: available when the
+view is interactive or a handoff is active, refused server-side on watch-only
+views. Viewer-driven navigation flows through the SOCKS policy proxy and every
+other guard, the same as agent navigation.
 
 Human browser input goes through every existing guard: the SOCKS policy proxy,
 download limits, and credential capture treat takeover navigation exactly like
