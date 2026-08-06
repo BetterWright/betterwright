@@ -9,6 +9,15 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- Operator guidance now tells the agent that bulk repetitive work may drive the
+  site's own endpoint or in-page function via `page.evaluate` instead of
+  replaying a UI action N times, with the result still confirmed in the UI and
+  an explicit carve-out against bypassing a paywall, rate limit, or access
+  control. The capability was always there — `evaluate`/`$eval`/`addInitScript`
+  callbacks serialize into the page — but nothing pointed models at it.
+
 ## [1.6.3] - 2026-08-03
 
 A performance release, continuing 1.6.2. No API changes: 1.6.3 is a drop-in
