@@ -85,9 +85,13 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Build TypeScript sources
+      # npm publish runs prepublishOnly implicitly. Run that release gate as an
+      # explicit, visible step instead, then suppress lifecycle scripts on the
+      # final upload so the same expensive suite cannot run a second time. The
+      # gate builds the package before the managed-browser steps consume dist/.
+      - name: Run release verification
         if: steps.existing.outputs.published != 'true'
-        run: npm run build
+        run: npm run release:check
       # The published default is Obscura with Cloak as its compatibility
       # renderer. Install both so a release cannot reach npm after testing only
       # the fallback backend.
@@ -136,4 +140,4 @@ jobs:
           fi
       - name: Publish to npm with provenance
         if: steps.existing.outputs.published != 'true'
-        run: npm publish --access public --tag "${{ steps.npm_tag.outputs.tag }}"
+        run: npm publish --ignore-scripts --access public --tag "${{ steps.npm_tag.outputs.tag }}"
