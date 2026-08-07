@@ -67,6 +67,12 @@ expectMatch(
   /PINNED_CLOAKBROWSER_VERSION = "([^"]+)"/,
   pkg.dependencies.cloakbrowser,
 );
+const obscuraSource = read("src/obscura.ts");
+const obscuraVersion = obscuraSource.match(/OBSCURA_VERSION = "([^"]+)"/)?.[1];
+if (!obscuraVersion) failures.push("Obscura runtime version pin is missing");
+else if (!/OBSCURA_RELEASE_TAG = `v\$\{OBSCURA_VERSION\}`/.test(obscuraSource)) {
+  failures.push("Obscura release tag must derive from OBSCURA_VERSION");
+}
 
 const tagIndex = process.argv.indexOf("--tag");
 if (tagIndex !== -1) {
@@ -79,5 +85,5 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(
-  `versions aligned: betterwright ${pkg.version}, playwright-core ${pkg.dependencies["playwright-core"]}, cloakbrowser ${pkg.dependencies.cloakbrowser}`,
+  `versions aligned: betterwright ${pkg.version}, obscura ${obscuraVersion}, playwright-core ${pkg.dependencies["playwright-core"]}, cloakbrowser ${pkg.dependencies.cloakbrowser}`,
 );

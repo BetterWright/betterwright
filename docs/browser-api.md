@@ -101,6 +101,23 @@ to decide what to click, a full `snapshot()` to read content wholesale,
 question. For anything Playwright can read — text, attributes, computed
 state — use the normal `page.locator(...)` API.
 
+### Same-origin application data
+
+The frozen `site` global exposes application assets and first-party requests
+without raw HTML dumps or repeated browser restarts:
+
+| Method | Description |
+| --- | --- |
+| `site.assets()` | Scripts, stylesheets, fetches, and XHRs discovered in the DOM or network log. |
+| `site.requests(options?)` | Recent request metadata, filterable by `urlIncludes` and `resourceType`. |
+| `site.read(url, options?)` | Read a same-origin text asset; `find`, `contextChars`, and `maxMatches` return bounded literal excerpts. |
+| `site.request(url, options?)` | Same-origin GET/HEAD/POST/PUT/PATCH/DELETE with optional `json`, `body`, `headers`, and `response: "json"`. BetterWright copies matching browser cookies into the guarded request and returns response cookies to the session. |
+
+Cross-origin URLs and credential-bearing headers are rejected. Request and
+response bodies are bounded to 1 MB. This surface is useful for any web app
+whose visible UI is backed by a first-party JSON API or client bundle; it does
+not contain site-specific puzzle or endpoint knowledge.
+
 ## Human-shaped interactions
 
 The frozen `human` global emits visible actions with curved pointer movement,
@@ -118,7 +135,7 @@ the field by default; pass `{clear: false}` to append, or set `minDelay` and
 `maxDelay`. `human.scroll(deltaY, options?)` accepts `steps`, while the object
 form also accepts `deltaX`.
 
-These helpers and the default managed Cloak backend reduce behavioral and
+These helpers and the managed engines reduce behavioral and
 browser-fingerprint false positives; they do not guarantee undetectability.
 Keep one stable persistent profile and respect a site's rate limits. For broad
 discovery, use the host's web-search tool and open returned results here rather

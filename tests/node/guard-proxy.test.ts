@@ -83,6 +83,44 @@ async function socksConnect(proxyPort, host, port = 443) {
   }
 }
 
+function readHttpHeader(socket) {
+  return new Promise<string>((resolve, reject) => {
+    let value = "";
+    const timer = setTimeout(() => finish(new Error("timed out reading HTTP proxy reply")), 2_000);
+    const finish = (error, result = "") => {
+      clearTimeout(timer);
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const onData = (chunk) => {
+      value += chunk.toString("latin1");
+      const end = value.indexOf("\r\n\r\n");
+      if (end >= 0) finish(null, value.slice(0, end + 4));
+    };
+    const onError = (error) => finish(error);
+    const onClose = () => finish(new Error("HTTP proxy socket closed before its reply"));
+    socket.on("data", onData);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+  });
+}
+
+async function httpConnect(proxyPort, authority) {
+  const client = net.createConnection({ host: "127.0.0.1", port: proxyPort });
+  try {
+    await once(client, "connect");
+    client.write(
+      `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\nProxy-Connection: keep-alive\r\n\r\n`,
+    );
+    return await readHttpHeader(client);
+  } finally {
+    client.destroy();
+  }
+}
+
 function proxyOptions(
   transport: Record<string, any> = {},
   guardUrl: (url?: any, details?: any) => Promise<any> = async () => ({ allowed: true }),
@@ -109,6 +147,112 @@ function timedDelay(delays, paddingMs = 25) {
       setTimeout(resolve, milliseconds + paddingMs);
     });
 }
+
+test("the guard listener accepts HTTP CONNECT without weakening target checks", async () => {
+  const calls = [];
+  const proxy = createGuardProxy(
+    proxyOptions(
+      {
+        lookup: async () => [{ address: "192.0.2.1", family: 4 }],
+        connect: async () => new PassThrough(),
+      },
+      async (url, details) => {
+        calls.push({ url, details });
+        return { allowed: true };
+      },
+    ),
+  );
+  try {
+    const port = await proxy.ensure();
+    assert.match(await httpConnect(port, "example.test:443"), /^HTTP\/1\.1 200 /);
+    assert.deepEqual(
+      calls.map(({ url }) => url),
+      ["https://example.test:443/", "https://192.0.2.1:443/"],
+    );
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("HTTP CONNECT returns 403 before dialing a policy-blocked host", async () => {
+  let dialed = false;
+  const proxy = createGuardProxy(
+    proxyOptions(
+      {
+        lookup: async () => [{ address: "192.0.2.1", family: 4 }],
+        connect: async () => {
+          dialed = true;
+          return new PassThrough();
+        },
+        delay: async () => {},
+      },
+      async (url) => ({
+        allowed: !url.includes("blocked.test"),
+        reason: "test policy",
+      }),
+    ),
+  );
+  try {
+    const port = await proxy.ensure();
+    assert.match(await httpConnect(port, "blocked.test:443"), /^HTTP\/1\.1 403 /);
+    assert.equal(dialed, false);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("plain HTTP proxy requests are full-URL guarded and rewritten for the origin", async () => {
+  let received = "";
+  const target = net.createServer((socket) => {
+    socket.once("data", (chunk) => {
+      received = chunk.toString("latin1");
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+  });
+  target.listen({ host: "127.0.0.1", port: 0 });
+  await once(target, "listening");
+  const targetPort = (target.address() as AddressInfo).port;
+  const calls = [];
+  const proxy = createGuardProxy(
+    proxyOptions(
+      {
+        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+      },
+      async (url, details) => {
+        calls.push({ url, details });
+        return { allowed: true };
+      },
+    ),
+  );
+  const client = new net.Socket();
+  try {
+    const port = await proxy.ensure();
+    client.connect({ host: "127.0.0.1", port });
+    await once(client, "connect");
+    const response = new Promise<string>((resolve, reject) => {
+      let text = "";
+      client.on("data", (chunk) => {
+        text += chunk.toString("latin1");
+      });
+      client.once("end", () => resolve(text));
+      client.once("error", reject);
+    });
+    client.write(
+      `GET http://plain.test:${targetPort}/path?q=1 HTTP/1.1\r\n` +
+        "Host: ignored.test\r\nProxy-Authorization: secret\r\n\r\n",
+    );
+    assert.match(await response, /^HTTP\/1\.1 200 OK/);
+    assert.match(received, /^GET \/path\?q=1 HTTP\/1\.1\r\n/);
+    assert.match(received, new RegExp(`Host: plain\\.test:${targetPort}`));
+    assert.doesNotMatch(received, /Proxy-Authorization/i);
+    assert.equal(calls[0].url, `http://plain.test:${targetPort}/path?q=1`);
+    assert.equal(calls[0].details.resourceType, "http-proxy");
+  } finally {
+    client.destroy();
+    await proxy.close();
+    await new Promise((resolve) => target.close(resolve));
+  }
+});
 
 test("family unreachability suppresses new dials without skipping guard checks", async () => {
   let dialCount = 0;

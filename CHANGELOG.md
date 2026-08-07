@@ -9,6 +9,23 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- Headless sessions now use checksum-pinned Obscura 0.1.11 for resident DOM,
+  JavaScript, storage, and network execution. Screenshots preserve the public
+  API by launching the existing Chromium/Cloak renderer only for the capture
+  and transferring URL, cookies, storage, controls, scroll, and canvas state.
+- Added the frozen, same-origin `site` surface for inspecting application
+  assets and request metadata, reading bounded text excerpts, and issuing
+  cookie-bearing JSON requests. This provides general client-app tooling
+  without embedding site-specific endpoints or puzzle instructions.
+
+### Changed
+
+- `betterwright setup` installs Obscura plus the pixel renderer; `update`
+  refreshes the pinned Obscura release. Headed and explicit `--cloak-only`
+  sessions retain the Chromium/Cloak compatibility backend.
+
 ## [1.6.3] - 2026-08-03
 
 A performance release, continuing 1.6.2. No API changes: 1.6.3 is a drop-in

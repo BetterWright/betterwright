@@ -34,6 +34,9 @@ const READY_REPORT = {
   playwright_core: "/x/playwright-core",
   playwright_version: "1.61.1",
   playwright_pinned: "1.61.1",
+  obscura: "/x/obscura",
+  obscura_version: "0.1.11",
+  obscura_error: null,
   cloakbrowser: "/x/cloakbrowser",
   cloakbrowser_version: "0.4.10",
   cloakbrowser_pinned: "0.4.10",
@@ -48,7 +51,7 @@ const READY_REPORT = {
   chromium_fork_fonts_warning: null,
   stealth_driver: "1.61.1",
   stealth_available: true,
-  browser: "chromium-fork",
+  browser: "obscura",
   ready: true,
 };
 

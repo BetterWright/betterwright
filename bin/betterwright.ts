@@ -3,8 +3,8 @@
 //
 //   betterwright                  interactive agent console (type tasks, watch
 //                                 progress, answer the agent's questions)
-//   betterwright setup            install Chromium fork (mac/linux) + Cloak fallback
-//   betterwright update           download/refresh the Chromium fork (switches from Cloak)
+//   betterwright setup            install Obscura + the on-demand pixel renderer
+//   betterwright update           download/refresh the resident Obscura engine
 //   betterwright doctor           report runtime readiness
 //   betterwright run <file|-|-c>  execute a Playwright snippet in the
 //                                 persistent session (tabs/state survive calls)
@@ -74,6 +74,7 @@ import {
   resolveCoreDir,
 } from "../src/doctor.js";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.js";
+import { installObscura } from "../src/obscura-install.js";
 import { profileLabel, resolveProfileName } from "../src/profile-name.js";
 // `agentSystemPrompt` comes from the light prompt module, not index.js, which
 // would drag the whole browser/worker/vault graph in just to print a skill.
@@ -402,30 +403,24 @@ async function installCloakBrowser() {
   return 0;
 }
 
-/** Download the Chromium fork so discovery prefers it over Cloak. */
+/** Download the resident low-memory browser engine. */
 async function cmdUpdate(flags) {
   if (flags.has("--cloak-only")) {
     console.error(
-      "`betterwright update` installs the Chromium fork. Use `betterwright setup --cloak-only` for CloakBrowser alone.",
+      "`betterwright update` installs Obscura. Use `betterwright setup --cloak-only` for CloakBrowser alone.",
     );
     return 1;
   }
-  const result = await installChromiumFork({ force: flags.has("--force") });
+  const result = await installObscura({ force: flags.has("--force") });
   if (result.skipped) {
     console.log(result.skipped);
-    console.log("On this platform, keep using `betterwright setup` for CloakBrowser.");
+    console.log("On this platform, BetterWright keeps using its Chromium compatibility backend.");
     return 0;
   }
   console.log(
-    "\nUpdate complete. BetterWright will use the Chromium fork by default.",
+    "\nUpdate complete. BetterWright will use Obscura as its resident browser.",
   );
-  console.log("Run `betterwright doctor` to confirm (browser: chromium-fork).");
-  console.log(
-    "Tip: use a dedicated BETTERWRIGHT_HOME if you still need Cloak on this machine —",
-  );
-  console.log(
-    "fork and Cloak share the default profile and are not interchangeable.",
-  );
+  console.log("Run `betterwright doctor` to confirm (browser: obscura).");
   refreshAgentSkillsQuietly();
   return 0;
 }
@@ -433,23 +428,27 @@ async function cmdUpdate(flags) {
 async function cmdSetup(flags, { quiet = false }: any = {}) {
   if (flags.has("--chromium")) {
     console.error(
-      "The stock Chromium fallback was removed. Use `betterwright update` for the Chromium fork, or `betterwright setup` for managed CloakBrowser.",
+      "The stock Chromium fallback was removed. Use `betterwright setup` for Obscura plus its pixel renderer, or `betterwright setup --cloak-only`.",
     );
     return 1;
   }
 
   const cloakOnly = flags.has("--cloak-only");
   if (!cloakOnly) {
-    const result = await installChromiumFork({ force: flags.has("--force") });
-    if (result.skipped) {
-      console.log(result.skipped);
-    } else if (!result.alreadyInstalled) {
+    const obscura = await installObscura({ force: flags.has("--force") });
+    if (obscura.skipped) {
+      console.log(obscura.skipped);
+    } else if (!obscura.alreadyInstalled) {
       console.log(
-        "Chromium fork installed. Discovery will prefer it over CloakBrowser.",
+        "Obscura installed. It will stay resident for normal browser work.",
       );
     }
+    const renderer = await installChromiumFork({ force: flags.has("--force") });
+    if (renderer.skipped) console.log(renderer.skipped);
+    else if (!renderer.alreadyInstalled)
+      console.log("Chromium pixel renderer installed for on-demand captures.");
   } else {
-    console.log("Skipping Chromium fork (--cloak-only).");
+    console.log("Skipping Obscura and the Chromium renderer (--cloak-only).");
   }
 
   const cloakCode = await installCloakBrowser();
@@ -462,7 +461,7 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
     console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
     if (!cloakOnly) {
       console.log(
-        "On macOS arm64 / Linux x64 / Windows x64, doctor should report browser: chromium-fork after update/setup.",
+        "On supported platforms, doctor should report browser: obscura after update/setup.",
       );
     }
   }

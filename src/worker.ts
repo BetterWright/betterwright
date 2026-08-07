@@ -94,6 +94,8 @@ import {
 } from "./human.js";
 import { createLiveViewServer } from "./live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.js";
+import { resolveObscuraBinary } from "./obscura.js";
+import { launchObscuraServer } from "./obscura-runtime.js";
 import {
   dismissObstructiveOverlays,
   inspectControls,
@@ -106,6 +108,12 @@ import {
   releaseProfileLockDir,
   touchProfileLock,
 } from "./profile-lock.js";
+import {
+  normalizeSiteHeaders,
+  SITE_RESPONSE_LIMIT,
+  sameOriginSiteUrl,
+  siteTextExcerpts,
+} from "./site-tools.js";
 import {
   compressSnapshot,
   diffSnapshots,
@@ -149,6 +157,10 @@ const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const MAX_ACTIVE_SECRETS = 200;
 
 let browserContext = null;
+let browserConnection = null;
+let obscuraServer = null;
+let browserBackend = "compatibility";
+let transportProxyPort = 0;
 let launchPromise = null;
 let launchConfig = null;
 let profileLock = null;
@@ -237,6 +249,9 @@ async function wakeSessionPages(session) {
 function quietSessionPages(session) {
   cancelPendingPark(session.id);
   if (!browserContext) return;
+  // Obscura has no compositor/frame loop to park, and opening a second page
+  // CDP session currently duplicates its target in Playwright 1.61.
+  if (browserBackend === "obscura") return;
   if (
     !parkingEnabled({
       config: launchConfig,
@@ -897,9 +912,166 @@ async function addScreenshotAnnotations(page, fullPage) {
   return boxes.length;
 }
 
+function readPixelBridgeState() {
+  const controls = [...document.querySelectorAll("input, select, textarea")].map(
+    (element: any) => ({
+      value: element.value,
+      checked: Boolean(element.checked),
+      selectedIndex:
+        typeof element.selectedIndex === "number" ? element.selectedIndex : null,
+    }),
+  );
+  const canvases = [...document.querySelectorAll("canvas")].map(
+    (canvas: any) => {
+      let dataUrl = "";
+      try {
+        dataUrl = canvas.toDataURL("image/png");
+      } catch {
+        /* a tainted canvas cannot be copied; the renderer will redraw it */
+      }
+      return {
+        width: Number(canvas.width) || 0,
+        height: Number(canvas.height) || 0,
+        dataUrl,
+      };
+    },
+  );
+  return {
+    url: location.href,
+    viewport: {
+      width: Math.max(320, Math.min(3840, Number(innerWidth) || 1440)),
+      height: Math.max(240, Math.min(2160, Number(innerHeight) || 900)),
+    },
+    localStorage: Object.entries(localStorage),
+    sessionStorage: Object.entries(sessionStorage),
+    controls,
+    canvases,
+    scroll: { x: scrollX, y: scrollY },
+  };
+}
+
+function seedPixelBridgeStorage(state) {
+  if (location.href !== "about:blank") {
+    for (const [key, value] of state.localStorage || [])
+      localStorage.setItem(key, value);
+    for (const [key, value] of state.sessionStorage || [])
+      sessionStorage.setItem(key, value);
+  }
+}
+
+async function restorePixelBridgeState(page, state) {
+  await page.evaluate(async (snapshot) => {
+    const controls = [...document.querySelectorAll("input, select, textarea")];
+    for (let index = 0; index < snapshot.controls.length; index += 1) {
+      const element: any = controls[index];
+      const saved = snapshot.controls[index];
+      if (!element || !saved) continue;
+      if ("value" in element) element.value = saved.value;
+      if ("checked" in element) element.checked = saved.checked;
+      if (
+        saved.selectedIndex !== null &&
+        typeof element.selectedIndex === "number"
+      ) {
+        element.selectedIndex = saved.selectedIndex;
+      }
+    }
+    const canvases = [...document.querySelectorAll("canvas")];
+    await Promise.all(
+      snapshot.canvases.map(async (saved, index) => {
+        const canvas: any = canvases[index];
+        if (!canvas || !saved?.dataUrl?.startsWith("data:image/")) return;
+        const image = new Image();
+        await new Promise((resolve) => {
+          image.onload = resolve;
+          image.onerror = resolve;
+          image.src = saved.dataUrl;
+        });
+        const context = canvas.getContext("2d");
+        if (context && image.complete) {
+          if (saved.width) canvas.width = saved.width;
+          if (saved.height) canvas.height = saved.height;
+          context.drawImage(image, 0, 0);
+        }
+      }),
+    );
+    scrollTo(snapshot.scroll?.x || 0, snapshot.scroll?.y || 0);
+  }, state);
+}
+
+async function captureObscuraPixels(page, options) {
+  const state = await page.evaluate(readPixelBridgeState);
+  const cookies = await browserContext.cookies().catch(() => []);
+  const tempRoot = fs.mkdtempSync(
+    path.join(launchConfig.runtimeDir, "pixel-renderer-"),
+  );
+  let renderer = null;
+  try {
+    const proxy = {
+      server: `socks5://127.0.0.1:${transportProxyPort}`,
+      bypass: "<-loopback>",
+    };
+    const forkBinary = resolveChromiumForkBinary();
+    if (forkBinary) {
+      const args = mergeChromiumArgs(
+        managedChromiumForkArgs(fingerprintSeedForProfile(profileLock.profileDir)),
+        normalizeChromiumArgs(launchConfig.chromiumArgs, "chromiumArgs"),
+      ).args;
+      const { chromium } = await import("playwright-core");
+      renderer = await chromium.launchPersistentContext(tempRoot, {
+        executablePath: forkBinary,
+        headless: true,
+        ...chromiumForkContextOptions(),
+        viewport: state.viewport,
+        proxy,
+        args,
+        serviceWorkers: "allow",
+      });
+    } else {
+      const binaryInfo = await cloakBinaryInfo();
+      if (!binaryInfo?.installed) {
+        throw new Error(
+          "No on-demand pixel renderer is installed. Run `betterwright setup`.",
+        );
+      }
+      renderer = await launchCloakPersistentContext({
+        userDataDir: tempRoot,
+        headless: true,
+        humanize: false,
+        viewport: state.viewport,
+        proxy,
+        args: managedCloakArgs(
+          fingerprintSeedForProfile(profileLock.profileDir),
+        ),
+        contextOptions: { serviceWorkers: "allow" },
+      });
+    }
+    if (cookies.length) await renderer.addCookies(cookies).catch(() => {});
+    await renderer.addInitScript(seedPixelBridgeStorage, state);
+    const renderedPage = renderer.pages()[0] || (await renderer.newPage());
+    if (/^https?:/i.test(state.url)) {
+      await renderedPage.goto(state.url, {
+        waitUntil: "domcontentloaded",
+        timeout: DEFAULT_ACTION_TIMEOUT_MS * 3,
+      });
+    } else {
+      await renderedPage.setContent(await page.content(), {
+        waitUntil: "domcontentloaded",
+      });
+    }
+    await renderedPage.waitForTimeout(100);
+    await restorePixelBridgeState(renderedPage, state);
+    return await renderedPage.screenshot(options);
+  } finally {
+    await renderer?.close().catch(() => {});
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
 async function captureScreenshot(page, session, requested, fallback, options) {
   await assertScreenshotPixelLimit(page, options);
-  const content = await page.screenshot(options);
+  const content = browserBackend === "obscura"
+    ? await captureObscuraPixels(page, options)
+    : await page.screenshot(options);
   const perFileLimit = configuredLimit(
     launchConfig.maxScreenshotBytes,
     DEFAULT_SCREENSHOT_LIMIT,
@@ -1062,6 +1234,27 @@ async function handleDialog(page, dialog) {
 // in challenges.ts, where the gate that reads this timestamp lives.
 const CHALLENGE_BLOCK_STATUSES = new Set([403, 429, 503]);
 const lastBlockedDocumentAt = new WeakMap();
+const pageSiteRequests = new WeakMap();
+const requestSiteRecord = new WeakMap();
+const MAX_SITE_REQUESTS = 512;
+
+function rememberSiteRequest(page, request) {
+  const records = pageSiteRequests.get(page) || [];
+  pageSiteRequests.set(page, records);
+  const record: Record<string, any> = {
+    method: String(request.method() || "GET"),
+    url: String(request.url() || ""),
+    resourceType: String(request.resourceType() || "other"),
+    status: null,
+    mimeType: "",
+    failure: "",
+    at: Date.now(),
+  };
+  records.push(record);
+  if (records.length > MAX_SITE_REQUESTS)
+    records.splice(0, records.length - MAX_SITE_REQUESTS);
+  requestSiteRecord.set(request, record);
+}
 
 function adoptPage(page, sessionId) {
   const session = sessionFor(sessionId);
@@ -1104,9 +1297,21 @@ function adoptPage(page, sessionId) {
     page.on("download", (download) => {
       trackDownload(page, download);
     });
+    page.on("request", (request) => rememberSiteRequest(page, request));
+    page.on("requestfailed", (request) => {
+      const record = requestSiteRecord.get(request);
+      if (record) record.failure = request.failure()?.errorText || "failed";
+    });
     // Status first: it rejects every response but the handful worth inspecting,
     // so ordinary page loads never touch request metadata.
     page.on("response", (response) => {
+      const record = requestSiteRecord.get(response.request());
+      if (record) {
+        record.status = response.status();
+        record.mimeType = String(response.headers()["content-type"] || "")
+          .split(";", 1)[0]
+          .trim();
+      }
       if (!CHALLENGE_BLOCK_STATUSES.has(response.status())) return;
       try {
         const request = response.request();
@@ -1333,6 +1538,16 @@ async function humanTargetBox(page, value, timeout = DEFAULT_ACTION_TIMEOUT_MS, 
 
 async function humanClickTarget(page, session, value, options: any = {}) {
   const timeout = Math.max(1, Number(options?.timeout) || DEFAULT_ACTION_TIMEOUT_MS);
+  if (browserBackend === "obscura") {
+    const target = unwrapHumanTarget(page, value);
+    if (typeof target?.click !== "function") {
+      throw new Error(
+        "Coordinate-only human targets need the pixel renderer; use a selector or Locator with Obscura.",
+      );
+    }
+    await obscuraDomAction(target, "click");
+    return target;
+  }
   const { target, box, inputLike } = await humanTargetBox(
     page,
     value,
@@ -1485,16 +1700,9 @@ async function ensureBrowser(config) {
     startProfileLockHeartbeat();
     profileMode = profileLock.ephemeral ? "ephemeral" : "persistent";
     profileWarning = profileLock.warning;
-    const transportProxyPort = await guardProxy.ensure();
+    transportProxyPort = await guardProxy.ensure();
 
     const headless = launchConfig.headless !== false;
-    const forkBinary = resolveChromiumForkBinary();
-    const args = forkBinary
-      ? managedChromiumForkArgs(
-          fingerprintSeedForProfile(profileLock.profileDir),
-        )
-      : managedCloakArgs(fingerprintSeedForProfile(profileLock.profileDir));
-
     // Upstream egress proxy (the IP layer). Every connection still passes
     // policy + DNS-rebinding validation here; the upstream only changes which
     // IP the target observes. Applies independently of cloakV2 — a configured
@@ -1509,6 +1717,45 @@ async function ensureBrowser(config) {
       }
     }
     guardProxy.setUpstream(upstream);
+
+    const obscuraBinary =
+      headless && launchConfig.visualResident !== true
+        ? resolveObscuraBinary()
+        : null;
+    if (obscuraBinary) {
+      useSetContentCompatibility = true;
+      browserBackend = "obscura";
+      const storageDir = path.join(profileLock.profileDir, "obscura-storage");
+      mkdirPrivate(storageDir);
+      obscuraServer = await launchObscuraServer({
+        binary: obscuraBinary,
+        storageDir,
+        // Obscura's stealth transport currently supports HTTP proxies but not
+        // SOCKS5. The guard listener accepts both protocols, so Obscura still
+        // crosses the same policy/DNS-rebinding boundary as Chromium.
+        proxy: `http://127.0.0.1:${transportProxyPort}`,
+        timezone: launchConfig.timezone || undefined,
+      });
+      const { chromium } = await import("playwright-core");
+      browserConnection = await chromium.connectOverCDP(obscuraServer.endpoint);
+      browserContext =
+        browserConnection.contexts()[0] ||
+        (await browserConnection.newContext({ acceptDownloads: true }));
+      const suppliedArgs = normalizeChromiumArgs(
+        launchConfig.chromiumArgs,
+        "chromiumArgs",
+      );
+      chromiumArgsNote = suppliedArgs.length
+        ? "chromiumArgs apply only to the on-demand pixel renderer; Obscura ignored them for resident execution."
+        : "";
+    } else {
+      browserBackend = "compatibility";
+      const forkBinary = resolveChromiumForkBinary();
+      const args = forkBinary
+        ? managedChromiumForkArgs(
+            fingerprintSeedForProfile(profileLock.profileDir),
+          )
+        : managedCloakArgs(fingerprintSeedForProfile(profileLock.profileDir));
 
     // Cloaking V2: one coherent identity across the Chromium and network
     // layers. geoip resolves the locale/timezone to match the egress
@@ -1665,9 +1912,14 @@ async function ensureBrowser(config) {
         },
       });
     }
+    }
     const launchedContext = browserContext;
     launchedContext.on("close", () => {
       if (browserContext === launchedContext) browserContext = null;
+      browserConnection = null;
+      const closingObscura = obscuraServer;
+      obscuraServer = null;
+      if (closingObscura) void closingObscura.stop().catch(() => {});
       downloadGuardReady = false;
       disposeVaultCapture();
       releaseProfileLock();
@@ -1677,9 +1929,18 @@ async function ensureBrowser(config) {
       liveView = null;
       if (closingLiveView) void closingLiveView.stop().catch(() => {});
     });
-    await installContextGuard(launchedContext);
+    // Obscura 0.1.11 implements the CDP Fetch domain used by Playwright
+    // routing, but continuing a JavaScript fetch currently leaves its promise
+    // pending. Its process is still forced through the same fail-closed SOCKS
+    // guard, which remains the network security boundary. Keep the richer
+    // request-level route on the compatibility backend until Obscura can
+    // continue intercepted fetch/XHR requests correctly.
+    if (browserBackend !== "obscura") await installContextGuard(launchedContext);
     await installDownloadGuard(launchedContext);
-    if (launchConfig.credentialCapture !== false) {
+    if (
+      launchConfig.credentialCapture !== false &&
+      browserBackend !== "obscura"
+    ) {
       // CDP-level capture: the sensor runs in dedicated isolated worlds and
       // reports logins in-process; model-typed logins save silently, manual
       // user logins prompt in headed sessions. Best-effort: capture must
@@ -1730,6 +1991,10 @@ async function ensureBrowser(config) {
     const launched = browserContext;
     browserContext = null;
     await launched?.close().catch(() => {});
+    await browserConnection?.close().catch(() => {});
+    browserConnection = null;
+    await obscuraServer?.stop().catch(() => {});
+    obscuraServer = null;
     disposeVaultCapture();
     releaseProfileLock();
     throw error;
@@ -1886,6 +2151,366 @@ function validateMethodPaths(kind, property, args) {
   if (["Page", "Frame"].includes(kind) && property === "goto") {
     assertModelNavigationUrl(args[0]);
   }
+}
+
+function parseObscuraInternalSelector(selector) {
+  let source = String(selector || "");
+  let nth = null;
+  const nthMatch = / >> nth=(-?\d+)$/.exec(source);
+  if (nthMatch) {
+    nth = Number(nthMatch[1]);
+    source = source.slice(0, nthMatch.index);
+  }
+  const valuePattern = '("(?:[^"\\\\]|\\\\.)*")([is])|(/(?:[^/\\\\]|\\\\.)+/)([a-z]*)';
+  const parseValue = (match, offset) => {
+    if (match[offset]) {
+      return {
+        value: JSON.parse(match[offset]),
+        exact: match[offset + 1] === "s",
+        regex: false,
+        flags: "",
+      };
+    }
+    return {
+      value: match[offset + 2].slice(1, -1),
+      exact: false,
+      regex: true,
+      flags: match[offset + 3] || "",
+    };
+  };
+  const text = new RegExp(`^internal:text=(?:${valuePattern})$`).exec(source);
+  if (text) {
+    return {
+      kind: "text",
+      ...parseValue(text, 1),
+      nth,
+    };
+  }
+  const role = new RegExp(
+    `^internal:role=([^[]+)(?:\\[name=(?:${valuePattern})\\])?$`,
+  ).exec(source);
+  if (role) {
+    return {
+      kind: "role",
+      role: role[1],
+      ...(role[2] || role[4]
+        ? parseValue(role, 2)
+        : { value: "", exact: false, regex: false, flags: "" }),
+      nth,
+    };
+  }
+  const label = new RegExp(`^internal:label=(?:${valuePattern})$`).exec(source);
+  if (label) {
+    return {
+      kind: "label",
+      ...parseValue(label, 1),
+      nth,
+    };
+  }
+  const attr = new RegExp(
+    `^internal:(?:attr|testid)=\\[([^=\\]]+)=(?:${valuePattern})\\]$`,
+  ).exec(source);
+  if (attr) {
+    return {
+      kind: "attr",
+      name: attr[1],
+      ...parseValue(attr, 2),
+      nth,
+    };
+  }
+  return null;
+}
+
+function obscuraLocatorPage(target) {
+  return target?._frame?._page || target?._frame?.page?.() || null;
+}
+
+const OBSCURA_INTERNAL_LOCATOR_METHODS = new Set([
+  "allInnerTexts",
+  "allTextContents",
+  "blur",
+  "check",
+  "clear",
+  "click",
+  "count",
+  "dblclick",
+  "dispatchEvent",
+  "fill",
+  "focus",
+  "getAttribute",
+  "hover",
+  "innerHTML",
+  "innerText",
+  "inputValue",
+  "isChecked",
+  "isDisabled",
+  "isEditable",
+  "isEnabled",
+  "isHidden",
+  "isVisible",
+  "press",
+  "selectOption",
+  "textContent",
+  "type",
+  "uncheck",
+  "waitFor",
+]);
+
+async function obscuraInternalLocatorOperation(target, property, args = []) {
+  const descriptor = parseObscuraInternalSelector(target?._selector);
+  const page = obscuraLocatorPage(target);
+  if (!descriptor || !page || !OBSCURA_INTERNAL_LOCATOR_METHODS.has(property)) {
+    return { handled: false, value: undefined };
+  }
+  if (property === "waitFor") {
+    const state = String(args[0]?.state || "visible");
+    if (!["attached", "detached", "visible", "hidden"].includes(state)) {
+      throw new Error(`Unsupported locator wait state: ${state}`);
+    }
+    const timeout = Math.max(0, Number(args[0]?.timeout) || DEFAULT_ACTION_TIMEOUT_MS);
+    const deadline = Date.now() + timeout;
+    while (true) {
+      const count = (await obscuraInternalLocatorOperation(target, "count")).value;
+      const shown = count > 0 &&
+        (await obscuraInternalLocatorOperation(target, "isVisible")).value;
+      const satisfied = state === "attached"
+        ? count > 0
+        : state === "detached"
+          ? count === 0
+          : state === "visible"
+            ? shown
+            : !shown;
+      if (satisfied) return { handled: true, value: undefined };
+      if (Date.now() >= deadline) {
+        throw new Error(`Locator.waitFor: Timeout ${timeout}ms exceeded.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  const value = await page.evaluate(
+    ({ descriptor, property, args }) => {
+      const normalize = (value) =>
+        String(value || "")
+          .replace(/\s+/g, " ")
+          .trim();
+      const matches = (actual) => {
+        const left = normalize(actual);
+        if (descriptor.regex) {
+          const flags = String(descriptor.flags || "").replace(/[gy]/g, "");
+          return new RegExp(descriptor.value, flags).test(left);
+        }
+        const right = normalize(descriptor.value);
+        return descriptor.exact
+          ? left === right
+          : left.toLocaleLowerCase().includes(right.toLocaleLowerCase());
+      };
+      const implicitRole = (element) => {
+        const explicit = element.getAttribute("role");
+        if (explicit) return explicit;
+        const tag = element.tagName.toLowerCase();
+        if (tag === "button") return "button";
+        if (tag === "a" && element.hasAttribute("href")) return "link";
+        if (/^h[1-6]$/.test(tag)) return "heading";
+        if (tag === "img") return "img";
+        if (tag === "li") return "listitem";
+        if (["ul", "ol"].includes(tag)) return "list";
+        if (tag === "main") return "main";
+        if (tag === "nav") return "navigation";
+        if (tag === "textarea") return "textbox";
+        if (tag === "select") return "combobox";
+        if (tag === "input") {
+          const type = String(
+            element.getAttribute("type") || "text",
+          ).toLowerCase();
+          if (["button", "submit", "reset"].includes(type)) return "button";
+          if (type === "checkbox") return "checkbox";
+          if (type === "radio") return "radio";
+          if (!["hidden", "file"].includes(type)) return "textbox";
+        }
+        return "";
+      };
+      const accessibleName = (element) => {
+        const aria = element.getAttribute("aria-label");
+        if (aria) return aria;
+        const labelledBy = element.getAttribute("aria-labelledby");
+        if (labelledBy) {
+          return labelledBy
+            .split(/\s+/)
+            .map((id) => document.getElementById(id)?.textContent || "")
+            .join(" ");
+        }
+        if (element.id) {
+          const label = [...document.querySelectorAll("label")].find(
+            (candidate) => candidate.htmlFor === element.id,
+          );
+          if (label) return label.textContent || "";
+        }
+        return (
+          element.getAttribute("alt") ||
+          element.getAttribute("title") ||
+          element.getAttribute("value") ||
+          element.textContent ||
+          ""
+        );
+      };
+      const elements = [...document.querySelectorAll("*")];
+      let matched = [];
+      if (descriptor.kind === "text") {
+        matched = elements.filter(
+          (candidate) =>
+            matches(candidate.textContent) &&
+            ![...candidate.children].some((child) => matches(child.textContent)),
+        );
+      } else if (descriptor.kind === "role") {
+        matched = elements.filter(
+          (candidate) =>
+            implicitRole(candidate) === descriptor.role &&
+            (!descriptor.value || matches(accessibleName(candidate))),
+        );
+      } else if (descriptor.kind === "label") {
+        matched = elements.filter((candidate: any) => {
+          const tag = candidate.tagName.toLowerCase();
+          const labelable = ["button", "input", "meter", "output", "progress", "select", "textarea"].includes(tag);
+          return labelable && matches(accessibleName(candidate));
+        });
+      } else if (descriptor.kind === "attr") {
+        matched = elements.filter((candidate) =>
+          matches(candidate.getAttribute(descriptor.name)),
+        );
+      }
+      if (property === "count") return matched.length;
+      if (property === "allTextContents")
+        return matched.map((element) => element.textContent || "");
+      if (property === "allInnerTexts")
+        return matched.map((element) => (element as HTMLElement).innerText || "");
+      const index = descriptor.nth === null
+        ? 0
+        : descriptor.nth < 0
+          ? matched.length + descriptor.nth
+          : descriptor.nth;
+      const element: any = matched[index];
+      const visible = (candidate) => {
+        if (!candidate || candidate.hidden) return false;
+        if (candidate.getAttribute("aria-hidden") === "true") return false;
+        const style = getComputedStyle(candidate);
+        return style.display !== "none" && style.visibility !== "hidden";
+      };
+      if (property === "isVisible") return visible(element);
+      if (property === "isHidden") return !visible(element);
+      if (!element) {
+        throw new Error(`No element matched ${descriptor.kind} locator.`);
+      }
+      if (descriptor.nth === null && matched.length > 1) {
+        throw new Error(
+          `${descriptor.kind} locator matched ${matched.length} elements; use first() or nth().`,
+        );
+      }
+      if (property === "dblclick") {
+        element.dispatchEvent(
+          new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
+        );
+        return;
+      }
+      if (property === "click") {
+        element.click();
+        return;
+      }
+      if (property === "textContent") return element.textContent;
+      if (property === "innerText") return element.innerText;
+      if (property === "innerHTML") return element.innerHTML;
+      if (property === "getAttribute") return element.getAttribute(String(args[0]));
+      if (property === "inputValue") return String(element.value ?? "");
+      if (property === "isChecked") return Boolean(element.checked);
+      if (property === "isDisabled") return Boolean(element.disabled);
+      if (property === "isEnabled") return !element.disabled;
+      if (property === "isEditable") {
+        return !element.disabled &&
+          !element.readOnly &&
+          (element.isContentEditable ||
+            ["input", "textarea", "select"].includes(
+              element.tagName.toLowerCase(),
+            ));
+      }
+      if (property === "focus" || property === "blur") {
+        element[property]();
+        return;
+      }
+      if (property === "hover") {
+        element.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        element.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+        return;
+      }
+      if (property === "dispatchEvent") {
+        element.dispatchEvent(
+          new Event(String(args[0]), { bubbles: true, cancelable: true, ...args[1] }),
+        );
+        return;
+      }
+      if (["check", "uncheck"].includes(property)) {
+        const checked = property === "check";
+        if (Boolean(element.checked) !== checked) element.click();
+        return;
+      }
+      if (["fill", "clear", "type"].includes(property)) {
+        const incoming = property === "clear" ? "" : String(args[0] ?? "");
+        const next = property === "type"
+          ? `${String(element.value ?? "")}${incoming}`
+          : incoming;
+        const prototype = Object.getPrototypeOf(element);
+        const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+        if (setter) setter.call(element, next);
+        else if (element.isContentEditable) element.textContent = next;
+        else element.value = next;
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+      }
+      if (property === "selectOption") {
+        const requested = Array.isArray(args[0]) ? args[0] : [args[0]];
+        const wanted = requested.map((entry) =>
+          typeof entry === "object" && entry !== null ? entry : { value: entry },
+        );
+        for (const option of element.options || []) {
+          option.selected = wanted.some((entry) =>
+            entry.index !== undefined
+              ? option.index === Number(entry.index)
+              : entry.label !== undefined
+                ? option.label === String(entry.label)
+                : option.value === String(entry.value),
+          );
+        }
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        return [...(element.selectedOptions || [])].map((option: any) => option.value);
+      }
+      if (property === "press") {
+        const key = String(args[0] || "").split("+").pop();
+        element.focus();
+        element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+        element.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+        return;
+      }
+      throw new Error(`Unsupported Obscura locator operation: ${String(property)}`);
+    },
+    { descriptor, property, args },
+  );
+  return { handled: true, value };
+}
+
+async function obscuraDomAction(target, property, args = []) {
+  const internal = await obscuraInternalLocatorOperation(target, property, args);
+  if (internal.handled) return internal.value;
+  if (property === "click") {
+    return target.evaluate((element) => (element as HTMLElement).click());
+  }
+  if (property === "dblclick") {
+    return target.evaluate((element) => {
+      element.dispatchEvent(
+        new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
+      );
+    });
+  }
+  return undefined;
 }
 
 async function setContentCompatible(target, html, options: any = {}) {
@@ -2128,12 +2753,29 @@ function wrap(value, realm) {
         );
         const kind = objectKind(value);
         validateMethodPaths(kind, property, prepared);
-        const result =
+        let result;
+        const obscuraLocatorMethod =
+          browserBackend === "obscura" &&
+          kind === "Locator" &&
+          (["click", "dblclick"].includes(property) ||
+            (parseObscuraInternalSelector(value?._selector) &&
+              OBSCURA_INTERNAL_LOCATOR_METHODS.has(property)));
+        if (
+          obscuraLocatorMethod ||
+          (browserBackend === "obscura" &&
+            kind === "ElementHandle" &&
+            ["click", "dblclick"].includes(property))
+        ) {
+          result = obscuraDomAction(value, property, prepared);
+        } else if (
           useSetContentCompatibility &&
           ["Page", "Frame"].includes(kind) &&
           property === "setContent"
-            ? setContentCompatible(value, prepared[0], prepared[1])
-            : member.apply(value, prepared);
+        ) {
+          result = setContentCompatible(value, prepared[0], prepared[1]);
+        } else {
+          result = member.apply(value, prepared);
+        }
         if (result && typeof result.then === "function") {
           return result.then((item) => wrap(item, realm));
         }
@@ -3526,6 +4168,145 @@ async function credentialPending(message) {
   }
 }
 
+async function pageSiteRequest(page, url, options: any = {}) {
+  let target = sameOriginSiteUrl(page.url(), url);
+  let method = String(options.method || "GET").trim().toUpperCase();
+  if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    throw new Error("site.request method must be GET, HEAD, POST, PUT, PATCH, or DELETE.");
+  }
+  const headers: Record<string, string> = normalizeSiteHeaders(options.headers);
+  let body;
+  if (Object.hasOwn(options, "json")) {
+    body = JSON.stringify(options.json);
+    headers["content-type"] ||= "application/json";
+  } else if (Object.hasOwn(options, "body")) {
+    body = String(options.body);
+  }
+  if (body && Buffer.byteLength(body) > SITE_RESPONSE_LIMIT) {
+    throw new Error(`site.request body exceeds ${SITE_RESPONSE_LIMIT} bytes.`);
+  }
+  const pageUrl = page.url();
+  const cookieHeader = (await browserContext.cookies(target).catch(() => []))
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join("; ");
+  headers.origin ||= new URL(pageUrl).origin;
+  headers.referer ||= pageUrl;
+  if (cookieHeader) headers.cookie = cookieHeader;
+
+  const { request } = await import("playwright-core");
+  const requestContext = await request.newContext({
+    proxy: { server: `socks5://127.0.0.1:${transportProxyPort}` },
+    extraHTTPHeaders: headers,
+  });
+  let response;
+  try {
+    for (let redirects = 0; redirects <= 5; redirects += 1) {
+      const decision = await guardUrl(
+        target,
+        { method, resourceType: "fetch", siteHelper: true },
+        transportExecuteId(),
+      );
+      if (!decision?.allowed) {
+        throw new Error(decision?.reason || "site.request was blocked by policy.");
+      }
+      response = await requestContext.fetch(target, {
+        method,
+        ...(body !== undefined && !["GET", "HEAD"].includes(method)
+          ? { data: body }
+          : {}),
+        failOnStatusCode: false,
+        maxRedirects: 0,
+        timeout: DEFAULT_ACTION_TIMEOUT_MS * 3,
+      });
+      const location = response.headers().location;
+      if (![301, 302, 303, 307, 308].includes(response.status()) || !location) {
+        break;
+      }
+      if (redirects === 5) throw new Error("site.request exceeded 5 redirects.");
+      target = sameOriginSiteUrl(pageUrl, new URL(location, target).href);
+      if (response.status() === 303 ||
+        ([301, 302].includes(response.status()) && method === "POST")) {
+        method = "GET";
+        body = undefined;
+      }
+    }
+    const bytes = await response.body();
+    const truncated = bytes.length > SITE_RESPONSE_LIMIT;
+    const text = bytes.subarray(0, SITE_RESPONSE_LIMIT).toString("utf8");
+    const responseHeaders = response.headers();
+    const result = {
+      ok: response.ok(),
+      status: response.status(),
+      statusText: response.statusText(),
+      url: response.url(),
+      contentType: responseHeaders["content-type"] || "",
+      text,
+      truncated,
+      length: bytes.length,
+    };
+    const storage = await requestContext.storageState().catch(() => null);
+    if (storage?.cookies?.length) {
+      await browserContext.addCookies(storage.cookies).catch(() => {});
+    }
+    const records = pageSiteRequests.get(page) || [];
+    records.push({
+      method,
+      url: result.url,
+      resourceType: "fetch",
+      status: result.status,
+      mimeType: result.contentType.split(";", 1)[0].trim(),
+      failure: "",
+      at: Date.now(),
+    });
+    if (records.length > MAX_SITE_REQUESTS) {
+      records.splice(0, records.length - MAX_SITE_REQUESTS);
+    }
+    pageSiteRequests.set(page, records);
+    if (options.response === "json") {
+      try {
+        return { ...result, json: result.text ? JSON.parse(result.text) : null };
+      } catch {
+        throw new Error(`site.request expected JSON but received ${result.contentType || "unknown content"}.`);
+      }
+    }
+    return result;
+  } finally {
+    await requestContext.dispose().catch(() => {});
+  }
+}
+
+async function inspectSiteAssets(page) {
+  const domAssets = await page.evaluate(() =>
+    [
+      ...[...document.scripts].map((element) => ({
+        url: element.src,
+        resourceType: "script",
+      })),
+      ...[...document.querySelectorAll('link[rel~="stylesheet"]')].map(
+        (element: HTMLLinkElement) => ({
+          url: element.href,
+          resourceType: "stylesheet",
+        }),
+      ),
+    ].filter((entry) => entry.url),
+  );
+  const networkAssets = (pageSiteRequests.get(page) || [])
+    .filter((record) =>
+      ["script", "stylesheet", "fetch", "xhr"].includes(record.resourceType),
+    )
+    .map(({ url, resourceType, status, mimeType }) => ({
+      url,
+      resourceType,
+      status,
+      mimeType,
+    }));
+  const unique = new Map();
+  for (const asset of [...domAssets, ...networkAssets]) {
+    if (!unique.has(asset.url)) unique.set(asset.url, asset);
+  }
+  return [...unique.values()].slice(0, MAX_SITE_REQUESTS);
+}
+
 function buildSandbox(session, consoleMessages, execution) {
   const sandbox = Object.create(null);
   const context = vm.createContext(sandbox, {
@@ -3627,8 +4408,13 @@ function buildSandbox(session, consoleMessages, execution) {
     if (!/\.(png|jpe?g)$/i.test(requested)) requested = `${requested}.${type}`;
     const fullPage = Boolean(settings.fullPage);
     let annotations;
-    if (settings.annotate)
-      annotations = await addScreenshotAnnotations(page, fullPage);
+    const annotateInResidentPage =
+      settings.annotate && browserBackend !== "obscura";
+    if (settings.annotate) {
+      annotations = annotateInResidentPage
+        ? await addScreenshotAnnotations(page, fullPage)
+        : 0;
+    }
     let file;
     try {
       file = await captureScreenshot(page, session, requested, `${kind}.${type}`, {
@@ -3638,7 +4424,7 @@ function buildSandbox(session, consoleMessages, execution) {
         ...(type === "jpeg" ? { quality: Number(settings.quality) || 80 } : {}),
       });
     } finally {
-      if (settings.annotate)
+      if (annotateInResidentPage)
         await page
           .evaluate(removeAnnotationOverlay, ANNOTATION_OVERLAY_ID)
           .catch(() => {});
@@ -3787,12 +4573,48 @@ function buildSandbox(session, consoleMessages, execution) {
     const page = await ensureSessionPage(session);
     return inspectMedia(page);
   });
+  const site = Object.create(null);
+  site.requests = realm.safeFunction(async (options: any = {}) => {
+    const page = await ensureSessionPage(session);
+    const includes = String(options.urlIncludes || "");
+    const resourceType = String(options.resourceType || "");
+    const limit = Math.max(1, Math.min(512, Number(options.limit) || 100));
+    return (pageSiteRequests.get(page) || [])
+      .filter(
+        (record) =>
+          (!includes || record.url.includes(includes)) &&
+          (!resourceType || record.resourceType === resourceType),
+      )
+      .slice(-limit);
+  });
+  site.assets = realm.safeFunction(async () => {
+    const page = await ensureSessionPage(session);
+    return inspectSiteAssets(page);
+  });
+  site.read = realm.safeFunction(async (url, options: any = {}) => {
+    const page = await ensureSessionPage(session);
+    const response = await pageSiteRequest(page, url, { method: "GET" });
+    return {
+      ...response,
+      text: siteTextExcerpts(
+        response.text,
+        options.find,
+        options.contextChars,
+        options.maxMatches,
+      ),
+    };
+  });
+  site.request = realm.safeFunction(async (url, options: any = {}) => {
+    const page = await ensureSessionPage(session);
+    return pageSiteRequest(page, url, options);
+  });
   sandbox.dialogs = Object.freeze(dialogs);
   sandbox.captcha = Object.freeze(captcha);
   sandbox.human = Object.freeze(human);
   sandbox.overlays = Object.freeze(overlays);
   sandbox.controls = Object.freeze(controls);
   sandbox.media = Object.freeze(media);
+  sandbox.site = Object.freeze(site);
   sandbox.credentials = buildCredentials(session, realm, execution);
   realm.installPage(getCurrentPage);
   return { context, realm, sandbox };
@@ -5281,7 +6103,13 @@ function ensureLiveView(preferredSessionId) {
 
 async function liveViewStart(message) {
   try {
-    await ensureBrowser(message.config);
+    await ensureBrowser({ ...message.config, visualResident: true });
+    if (browserBackend === "obscura") {
+      throw new Error(
+        "Live view needs the visual compatibility backend. Close the active " +
+          "Obscura session, then start live view before the first browser run.",
+      );
+    }
     const options = message.options && typeof message.options === "object" ? message.options : {};
     const view = ensureLiveView(options.session);
     // A viewer is about to watch these pages, so nothing may stay parked: the
@@ -5469,6 +6297,18 @@ async function performShutdown() {
     /* parent/process exit */
   }
   browserContext = null;
+  try {
+    await browserConnection?.close();
+  } catch {
+    /* parent/process exit */
+  }
+  browserConnection = null;
+  try {
+    await obscuraServer?.stop();
+  } catch {
+    /* parent/process exit */
+  }
+  obscuraServer = null;
   releaseProfileLock();
   try {
     await guardProxy.close();
