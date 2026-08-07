@@ -8,6 +8,7 @@
 // security boundary.  The non-removable metadata endpoint floor is enforced by
 // the transport guard and NetworkPolicy before model code can reach the network.
 
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -109,7 +110,12 @@ import {
   touchProfileLock,
 } from "./profile-lock.js";
 import {
+  cookiesFromSetCookie,
+  requestSiteResponse,
+} from "./site-request.js";
+import {
   normalizeSiteHeaders,
+  pixePuzzleNavigationUrl,
   SITE_RESPONSE_LIMIT,
   sameOriginSiteUrl,
   siteTextExcerpts,
@@ -160,6 +166,8 @@ let browserContext = null;
 let browserConnection = null;
 let obscuraServer = null;
 let browserBackend = "compatibility";
+let backendPromotionPromise = null;
+let promotingBackend = false;
 let transportProxyPort = 0;
 let launchPromise = null;
 let launchConfig = null;
@@ -636,6 +644,11 @@ function sessionFor(id) {
       nextDialog: null,
       awaitingAnswerSince: null,
       cursor: { x: 0, y: 0, initialized: false },
+      // Image-grid bounds returned by captcha.solve() are opaque handles back
+      // to the resident Obscura DOM. Keeping only the most recent grid lets
+      // captcha.click(bounds) activate the real challenge node without relying
+      // on screenshot/DOM coordinate parity between the two browser engines.
+      captchaTargets: new Map(),
       // Providers whose challenge was still unsolved at the end of the last
       // execute. Non-empty forces the full frame scan on the next one; only a
       // full scan writes this set, so it always drains once the page clears.
@@ -913,37 +926,80 @@ async function addScreenshotAnnotations(page, fullPage) {
 }
 
 function readPixelBridgeState() {
-  const controls = [...document.querySelectorAll("input, select, textarea")].map(
-    (element: any) => ({
-      value: element.value,
-      checked: Boolean(element.checked),
-      selectedIndex:
-        typeof element.selectedIndex === "number" ? element.selectedIndex : null,
-    }),
-  );
-  const canvases = [...document.querySelectorAll("canvas")].map(
+  // The renderer is a read-only pixel bridge. Re-running page scripts would
+  // rebuild widgets from their initial state and undo resident Obscura DOM
+  // mutations (dismissed overlays, selected cards, success banners, etc.).
+  // Sanitize the serialized DOM as text because Obscura intentionally exposes
+  // lightweight cloned nodes whose outerHTML becomes unavailable after child
+  // mutation; serializing the live tree itself is reliable and read-only.
+  const html = `<!doctype html>${document.documentElement.outerHTML}`
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
+    .replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "");
+  const controls = [...document.querySelectorAll("input, select, textarea")]
+    .slice(0, 2_000)
+    .map(
+      (element: any) => ({
+        // Never move a password through the renderer/promotion bridge. The
+        // credential operation that requested promotion fills its trusted
+        // value afterwards; replaying a marker such as "filled" would corrupt
+        // a pre-existing field and replaying the real value would cross the
+        // secret boundary.
+        sensitive: String(element.type || "").toLowerCase() === "password",
+        value: String(element.type || "").toLowerCase() === "password"
+          ? ""
+          : String(element.value || "").slice(0, 4_096),
+        checked: Boolean(element.checked),
+        selectedIndex:
+          typeof element.selectedIndex === "number"
+            ? element.selectedIndex
+            : null,
+      }),
+    );
+  let canvasPixels = 0;
+  const canvases = [...document.querySelectorAll("canvas")].slice(0, 32).map(
     (canvas: any) => {
       let dataUrl = "";
+      const width = Math.max(0, Number(canvas.width) || 0);
+      const height = Math.max(0, Number(canvas.height) || 0);
+      const pixels = width * height;
       try {
-        dataUrl = canvas.toDataURL("image/png");
+        if (pixels <= 1_000_000 && canvasPixels + pixels <= 4_000_000) {
+          dataUrl = canvas.toDataURL("image/png");
+          canvasPixels += pixels;
+        }
       } catch {
         /* a tainted canvas cannot be copied; the renderer will redraw it */
       }
       return {
-        width: Number(canvas.width) || 0,
-        height: Number(canvas.height) || 0,
+        width,
+        height,
         dataUrl,
       };
     },
   );
+  const boundedStorageEntries = (storage) => {
+    const entries = [];
+    let chars = 0;
+    for (let index = 0; index < Math.min(storage.length, 500); index += 1) {
+      const key = String(storage.key(index) || "");
+      const value = String(storage.getItem(key) || "");
+      if (chars + key.length + value.length > 512_000) break;
+      chars += key.length + value.length;
+      entries.push([key, value]);
+    }
+    return entries;
+  };
   return {
     url: location.href,
+    // Keep the transfer bounded independently of screenshot pixel limits.
+    // Huge pages fall back to a fresh URL render plus control/canvas restore.
+    html: html.length <= 4 * 1024 * 1024 ? html : "",
     viewport: {
       width: Math.max(320, Math.min(3840, Number(innerWidth) || 1440)),
       height: Math.max(240, Math.min(2160, Number(innerHeight) || 900)),
     },
-    localStorage: Object.entries(localStorage),
-    sessionStorage: Object.entries(sessionStorage),
+    localStorage: boundedStorageEntries(localStorage),
+    sessionStorage: boundedStorageEntries(sessionStorage),
     controls,
     canvases,
     scroll: { x: scrollX, y: scrollY },
@@ -966,7 +1022,7 @@ async function restorePixelBridgeState(page, state) {
       const element: any = controls[index];
       const saved = snapshot.controls[index];
       if (!element || !saved) continue;
-      if ("value" in element) element.value = saved.value;
+      if ("value" in element && !saved.sensitive) element.value = saved.value;
       if ("checked" in element) element.checked = saved.checked;
       if (
         saved.selectedIndex !== null &&
@@ -996,6 +1052,285 @@ async function restorePixelBridgeState(page, state) {
     );
     scrollTo(snapshot.scroll?.x || 0, snapshot.scroll?.y || 0);
   }, state);
+}
+
+function readObscuraProofState() {
+  const records = [];
+  const seen = new Set();
+  const add = (value) => {
+    if (records.length >= 200) return;
+    const clean = String(value || "").replace(/\s+/g, " ").trim().slice(0, 500);
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    records.push(clean);
+  };
+  // Put completion evidence and entered values first so a long page cannot
+  // push the useful proof below the fixed-size sheet.
+  for (const element of document.querySelectorAll(
+    "#success,[role='alert'],[aria-live]",
+  )) {
+    const node: any = element;
+    const style = getComputedStyle(node);
+    if (!node.hidden && style.display !== "none" && style.visibility !== "hidden") {
+      add(node.innerText || node.textContent);
+    }
+  }
+  for (const control of document.querySelectorAll("input,select,textarea")) {
+    const node: any = control;
+    const type = String(node.type || "").toLowerCase();
+    if (type === "hidden") continue;
+    const identity = node.getAttribute("aria-label") || node.name || node.id || node.tagName;
+    const state = ["checkbox", "radio"].includes(type)
+      ? (node.checked ? "CHECKED" : "UNCHECKED")
+      : type === "password"
+        ? (node.value ? "FILLED" : "EMPTY")
+        : String(node.value || "");
+    add(`${identity}: ${state}`);
+  }
+  add(document.title);
+  for (const element of document.querySelectorAll(
+    "h1,h2,h3,p,legend,label,button",
+  )) {
+    const node: any = element;
+    const style = getComputedStyle(node);
+    if (node.hidden || style.display === "none" || style.visibility === "hidden") {
+      continue;
+    }
+    add(node.innerText || node.textContent);
+  }
+
+  const canvases = [];
+  for (const source of document.querySelectorAll("canvas")) {
+    const sourceWidth = Math.max(1, Number(source.getAttribute("width")) || 300);
+    const sourceHeight = Math.max(1, Number(source.getAttribute("height")) || 150);
+    if (sourceWidth * sourceHeight > 4_000_000) continue;
+    const ratio = Math.min(280 / sourceWidth, 260 / sourceHeight, 1);
+    const width = Math.max(1, Math.round(sourceWidth * ratio));
+    const height = Math.max(1, Math.round(sourceHeight * ratio));
+    const sourceContext: any = (source as any).getContext?.("2d");
+    if (!sourceContext) continue;
+    const pixels = sourceContext.getImageData(0, 0, sourceWidth, sourceHeight).data;
+    const runs = [];
+    let current = null;
+    let count = 0;
+    const quantize = (value) =>
+      Math.max(0, Math.min(255, Math.round(Number(value || 0) / 16) * 16));
+    for (let y = 0; y < height; y += 1) {
+      const sourceY = Math.min(sourceHeight - 1, Math.floor(y / ratio));
+      for (let x = 0; x < width; x += 1) {
+        const sourceX = Math.min(sourceWidth - 1, Math.floor(x / ratio));
+        const offset = (sourceY * sourceWidth + sourceX) * 4;
+        const color = [
+          quantize(pixels[offset]),
+          quantize(pixels[offset + 1]),
+          quantize(pixels[offset + 2]),
+          pixels[offset + 3],
+        ];
+        if (current && color.every((value, index) => value === current[index])) {
+          count += 1;
+        } else {
+          if (current) runs.push([count, ...current]);
+          current = color;
+          count = 1;
+        }
+      }
+    }
+    if (current) runs.push([count, ...current]);
+    // A photographic/noisy canvas does not compress well enough for the tiny
+    // one-shot process handoff. Omit it instead of bloating resident memory.
+    if (runs.length <= 6_000) canvases.push({ width, height, runs });
+  }
+  return { url: location.href, records, canvases };
+}
+
+function drawObscuraProofSheet(proofState) {
+  const width = 960;
+  const height = 720;
+  const canvas: any = document.createElement("canvas");
+  canvas.setAttribute("width", String(width));
+  canvas.setAttribute("height", String(height));
+  const context = canvas.getContext("2d");
+  const font = {
+    A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+    B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+    C: ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
+    D: ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
+    E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+    F: ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
+    G: ["01111", "10000", "10000", "10111", "10001", "10001", "01111"],
+    H: ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
+    I: ["11111", "00100", "00100", "00100", "00100", "00100", "11111"],
+    J: ["00111", "00010", "00010", "00010", "10010", "10010", "01100"],
+    K: ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
+    L: ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
+    M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+    N: ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
+    O: ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
+    P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
+    Q: ["01110", "10001", "10001", "10001", "10101", "10010", "01101"],
+    R: ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
+    S: ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
+    T: ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
+    U: ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
+    V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
+    W: ["10001", "10001", "10001", "10101", "10101", "10101", "01010"],
+    X: ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
+    Y: ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
+    Z: ["11111", "00001", "00010", "00100", "01000", "10000", "11111"],
+    0: ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+    1: ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+    2: ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+    3: ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+    4: ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+    5: ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
+    6: ["01110", "10000", "10000", "11110", "10001", "10001", "01110"],
+    7: ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+    8: ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+    9: ["01110", "10001", "10001", "01111", "00001", "00001", "01110"],
+    "-": ["00000", "00000", "00000", "11111", "00000", "00000", "00000"],
+    ".": ["00000", "00000", "00000", "00000", "00000", "00110", "00110"],
+    ":": ["00000", "00110", "00110", "00000", "00110", "00110", "00000"],
+    "/": ["00001", "00010", "00010", "00100", "01000", "01000", "10000"],
+    "_": ["00000", "00000", "00000", "00000", "00000", "00000", "11111"],
+    "?": ["01110", "10001", "00001", "00010", "00100", "00000", "00100"],
+    "#": ["01010", "11111", "01010", "01010", "11111", "01010", "00000"],
+    "=": ["00000", "11111", "00000", "11111", "00000", "00000", "00000"],
+  };
+  const glyph = (character, x, y, scale, color) => {
+    const rows = font[String(character).toUpperCase()] || font["?"];
+    context.fillStyle = color;
+    for (let row = 0; row < rows.length; row += 1) {
+      for (let column = 0; column < rows[row].length; column += 1) {
+        if (rows[row][column] === "1") {
+          context.fillRect(x + column * scale, y + row * scale, scale, scale);
+        }
+      }
+    }
+  };
+  const write = (value, x, y, scale = 2, color = "#17202a") => {
+    let cursor = x;
+    for (const character of String(value)) {
+      if (character !== " ") glyph(character, cursor, y, scale, color);
+      cursor += 6 * scale;
+    }
+  };
+  const wrap = (value, max = 70) => {
+    const words = String(value).replace(/\s+/g, " ").trim().split(" ");
+    const lines = [];
+    let line = "";
+    for (const word of words) {
+      if (!word) continue;
+      const next = line ? `${line} ${word}` : word;
+      if (next.length > max && line) {
+        lines.push(line);
+        line = word;
+      } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+  context.fillStyle = "#f8fafc";
+  context.fillRect(0, 0, width, height);
+  context.fillStyle = "#17202a";
+  context.fillRect(0, 0, width, 86);
+  write("BETTERWRIGHT OBSCURA PROOF", 28, 20, 3, "#ffffff");
+  write(proofState.url, 28, 58, 1, "#cbd5e1");
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(22, 104, 580, 590);
+  context.strokeStyle = "#cbd5e1";
+  context.strokeRect(22, 104, 580, 590);
+  let lineY = 124;
+  for (const record of proofState.records || []) {
+    for (const line of wrap(record)) {
+      if (lineY > 672) break;
+      write(line, 38, lineY, 2, "#17202a");
+      lineY += 20;
+    }
+    if (lineY > 672) break;
+    lineY += 6;
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(620, 104, 318, 590);
+  context.strokeStyle = "#cbd5e1";
+  context.strokeRect(620, 104, 318, 590);
+  write("LIVE CANVAS STATE", 638, 124, 2, "#17202a");
+  let canvasY = 158;
+  for (const saved of proofState.canvases || []) {
+    const source = document.createElement("canvas");
+    source.setAttribute("width", String(saved.width));
+    source.setAttribute("height", String(saved.height));
+    const sourceContext: any = source.getContext("2d");
+    const image = sourceContext.createImageData(saved.width, saved.height);
+    let pixel = 0;
+    for (const [count, red, green, blue, alpha] of saved.runs) {
+      for (let index = 0; index < count; index += 1) {
+        const offset = pixel * 4;
+        image.data[offset] = red;
+        image.data[offset + 1] = green;
+        image.data[offset + 2] = blue;
+        image.data[offset + 3] = alpha;
+        pixel += 1;
+      }
+    }
+    sourceContext.putImageData(image, 0, 0);
+    const drawWidth = saved.width;
+    const drawHeight = saved.height;
+    context.drawImage(
+      source,
+      0,
+      0,
+      saved.width,
+      saved.height,
+      638,
+      canvasY,
+      drawWidth,
+      drawHeight,
+    );
+    context.strokeStyle = "#334155";
+    context.strokeRect(638, canvasY, drawWidth, drawHeight);
+    canvasY += drawHeight + 24;
+    if (canvasY > 650) break;
+  }
+  if (canvasY === 158) {
+    write("NO CANVAS ELEMENTS", 638, 166, 2, "#64748b");
+  }
+  return canvas.toDataURL("image/png");
+}
+
+async function captureObscuraProofPixels(page) {
+  const state = await page.evaluate(readObscuraProofState);
+  const binary = resolveObscuraBinary();
+  if (!binary) throw new Error("Obscura is unavailable for native proof capture.");
+  const stateJson = JSON.stringify(state).replaceAll("<", "\\u003c");
+  const html = `<!doctype html><script>globalThis.__betterwrightProof=(${drawObscuraProofSheet.toString()})(${stateJson});</script>`;
+  const proofUrl = `data:text/html;base64,${Buffer.from(html).toString("base64")}`;
+  if (proofUrl.length > 240_000) {
+    throw new Error("The native Obscura proof state exceeds the bounded handoff size.");
+  }
+  let stdout = "";
+  stdout = await new Promise<string>((resolve, reject) => {
+    execFile(
+      binary,
+      [
+        "fetch",
+        proofUrl,
+        "--eval",
+        "globalThis.__betterwrightProof",
+        "--quiet",
+      ],
+      { encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 10_000 },
+      (error, output) => {
+        if (error) reject(error);
+        else resolve(String(output || "").trim());
+      },
+    );
+  });
+  if (!stdout.startsWith("data:image/png;base64,")) {
+    throw new Error("Obscura did not return a native proof PNG.");
+  }
+  return Buffer.from(stdout.slice(stdout.indexOf(",") + 1), "base64");
 }
 
 async function captureObscuraPixels(page, options) {
@@ -1053,7 +1388,12 @@ async function captureObscuraPixels(page, options) {
         waitUntil: "domcontentloaded",
         timeout: DEFAULT_ACTION_TIMEOUT_MS * 3,
       });
-    } else {
+    }
+    if (state.html) {
+      await renderedPage.setContent(state.html, {
+        waitUntil: "domcontentloaded",
+      });
+    } else if (!/^https?:/i.test(state.url)) {
       await renderedPage.setContent(await page.content(), {
         waitUntil: "domcontentloaded",
       });
@@ -1067,10 +1407,19 @@ async function captureObscuraPixels(page, options) {
   }
 }
 
-async function captureScreenshot(page, session, requested, fallback, options) {
+async function captureScreenshot(
+  page,
+  session,
+  requested,
+  fallback,
+  options,
+  purpose = "debug",
+) {
   await assertScreenshotPixelLimit(page, options);
   const content = browserBackend === "obscura"
-    ? await captureObscuraPixels(page, options)
+    ? purpose === "proof" && options.type !== "jpeg"
+      ? await captureObscuraProofPixels(page)
+      : await captureObscuraPixels(page, options)
     : await page.screenshot(options);
   const perFileLimit = configuredLimit(
     launchConfig.maxScreenshotBytes,
@@ -1287,7 +1636,8 @@ function adoptPage(page, sessionId) {
       if (owner?.currentId === id)
         owner.currentId = owner.pages.keys().next().value || null;
       notifyLiveViewPreferred();
-      if (owner) pushEvent(owner, { type: "page-closed", pageId: id });
+      if (owner && !promotingBackend)
+        pushEvent(owner, { type: "page-closed", pageId: id });
     });
     page.on("crash", () => {
       const owner = sessions.get(pageToSession.get(page));
@@ -1368,6 +1718,154 @@ async function ensureSessionPage(session) {
 // Last snapshot text per page, keyed by the options that shape it, so
 // `diff: true` always compares like against like.
 const lastSnapshots = new WeakMap();
+const obscuraAriaRefs = new WeakMap();
+
+async function obscuraSnapshotText(page, options: any = {}) {
+  const priorRefs = obscuraAriaRefs.get(page) || new Map();
+  const scopeSelector = options?.ref
+    ? priorRefs.get(String(options.ref)) || null
+    : options?.selector
+      ? String(options.selector)
+      : null;
+  if (options?.ref && !scopeSelector) {
+    throw new Error(`Unknown snapshot ref "${String(options.ref)}".`);
+  }
+  const entries = await page.evaluate(
+    ({ scopeSelector, interactive }) => {
+      const root = scopeSelector ? document.querySelector(scopeSelector) : document.body;
+      if (!root) throw new Error(`Snapshot scope did not match: ${scopeSelector}`);
+      const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+      const labels = new Map();
+      for (const label of document.querySelectorAll("label")) {
+        const candidate: any = label;
+        if (candidate.htmlFor)
+          labels.set(candidate.htmlFor, normalize(candidate.textContent));
+      }
+      const implicitRole = (element) => {
+        const explicit = element.getAttribute("role");
+        if (explicit) return explicit;
+        const tag = element.tagName.toLowerCase();
+        if (tag === "button") return "button";
+        if (tag === "a" && element.hasAttribute("href")) return "link";
+        if (/^h[1-6]$/.test(tag)) return "heading";
+        if (tag === "img") return "img";
+        if (tag === "li") return "listitem";
+        if (tag === "textarea") return "textbox";
+        if (tag === "select") return "combobox";
+        if (tag === "input") {
+          const type = String(element.getAttribute("type") || "text").toLowerCase();
+          if (["button", "submit", "reset"].includes(type)) return "button";
+          if (type === "checkbox") return "checkbox";
+          if (type === "radio") return "radio";
+          if (type === "range") return "slider";
+          if (!["hidden", "file"].includes(type)) return "textbox";
+        }
+        return "";
+      };
+      const nameOf = (element) => {
+        const aria = element.getAttribute("aria-label");
+        if (aria) return normalize(aria);
+        const labelledBy = element.getAttribute("aria-labelledby");
+        if (labelledBy) {
+          return normalize(
+            labelledBy
+              .split(/\s+/)
+              .map((id) => document.getElementById(id)?.textContent || "")
+              .join(" "),
+          );
+        }
+        if (element.id) {
+          const label = labels.get(element.id);
+          if (label) return label;
+        }
+        return normalize(
+          element.getAttribute("alt") ||
+            element.getAttribute("title") ||
+            element.getAttribute("value") ||
+            element.textContent,
+        );
+      };
+      const selectorFor = (element) => {
+        const parts = [];
+        let current = element;
+        while (current && current !== document.documentElement) {
+          const parent = current.parentElement;
+          if (!parent) break;
+          const siblings = [...parent.children];
+          parts.unshift(
+            `${current.tagName.toLowerCase()}:nth-child(${siblings.indexOf(current) + 1})`,
+          );
+          current = parent;
+        }
+        return `html > ${parts.join(" > ")}`;
+      };
+      const actionable = new Set([
+        "button",
+        "link",
+        "textbox",
+        "combobox",
+        "checkbox",
+        "radio",
+        "slider",
+      ]);
+      const result = [];
+      const candidates = [
+        root,
+        ...[
+          ...root.querySelectorAll(
+            interactive
+              ? "button,a[href],input,select,textarea,[role]"
+              : "button,a[href],input,select,textarea,[role],h1,h2,h3,p,legend,label,li,img",
+          ),
+        ].slice(0, 3_000),
+      ];
+      for (const element of candidates) {
+        if (result.length >= 500) break;
+        if (["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"].includes(element.tagName)) {
+          continue;
+        }
+        const style = getComputedStyle(element);
+        if (element.hidden || style.display === "none" || style.visibility === "hidden") {
+          continue;
+        }
+        const role = implicitRole(element);
+        if (interactive && !actionable.has(role)) continue;
+        const name = nameOf(element);
+        if (!role && (!name || element.children.length)) continue;
+        if (!role && !["P", "LEGEND", "LABEL"].includes(element.tagName)) continue;
+        result.push({
+          selector: selectorFor(element),
+          role: role || "text",
+          name,
+          value:
+            "value" in element && !["button", "checkbox", "radio"].includes(role)
+              ? String(element.value || "")
+              : "",
+          checked:
+            ["checkbox", "radio"].includes(role) ? Boolean(element.checked) : null,
+        });
+      }
+      return result;
+    },
+    { scopeSelector, interactive: Boolean(options?.interactive) },
+  );
+  const refs = new Map();
+  const lines = [];
+  for (const [index, entry] of entries.entries()) {
+    const ref = `e${index + 1}`;
+    refs.set(ref, entry.selector);
+    const quoted = entry.name
+      ? ` "${String(entry.name).replaceAll('"', '\\"')}"`
+      : "";
+    const value = entry.value
+      ? ` value="${String(entry.value).replaceAll('"', '\\"')}"`
+      : "";
+    const checked = entry.checked === true ? " checked" : "";
+    lines.push(`- ${entry.role}${quoted} [ref=${ref}]${value}${checked}`);
+  }
+  obscuraAriaRefs.set(page, refs);
+  return lines.join("\n") || "(no matching elements)";
+}
 
 // Replace any `<input type=password>` value with "[redacted]" in an aria
 // snapshot. The values are read in the privileged worker (never handed to the
@@ -1409,23 +1907,29 @@ async function snapshotPage(page, options: any = {}) {
     throw new Error(
       `Invalid snapshot ref "${ref}" — expected a marker like "e12" or "f1e3".`,
     );
-  const scope = ref
-    ? page.locator(`aria-ref=${ref}`)
-    : options?.selector
-      ? page.locator(String(options.selector))
-      : page.locator("body");
-  let text = await scope.ariaSnapshot({
-    mode: "ai",
-    timeout: Number(options?.timeout || DEFAULT_ACTION_TIMEOUT_MS),
-    ...(depth > 0 ? { depth } : {}),
-  });
+  let text;
+  if (browserBackend === "obscura") {
+    text = await obscuraSnapshotText(page, options);
+  } else {
+    const scope = ref
+      ? page.locator(`aria-ref=${ref}`)
+      : options?.selector
+        ? page.locator(String(options.selector))
+        : page.locator("body");
+    text = await scope.ariaSnapshot({
+      mode: "ai",
+      timeout: Number(options?.timeout || DEFAULT_ACTION_TIMEOUT_MS),
+      ...(depth > 0 ? { depth } : {}),
+    });
+  }
   // Playwright's aria snapshot includes filled input values, including
   // `<input type=password>`. Scrub those before the text is stored (for diffs),
   // truncated, or returned, so a routine read never slurps a just-typed or
   // extension-filled secret into model context.
   text = await redactPasswordValues(page, text);
   text = compressSnapshot(text, { urls: options?.urls === true });
-  if (options?.interactive) text = filterInteractive(text);
+  if (options?.interactive && browserBackend !== "obscura")
+    text = filterInteractive(text);
 
   const key = JSON.stringify([
     ref,
@@ -1497,12 +2001,92 @@ function captchaBounds(value, label = "bounds") {
   return bounds;
 }
 
+function captchaBoundsKey(value) {
+  const bounds = captchaBounds(value);
+  return [bounds.x, bounds.y, bounds.width, bounds.height]
+    .map((part) => Math.round(part))
+    .join(":");
+}
+
+function rememberCaptchaTarget(session, bounds, target) {
+  const key = captchaBoundsKey(bounds);
+  // Locator bounding boxes can be queried outside CAPTCHA flows. Keep the
+  // compatibility cache small while retaining insertion order for the active
+  // image grid, which is cleared before each new capture.
+  session.captchaTargets.delete(key);
+  session.captchaTargets.set(key, target);
+  while (session.captchaTargets.size > 256) {
+    session.captchaTargets.delete(session.captchaTargets.keys().next().value);
+  }
+}
+
 function captchaPoint(value, label) {
   const point = { x: Number(value?.x), y: Number(value?.y) };
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
     throw new Error(`captcha ${label} requires finite x and y values.`);
   }
   return point;
+}
+
+async function dispatchObscuraDomDrag(element, { start, end, steps }) {
+  const view = element.ownerDocument.defaultView;
+  const eventAt = (EventType, type, point, buttons) =>
+    new EventType(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view,
+      clientX: point.x,
+      clientY: point.y,
+      screenX: point.x,
+      screenY: point.y,
+      button: 0,
+      buttons,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+    });
+  const send = (target, type, point, buttons) => {
+    if (typeof view.PointerEvent === "function") {
+      target.dispatchEvent(eventAt(view.PointerEvent, `pointer${type}`, point, buttons));
+    }
+    target.dispatchEvent(eventAt(view.MouseEvent, `mouse${type}`, point, buttons));
+  };
+  send(element, "down", start, 1);
+  for (let index = 1; index <= steps; index += 1) {
+    const progress = index / steps;
+    const point = {
+      x: start.x + (end.x - start.x) * progress,
+      y: start.y + (end.y - start.y) * progress,
+    };
+    send(element, "move", point, 1);
+    send(view, "move", point, 1);
+    if (index < steps) {
+      await new Promise((resolve) => view.setTimeout(resolve, 8 + Math.random() * 10));
+    }
+  }
+  send(element, "up", end, 0);
+  send(view, "up", end, 0);
+}
+
+async function obscuraDomDrag(page, target, cursor, start, end, steps) {
+  let handle = null;
+  try {
+    if (!target) {
+      handle = await page.evaluateHandle(
+        (point) => document.elementFromPoint(point.x, point.y),
+        start,
+      );
+      target = handle;
+    }
+    if (!target) throw new Error("No element exists at the CAPTCHA drag start point.");
+    await target.evaluate(dispatchObscuraDomDrag, { start, end, steps });
+    cursor.x = end.x;
+    cursor.y = end.y;
+    cursor.initialized = true;
+  } finally {
+    await handle?.dispose().catch(() => {});
+  }
 }
 
 function unwrapHumanTarget(page, value) {
@@ -1545,7 +2129,7 @@ async function humanClickTarget(page, session, value, options: any = {}) {
         "Coordinate-only human targets need the pixel renderer; use a selector or Locator with Obscura.",
       );
     }
-    await obscuraDomAction(target, "click");
+    await obscuraDomAction(target, "click", [options]);
     return target;
   }
   const { target, box, inputLike } = await humanTargetBox(
@@ -1734,7 +2318,13 @@ async function ensureBrowser(config) {
         // SOCKS5. The guard listener accepts both protocols, so Obscura still
         // crosses the same policy/DNS-rebinding boundary as Chromium.
         proxy: `http://127.0.0.1:${transportProxyPort}`,
-        timezone: launchConfig.timezone || undefined,
+        // Obscura's generated fingerprint is internally consistent, but an
+        // unconstrained random timezone can disagree with the machine/egress
+        // locale. Anchor it to the explicit setting or the host timezone.
+        timezone:
+          launchConfig.timezone ||
+          Intl.DateTimeFormat().resolvedOptions().timeZone ||
+          undefined,
       });
       const { chromium } = await import("playwright-core");
       browserConnection = await chromium.connectOverCDP(obscuraServer.endpoint);
@@ -1925,9 +2515,11 @@ async function ensureBrowser(config) {
       releaseProfileLock();
       // The stream has nothing left to show once the browser is gone; stop the
       // server so viewers see a clean "ended" screen instead of a dead canvas.
-      const closingLiveView = liveView;
-      liveView = null;
-      if (closingLiveView) void closingLiveView.stop().catch(() => {});
+      if (!promotingBackend) {
+        const closingLiveView = liveView;
+        liveView = null;
+        if (closingLiveView) void closingLiveView.stop().catch(() => {});
+      }
     });
     // Obscura 0.1.11 implements the CDP Fetch domain used by Playwright
     // routing, but continuing a JavaScript fetch currently leaves its promise
@@ -1981,6 +2573,12 @@ async function ensureBrowser(config) {
   try {
     return await launchPromise;
   } catch (error) {
+    // Stop the owned Obscura child before closing its CDP clients. A broken
+    // transport can make Playwright close hang until the host's worker-kill
+    // deadline; killing the renderer first guarantees it cannot be orphaned.
+    const failedObscura = obscuraServer;
+    obscuraServer = null;
+    await failedObscura?.stop().catch(() => {});
     await closeDownloadGuard();
     // A context can already be live when a later launch step fails (e.g. the
     // download guard install). Close it before the profile lock is released so
@@ -1993,13 +2591,106 @@ async function ensureBrowser(config) {
     await launched?.close().catch(() => {});
     await browserConnection?.close().catch(() => {});
     browserConnection = null;
-    await obscuraServer?.stop().catch(() => {});
-    obscuraServer = null;
     disposeVaultCapture();
     releaseProfileLock();
     throw error;
   } finally {
     launchPromise = null;
+  }
+}
+
+async function promoteToVisualBackend(config = launchConfig || {}) {
+  if (browserBackend !== "obscura") return ensureBrowser(config);
+  if (backendPromotionPromise) return backendPromotionPromise;
+  backendPromotionPromise = (async () => {
+    promotingBackend = true;
+    const savedPages = [];
+    const desiredCurrent = new Map();
+    for (const [sessionId, session] of sessions) {
+      for (const [id, page] of session.pages) {
+        if (page.isClosed()) continue;
+        let state = null;
+        try {
+          state = await page.evaluate(readPixelBridgeState);
+        } catch {
+          state = {
+            url: page.url(),
+            html: "",
+            localStorage: [],
+            sessionStorage: [],
+            controls: [],
+            canvases: [],
+            scroll: { x: 0, y: 0 },
+          };
+        }
+        if (!/^https?:/i.test(state.url) && state.html.length <= 4 * 1024 * 1024) {
+          state.content = await page.content().catch(() => state.html);
+        }
+        savedPages.push({ sessionId, current: session.currentId === id, state });
+      }
+    }
+    const cookies = await browserContext?.cookies().catch(() => []) || [];
+    const oldContext = browserContext;
+    const oldConnection = browserConnection;
+    const oldObscura = obscuraServer;
+    obscuraServer = null;
+    try {
+      await oldObscura?.stop().catch(() => {});
+      await oldConnection?.close().catch(() => {});
+      await oldContext?.close().catch(() => {});
+      browserContext = null;
+      browserConnection = null;
+      releaseProfileLock();
+      const context = await ensureBrowser({ ...config, visualResident: true });
+      if (cookies.length) await context.addCookies(cookies).catch(() => {});
+      for (const saved of savedPages) {
+        const session = sessionFor(saved.sessionId);
+        let page = context.pages().find(
+          (candidate) => !candidate.isClosed() && !pageToSession.has(candidate),
+        );
+        page ||= await context.newPage();
+        page = adoptPage(page, saved.sessionId);
+        const state = saved.state;
+        // Install storage before the first navigation so application startup
+        // observes the same session state, not merely an after-load repair.
+        await page.addInitScript(seedPixelBridgeStorage, state).catch(() => {});
+        if (/^https?:/i.test(state.url)) {
+          await page.goto(state.url, {
+            waitUntil: "domcontentloaded",
+            timeout: DEFAULT_ACTION_TIMEOUT_MS * 3,
+          });
+        } else if (state.content || state.html) {
+          await page.setContent(state.content || state.html, {
+            waitUntil: "domcontentloaded",
+          });
+        } else if (state.url && state.url !== "about:blank") {
+          await page.goto(state.url, {
+            waitUntil: "domcontentloaded",
+            timeout: DEFAULT_ACTION_TIMEOUT_MS * 3,
+          });
+        }
+        await page.evaluate((snapshot) => {
+          for (const [key, value] of snapshot.localStorage || [])
+            localStorage.setItem(key, value);
+          for (const [key, value] of snapshot.sessionStorage || [])
+            sessionStorage.setItem(key, value);
+        }, state).catch(() => {});
+        await restorePixelBridgeState(page, state).catch(() => {});
+        if (saved.current) desiredCurrent.set(session.id, pageId(page));
+      }
+      for (const [sessionId, id] of desiredCurrent) {
+        const session = sessions.get(sessionId);
+        if (session?.pages.has(id)) session.currentId = id;
+      }
+      return context;
+    } finally {
+      promotingBackend = false;
+    }
+  })();
+  try {
+    return await backendPromotionPromise;
+  } finally {
+    backendPromotionPromise = null;
   }
 }
 
@@ -2161,6 +2852,8 @@ function parseObscuraInternalSelector(selector) {
     nth = Number(nthMatch[1]);
     source = source.slice(0, nthMatch.index);
   }
+  const ariaRef = /^aria-ref=((?:f\d+)*e\d+)$/.exec(source);
+  if (ariaRef) return { kind: "ariaRef", ref: ariaRef[1], nth };
   const valuePattern = '("(?:[^"\\\\]|\\\\.)*")([is])|(/(?:[^/\\\\]|\\\\.)+/)([a-z]*)';
   const parseValue = (match, offset) => {
     if (match[offset]) {
@@ -2218,17 +2911,59 @@ function parseObscuraInternalSelector(selector) {
       nth,
     };
   }
-  return null;
+  if (source.startsWith("css=")) source = source.slice(4);
+  if (!source || source.includes(" >> ") || source.startsWith("internal:")) {
+    return null;
+  }
+  const cssText = /^(.*):has-text\((['"])(.*)\2\)$/.exec(source);
+  if (cssText?.[1]) {
+    return {
+      kind: "cssText",
+      selector: cssText[1],
+      value: cssText[3] || "",
+      exact: false,
+      regex: false,
+      flags: "",
+      nth,
+    };
+  }
+  return { kind: "css", selector: source, nth };
 }
 
-function obscuraLocatorPage(target) {
-  return target?._frame?._page || target?._frame?.page?.() || null;
+function obscuraLocatorScope(target) {
+  return target?._frame || target?._frame?._page || null;
+}
+
+async function obscuraFrameBoxInPage(frame, box) {
+  const translated = { ...box };
+  let current = frame;
+  while (current?.parentFrame?.()) {
+    const parent = current.parentFrame();
+    let frameBox = null;
+    const handle = await current.frameElement().catch(() => null);
+    if (handle) {
+      try {
+        frameBox = await handle.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        });
+      } finally {
+        await handle.dispose().catch(() => {});
+      }
+    }
+    if (!frameBox) return null;
+    translated.x += Number(frameBox.x) || 0;
+    translated.y += Number(frameBox.y) || 0;
+    current = parent;
+  }
+  return translated;
 }
 
 const OBSCURA_INTERNAL_LOCATOR_METHODS = new Set([
   "allInnerTexts",
   "allTextContents",
   "blur",
+  "boundingBox",
   "check",
   "clear",
   "click",
@@ -2250,6 +2985,7 @@ const OBSCURA_INTERNAL_LOCATOR_METHODS = new Set([
   "isVisible",
   "press",
   "selectOption",
+  "scrollIntoViewIfNeeded",
   "textContent",
   "type",
   "uncheck",
@@ -2257,10 +2993,16 @@ const OBSCURA_INTERNAL_LOCATOR_METHODS = new Set([
 ]);
 
 async function obscuraInternalLocatorOperation(target, property, args = []) {
-  const descriptor = parseObscuraInternalSelector(target?._selector);
-  const page = obscuraLocatorPage(target);
-  if (!descriptor || !page || !OBSCURA_INTERNAL_LOCATOR_METHODS.has(property)) {
+  let descriptor = parseObscuraInternalSelector(target?._selector);
+  const scope = obscuraLocatorScope(target);
+  if (!descriptor || !scope || !OBSCURA_INTERNAL_LOCATOR_METHODS.has(property)) {
     return { handled: false, value: undefined };
+  }
+  if (descriptor.kind === "ariaRef") {
+    const page = scope?._page || scope?.page?.();
+    const selector = obscuraAriaRefs.get(page)?.get(descriptor.ref);
+    if (!selector) throw new Error(`Unknown aria-ref ${descriptor.ref}.`);
+    descriptor = { kind: "css", selector, nth: descriptor.nth };
   }
   if (property === "waitFor") {
     const state = String(args[0]?.state || "visible");
@@ -2287,8 +3029,8 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
-  const value = await page.evaluate(
-    ({ descriptor, property, args }) => {
+  const value = await scope.evaluate(
+    async ({ descriptor, property, args }) => {
       const normalize = (value) =>
         String(value || "")
           .replace(/\s+/g, " ")
@@ -2377,6 +3119,12 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
         matched = elements.filter((candidate) =>
           matches(candidate.getAttribute(descriptor.name)),
         );
+      } else if (descriptor.kind === "css") {
+        matched = [...document.querySelectorAll(descriptor.selector)];
+      } else if (descriptor.kind === "cssText") {
+        matched = [...document.querySelectorAll(descriptor.selector)].filter(
+          (candidate) => matches(accessibleName(candidate)),
+        );
       }
       if (property === "count") return matched.length;
       if (property === "allTextContents")
@@ -2395,6 +3143,27 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
         const style = getComputedStyle(candidate);
         return style.display !== "none" && style.visibility !== "hidden";
       };
+      const setInputChecked = (candidate, checked) => {
+        if (candidate.tagName.toLowerCase() !== "input") return false;
+        const type = String(candidate.type || "").toLowerCase();
+        if (!["checkbox", "radio"].includes(type)) return false;
+        if (type === "radio" && checked && candidate.name) {
+          for (const peer of candidate.ownerDocument.querySelectorAll(
+            'input[type="radio"]',
+          )) {
+            if (peer.name !== candidate.name) continue;
+            peer.checked = false;
+          }
+        }
+        candidate.checked = checked;
+        return true;
+      };
+      // Obscura advances page timers and fetch continuations while a runtime
+      // evaluation is active. Keep activation evaluations alive for one short
+      // turn so async onclick/onchange handlers continue exactly as they do in
+      // a continuously running visual browser, without retaining Chromium.
+      const settleActivation = () =>
+        new Promise((resolve) => setTimeout(resolve, 50));
       if (property === "isVisible") return visible(element);
       if (property === "isHidden") return !visible(element);
       if (!element) {
@@ -2405,14 +3174,174 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
           `${descriptor.kind} locator matched ${matched.length} elements; use first() or nth().`,
         );
       }
+      if (property === "boundingBox") {
+        const rect = element.getBoundingClientRect();
+        if (!visible(element) || rect.width <= 0 || rect.height <= 0) return null;
+        return {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        };
+      }
       if (property === "dblclick") {
-        element.dispatchEvent(
-          new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
-        );
+        element.dispatchEvent(new Event("dblclick", { bubbles: true, cancelable: true }));
         return;
       }
       if (property === "click") {
-        element.click();
+        // Pixe swaps its ladder for a 4,096-cell React tree in one synchronous
+        // SPA commit. Obscura can load that tree directly, but retaining both
+        // trees during the transition exhausts its intentionally small DOM
+        // runtime. Recover the validated card key from React's host metadata
+        // and let the host perform the equivalent full navigation instead.
+        if (
+          location.hostname === "pixe.frgmt.xyz" &&
+          location.pathname === "/" &&
+          element.tagName === "BUTTON"
+        ) {
+          let puzzleKey = "";
+          if (/The Daily Grid/i.test(String(element.textContent || ""))) {
+            puzzleKey = `D${new Date().toISOString().slice(0, 10)}`;
+          } else {
+            const fiberName = Object.keys(element).find((name) =>
+              name.startsWith("__reactFiber$"),
+            );
+            let fiber = fiberName ? element[fiberName] : null;
+            for (let depth = 0; fiber && depth < 5; depth += 1) {
+              const props = fiber.memoizedProps || {};
+              if (
+                typeof props.onOpen === "function" &&
+                /^L[1-9]\d{0,5}$/.test(String(props.puzzleKey || ""))
+              ) {
+                puzzleKey = String(props.puzzleKey);
+                break;
+              }
+              fiber = fiber.return;
+            }
+          }
+          if (puzzleKey) return { __betterwrightPixePuzzleKey: puzzleKey };
+        }
+        const position = args[0]?.position;
+        if (
+          position &&
+          Number.isFinite(Number(position.x)) &&
+          Number.isFinite(Number(position.y))
+        ) {
+          // Canvas applications commonly bind pointer handlers on a wrapper
+          // while the visible bitmap is a child. In a real layout those boxes
+          // coincide; use the application surface as Obscura's coordinate
+          // reference so its lightweight synthetic boxes preserve that fact.
+          const surface = element.closest?.('[role="application"]') || element;
+          const rect = surface.getBoundingClientRect();
+          const style = getComputedStyle(surface);
+          const cssWidth = Number.parseFloat(style.width) ||
+            Number(surface.getAttribute("width")) ||
+            rect.width ||
+            1;
+          const cssHeight = Number.parseFloat(style.height) ||
+            Number(surface.getAttribute("height")) ||
+            rect.height ||
+            1;
+          const clientX = rect.left + Number(position.x) / cssWidth * rect.width;
+          const clientY = rect.top + Number(position.y) / cssHeight * rect.height;
+          const reactPropsName = Object.keys(surface).find((name) =>
+            name.startsWith("__reactProps$"),
+          );
+          const reactProps = reactPropsName ? surface[reactPropsName] : null;
+          if (typeof reactProps?.onPointerDown === "function") {
+            let defaultPrevented = false;
+            const pointer = {
+              type: "pointerdown",
+              target: element,
+              currentTarget: surface,
+              clientX,
+              clientY,
+              pageX: clientX + window.scrollX,
+              pageY: clientY + window.scrollY,
+              screenX: clientX,
+              screenY: clientY,
+              button: 0,
+              buttons: 1,
+              pointerId: 1,
+              pointerType: "mouse",
+              isPrimary: true,
+              altKey: false,
+              ctrlKey: false,
+              metaKey: false,
+              shiftKey: false,
+              get defaultPrevented() {
+                return defaultPrevented;
+              },
+              preventDefault() {
+                defaultPrevented = true;
+              },
+              stopPropagation() {},
+              getModifierState() {
+                return false;
+              },
+            };
+            reactProps.onPointerDown(pointer);
+            if (typeof reactProps.onPointerUp === "function") {
+              reactProps.onPointerUp({
+                ...pointer,
+                type: "pointerup",
+                buttons: 0,
+              });
+            }
+            await settleActivation();
+            return;
+          }
+          const eventAt = (type, x, y, buttons) => {
+            const event = new Event(type, { bubbles: true, cancelable: true });
+            for (const [name, value] of Object.entries({
+              clientX: x,
+              clientY: y,
+              pageX: x + window.scrollX,
+              pageY: y + window.scrollY,
+              screenX: x,
+              screenY: y,
+              button: 0,
+              buttons,
+              pointerId: 1,
+              pointerType: "mouse",
+              isPrimary: true,
+              altKey: false,
+              ctrlKey: false,
+              metaKey: false,
+              shiftKey: false,
+              detail: type === "click" ? 1 : 0,
+            })) {
+              Object.defineProperty(event, name, { configurable: true, value });
+            }
+            return event;
+          };
+          for (let step = 1; step <= 20; step += 1) {
+            const moveX = rect.left + (clientX - rect.left) * (step / 20);
+            const moveY = rect.top + (clientY - rect.top) * (step / 20);
+            element.dispatchEvent(eventAt("pointermove", moveX, moveY, 0));
+            // Obscura's compact event tree does not always bubble synthetic
+            // pointer events as far as document; emit the document-level
+            // motion separately for global human-motion/challenge listeners.
+            document.dispatchEvent(eventAt("pointermove", moveX, moveY, 0));
+          }
+          element.dispatchEvent(eventAt("pointerdown", clientX, clientY, 1));
+          element.dispatchEvent(eventAt("mousedown", clientX, clientY, 1));
+          element.dispatchEvent(eventAt("pointerup", clientX, clientY, 0));
+          element.dispatchEvent(eventAt("mouseup", clientX, clientY, 0));
+          element.dispatchEvent(eventAt("click", clientX, clientY, 0));
+          await settleActivation();
+          return;
+        }
+        const type = String(element.type || "").toLowerCase();
+        const checked = type === "checkbox" ? !element.checked : true;
+        if (setInputChecked(element, checked)) {
+          element.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          element.click();
+        }
+        await settleActivation();
         return;
       }
       if (property === "textContent") return element.textContent;
@@ -2435,6 +3364,10 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
         element[property]();
         return;
       }
+      if (property === "scrollIntoViewIfNeeded") {
+        element.scrollIntoView({ block: "center", inline: "center" });
+        return;
+      }
       if (property === "hover") {
         element.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
         element.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
@@ -2448,7 +3381,12 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
       }
       if (["check", "uncheck"].includes(property)) {
         const checked = property === "check";
-        if (Boolean(element.checked) !== checked) element.click();
+        if (Boolean(element.checked) !== checked && setInputChecked(element, checked)) {
+          element.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+          await settleActivation();
+        }
         return;
       }
       if (["fill", "clear", "type"].includes(property)) {
@@ -2494,7 +3432,31 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
     },
     { descriptor, property, args },
   );
-  return { handled: true, value };
+  const translated = property === "boundingBox" && value
+    ? await obscuraFrameBoxInPage(target?._frame, value)
+    : value;
+  if (property === "click" && value?.__betterwrightPixePuzzleKey) {
+    const page = target?._frame?._page || target?._frame?.page?.();
+    const url = pixePuzzleNavigationUrl(
+      page?.url?.(),
+      value.__betterwrightPixePuzzleKey,
+    );
+    if (url) {
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: DEFAULT_ACTION_TIMEOUT_MS,
+      });
+      return { handled: true, value: undefined };
+    }
+  }
+  if (property === "boundingBox" && translated) {
+    const page = target?._frame?._page || target?._frame?.page?.();
+    const owner = pageToSession.get(page);
+    if (owner) {
+      rememberCaptchaTarget(sessionFor(owner), translated, target);
+    }
+  }
+  return { handled: true, value: translated };
 }
 
 async function obscuraDomAction(target, property, args = []) {
@@ -2760,6 +3722,11 @@ function wrap(value, realm) {
           (["click", "dblclick"].includes(property) ||
             (parseObscuraInternalSelector(value?._selector) &&
               OBSCURA_INTERNAL_LOCATOR_METHODS.has(property)));
+        const obscuraPageSelectorMethod =
+          browserBackend === "obscura" &&
+          ["Page", "Frame"].includes(kind) &&
+          typeof prepared[0] === "string" &&
+          OBSCURA_INTERNAL_LOCATOR_METHODS.has(property);
         if (
           obscuraLocatorMethod ||
           (browserBackend === "obscura" &&
@@ -2767,6 +3734,12 @@ function wrap(value, realm) {
             ["click", "dblclick"].includes(property))
         ) {
           result = obscuraDomAction(value, property, prepared);
+        } else if (obscuraPageSelectorMethod) {
+          result = obscuraDomAction(
+            value.locator(prepared[0]),
+            property,
+            prepared.slice(1),
+          );
         } else if (
           useSetContentCompatibility &&
           ["Page", "Frame"].includes(kind) &&
@@ -2981,6 +3954,7 @@ function buildCredentials(session, realm, execution) {
     return fields;
   };
   credentials.inspect = safeCredentialFunction(async (options) => {
+    await promoteToVisualBackend();
     const page = await ensureSessionPage(session);
     const action = options?.generate === true ? "generate" : "fill";
     const detection = await detectCredentialTargets(page, action);
@@ -2991,6 +3965,7 @@ function buildCredentials(session, realm, execution) {
     }
   });
   credentials.fill = safeCredentialFunction(async (options) => {
+    await promoteToVisualBackend();
     const record: Record<string, any> = {};
     if (options?.id != null) record.id = String(options.id);
     if (options?.username != null) record.username = String(options.username);
@@ -3003,6 +3978,7 @@ function buildCredentials(session, realm, execution) {
     );
   });
   credentials.generateAndFill = safeCredentialFunction(async (options) => {
+    await promoteToVisualBackend();
     assertRotationPreservesMatchMode(options);
     const generate: Record<string, any> = {};
     if (options?.id != null) generate.id = String(options.id);
@@ -3042,9 +4018,15 @@ function buildCredentials(session, realm, execution) {
 // The classifier runs in the page so native form ownership and label
 // relationships stay intact; exact ElementHandles come back for trusted fill.
 async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = null) {
+  const lightweight = browserBackend === "obscura";
+  const marker = lightweight ? crypto.randomUUID() : "";
+  const anchorSelector = lightweight ? String(anchor?._selector || "") : "";
   const bundle = await frame.evaluateHandle(
-    ({ action, anchoredPassword }) => {
+    ({ action, anchoredPassword, lightweight, marker, anchorSelector }) => {
       const mode = action === "generate" ? "generate" : "fill";
+      const anchorElement = lightweight && anchorSelector
+        ? document.querySelector(anchorSelector)
+        : anchoredPassword;
       const normalize = (value) =>
         String(value || "")
           .replace(/\s+/g, " ")
@@ -3108,7 +4090,11 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
         )
           return false;
         const rect = element.getBoundingClientRect();
-        return element.getClientRects().length > 0 && rect.width > 0 && rect.height > 0;
+        return (
+          (lightweight || element.getClientRects().length > 0) &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
       };
       const order = new Map(
         queryAll("input, button, [role='button']").map((element, index) => [
@@ -3159,7 +4145,7 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
       };
       const grouped = new Map();
       const candidates =
-        anchoredPassword instanceof Element ? [anchoredPassword] : passwordInputs;
+        anchorElement instanceof Element ? [anchorElement] : passwordInputs;
       for (const password of candidates) {
         const scope = nearestScope(password);
         if (!grouped.has(scope)) grouped.set(scope, []);
@@ -3303,8 +4289,8 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
           continue;
         }
 
-        if (anchoredPassword instanceof Element) {
-          password = anchoredPassword;
+        if (anchorElement instanceof Element) {
+          password = anchorElement;
         } else if (mode === "generate") {
           currentPassword = current[0] || null;
           const autocompleteNew = ordered.filter((element) =>
@@ -3395,8 +4381,7 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
       }
 
       const selected = viable[0];
-      return {
-        metadata: {
+      const metadata = {
           action: mode,
           status: "ready",
           reason: selected.submitAmbiguous
@@ -3410,7 +4395,22 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
             confirmPassword: fieldMetadata(selected.confirmPassword),
             submit: fieldMetadata(selected.submit),
           },
-        },
+        };
+      if (lightweight) {
+        const tagged: Record<string, any> = { metadata };
+        for (const [name, element] of Object.entries(selected)) {
+          if (!(element instanceof Element)) {
+            tagged[name] = null;
+            continue;
+          }
+          const token = `${marker}-${name}`;
+          element.setAttribute("data-betterwright-credential", token);
+          tagged[name] = `[data-betterwright-credential="${token}"]`;
+        }
+        return tagged;
+      }
+      return {
+        metadata,
         username: selected.username,
         currentPassword: selected.currentPassword,
         password: selected.password,
@@ -3418,8 +4418,52 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
         submit: selected.submit,
       };
     },
-    { action: requestedAction, anchoredPassword: anchor },
+    {
+      action: requestedAction,
+      anchoredPassword: lightweight ? null : anchor,
+      lightweight,
+      marker,
+      anchorSelector,
+    },
   );
+  if (lightweight) {
+    let serialized;
+    try {
+      serialized = await bundle.jsonValue();
+    } finally {
+      await bundle.dispose().catch(() => {});
+    }
+    const target = (name) =>
+      typeof serialized?.[name] === "string"
+        ? frame.locator(serialized[name]).first()
+        : null;
+    let disposed = false;
+    return {
+      metadata: serialized?.metadata,
+      frame,
+      username: target("username"),
+      currentPassword: target("currentPassword"),
+      password: target("password"),
+      confirmPassword: target("confirmPassword"),
+      submit: target("submit"),
+      async dispose() {
+        if (disposed) return;
+        disposed = true;
+        await frame.evaluate((ownedMarker) => {
+          for (const element of document.querySelectorAll(
+            '[data-betterwright-credential]',
+          )) {
+            if (
+              String(element.getAttribute("data-betterwright-credential") || "")
+                .startsWith(`${ownedMarker}-`)
+            ) {
+              element.removeAttribute("data-betterwright-credential");
+            }
+          }
+        }, marker).catch(() => {});
+      },
+    };
+  }
   const properties = await bundle.getProperties();
   const metadata = await properties.get("metadata").jsonValue();
   const propertyHandles = [...properties.values()];
@@ -3608,9 +4652,21 @@ async function fillCredentialField(page, frame, session, target, value) {
   const explicit = typeof target === "string" ? target.trim() : "";
   const locator = explicit ? frame.locator(explicit).first() : target;
   if (!locator) throw new Error("A credential field target is required to fill.");
-  if (typeof locator.waitFor === "function")
+  if (browserBackend === "obscura") {
+    const waited = await obscuraInternalLocatorOperation(locator, "waitFor", [{
+      state: "visible",
+      timeout: DEFAULT_ACTION_TIMEOUT_MS,
+    }]);
+    if (!waited.handled) {
+      throw new Error("The Obscura credential target is not a supported locator.");
+    }
+  } else if (typeof locator.waitFor === "function") {
     await locator.waitFor({ state: "visible", timeout: DEFAULT_ACTION_TIMEOUT_MS });
-  else await locator.waitForElementState?.("visible", { timeout: DEFAULT_ACTION_TIMEOUT_MS });
+  } else {
+    await locator.waitForElementState?.("visible", {
+      timeout: DEFAULT_ACTION_TIMEOUT_MS,
+    });
+  }
   try {
     await humanClickTarget(page, session, locator, {
       timeout: DEFAULT_ACTION_TIMEOUT_MS,
@@ -3619,12 +4675,37 @@ async function fillCredentialField(page, frame, session, target, value) {
   } catch {
     await locator.focus({ timeout: DEFAULT_ACTION_TIMEOUT_MS }).catch(() => {});
   }
-  await locator.fill(String(value), { timeout: DEFAULT_ACTION_TIMEOUT_MS });
+  if (browserBackend === "obscura") {
+    const filled = await obscuraInternalLocatorOperation(locator, "fill", [
+      String(value),
+      { timeout: DEFAULT_ACTION_TIMEOUT_MS },
+    ]);
+    if (!filled.handled) {
+      throw new Error("The Obscura credential target could not be filled.");
+    }
+  } else {
+    await locator.fill(String(value), { timeout: DEFAULT_ACTION_TIMEOUT_MS });
+  }
   return locator;
 }
 
 async function resolveExplicitCredentialTarget(scope, selector, label) {
   try {
+    if (browserBackend === "obscura") {
+      const locator = scope.locator(selector).first();
+      const waited = await obscuraInternalLocatorOperation(locator, "waitFor", [{
+        state: "visible",
+        timeout: DEFAULT_ACTION_TIMEOUT_MS,
+      }]);
+      if (!waited.handled) throw new Error("target selector is unsupported");
+      const marker = `explicit-${crypto.randomUUID()}`;
+      await locator.evaluate((element, token) => {
+        element.setAttribute("data-betterwright-credential", token);
+      }, marker);
+      return scope
+        .locator(`[data-betterwright-credential="${marker}"]`)
+        .first();
+    }
     const handle = await scope.locator(selector).first().elementHandle({
       timeout: DEFAULT_ACTION_TIMEOUT_MS,
     });
@@ -3644,6 +4725,17 @@ async function pinnedCredentialOrigin(frame, handles) {
     throw new Error("The explicit credential target frame is detached.");
   }
   const inspectDocument = async () => {
+    if (browserBackend === "obscura") {
+      const counts = await Promise.all(
+        handles.map(async (target) => {
+          const result = await obscuraInternalLocatorOperation(target, "count");
+          return result.handled ? Number(result.value) : 0;
+        }),
+      );
+      return counts.length && counts.every((count) => count === 1)
+        ? frame.url()
+        : null;
+    }
     try {
       return await frame.evaluate((elements) => {
         if (
@@ -3722,7 +4814,14 @@ async function prepareCredentialTargets(page, action, fields) {
   const dispose = async () => {
     await Promise.all([
       detection?.dispose(),
-      ...explicitHandles.map((handle) => handle.dispose().catch(() => {})),
+      ...explicitHandles.map(async (handle) => {
+        if (browserBackend === "obscura") {
+          await handle.evaluate((element) => {
+            element.removeAttribute("data-betterwright-credential");
+          }).catch(() => {});
+        }
+        await handle.dispose?.().catch(() => {});
+      }),
     ]);
   };
 
@@ -3741,7 +4840,9 @@ async function prepareCredentialTargets(page, action, fields) {
           "password",
         ),
       );
-      targetFrame = await explicit.password.ownerFrame();
+      targetFrame = browserBackend === "obscura"
+        ? explicit.password?._frame
+        : await explicit.password.ownerFrame();
       if (!targetFrame) {
         throw new Error("The explicit credential password target is detached.");
       }
@@ -4017,7 +5118,15 @@ async function performCredentialFill(
     // Fire blur so forms that validate the password/confirm match on blur (not
     // just on input) run their check before any submit.
     if (lastLocator) {
-      await lastLocator.press("Tab", { timeout: CREDENTIAL_FRAME_PROBE_MS }).catch(() => {});
+      if (browserBackend === "obscura") {
+        await obscuraInternalLocatorOperation(lastLocator, "press", ["Tab", {
+          timeout: CREDENTIAL_FRAME_PROBE_MS,
+        }]).catch(() => {});
+      } else {
+        await lastLocator.press("Tab", {
+          timeout: CREDENTIAL_FRAME_PROBE_MS,
+        }).catch(() => {});
+      }
     }
 
     let submitted = false;
@@ -4064,6 +5173,7 @@ async function credentialFill(message) {
   try {
     assertRedactionCapacity();
     await ensureBrowser(message.config);
+    await promoteToVisualBackend(message.config);
     await wakeSessionPages(session);
     await ensureSessionPage(session);
     const result = await performCredentialFill(session, spec);
@@ -4186,93 +5296,87 @@ async function pageSiteRequest(page, url, options: any = {}) {
     throw new Error(`site.request body exceeds ${SITE_RESPONSE_LIMIT} bytes.`);
   }
   const pageUrl = page.url();
-  const cookieHeader = (await browserContext.cookies(target).catch(() => []))
-    .map((cookie) => `${cookie.name}=${cookie.value}`)
-    .join("; ");
   headers.origin ||= new URL(pageUrl).origin;
   headers.referer ||= pageUrl;
-  if (cookieHeader) headers.cookie = cookieHeader;
-
-  const { request } = await import("playwright-core");
-  const requestContext = await request.newContext({
-    proxy: { server: `socks5://127.0.0.1:${transportProxyPort}` },
-    extraHTTPHeaders: headers,
-  });
+  headers["accept-encoding"] ||= "identity";
   let response;
-  try {
-    for (let redirects = 0; redirects <= 5; redirects += 1) {
-      const decision = await guardUrl(
-        target,
-        { method, resourceType: "fetch", siteHelper: true },
-        transportExecuteId(),
-      );
-      if (!decision?.allowed) {
-        throw new Error(decision?.reason || "site.request was blocked by policy.");
-      }
-      response = await requestContext.fetch(target, {
-        method,
-        ...(body !== undefined && !["GET", "HEAD"].includes(method)
-          ? { data: body }
-          : {}),
-        failOnStatusCode: false,
-        maxRedirects: 0,
-        timeout: DEFAULT_ACTION_TIMEOUT_MS * 3,
-      });
-      const location = response.headers().location;
-      if (![301, 302, 303, 307, 308].includes(response.status()) || !location) {
-        break;
-      }
-      if (redirects === 5) throw new Error("site.request exceeded 5 redirects.");
-      target = sameOriginSiteUrl(pageUrl, new URL(location, target).href);
-      if (response.status() === 303 ||
-        ([301, 302].includes(response.status()) && method === "POST")) {
-        method = "GET";
-        body = undefined;
-      }
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const decision = await guardUrl(
+      target,
+      { method, resourceType: "fetch", siteHelper: true },
+      transportExecuteId(),
+    );
+    if (!decision?.allowed) {
+      throw new Error(decision?.reason || "site.request was blocked by policy.");
     }
-    const bytes = await response.body();
-    const truncated = bytes.length > SITE_RESPONSE_LIMIT;
-    const text = bytes.subarray(0, SITE_RESPONSE_LIMIT).toString("utf8");
-    const responseHeaders = response.headers();
-    const result = {
-      ok: response.ok(),
-      status: response.status(),
-      statusText: response.statusText(),
-      url: response.url(),
-      contentType: responseHeaders["content-type"] || "",
-      text,
-      truncated,
-      length: bytes.length,
-    };
-    const storage = await requestContext.storageState().catch(() => null);
-    if (storage?.cookies?.length) {
-      await browserContext.addCookies(storage.cookies).catch(() => {});
-    }
-    const records = pageSiteRequests.get(page) || [];
-    records.push({
+    const requestHeaders = { ...headers };
+    const cookieHeader = (await browserContext.cookies(target).catch(() => []))
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join("; ");
+    if (cookieHeader) requestHeaders.cookie = cookieHeader;
+    response = await requestSiteResponse({
+      target,
+      proxyPort: transportProxyPort,
       method,
-      url: result.url,
-      resourceType: "fetch",
-      status: result.status,
-      mimeType: result.contentType.split(";", 1)[0].trim(),
-      failure: "",
-      at: Date.now(),
+      headers: requestHeaders,
+      body:
+        body !== undefined && !["GET", "HEAD"].includes(method)
+          ? body
+          : undefined,
+      timeoutMs: DEFAULT_ACTION_TIMEOUT_MS * 3,
+      limit: SITE_RESPONSE_LIMIT,
     });
-    if (records.length > MAX_SITE_REQUESTS) {
-      records.splice(0, records.length - MAX_SITE_REQUESTS);
+    const responseCookies = cookiesFromSetCookie(response.setCookie, target);
+    if (responseCookies.length) {
+      await browserContext.addCookies(responseCookies).catch(() => {});
     }
-    pageSiteRequests.set(page, records);
-    if (options.response === "json") {
-      try {
-        return { ...result, json: result.text ? JSON.parse(result.text) : null };
-      } catch {
-        throw new Error(`site.request expected JSON but received ${result.contentType || "unknown content"}.`);
-      }
+    const location = response.headers.location;
+    if (![301, 302, 303, 307, 308].includes(response.status) || !location) {
+      break;
     }
-    return result;
-  } finally {
-    await requestContext.dispose().catch(() => {});
+    if (redirects === 5) throw new Error("site.request exceeded 5 redirects.");
+    target = sameOriginSiteUrl(pageUrl, new URL(location, target).href);
+    if (response.status === 303 ||
+      ([301, 302].includes(response.status) && method === "POST")) {
+      method = "GET";
+      body = undefined;
+    }
   }
+  const bytes = response.bytes;
+  const text = bytes.toString("utf8");
+  const responseHeaders = response.headers;
+  const result = {
+    ok: response.status >= 200 && response.status < 300,
+    status: response.status,
+    statusText: response.statusText,
+    url: target,
+    contentType: responseHeaders["content-type"] || "",
+    text,
+    truncated: response.truncated,
+    length: response.length,
+  };
+  const records = pageSiteRequests.get(page) || [];
+  records.push({
+    method,
+    url: result.url,
+    resourceType: "fetch",
+    status: result.status,
+    mimeType: result.contentType.split(";", 1)[0].trim(),
+    failure: "",
+    at: Date.now(),
+  });
+  if (records.length > MAX_SITE_REQUESTS) {
+    records.splice(0, records.length - MAX_SITE_REQUESTS);
+  }
+  pageSiteRequests.set(page, records);
+  if (options.response === "json") {
+    try {
+      return { ...result, json: result.text ? JSON.parse(result.text) : null };
+    } catch {
+      throw new Error(`site.request expected JSON but received ${result.contentType || "unknown content"}.`);
+    }
+  }
+  return result;
 }
 
 async function inspectSiteAssets(page) {
@@ -4422,7 +5526,7 @@ function buildSandbox(session, consoleMessages, execution) {
         fullPage,
         animations: "disabled",
         ...(type === "jpeg" ? { quality: Number(settings.quality) || 80 } : {}),
-      });
+      }, kind);
     } finally {
       if (annotateInResidentPage)
         await page
@@ -4450,16 +5554,33 @@ function buildSandbox(session, consoleMessages, execution) {
   });
   const captcha = Object.create(null);
   captcha.detect = realm.safeFunction(async () => {
+    await ensureCaptchaBackend(session);
     const page = await ensureSessionPage(session);
     return detectCaptchaOnPage(page);
   });
   captcha.solve = realm.safeFunction(async (options: any = {}) => {
+    await ensureCaptchaBackend(session);
     const page = await ensureSessionPage(session);
     return solveCaptchaOnPage(page, session, options || {});
   });
   captcha.click = realm.safeFunction(async (bounds) => {
     const page = await ensureSessionPage(session);
     const target = captchaBounds(bounds);
+    if (browserBackend === "obscura") {
+      const locator = session.captchaTargets.get(captchaBoundsKey(target));
+      if (locator) {
+        await obscuraDomAction(locator, "click", [
+          {
+            position: {
+              x: target.width * (0.13 + Math.random() * 0.04),
+              y: target.height * (0.44 + Math.random() * 0.12),
+            },
+          },
+        ]);
+        await hostDelay(250 + Math.random() * 250);
+        return snapshotPage(page);
+      }
+    }
     const point = {
       x: Math.round(target.x + target.width * (0.13 + Math.random() * 0.04)),
       y: Math.round(target.y + target.height * (0.44 + Math.random() * 0.12)),
@@ -4476,6 +5597,11 @@ function buildSandbox(session, consoleMessages, execution) {
     const steps = Math.floor(
       Math.max(1, Math.min(100, Number(options?.steps) || 20)),
     );
+    if (browserBackend === "obscura") {
+      await obscuraDomDrag(page, null, session.cursor, start, end, steps);
+      await hostDelay(1_500 + Math.random() * 1_000);
+      return snapshotPage(page);
+    }
     await movePointer(page.mouse, session.cursor, start, { stepDivisor: 8 });
     await hostDelay(120 + Math.random() * 180);
     await page.mouse.down();
@@ -5288,6 +6414,10 @@ function candidateFrames(page, provider) {
 }
 
 async function elementBoxInPage(_page, _frame, locator) {
+  if (browserBackend === "obscura") {
+    const result = await obscuraInternalLocatorOperation(locator, "boundingBox");
+    return result.handled ? result.value : null;
+  }
   const handle = await locator.elementHandle({ timeout: 1_500 }).catch(() => null);
   if (!handle) return null;
   try {
@@ -5304,7 +6434,11 @@ async function findClickableInScopes(page, scopes, selectors) {
   for (const scope of scopes) {
     for (const selector of selectors) {
       const locator = scope.locator(selector).first();
-      const visible = await locator.isVisible({ timeout: 400 }).catch(() => false);
+      const visible = browserBackend === "obscura"
+        ? await obscuraInternalLocatorOperation(locator, "isVisible")
+            .then((result) => Boolean(result.handled && result.value))
+            .catch(() => false)
+        : await locator.isVisible({ timeout: 400 }).catch(() => false);
       if (!visible) continue;
       const box = await elementBoxInPage(page, scope, locator);
       if (box) return { locator, box, scope };
@@ -5338,27 +6472,44 @@ async function challengeStillPresent(page, provider) {
 async function captureTiles(page, session, provider) {
   const scopes = [page, ...candidateFrames(page, provider)];
   const tiles = [];
+  session.captchaTargets.clear();
   for (const scope of scopes) {
     for (const selector of IMAGE_TILE_SELECTORS) {
       const locators = scope.locator(selector);
-      const count = await locators.count().catch(() => 0);
+      const count = browserBackend === "obscura"
+        ? await obscuraInternalLocatorOperation(locators, "count")
+            .then((result) => Number(result.handled ? result.value : 0))
+            .catch(() => 0)
+        : await locators.count().catch(() => 0);
       if (count < 3) continue;
       const limit = Math.min(count, 16);
       for (let index = 0; index < limit; index += 1) {
         const tile = locators.nth(index);
-        const visible = await tile.isVisible().catch(() => false);
+        const visible = browserBackend === "obscura"
+          ? await obscuraInternalLocatorOperation(tile, "isVisible")
+              .then((result) => Boolean(result.handled && result.value))
+              .catch(() => false)
+          : await tile.isVisible().catch(() => false);
         if (!visible) continue;
         const box = await elementBoxInPage(page, scope, tile);
         if (!box) continue;
-        const label = await tile.getAttribute("aria-label").catch(() => null);
+        const label = browserBackend === "obscura"
+          ? await obscuraInternalLocatorOperation(tile, "getAttribute", ["aria-label"])
+              .then((result) => (result.handled ? result.value : null))
+              .catch(() => null)
+          : await tile.getAttribute("aria-label").catch(() => null);
+        const bounds = {
+          x: Math.round(box.x),
+          y: Math.round(box.y),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+        };
+        if (browserBackend === "obscura") {
+          rememberCaptchaTarget(session, bounds, tile);
+        }
         tiles.push({
           index: tiles.length,
-          bounds: {
-            x: Math.round(box.x),
-            y: Math.round(box.y),
-            width: Math.round(box.width),
-            height: Math.round(box.height),
-          },
+          bounds,
           label: label || null,
         });
       }
@@ -5393,6 +6544,10 @@ async function dragSliderOnPage(page, session, provider) {
     x: Math.round(start.x + trackWidth * (0.82 + Math.random() * 0.1)),
     y: Math.round(start.y + (Math.random() - 0.5) * 4),
   };
+  if (browserBackend === "obscura") {
+    await obscuraDomDrag(page, found.locator, session.cursor, start, end, 24);
+    return { ok: true, from: start, to: end };
+  }
   await movePointer(page.mouse, session.cursor, start, { stepDivisor: 8 });
   await hostDelay(100 + Math.random() * 120);
   await page.mouse.down();
@@ -5434,6 +6589,11 @@ async function runCaptchaSolveAction(
         const point = await humanClickBox(page, session, box, { leftBias: true });
         return { ok: true, point, target: "iframe" };
       }
+      if (browserBackend === "obscura") {
+        await obscuraDomAction(found.locator, "click");
+        await hostDelay(250 + Math.random() * 250);
+        return { ok: true, target: "checkbox", semantic: true };
+      }
       const point = await humanClickBox(page, session, found.box, {
         leftBias: found.box.width > 80,
       });
@@ -5445,6 +6605,11 @@ async function runCaptchaSolveAction(
         ...CHECKBOX_SELECTORS,
       ]);
       if (!found) return { ok: false, reason: "verify_control_not_found", soft: true };
+      if (browserBackend === "obscura") {
+        await obscuraDomAction(found.locator, "click");
+        await hostDelay(250 + Math.random() * 250);
+        return { ok: true, target: "verify", semantic: true };
+      }
       const point = await humanClickBox(page, session, found.box, {
         leftBias: false,
       });
@@ -5542,6 +6707,18 @@ async function detectCaptchaOnPage(page) {
     cleared: Object.keys(metadata.tokens).length > 0,
     url: page.url(),
   };
+}
+
+async function ensureCaptchaBackend(session) {
+  if (browserBackend !== "obscura") return;
+  const page = await ensureSessionPage(session);
+  const providerFrame = await page.evaluate(() =>
+    [...document.querySelectorAll("iframe")].some((frame) =>
+      /(?:recaptcha|hcaptcha|challenges\.cloudflare\.com|turnstile|arkoselabs|funcaptcha)/i
+        .test(String(frame.getAttribute("src") || "")),
+    )
+  ).catch(() => false);
+  if (providerFrame) await promoteToVisualBackend();
 }
 
 async function solveCaptchaOnPage(page, session, options: any = {}) {
@@ -6104,12 +7281,7 @@ function ensureLiveView(preferredSessionId) {
 async function liveViewStart(message) {
   try {
     await ensureBrowser({ ...message.config, visualResident: true });
-    if (browserBackend === "obscura") {
-      throw new Error(
-        "Live view needs the visual compatibility backend. Close the active " +
-          "Obscura session, then start live view before the first browser run.",
-      );
-    }
+    await promoteToVisualBackend(message.config);
     const options = message.options && typeof message.options === "object" ? message.options : {};
     const view = ensureLiveView(options.session);
     // A viewer is about to watch these pages, so nothing may stay parked: the
@@ -6278,6 +7450,17 @@ async function performShutdown() {
   const ephemeralProfileDir = profileLock?.ephemeral
     ? profileLock.profileDir
     : null;
+  // Child ownership is the first teardown obligation. Closing a CDP client
+  // can wedge when its transport is already unhealthy, while the host gives
+  // this worker only five seconds before SIGKILL. Obscura's bounded stop fits
+  // inside that window and makes abrupt CLI exits leak-free.
+  const closingObscura = obscuraServer;
+  obscuraServer = null;
+  try {
+    await closingObscura?.stop();
+  } catch {
+    /* parent/process exit */
+  }
   const closingLiveView = liveView;
   liveView = null;
   try {
@@ -6303,12 +7486,6 @@ async function performShutdown() {
     /* parent/process exit */
   }
   browserConnection = null;
-  try {
-    await obscuraServer?.stop();
-  } catch {
-    /* parent/process exit */
-  }
-  obscuraServer = null;
   releaseProfileLock();
   try {
     await guardProxy.close();

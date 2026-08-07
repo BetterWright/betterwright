@@ -27,6 +27,27 @@ export function sameOriginSiteUrl(currentUrl, value) {
   return target.href;
 }
 
+export function pixePuzzleNavigationUrl(currentUrl, puzzleKey) {
+  let current;
+  try {
+    current = new URL(String(currentUrl || ""));
+  } catch {
+    return "";
+  }
+  const key = String(puzzleKey || "");
+  const validKey = /^L[1-9]\d{0,5}$/.test(key) ||
+    (/^D\d{4}-\d{2}-\d{2}$/.test(key) &&
+      !Number.isNaN(Date.parse(key.slice(1))));
+  if (
+    current.hostname !== "pixe.frgmt.xyz" ||
+    current.pathname !== "/" ||
+    !validKey
+  ) {
+    return "";
+  }
+  return new URL(`/play/${key}`, current).href;
+}
+
 export function normalizeSiteHeaders(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const headers = {};

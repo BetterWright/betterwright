@@ -363,7 +363,13 @@ export async function launchPersistentContext(options) {
   process.env.BETTERWRIGHT_CHROMIUM_PATH = "off";
   delete process.env.BETTERWRIGHT_CHROMIUM_ROOT;
   process.env.BETTERWRIGHT_TEST_CLOSE_MARKER = marker;
-  const browser = new BetterWright({ home, headless: true, vault: false });
+  const browser = new BetterWright({
+    home,
+    // This regression exercises the compatibility browser's launch path;
+    // headed sessions intentionally do not use resident Obscura.
+    headless: false,
+    vault: false,
+  });
   t.after(async () => {
     await browser.close().catch(() => {});
     for (const [key, value] of Object.entries(savedEnv)) {

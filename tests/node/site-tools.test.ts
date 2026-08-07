@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   normalizeSiteHeaders,
+  pixePuzzleNavigationUrl,
   sameOriginSiteUrl,
   siteTextExcerpts,
 } from "../../dist/src/site-tools.js";
@@ -19,6 +20,29 @@ test("site helpers resolve relative URLs but reject cross-origin access", () => 
   assert.throws(
     () => sameOriginSiteUrl("about:blank", "/api"),
     /valid HTTP/,
+  );
+});
+
+test("Pixe puzzle cards use bounded direct routes on the lightweight DOM backend", () => {
+  assert.equal(
+    pixePuzzleNavigationUrl("https://pixe.frgmt.xyz/", "L12"),
+    "https://pixe.frgmt.xyz/play/L12",
+  );
+  assert.equal(
+    pixePuzzleNavigationUrl("https://pixe.frgmt.xyz/", "D2026-08-06"),
+    "https://pixe.frgmt.xyz/play/D2026-08-06",
+  );
+  assert.equal(
+    pixePuzzleNavigationUrl("https://pixe.frgmt.xyz/play/L1", "L2"),
+    "",
+  );
+  assert.equal(
+    pixePuzzleNavigationUrl("https://example.com/", "L1"),
+    "",
+  );
+  assert.equal(
+    pixePuzzleNavigationUrl("https://pixe.frgmt.xyz/", "../admin"),
+    "",
   );
 });
 
