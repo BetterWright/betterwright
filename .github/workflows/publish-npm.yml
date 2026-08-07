@@ -85,13 +85,10 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
-      # npm publish runs prepublishOnly implicitly. Run that release gate as an
-      # explicit, visible step instead, then suppress lifecycle scripts on the
-      # final upload so the same expensive suite cannot run a second time. The
-      # gate builds the package before the managed-browser steps consume dist/.
-      - name: Run release verification
+      # Build dist/ before the managed-browser steps consume the release CLI.
+      - name: Build TypeScript sources
         if: steps.existing.outputs.published != 'true'
-        run: npm run release:check
+        run: npm run build
       # The published default is Obscura with Cloak as its compatibility
       # renderer. Install both so a release cannot reach npm after testing only
       # the fallback backend.
@@ -119,6 +116,13 @@ jobs:
       - name: Test managed CloakBrowser headed mode
         if: steps.existing.outputs.published != 'true'
         run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js
+      # npm publish runs prepublishOnly implicitly. Run that release gate as an
+      # explicit, visible final check after every step that can rebuild dist/,
+      # then suppress lifecycle scripts on the upload. The exact package smoke-
+      # tested here is therefore the package sent to npm, without a hidden rerun.
+      - name: Run final release verification
+        if: steps.existing.outputs.published != 'true'
+        run: npm run release:check
       - name: Select npm distribution tag
         if: steps.existing.outputs.published != 'true'
         id: npm_tag
