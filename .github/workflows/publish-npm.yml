@@ -123,6 +123,12 @@ jobs:
       - name: Run final release verification
         if: steps.existing.outputs.published != 'true'
         run: npm run release:check
+        # setup installed both managed browsers for the integration gates
+        # above. Keep the unit suite hermetic so it cannot discover and launch
+        # those real binaries; browser behavior has already been tested here.
+        env:
+          BETTERWRIGHT_OBSCURA_ROOT: "off"
+          BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Select npm distribution tag
         if: steps.existing.outputs.published != 'true'
         id: npm_tag
