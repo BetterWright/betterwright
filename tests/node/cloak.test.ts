@@ -39,6 +39,13 @@ test("managed Cloak viewports stay coherent on affected builds", () => {
   );
   assert.deepEqual(
     managedCloakViewport(
+      { tier: "free", platform: "darwin-arm64", version: "145.0.0" },
+      false,
+    ),
+    { width: 1438, height: 679 },
+  );
+  assert.deepEqual(
+    managedCloakViewport(
       { tier: "free", platform: "linux-x64", version: "146.0.0" },
       false,
     ),

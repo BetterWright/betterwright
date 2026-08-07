@@ -175,6 +175,7 @@ let profileLock = null;
 let profileLockHeartbeat = null;
 let profileMode = "persistent";
 let profileWarning = "";
+const OBSCURA_COOKIE_FILE = "betterwright-cookies.json";
 // Non-empty when caller-supplied Chromium switches were dropped as duplicates
 // of BetterWright's own, so the caller is told rather than left wondering why
 // a switch had no effect.
@@ -215,6 +216,38 @@ function soleExecutingSession() {
   if (activeExecutionCounts.size !== 1) return null;
   for (const key of activeExecutionCounts.keys()) return key;
   return null;
+}
+
+function obscuraCookiePath() {
+  if (!profileLock || profileLock.ephemeral) return null;
+  return path.join(profileLock.profileDir, OBSCURA_COOKIE_FILE);
+}
+
+function readObscuraCookies() {
+  const file = obscuraCookiePath();
+  if (!file) return [];
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    if (raw.length > 4 * 1024 * 1024) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.slice(0, 4_096) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeObscuraCookies(cookies) {
+  const file = obscuraCookiePath();
+  if (!file || !Array.isArray(cookies)) return;
+  const bounded = cookies.slice(0, 4_096);
+  const serialized = JSON.stringify(bounded);
+  if (serialized.length <= 4 * 1024 * 1024) writePrivate(file, serialized);
+}
+
+async function persistObscuraCookies() {
+  if (browserBackend !== "obscura" || !browserContext) return;
+  const cookies = await browserContext.cookies().catch(() => null);
+  if (cookies) writeObscuraCookies(cookies);
 }
 
 // --- background-page parking (src/page-park.ts) -----------------------------
@@ -1318,6 +1351,10 @@ async function captureObscuraProofPixels(page) {
         proofUrl,
         "--eval",
         "globalThis.__betterwrightProof",
+        "--wait",
+        "0",
+        "--timeout",
+        "5",
         "--quiet",
       ],
       { encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 10_000 },
@@ -1390,13 +1427,18 @@ async function captureObscuraPixels(page, options) {
       });
     }
     if (state.html) {
-      await renderedPage.setContent(state.html, {
-        waitUntil: "domcontentloaded",
-      });
+      await renderedPage.evaluate((markup) => {
+        document.open();
+        document.write(markup);
+        document.close();
+      }, state.html);
     } else if (!/^https?:/i.test(state.url)) {
-      await renderedPage.setContent(await page.content(), {
-        waitUntil: "domcontentloaded",
-      });
+      const markup = await page.content();
+      await renderedPage.evaluate((content) => {
+        document.open();
+        document.write(content);
+        document.close();
+      }, markup);
     }
     await renderedPage.waitForTimeout(100);
     await restorePixelBridgeState(renderedPage, state);
@@ -1719,6 +1761,7 @@ async function ensureSessionPage(session) {
 // `diff: true` always compares like against like.
 const lastSnapshots = new WeakMap();
 const obscuraAriaRefs = new WeakMap();
+const obscuraPageTitles = new WeakMap();
 
 async function obscuraSnapshotText(page, options: any = {}) {
   const priorRefs = obscuraAriaRefs.get(page) || new Map();
@@ -1731,7 +1774,7 @@ async function obscuraSnapshotText(page, options: any = {}) {
     throw new Error(`Unknown snapshot ref "${String(options.ref)}".`);
   }
   const entries = await page.evaluate(
-    ({ scopeSelector, interactive }) => {
+    ({ scopeSelector, interactive, urls }) => {
       const root = scopeSelector ? document.querySelector(scopeSelector) : document.body;
       if (!root) throw new Error(`Snapshot scope did not match: ${scopeSelector}`);
       const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -1843,16 +1886,29 @@ async function obscuraSnapshotText(page, options: any = {}) {
               : "",
           checked:
             ["checkbox", "radio"].includes(role) ? Boolean(element.checked) : null,
+          url:
+            urls && role === "link"
+              ? String(element.getAttribute("href") || "")
+              : "",
         });
       }
       return result;
     },
-    { scopeSelector, interactive: Boolean(options?.interactive) },
+    {
+      scopeSelector,
+      interactive: Boolean(options?.interactive),
+      urls: options?.urls === true,
+    },
   );
   const refs = new Map();
   const lines = [];
-  for (const [index, entry] of entries.entries()) {
-    const ref = `e${index + 1}`;
+  let nextRef = 1;
+  for (const entry of entries) {
+    if (entry.role === "text") {
+      if (entry.name) lines.push(`- text: ${entry.name}`);
+      continue;
+    }
+    const ref = `e${nextRef++}`;
     refs.set(ref, entry.selector);
     const quoted = entry.name
       ? ` "${String(entry.name).replaceAll('"', '\\"')}"`
@@ -1862,6 +1918,7 @@ async function obscuraSnapshotText(page, options: any = {}) {
       : "";
     const checked = entry.checked === true ? " checked" : "";
     lines.push(`- ${entry.role}${quoted} [ref=${ref}]${value}${checked}`);
+    if (entry.url) lines.push(`  - /url: ${entry.url}`);
   }
   obscuraAriaRefs.set(page, refs);
   return lines.join("\n") || "(no matching elements)";
@@ -1944,7 +2001,14 @@ async function snapshotPage(page, options: any = {}) {
 
   let title = "";
   try {
-    title = String(await page.title())
+    const rawTitle = await page.title();
+    const resolvedTitle =
+      !rawTitle && browserBackend === "obscura"
+        ? await page.evaluate(
+            () => document.title || document.querySelector("title")?.textContent || "",
+          )
+        : rawTitle;
+    title = String(resolvedTitle)
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 120);
@@ -2020,6 +2084,24 @@ function rememberCaptchaTarget(session, bounds, target) {
   }
 }
 
+function captchaTargetAtPoint(session, point) {
+  const x = Number(point?.x);
+  const y = Number(point?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  for (const [key, target] of [...session.captchaTargets.entries()].reverse()) {
+    const [left, top, width, height] = key.split(":").map(Number);
+    if (
+      x >= left &&
+      x <= left + width &&
+      y >= top &&
+      y <= top + height
+    ) {
+      return target;
+    }
+  }
+  return null;
+}
+
 function captchaPoint(value, label) {
   const point = { x: Number(value?.x), y: Number(value?.y) };
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
@@ -2053,6 +2135,7 @@ async function dispatchObscuraDomDrag(element, { start, end, steps }) {
     target.dispatchEvent(eventAt(view.MouseEvent, `mouse${type}`, point, buttons));
   };
   send(element, "down", start, 1);
+  send(element.ownerDocument, "down", start, 1);
   for (let index = 1; index <= steps; index += 1) {
     const progress = index / steps;
     const point = {
@@ -2060,12 +2143,14 @@ async function dispatchObscuraDomDrag(element, { start, end, steps }) {
       y: start.y + (end.y - start.y) * progress,
     };
     send(element, "move", point, 1);
+    send(element.ownerDocument, "move", point, 1);
     send(view, "move", point, 1);
     if (index < steps) {
       await new Promise((resolve) => view.setTimeout(resolve, 8 + Math.random() * 10));
     }
   }
   send(element, "up", end, 0);
+  send(element.ownerDocument, "up", end, 0);
   send(view, "up", end, 0);
 }
 
@@ -2129,7 +2214,16 @@ async function humanClickTarget(page, session, value, options: any = {}) {
         "Coordinate-only human targets need the pixel renderer; use a selector or Locator with Obscura.",
       );
     }
-    await obscuraDomAction(target, "click", [options]);
+    const located = await obscuraInternalLocatorOperation(target, "boundingBox");
+    const box = located.handled ? located.value : await target.boundingBox();
+    if (!box) throw new Error("human target is not visible.");
+    const point = pointInside(box, Boolean(options?.inputLike));
+    await obscuraDomAction(target, "click", [
+      {
+        ...options,
+        position: { x: point.x - box.x, y: point.y - box.y },
+      },
+    ]);
     return target;
   }
   const { target, box, inputLike } = await humanTargetBox(
@@ -2331,6 +2425,10 @@ async function ensureBrowser(config) {
       browserContext =
         browserConnection.contexts()[0] ||
         (await browserConnection.newContext({ acceptDownloads: true }));
+      const persistedCookies = readObscuraCookies();
+      if (persistedCookies.length) {
+        await browserContext.addCookies(persistedCookies).catch(() => {});
+      }
       const suppliedArgs = normalizeChromiumArgs(
         launchConfig.chromiumArgs,
         "chromiumArgs",
@@ -2444,7 +2542,7 @@ async function ensureBrowser(config) {
           BETTERWRIGHT_CHROMIUM_VERSION,
         );
       }
-      useSetContentCompatibility = false;
+      useSetContentCompatibility = true;
       const { chromium } = await import("playwright-core");
       browserContext = await chromium.launchPersistentContext(
         profileLock.profileDir,
@@ -2630,6 +2728,7 @@ async function promoteToVisualBackend(config = launchConfig || {}) {
       }
     }
     const cookies = await browserContext?.cookies().catch(() => []) || [];
+    writeObscuraCookies(cookies);
     const oldContext = browserContext;
     const oldConnection = browserConnection;
     const oldObscura = obscuraServer;
@@ -2660,9 +2759,11 @@ async function promoteToVisualBackend(config = launchConfig || {}) {
             timeout: DEFAULT_ACTION_TIMEOUT_MS * 3,
           });
         } else if (state.content || state.html) {
-          await page.setContent(state.content || state.html, {
-            waitUntil: "domcontentloaded",
-          });
+          await page.evaluate((markup) => {
+            document.open();
+            document.write(markup);
+            document.close();
+          }, state.content || state.html);
         } else if (state.url && state.url !== "about:blank") {
           await page.goto(state.url, {
             waitUntil: "domcontentloaded",
@@ -3394,11 +3495,16 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
         const next = property === "type"
           ? `${String(element.value ?? "")}${incoming}`
           : incoming;
-        const prototype = Object.getPrototypeOf(element);
-        const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-        if (setter) setter.call(element, next);
-        else if (element.isContentEditable) element.textContent = next;
-        else element.value = next;
+        if (
+          element.isContentEditable ||
+          element.hasAttribute("contenteditable")
+        ) element.textContent = next;
+        else {
+          const prototype = Object.getPrototypeOf(element);
+          const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+          if (setter) setter.call(element, next);
+          else element.value = next;
+        }
         element.dispatchEvent(new Event("input", { bubbles: true }));
         element.dispatchEvent(new Event("change", { bubbles: true }));
         return;
@@ -3460,6 +3566,25 @@ async function obscuraInternalLocatorOperation(target, property, args = []) {
 }
 
 async function obscuraDomAction(target, property, args = []) {
+  if (property === "click") {
+    const href = await obscuraInternalLocatorOperation(
+      target,
+      "getAttribute",
+      ["href"],
+    ).catch(() => ({ handled: false, value: "" }));
+    let navigation = href.handled && href.value ? String(href.value) : "";
+    const page = target?._frame?._page || target?._frame?.page?.();
+    if (navigation && page) {
+      try {
+        navigation = new URL(navigation, page.url()).href;
+      } catch {
+        navigation = "";
+      }
+    }
+    if (navigation) {
+      await assertObscuraNavigationAllowed(navigation, page);
+    }
+  }
   const internal = await obscuraInternalLocatorOperation(target, property, args);
   if (internal.handled) return internal.value;
   if (property === "click") {
@@ -3529,6 +3654,11 @@ async function setContentCompatible(target, html, options: any = {}) {
       document.write(markup);
       document.close();
     }, html);
+    const titleMarkup = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(html)?.[1] || "";
+    obscuraPageTitles.set(
+      page,
+      titleMarkup.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim(),
+    );
     if (waitUntil === "commit") return;
     await frame.waitForFunction(
       (expected) =>
@@ -3578,6 +3708,36 @@ function assertModelNavigationUrl(value) {
     isPublicSearchNavigation(url)
   ) {
     throw new Error(PUBLIC_SEARCH_BLOCK_ADVICE);
+  }
+}
+
+async function assertObscuraNavigationAllowed(value, page = null) {
+  const url = String(value || "");
+  const publicSearch = isPublicSearchNavigation(url);
+  if (
+    publicSearch &&
+    String(launchConfig?.publicSearchPolicy || "block") !== "allow"
+  ) {
+    const owner = (page ? pageToSession.get(page) : null) || soleExecutingSession();
+    if (owner) {
+      pushEvent(sessionFor(owner), {
+        type: "public-search-blocked",
+        advice: PUBLIC_SEARCH_BLOCK_ADVICE,
+      });
+    }
+    throw new Error(PUBLIC_SEARCH_BLOCK_ADVICE);
+  }
+  assertModelNavigationUrl(value);
+  if (!/^https?:/i.test(url)) return;
+  const decision = await guardUrl(
+    url,
+    { method: "GET", resourceType: "document", isNavigation: true },
+    transportExecuteId(),
+  );
+  if (!decision?.allowed) {
+    throw new Error(
+      `Browser navigation blocked by network policy: ${decision?.reason || url}`,
+    );
   }
 }
 
@@ -3714,6 +3874,17 @@ function wrap(value, realm) {
           prepareArgument(arg, property, realm),
         );
         const kind = objectKind(value);
+        if (
+          browserBackend === "obscura" &&
+          ["Page", "Frame"].includes(kind) &&
+          property === "goto"
+        ) {
+          return assertObscuraNavigationAllowed(prepared[0], value).then(() =>
+            Promise.resolve(member.apply(value, prepared)).then((item) =>
+              wrap(item, realm),
+            ),
+          );
+        }
         validateMethodPaths(kind, property, prepared);
         let result;
         const obscuraLocatorMethod =
@@ -3739,6 +3910,14 @@ function wrap(value, realm) {
             value.locator(prepared[0]),
             property,
             prepared.slice(1),
+          );
+        } else if (
+          browserBackend === "obscura" &&
+          ["Page", "Frame"].includes(kind) &&
+          property === "title"
+        ) {
+          result = value.evaluate(
+            () => document.title || document.querySelector("title")?.textContent || "",
           );
         } else if (
           useSetContentCompatibility &&
@@ -5411,6 +5590,49 @@ async function inspectSiteAssets(page) {
   return [...unique.values()].slice(0, MAX_SITE_REQUESTS);
 }
 
+async function dismissObscuraOverlays(page) {
+  return page.evaluate(() => {
+    const roots = [...document.querySelectorAll(
+      '[role="dialog"],[aria-modal="true"],[id*="cookie" i],[class*="cookie" i],' +
+        '[id*="consent" i],[class*="consent" i],[class*="newsletter" i],' +
+        '[class*="modal" i],[class*="popup" i]',
+    )].slice(0, 32);
+    const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    const visible = (element) => {
+      const style = getComputedStyle(element);
+      return !element.hidden && style.display !== "none" && style.visibility !== "hidden";
+    };
+    const cookieText = /\b(cookie|consent|privacy|tracking|personal data)\b/i;
+    const promotionText = /\b(newsletter|subscribe|sign[ -]?up|discount|special offer|notifications?|download (?:our|the) app|join (?:our|the) rewards)\b/i;
+    const rejectCookie = /^(?:reject|decline)(?: all)?(?: cookies)?$|^(?:use |only )?(?:essential|necessary)(?: cookies)?(?: only)?$|^(?:continue without|do not) (?:accepting|agreeing|cookies)$/i;
+    const acceptCookie = /^(?:accept|allow)(?: all)?(?: cookies)?$|^(?:agree|i agree|got it|ok(?:ay)?)$/i;
+    const dismissPromotion = /^(?:close|dismiss|no thanks|not now|maybe later|skip|continue without signing up|×|✕|✖)$/i;
+    const dismissed = [];
+    for (const root of roots) {
+      if (!root.isConnected || !visible(root)) continue;
+      const text = clean((root as HTMLElement).innerText || root.textContent).slice(0, 2_000);
+      const kind = cookieText.test(text)
+        ? "cookie"
+        : promotionText.test(text)
+          ? "promotion"
+          : null;
+      if (!kind) continue;
+      const controls = [...root.querySelectorAll('button,a[href],[role="button"]')]
+        .filter(visible)
+        .slice(0, 32);
+      const match = kind === "cookie"
+        ? controls.find((element) => rejectCookie.test(clean(element.getAttribute("aria-label") || element.textContent))) ||
+          controls.find((element) => acceptCookie.test(clean(element.getAttribute("aria-label") || element.textContent)))
+        : controls.find((element) => dismissPromotion.test(clean(element.getAttribute("aria-label") || element.textContent)));
+      if (!match) continue;
+      const label = clean(match.getAttribute("aria-label") || match.textContent || "button");
+      (match as HTMLElement).click();
+      dismissed.push({ kind, label });
+    }
+    return { dismissed };
+  });
+}
+
 function buildSandbox(session, consoleMessages, execution) {
   const sandbox = Object.create(null);
   const context = vm.createContext(sandbox, {
@@ -5458,7 +5680,11 @@ function buildSandbox(session, consoleMessages, execution) {
     const rawPage = await browserContext.newPage();
     const page = adoptPage(rawPage, session.id);
     if (url) {
-      assertModelNavigationUrl(url);
+      if (browserBackend === "obscura") {
+        await assertObscuraNavigationAllowed(url, page);
+      } else {
+        assertModelNavigationUrl(url);
+      }
       await page.goto(String(url), options);
     }
     return wrap(page, realm);
@@ -5598,7 +5824,14 @@ function buildSandbox(session, consoleMessages, execution) {
       Math.max(1, Math.min(100, Number(options?.steps) || 20)),
     );
     if (browserBackend === "obscura") {
-      await obscuraDomDrag(page, null, session.cursor, start, end, steps);
+      await obscuraDomDrag(
+        page,
+        captchaTargetAtPoint(session, start),
+        session.cursor,
+        start,
+        end,
+        steps,
+      );
       await hostDelay(1_500 + Math.random() * 1_000);
       return snapshotPage(page);
     }
@@ -5664,6 +5897,12 @@ function buildSandbox(session, consoleMessages, execution) {
   human.type = realm.safeFunction(async (target, text, options: any = {}) => {
     const page = await ensureSessionPage(session);
     const clickedTarget = await humanClickTarget(page, session, target, options);
+    if (browserBackend === "obscura") {
+      await obscuraDomAction(clickedTarget, options?.clear === false ? "type" : "fill", [
+        String(text),
+      ]);
+      return { typed: String(text).length };
+    }
     if (options?.clear !== false) {
       await selectAllForClear(page, clickedTarget);
       await page.keyboard.press("Backspace");
@@ -5681,13 +5920,32 @@ function buildSandbox(session, consoleMessages, execution) {
     const deltaY = Number(settings?.deltaY) || 0;
     if (!deltaX && !deltaY)
       throw new Error("human.scroll requires a non-zero deltaX or deltaY.");
-    await scrollWheel(page.mouse, deltaX, deltaY, settings);
+    if (browserBackend === "obscura") {
+      await page.evaluate(
+        ({ x, y, steps }) => {
+          const count = Math.max(2, Math.min(40, Number(steps) || 6));
+          for (let index = 0; index < count; index += 1) {
+            const partX = x / count;
+            const partY = y / count;
+            window.scrollBy(partX, partY);
+            document.dispatchEvent(
+              new WheelEvent("wheel", { deltaX: partX, deltaY: partY }),
+            );
+          }
+        },
+        { x: deltaX, y: deltaY, steps: settings?.steps },
+      );
+    } else {
+      await scrollWheel(page.mouse, deltaX, deltaY, settings);
+    }
     return { scrolled: { deltaX, deltaY } };
   });
   const overlays = Object.create(null);
   overlays.dismiss = realm.safeFunction(async () => {
     const page = await ensureSessionPage(session);
-    return dismissObstructiveOverlays(page);
+    return browserBackend === "obscura"
+      ? dismissObscuraOverlays(page)
+      : dismissObstructiveOverlays(page);
   });
   const controls = Object.create(null);
   controls.inspect = realm.safeFunction(async () => {
@@ -5861,9 +6119,15 @@ async function summarize(value, seen = new WeakSet(), depth = 0) {
 
   const kind = objectKind(raw);
   if (pageIds.has(raw)) {
-    let title = "";
+    let title = obscuraPageTitles.get(raw) || "";
     try {
-      title = await raw.title();
+      title ||= await raw.title();
+      const domTitle = await raw
+        .evaluate(
+          () => document.title || document.querySelector("title")?.textContent || "",
+        )
+        .catch(() => "");
+      if (typeof domTitle === "string" && domTitle) title = domTitle;
     } catch {
       /* page may have closed */
     }
@@ -6040,15 +6304,42 @@ const readFrameWalkInPage = (options: any) => {
         } catch {
           inner = null;
         }
-        if (!inner) continue;
+        if (!inner) {
+          const srcdoc = element.getAttribute("srcdoc");
+          if (srcdoc) {
+            const parsed = document.createElement("div");
+            parsed.innerHTML = srcdoc;
+            sameOrigin.push({
+              url: "about:srcdoc",
+              title: parsed.querySelector("title")?.textContent || "",
+              text: String(parsed.innerText || parsed.textContent || "").slice(
+                0,
+                options.frameTextLimit,
+              ),
+              visible: presentationOf(element).visible,
+            });
+          }
+          continue;
+        }
         const innerBody = inner.body;
+        let frameText =
+          typeof innerBody?.innerText === "string"
+            ? innerBody.innerText
+            : String(innerBody?.textContent || "");
+        let frameTitle = inner.title || "";
+        if (!frameText) {
+          const srcdoc = element.getAttribute("srcdoc");
+          if (srcdoc) {
+            const parsed = document.createElement("div");
+            parsed.innerHTML = srcdoc;
+            frameText = String(parsed.innerText || parsed.textContent || "");
+            frameTitle = parsed.querySelector("title")?.textContent || frameTitle;
+          }
+        }
         sameOrigin.push({
           url: inner.location ? String(inner.location.href) : "",
-          title: inner.title || "",
-          text:
-            typeof innerBody?.innerText === "string"
-              ? innerBody.innerText.slice(0, options.frameTextLimit)
-              : "",
+          title: frameTitle,
+          text: frameText.slice(0, options.frameTextLimit),
           visible: presentationOf(element).visible,
         });
         queue.push(inner);
@@ -6305,6 +6596,36 @@ async function collectChallengeMetadata(page, options: any = {}) {
   const frames = scanFrames
     ? await collectFrameMetadata(page, childFrames, walk.iframes)
     : [];
+  if (scanFrames && browserBackend === "obscura") {
+    const known = new Set(frames.map((frame) => `${frame.url}\n${frame.text}`));
+    for (const entry of walk.sameOrigin || []) {
+      const candidate = {
+        url: String(entry.url || ""),
+        text: String(entry.text || "").slice(0, CHALLENGE_FRAME_TEXT_LIMIT),
+        visible: entry.visible ?? null,
+        width: entry.width ?? null,
+        height: entry.height ?? null,
+        completed: CHALLENGE_COMPLETED_TEXT.test(String(entry.text || "")),
+      };
+      const key = `${candidate.url}\n${candidate.text}`;
+      if (!known.has(key)) {
+        frames.push(candidate);
+        known.add(key);
+      }
+    }
+    for (const entry of walk.iframes || []) {
+      const url = String(entry.src || entry.url || "");
+      if (!url || frames.some((frame) => frame.url === url)) continue;
+      frames.push({
+        url,
+        text: "",
+        visible: entry.visible ?? null,
+        width: entry.width ?? null,
+        height: entry.height ?? null,
+        completed: false,
+      });
+    }
+  }
   return { main, frames, solvedProviders: Object.keys(tokens), tokens };
 }
 
@@ -6378,6 +6699,7 @@ async function detectSessionChallenges(session) {
           "captcha-detected.png",
           "captcha-detected.png",
           { type: "png", animations: "disabled" },
+          "proof",
         );
         const artifact = { kind: "captcha", path: file, media: `MEDIA:${file}` };
         session.artifacts.push(artifact);
@@ -6952,6 +7274,24 @@ async function waitForCredentialTasks(execution) {
   if (unhandled) throw unhandledCredentialTaskError(unhandled.error);
 }
 
+function executionNeedsCompatibility(message) {
+  const code = String(message?.code || "");
+  const downloadPolicy = normalizeDownloadPolicy(
+    message?.config?.downloadPolicy,
+  );
+  return (
+    message?.approvedDownloads === true ||
+    downloadPolicy === "allow" ||
+    /\bnavigator\s*\.\s*serviceWorker\b|\.setInputFiles\s*\(|\bfilechooser\b|\bXMLHttpRequest\b|\bfetch\s*\(/i.test(
+      code,
+    ) ||
+    /\bopenPage\s*\(|\.frames\s*\(|\.frameLocator\s*\(/.test(code) ||
+    (/\bdownload\b/i.test(code) && /\.click\s*\(/.test(code)) ||
+    /g-recaptcha-response|h-captcha-response|cf-turnstile-response/i.test(code) ||
+    (/\.fill\s*\(/.test(code) && /password/i.test(code))
+  );
+}
+
 function resultContainsPendingId(value, pendingId, seen = new WeakSet(), depth = 0) {
   if (typeof value === "string") return value === pendingId;
   if (!value || typeof value !== "object" || depth > 8 || seen.has(value)) {
@@ -7033,7 +7373,15 @@ async function execute(message) {
   liveView?.setAgentState("driving");
   try {
     assertRedactionCapacity();
-    await ensureBrowser(message.config);
+    const needsCompatibility = executionNeedsCompatibility(message);
+    await ensureBrowser(
+      needsCompatibility && !browserContext
+        ? { ...message.config, visualResident: true }
+        : message.config,
+    );
+    if (needsCompatibility && browserBackend === "obscura") {
+      await promoteToVisualBackend(message.config);
+    }
     await wakeSessionPages(session);
     downloadPolicy = normalizeDownloadPolicy(message.config.downloadPolicy);
     if (downloadPolicy === "deny" && message.approvedDownloads === true) {
@@ -7092,6 +7440,7 @@ async function execute(message) {
     ]).finally(() => clearTimeout(timer));
     assertRedactionCapacity();
     await waitForPendingDownloads(downloadDeadline - Date.now());
+    await persistObscuraCookies();
     approvedDownloadSessions.delete(session.id);
     if (downloadRunConfigured) {
       downloadRunConfigured = false;
@@ -7160,6 +7509,7 @@ async function execute(message) {
       }),
     );
   } catch (error) {
+    await persistObscuraCookies().catch(() => {});
     if (redactionCapacityExceeded) {
       restartWorker = true;
       sendRedactionCapacityFailure(message);
@@ -7459,6 +7809,7 @@ async function performShutdown() {
   const ephemeralProfileDir = profileLock?.ephemeral
     ? profileLock.profileDir
     : null;
+  await persistObscuraCookies().catch(() => {});
   // Child ownership is the first teardown obligation. Closing a CDP client
   // can wedge when its transport is already unhealthy, while the host gives
   // this worker only five seconds before SIGKILL. Obscura's bounded stop fits

@@ -567,21 +567,17 @@ async function cmdRun(arg, flags) {
 // A CLI-usage preamble that turns the operator guidance (which talks about
 // `run()`) into a self-contained skill for any agent that can run a shell
 // command.
-const SKILL_PREAMBLE = `# Browser tool: BetterWright
+const SKILL_PREAMBLE = `# BetterWright browser
 
-Operate a real, persistent web browser with the \`betterwright\` command whenever a task needs the live web. Pass async Playwright JavaScript; a trailing expression (or explicit \`return\`) is the result:
+Use \`betterwright\` for live-web tasks. Run async Playwright JavaScript with:
 
     betterwright run -c "await page.goto('https://example.com'); return page.title()"
 
-It prints one JSON object {ok, result, error, console, events, artifacts, pages, challenges, warnings, durationMs}; \`artifacts\` lists files written during the run — screenshots there have a \`path\`; open that image to actually see the page.
+It returns JSON with \`ok\`, \`result\`, \`error\`, \`console\`, \`events\`, \`artifacts\`, \`pages\`, \`challenges\`, \`warnings\`, and \`durationMs\`. Screenshot artifacts contain a path; inspect the image before relying on it.
 
-Invocations share one persistent session (background daemon): open tabs, page state, and the in-memory \`state\` object survive between \`run\` calls; logins/cookies persist in the on-disk profile. Act in small steps — one \`run\` per action-and-observe — and call \`run\` again to continue. The session auto-closes after ~15 idle minutes; run \`betterwright close\` when you finish to end it sooner; give parallel workers their own \`--session <name>\` (same logins, own tabs), or \`--profile <name>\` when a run needs a different signed-in identity (own cookie jar). Batch steps in one process by piping blank-line-separated snippets: \`printf '%s\\n\\n%s\\n' "snippetA" "snippetB" | betterwright repl\` (same session).
+The daemon preserves tabs, page state, and the in-memory \`state\` object between calls; the profile preserves cookies and logins. Work in small action-and-observe calls. Use \`--session\` for parallel work, \`--profile\` for a separate identity, and \`betterwright close\` when finished.
 
-Surface details for "Live view and handoff" below: \`browser_handoff\` action "start" opens it, "status" waits for takeover Done; \`live_view\` watches without pausing, \`handoff\` pauses until they click Done; interactive accepts \`/live\`; \`exec "<task>" --live-view\` opens the viewer at step 0; \`betterwright view\` prints a URL for the open tabs without closing them (takeover: Take control / the handoff action bar; the viewer also has its own tabs, address bar, and back/forward).
-
-Network access is policy-guarded: loopback and the private network are reachable by default; \`--block-private-network\` / \`--block-loopback\` lock down; \`--allow-host <host>\` / \`--block-host <host>\` adjust. Cloud-metadata endpoints are always blocked. Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet"; the "approval-gated download tool" is \`betterwright run --approve-downloads\`: one bounded download-enabled run, used only after the user explicitly approves.
-
-\`betterwright vault\` is the user's own command for reading their saved passwords, not a tool for you. Never run \`vault show --reveal\` (or its \`vault get\` alias), \`vault copy\`, or \`vault rm\`: a stored password must not enter your context or be deleted on your initiative, and fill happens inside the browser without one. \`betterwright vault list\` is metadata-only and fine when the user asks what is saved. When they want a password themselves, tell them to run \`betterwright vault copy <id>\` — it reaches their clipboard without either of us seeing it.`;
+The browser is network-policy guarded. Private and loopback access are allowed unless disabled; cloud metadata is always blocked. Stored passwords are user-owned: never run \`vault show --reveal\`/\`get\`, \`vault copy\`, or \`vault rm\`; use trusted credential fill instead.`;
 
 function cmdSkill(flags) {
   const body = agentSkillBody();

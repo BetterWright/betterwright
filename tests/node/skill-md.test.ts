@@ -17,6 +17,12 @@ test("SKILL.md matches `betterwright skill --claude` output", () => {
     { cwd: root, encoding: "utf8" },
   );
   const checkedIn = readFileSync(new URL("../../SKILL.md", import.meta.url), "utf8");
+  const words = checkedIn.trim().split(/\s+/).length;
+  assert.ok(words < 750, `generated browser skill grew to ${words} words`);
+  assert.ok(checkedIn.length < 6_000, `generated browser skill grew to ${checkedIn.length} bytes`);
+  assert.match(checkedIn, /never run `vault show --reveal`/i);
+  assert.match(checkedIn, /Never claim a view is running without its URL/);
+  assert.doesNotMatch(checkedIn, /prefer the site's own machinery/);
   assert.equal(
     checkedIn,
     generated,
