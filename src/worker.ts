@@ -3649,27 +3649,47 @@ async function setContentCompatible(target, html, options: any = {}) {
     return value;
   };
   try {
-    await frame.evaluate((markup) => {
+    await frame.evaluate(({ markup, expected, timeoutMs }) => {
       document.open();
-      document.write(markup);
-      document.close();
-    }, html);
+      if (expected === "commit") {
+        document.write(markup);
+        document.close();
+        return undefined;
+      }
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error = null) => {
+          if (settled) return;
+          settled = true;
+          if (timer !== null) clearTimeout(timer);
+          if (error) reject(error);
+          else resolve(undefined);
+        };
+        const eventName = expected === "domcontentloaded"
+          ? "DOMContentLoaded"
+          : "load";
+        const eventTarget = expected === "domcontentloaded" ? document : window;
+        eventTarget.addEventListener(eventName, () => finish(), { once: true });
+        const timer = timeoutMs > 0
+          ? setTimeout(
+              () => finish(new Error(`setContent: Timeout ${timeoutMs}ms exceeded.`)),
+              timeoutMs,
+            )
+          : null;
+        document.write(markup);
+        document.close();
+      });
+    }, { markup: html, expected: waitUntil, timeoutMs: remaining() });
     const titleMarkup = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(html)?.[1] || "";
     obscuraPageTitles.set(
       page,
       titleMarkup.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim(),
     );
     if (waitUntil === "commit") return;
-    await frame.waitForFunction(
-      (expected) =>
-        expected === "domcontentloaded"
-          ? document.readyState !== "loading"
-          : document.readyState === "complete",
-      waitUntil,
-      { timeout: remaining() },
-    );
-    if (waitUntil !== "networkidle") return;
-    while (inflight.size > 0 || Date.now() - lastNetworkActivity < 500) {
+    while (
+      inflight.size > 0 ||
+      (waitUntil === "networkidle" && Date.now() - lastNetworkActivity < 500)
+    ) {
       remaining();
       await hostDelay(Math.min(50, Math.max(1, deadline - Date.now())));
     }
