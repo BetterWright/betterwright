@@ -1207,6 +1207,50 @@ test("normalizeViewerUrl behaves like an omnibox and blocks non-web schemes", ()
   }
 });
 
+// A tab switch is dispatched without being awaited, so a nav arriving in the
+// same burst used to read activeCdp before the switch landed and reload the
+// tab the human just left.
+test("a nav sent right after a tab switch drives the new tab, not the old one", async () => {
+  const firstCdp = fakeCdp();
+  const secondCdp = fakeCdp();
+  const pages = [
+    { id: "page-1", page: fakePage("https://one.example/"), sessionId: "default", active: true },
+    { id: "page-2", page: fakePage("https://two.example/"), sessionId: "default", active: false },
+  ];
+  let attached = 0;
+  const { server, info } = await startedServer({
+    pages,
+    newCDPSession: async () => {
+      attached += 1;
+      return attached === 1 ? firstCdp : secondCdp;
+    },
+  });
+  try {
+    const client = await connect(info);
+    await nextMessage(client, (message) => message.t === "hello");
+    // Both in one burst: the switch is still in flight when the reload lands.
+    client.send(JSON.stringify({ t: "tab", id: "page-2" }));
+    client.send(JSON.stringify({ t: "nav", action: "reload" }));
+    const deadline = Date.now() + 2_000;
+    while (
+      !secondCdp.calls.some((call) => call.method === "Page.reload") &&
+      Date.now() < deadline
+    )
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(
+      secondCdp.calls.some((call) => call.method === "Page.reload"),
+      "the reload must reach the newly selected tab",
+    );
+    assert.ok(
+      !firstCdp.calls.some((call) => call.method === "Page.reload"),
+      "the reload must not reach the tab the human switched away from",
+    );
+    client.close();
+  } finally {
+    await server.stop();
+  }
+});
+
 test("nav back/forward/reload drive CDP history; navstate reaches viewers", async () => {
   const cdp = fakeCdp({
     "Page.getNavigationHistory": {

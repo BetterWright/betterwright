@@ -989,11 +989,23 @@ export function createLiveViewServer({
     }
   }
 
+  // A tab switch is dispatched without being awaited, so a nav or navigate
+  // arriving right behind one would otherwise read activeCdp before
+  // switchToPage has moved it and drive the tab the human just left. Settle
+  // the in-flight switch first; a failed switch still leaves a usable target.
+  async function settledTarget() {
+    try {
+      await streamingPromise;
+    } catch {
+      /* the switch failed; fall through to whatever is streaming now */
+    }
+    return { cdp: activeCdp, page: activePage };
+  }
+
   // Toolbar navigation on the streamed page: back / forward / reload through
   // CDP history, so the viewer behaves like the page's own browser chrome.
   async function dispatchNav(message) {
-    const cdp = activeCdp;
-    const page = activePage;
+    const { cdp, page } = await settledTarget();
     if (!cdp || !page) return;
     const action = String(message.action || "");
     if (action === "reload") {
@@ -1016,8 +1028,7 @@ export function createLiveViewServer({
   }
 
   async function dispatchNavigate(client, message) {
-    const cdp = activeCdp;
-    const page = activePage;
+    const { cdp, page } = await settledTarget();
     if (!cdp || !page) return;
     const url = normalizeViewerUrl(message.url);
     if (!url) {
