@@ -3,18 +3,33 @@ name: Publish npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to verify and publish
+        required: true
+        type: string
+      prerelease:
+        description: Publish a prerelease package under the beta npm tag
+        default: false
+        required: true
+        type: boolean
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: npm-${{ github.event.release.tag_name }}
+  group: npm-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  RELEASE_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || inputs.prerelease }}
 
 jobs:
   publish:
-    if: startsWith(github.event.release.tag_name, 'v')
+    if: startsWith(github.event.release.tag_name || inputs.tag, 'v')
     name: Publish trusted package
     runs-on: ubuntu-latest
     environment: npm
@@ -25,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
       # Must equal the pin in ci.yml's branch-protected jobs. This used to be
       # 22.14.0 while CI floated "22", so the artifact that actually reached
@@ -51,7 +66,7 @@ jobs:
           git fetch origin main
           git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main
           npm run build:tools
-          node scripts/check-versions.js --tag "${{ github.event.release.tag_name }}"
+          node scripts/check-versions.js --tag "$RELEASE_TAG"
       - name: Check whether this version already exists
         id: existing
         shell: bash
@@ -101,13 +116,13 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           if [[ "$VERSION" == *-* ]]; then
-            if [[ "${{ github.event.release.prerelease }}" != "true" ]]; then
+            if [[ "$RELEASE_PRERELEASE" != "true" ]]; then
               echo "Prerelease package versions must use a GitHub prerelease." >&2
               exit 1
             fi
             echo "tag=beta" >> "$GITHUB_OUTPUT"
           else
-            if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
+            if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
               echo "Stable package versions cannot use a GitHub prerelease." >&2
               exit 1
             fi
