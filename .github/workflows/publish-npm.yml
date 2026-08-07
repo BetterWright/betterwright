@@ -73,18 +73,16 @@ jobs:
       - name: Install managed browsers
         if: steps.existing.outputs.published != 'true'
         run: node dist/bin/betterwright.js setup
-      - name: Verify Chromium fork update
+      - name: Verify Obscura update
         if: steps.existing.outputs.published != 'true'
         shell: bash
         run: |
-          HOME=$(mktemp -d)
-          export HOME
-          node dist/bin/betterwright.js update
+          node dist/bin/betterwright.js update --force
           node -e "
-            import { resolveChromiumForkBinary } from './dist/src/chromium-fork.js';
-            const binary = resolveChromiumForkBinary({ home: process.env.HOME });
-            if (!binary) throw new Error('update did not install a discoverable fork');
-            console.log('fork ok:', binary);
+            import { resolveObscuraBinary } from './dist/src/obscura.js';
+            const binary = resolveObscuraBinary();
+            if (!binary) throw new Error('update did not install discoverable Obscura');
+            console.log('Obscura update ok:', binary);
           "
       - name: Run browser integration suite
         if: steps.existing.outputs.published != 'true'
