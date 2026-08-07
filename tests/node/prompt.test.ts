@@ -8,9 +8,11 @@ test("default prompt is permissive", () => {
   const compact = prompt.replace(/\s+/g, " ");
   // Budget history: 6,500 → 7,000 on 2026-07-23 for the "Live view and
   // handoff" section (agents were claiming a live view was running without
-  // ever starting one); back to 6,900 on 2026-07-25 after the compression pass.
+  // ever starting one); back to 6,900 on 2026-07-25 after the compression pass;
+  // 7,200 on 2026-08-06 for the bulk-work bullet (repeating a UI action N
+  // times burns the run budget when the site exposes the same thing directly).
   // Grow this only for guidance that pays for itself.
-  assert.ok(prompt.length < 6_900, `default prompt grew to ${prompt.length} characters`);
+  assert.ok(prompt.length < 7_200, `default prompt grew to ${prompt.length} characters`);
   assert.ok(prompt.includes("You are authorized"));
   assert.ok(prompt.toLowerCase().includes("do not refuse"));
   // Reading escalation, ref discipline, batching, and recovery guidance.
@@ -34,6 +36,15 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("human.click(target)"));
   assert.ok(compact.includes("human.type(target, text)"));
   assert.ok(compact.includes("human.scroll(deltaY)"));
+  // Bulk repetitive work may drive the site's own endpoint/in-page function
+  // instead of replaying a UI action N times — still verified in the UI, and
+  // never as a way around a paywall, rate limit, or access control.
+  assert.ok(compact.includes("prefer the site's own machinery"));
+  assert.ok(compact.includes("drive it with `page.evaluate`"));
+  assert.ok(compact.includes("confirm the result in the UI"));
+  assert.ok(
+    compact.includes("Never to bypass a paywall, rate limit, or access control"),
+  );
   assert.ok(compact.includes("host's approval-gated download tool"));
   assert.ok(compact.includes("before enabling that one bounded download run"));
   assert.ok(compact.includes("three distinct stages"));
