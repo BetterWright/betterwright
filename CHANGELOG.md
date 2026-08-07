@@ -20,11 +20,39 @@ Releases before 1.1.3 predate this file; their notes live on the
   cookie-bearing JSON requests. This provides general client-app tooling
   without embedding site-specific endpoints or puzzle instructions.
 
+- **Live view is now a real browser.** The viewer grew full browser chrome:
+  an editable address bar (omnibox rules — URLs pass through, bare hosts get
+  `https://`, anything else becomes a search; only `http(s)` schemes are
+  accepted, enforced server-side), back / forward / reload wired to the
+  page's real CDP history (buttons enable from actual history state), a
+  **+** button that opens a new tab in the viewed session (adopted exactly
+  like an agent page — limits, listeners, and policy included), and per-tab
+  close (× or middle-click). Keyboard shortcuts while controlling:
+  Ctrl/Cmd+L focuses the address bar, Alt+←/→ navigate, Ctrl/Cmd+R reloads.
+  Every new control sits behind the same server-side gate as mouse/keyboard
+  input — watch-only viewers get read-only chrome — and viewer navigation
+  flows through the policy proxy like any other navigation.
+
 ### Changed
 
 - `betterwright setup` installs Obscura plus the pixel renderer; `update`
   refreshes the pinned Obscura release. Headed and explicit `--cloak-only`
   sessions retain the Chromium/Cloak compatibility backend.
+
+- **Live-view chat and handoff UI revamp.** Chat moved out of the bottom
+  dock (which ate up to a third of the window) into a collapsible side panel
+  with an unread badge, so the stream gets the full viewport. `handoff` and
+  `ask` now elevate into a prominent action bar under the toolbar — handoff
+  shows the reason with **Done — resume agent** / **Cancel step** and an
+  optional note field; ask shows the question with its choice chips and a
+  reply box — instead of being folded into the chat composer.
+
+- Operator guidance now tells the agent that bulk repetitive work may drive the
+  site's own endpoint or in-page function via `page.evaluate` instead of
+  replaying a UI action N times, with the result still confirmed in the UI and
+  an explicit carve-out against bypassing a paywall, rate limit, or access
+  control. The capability was always there — `evaluate`/`$eval`/`addInitScript`
+  callbacks serialize into the page — but nothing pointed models at it.
 
 ## [1.6.3] - 2026-08-03
 
@@ -97,7 +125,6 @@ client, and between the worker and the browser.
   This shows up on trivial snippets rather than real ones: on a quiet page,
   per-action latency is unchanged within noise, because a snippet that touches
   the page is dominated by its round trip rather than by compilation.
-
 ## [1.6.2] - 2026-08-02
 
 A performance release. No API changes: 1.6.2 is a drop-in replacement for
