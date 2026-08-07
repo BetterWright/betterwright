@@ -132,6 +132,49 @@ function defaultLoginHtml() {
   );
 }
 
+// Viewer-initiated navigation is confined to the web: no file://, chrome://,
+// javascript:, or extension pages — anything else the policy proxy could not
+// see or that would execute in the page with viewer authority.
+const ALLOWED_NAV_PROTOCOLS = new Set(["http:", "https:"]);
+const MAX_NAV_URL_LENGTH = 4_096;
+
+/**
+ * Turn whatever a human typed into the viewer's address bar into a safe
+ * navigable URL, mirroring a real browser omnibox: full URLs pass through
+ * (http/https only), bare hosts get https://, host:port works, and anything
+ * that doesn't look like an address becomes a web search. Returns "" when the
+ * input is empty or resolves to a forbidden scheme.
+ */
+export function normalizeViewerUrl(input) {
+  const raw = String(input || "").trim().slice(0, MAX_NAV_URL_LENGTH);
+  if (!raw) return "";
+  if (raw === "about:blank") return raw;
+  // "localhost:3000/path" parses as scheme "localhost:"; catch host:port first.
+  if (/^[a-z0-9][a-z0-9.-]*:\d{1,5}(\/|\?|#|$)/i.test(raw)) {
+    try {
+      return new URL(`http://${raw}`).href;
+    } catch {
+      return "";
+    }
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      return ALLOWED_NAV_PROTOCOLS.has(parsed.protocol) ? parsed.href : "";
+    } catch {
+      return "";
+    }
+  }
+  if (!/\s/.test(raw) && (raw.includes(".") || /^localhost(\/|$)/i.test(raw))) {
+    try {
+      return new URL(`https://${raw}`).href;
+    } catch {
+      /* fall through to search */
+    }
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(raw)}`;
+}
+
 const MOUSE_EVENT_TYPES = new Set([
   "mousePressed",
   "mouseReleased",
@@ -156,6 +199,7 @@ function clamp(value, min, max) {
  * @param {() => Array<{id: string, page: object, sessionId: string, active: boolean}>} deps.listPages
  * @param {() => (object|null)} [deps.preferredPage] page to stream first
  * @param {(page: object) => Promise<object>} deps.newCDPSession
+ * @param {() => Promise<object>} [deps.openPage] open a new tab in the viewed session (enables the viewer's + button)
  * @param {(page: object) => void} [deps.onHumanActivity]
  * @param {(message: string) => void} [deps.log]
  */
@@ -165,6 +209,7 @@ export function createLiveViewServer({
   listPages,
   preferredPage = () => null,
   newCDPSession,
+  openPage = null,
   onHumanActivity = (() => {}) as (page: any) => void,
   log = (() => {}) as (message: string) => void,
 }: any) {
@@ -193,6 +238,7 @@ export function createLiveViewServer({
   let activeCloseListener = null;
   let streamingPromise = null;
   let lastMeta = null; // { deviceWidth, deviceHeight, url }
+  let lastNavState = null; // { canGoBack, canGoForward } for the streamed page
   // Latest screencast frame, pre-encoded as a WebSocket frame: broadcast
   // serializes once for all viewers, and late joiners / tabs returning from
   // the background paint immediately instead of waiting for page damage.
@@ -398,6 +444,38 @@ export function createLiveViewServer({
     });
   }
 
+  /**
+   * Push back/forward availability for the streamed page so the viewer's nav
+   * buttons reflect real history. Best-effort and change-deduplicated: called
+   * on every URL change, attach, and connect.
+   */
+  async function refreshNavState(force = false) {
+    const cdp = activeCdp;
+    if (!cdp || !running) return;
+    let state = { canGoBack: false, canGoForward: false };
+    try {
+      const history = await cdp.send("Page.getNavigationHistory");
+      if (cdp !== activeCdp) return; // stream moved while we asked
+      const entries = Array.isArray(history?.entries) ? history.entries : [];
+      const index = Math.round(finiteNumber(history?.currentIndex, -1));
+      state = {
+        canGoBack: index > 0,
+        canGoForward: index >= 0 && index < entries.length - 1,
+      };
+    } catch {
+      /* history unavailable (page mid-navigation); keep defaults */
+    }
+    if (
+      force ||
+      !lastNavState ||
+      state.canGoBack !== lastNavState.canGoBack ||
+      state.canGoForward !== lastNavState.canGoForward
+    ) {
+      lastNavState = state;
+      broadcastText({ t: "navstate", ...state });
+    }
+  }
+
   function withTimeout(promise, ms): Promise<any> {
     // The timer stays referenced so the cap fires even on an otherwise-empty
     // event loop (a wedged CDP transport during shutdown), and is cleared as
@@ -582,6 +660,7 @@ export function createLiveViewServer({
     activeId = null;
     activeCloseListener = null;
     lastFrameEncoded = null;
+    lastNavState = null;
     currentStreamWidth = 0;
     await teardownSession(previous);
   }
@@ -607,8 +686,10 @@ export function createLiveViewServer({
       meta.deviceHeight !== lastMeta.deviceHeight ||
       meta.url !== lastMeta.url
     ) {
+      const urlChanged = meta.url !== lastMeta?.url;
       lastMeta = meta;
       broadcastMeta();
+      if (urlChanged) void refreshNavState().catch(() => {});
     }
     lastFrameEncoded = encoded;
     for (const client of clients) {
@@ -831,6 +912,7 @@ export function createLiveViewServer({
       lastFollowedPreferredId = null;
     }
     broadcastMeta();
+    void refreshNavState(true).catch(() => {});
     await refreshTabs(true);
   }
 
@@ -899,6 +981,115 @@ export function createLiveViewServer({
     }
   }
 
+  function stampHumanActivity(page) {
+    try {
+      onHumanActivity(page);
+    } catch {
+      /* activity accounting must never break navigation */
+    }
+  }
+
+  // A tab switch is dispatched without being awaited, so a nav or navigate
+  // arriving right behind one would otherwise read activeCdp before
+  // switchToPage has moved it and drive the tab the human just left. Settle
+  // the in-flight switch first; a failed switch still leaves a usable target.
+  async function settledTarget() {
+    try {
+      await streamingPromise;
+    } catch {
+      /* the switch failed; fall through to whatever is streaming now */
+    }
+    return { cdp: activeCdp, page: activePage };
+  }
+
+  // Toolbar navigation on the streamed page: back / forward / reload through
+  // CDP history, so the viewer behaves like the page's own browser chrome.
+  async function dispatchNav(message) {
+    const { cdp, page } = await settledTarget();
+    if (!cdp || !page) return;
+    const action = String(message.action || "");
+    if (action === "reload") {
+      await cdp.send("Page.reload");
+    } else if (action === "stop") {
+      await cdp.send("Page.stopLoading");
+    } else if (action === "back" || action === "forward") {
+      const history = await cdp.send("Page.getNavigationHistory");
+      if (cdp !== activeCdp) return;
+      const entries = Array.isArray(history?.entries) ? history.entries : [];
+      const index = Math.round(finiteNumber(history?.currentIndex, -1));
+      const target = entries[index + (action === "back" ? -1 : 1)];
+      if (!target) return;
+      await cdp.send("Page.navigateToHistoryEntry", { entryId: target.id });
+    } else {
+      return;
+    }
+    stampHumanActivity(page);
+    void refreshNavState(true).catch(() => {});
+  }
+
+  async function dispatchNavigate(client, message) {
+    const { cdp, page } = await settledTarget();
+    if (!cdp || !page) return;
+    const url = normalizeViewerUrl(message.url);
+    if (!url) {
+      client.sendText(
+        JSON.stringify({ t: "toast", text: "Only http(s) addresses can be opened here." }),
+      );
+      return;
+    }
+    await cdp.send("Page.navigate", { url });
+    stampHumanActivity(page);
+  }
+
+  async function dispatchNewTab(client, message) {
+    if (typeof openPage !== "function") {
+      client.sendText(
+        JSON.stringify({ t: "toast", text: "This live view cannot open new tabs." }),
+      );
+      return;
+    }
+    let page;
+    try {
+      page = await openPage();
+    } catch (error) {
+      client.sendText(
+        JSON.stringify({
+          t: "toast",
+          text: `Could not open a tab: ${String(error?.message || error).slice(0, 200)}`,
+        }),
+      );
+      return;
+    }
+    // The worker may refuse (page limit) by handing back an already-closed page.
+    if (!page || page.isClosed?.()) {
+      client.sendText(
+        JSON.stringify({ t: "toast", text: "Could not open a tab (page limit reached)." }),
+      );
+      return;
+    }
+    stampHumanActivity(page);
+    const entry = listPages().find((candidate) => candidate.page === page);
+    if (entry) await ensureStreaming(entry.id);
+    const url = normalizeViewerUrl(message.url);
+    if (url && url !== "about:blank" && activeCdp && activePage === page) {
+      await activeCdp.send("Page.navigate", { url });
+    }
+  }
+
+  async function dispatchCloseTab(message) {
+    const id = String(message.id || "");
+    if (!id) return;
+    const entry = listPages().find((candidate) => candidate.id === id);
+    if (!entry) return;
+    stampHumanActivity(entry.page);
+    try {
+      await entry.page.close?.();
+    } catch {
+      /* already closing */
+    }
+    await refreshTabs(true);
+  }
+
   function resolveHandoff(action, note) {
     const pending = handoff;
     if (!pending) return;
@@ -931,19 +1122,37 @@ export function createLiveViewServer({
       return;
     }
     const type = String(message?.t || "");
-    if (type === "input" || type === "tab") {
+    const drives =
+      type === "input" ||
+      type === "tab" ||
+      type === "nav" ||
+      type === "navigate" ||
+      type === "newtab" ||
+      type === "closetab";
+    if (drives) {
+      // Everything that steers the browser — input, tab switching, toolbar
+      // navigation, opening and closing tabs — sits behind the same gate.
       if (!inputAllowed()) {
         client.sendText(
           JSON.stringify({ t: "toast", text: "This live view is watch-only." }),
         );
         return;
       }
+      const failLogged = (label) => (error) => {
+        log(`live-view: ${label} failed: ${error?.message || error}`);
+      };
       if (type === "tab") {
         void ensureStreaming(String(message.id || "")).catch(() => {});
+      } else if (type === "nav") {
+        void dispatchNav(message).catch(failLogged("nav"));
+      } else if (type === "navigate") {
+        void dispatchNavigate(client, message).catch(failLogged("navigate"));
+      } else if (type === "newtab") {
+        void dispatchNewTab(client, message).catch(failLogged("new tab"));
+      } else if (type === "closetab") {
+        void dispatchCloseTab(message).catch(failLogged("close tab"));
       } else {
-        void dispatchInput(message).catch((error) => {
-          log(`live-view: input dispatch failed: ${error?.message || error}`);
-        });
+        void dispatchInput(message).catch(failLogged("input dispatch"));
       }
       return;
     }
@@ -977,6 +1186,7 @@ export function createLiveViewServer({
       return;
     }
     if (type === "refresh") {
+      void refreshNavState(true).catch(() => {});
       void refreshTabs(true).catch(() => {});
     }
   }
@@ -1013,8 +1223,12 @@ export function createLiveViewServer({
         interactive: inputAllowed(),
         handoff: handoffState(),
         ask: askState(),
+        caps: { newTab: typeof openPage === "function" },
       }),
     );
+    if (lastNavState) {
+      client.sendText(JSON.stringify({ t: "navstate", ...lastNavState }));
+    }
     if (chatHistory.length) {
       client.sendText(JSON.stringify({ t: "chat", messages: chatHistory.slice() }));
     }
@@ -1027,6 +1241,7 @@ export function createLiveViewServer({
     void ensureStreaming()
       .then(() => {
         broadcastMeta();
+        void refreshNavState(true).catch(() => {});
         return refreshTabs(true);
       })
       .catch(() => {});
