@@ -5268,6 +5268,15 @@ function ensureLiveView(preferredSessionId) {
       return page && !page.isClosed() ? page : null;
     },
     newCDPSession: (page) => browserContext.newCDPSession(page),
+    openPage: async () => {
+      // A human's + button opens the tab in the viewed session, through the
+      // same adoption path as agent pages — page limit, listeners, policy and
+      // parking behavior all apply identically. adoptPage signals a refused
+      // page (limit reached) by closing it; live-view surfaces that as a toast.
+      const session = sessionFor(liveViewPreferredSession);
+      const page = await browserContext.newPage();
+      return adoptPage(page, session.id);
+    },
     onHumanActivity: (page) => {
       const sessionId = pageToSession.get(page);
       // Human input keeps the owning session warm exactly like model activity,
