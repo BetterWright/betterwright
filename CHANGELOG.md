@@ -9,8 +9,23 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-07
+
+A browser-backend and agent-efficiency release. The public BetterWright client
+surface remains compatible, while ordinary headless work moves from a
+multi-process Chromium renderer to Obscura's lightweight DOM runtime.
+
 ### Added
 
+- Headless sessions now use checksum-pinned Obscura 0.1.11 for resident DOM,
+  JavaScript, storage, cookie, and guarded network execution. Normal proof PNGs
+  are rendered by one bounded Obscura canvas call from sanitized live state;
+  they no longer start Chromium. Painted debug captures retain the bounded
+  compatibility bridge.
+- Added the frozen, same-origin `site` surface for inspecting application
+  assets and request metadata, reading bounded text excerpts, and issuing
+  cookie-bearing requests. This provides general client-app tooling without
+  embedding site-specific endpoints or puzzle instructions.
 - **Live view is now a real browser.** The viewer grew full browser chrome:
   an editable address bar (omnibox rules — URLs pass through, bare hosts get
   `https://`, anything else becomes a search; only `http(s)` schemes are
@@ -26,6 +41,18 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Changed
 
+- `betterwright setup` installs Obscura plus the pixel renderer; `update`
+  refreshes the pinned Obscura release. Headed and explicit `--cloak-only`
+  sessions retain the Chromium/Cloak compatibility backend.
+- Credentials, known provider CAPTCHA frames, and live view promote an Obscura
+  session once to the full compatibility browser and keep it resident for that
+  session. Ordinary browsing and local CAPTCHA stages stay on Obscura.
+- The generated browser skill is 647 words instead of 1,434. The concise form
+  won the Qwen 3.8 Max evaluation with 23.1% fewer reported tokens, 19.9% less
+  wall time, fewer browser calls, and no browser failures while retaining the
+  authorization, exactness, credential, CAPTCHA, download, proof, and handoff
+  rules as tested invariants.
+
 - **Live-view chat and handoff UI revamp.** Chat moved out of the bottom
   dock (which ate up to a third of the window) into a collapsible side panel
   with an unread badge, so the stream gets the full viewport. `handoff` and
@@ -34,12 +61,32 @@ Releases before 1.1.3 predate this file; their notes live on the
   optional note field; ask shows the question with its choice chips and a
   reply box — instead of being folded into the chat composer.
 
-- Operator guidance now tells the agent that bulk repetitive work may drive the
-  site's own endpoint or in-page function via `page.evaluate` instead of
-  replaying a UI action N times, with the result still confirmed in the UI and
-  an explicit carve-out against bypassing a paywall, rate limit, or access
-  control. The capability was always there — `evaluate`/`$eval`/`addInitScript`
-  callbacks serialize into the page — but nothing pointed models at it.
+### Fixed
+
+- Obscura now asks the kernel for an ephemeral port and BetterWright discovers
+  only a loopback listener owned by the spawned child PID/inode, removing the
+  CDP endpoint race reported during review.
+- `site.read()` and `site.request()` cap response bytes while streaming,
+  including chunked responses, rather than buffering an unbounded body before
+  truncation.
+- Obscura locator compatibility now covers the CSS and internal role, text,
+  label, attribute, state, form, and pointer operations needed by existing
+  BetterWright clients. CAPTCHA tile bounds remain mapped to their resident DOM
+  locators, and pointer actions emit the motion/press sequence challenge
+  listeners expect.
+- Obscura navigation now fails closed through the same URL/search policy as the
+  compatibility browser. APIs that need full browser subsystems—downloads,
+  uploads, service workers, multiple pages or frames, explicit page-network
+  calls, and manual credential entry—promote once without client-side changes.
+- Persistent Obscura profiles now restore and durably save bounded cookies.
+  Native snapshots retain titles, links, and actionable refs, while human
+  click, type, scroll, drag, overlay dismissal, and same-origin challenge-frame
+  discovery stay on the lightweight backend.
+- Promotion and shutdown preserve bounded page state, never replay password
+  values, seed storage before navigation, and stop the owned Obscura process
+  before CDP teardown so failed launches cannot leave a browser orphaned.
+- Cloak 145 headed windows on macOS now use a coherent viewport instead of
+  occasionally reporting a viewport taller than the advertised screen.
 
 ## [1.6.3] - 2026-08-03
 
@@ -569,7 +616,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.6.3...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/BetterWright/betterwright/compare/v1.6.3...v1.7.0
 [1.6.3]: https://github.com/BetterWright/betterwright/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/BetterWright/betterwright/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/BetterWright/betterwright/compare/v1.6.0...v1.6.1

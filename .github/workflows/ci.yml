@@ -64,25 +64,27 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
-      # CloakBrowser unpacks a ~200 MB Chromium into ~/.cloakbrowser (see
-      # getCacheDir/getBinaryDir in the package), which this job re-downloaded on
-      # every run. The key is the exact pin from package.json, so a deliberate
-      # bump of that dependency invalidates the cache by construction. The setup
-      # step still runs on a hit: it verifies the cached binary is present and
-      # launch-ready and re-downloads if it is not, so a truncated or stale cache
-      # entry degrades to today's behaviour rather than to a false green.
-      - name: Read the pinned CloakBrowser version
-        id: cloak_pin
-        run: echo "version=$(node -p "require('./package.json').dependencies.cloakbrowser")" >> "$GITHUB_OUTPUT"
-      - name: Cache the managed CloakBrowser download
+      # The release default needs both engines: Obscura stays resident for
+      # ordinary headless work and Cloak supplies the compatibility renderer.
+      # Exact version keys invalidate either cached download when its pin moves;
+      # setup still validates a cache hit and repairs a partial install.
+      - name: Read the managed browser versions
+        id: browser_pins
+        shell: bash
+        run: |
+          echo "cloak=$(node -p 'require("./package.json").dependencies.cloakbrowser')" >> "$GITHUB_OUTPUT"
+          echo "obscura=$(sed -n 's/^export const OBSCURA_VERSION = "\([^"]*\)";/\1/p' src/obscura.ts)" >> "$GITHUB_OUTPUT"
+      - name: Cache the managed browser downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cloakbrowser
-          key: cloakbrowser-${{ runner.os }}-${{ steps.cloak_pin.outputs.version }}
-      - name: Install managed CloakBrowser
-        run: node dist/bin/betterwright.js setup --cloak-only
+          path: |
+            ~/.cloakbrowser
+            ~/.betterwright/obscura
+          key: managed-browsers-${{ runner.os }}-cloak-${{ steps.browser_pins.outputs.cloak }}-obscura-${{ steps.browser_pins.outputs.obscura }}
+      - name: Install managed browsers
+        run: node dist/bin/betterwright.js setup
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
-      # broken Cloak install can never report green by skipping every browser test.
+      # broken Obscura/Cloak install cannot report green by skipping browser tests.
       - run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"

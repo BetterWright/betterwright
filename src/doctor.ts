@@ -17,6 +17,7 @@ import {
 } from "./chromium-fork.js";
 import { forkFontsDir } from "./fork-identity.js";
 import { defaultHome } from "./home.js";
+import { OBSCURA_VERSION, resolveObscuraBinary } from "./obscura.js";
 import { optionalPeerAvailable } from "./optional-peer.js";
 import { staleAgentSkillReport } from "./skill-install.js";
 
@@ -109,6 +110,13 @@ export async function doctorReport() {
   const workerOk = fs.existsSync(worker);
   const cloakOk = cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed;
   const stealth = stealthDriverVersion();
+  let obscura = null;
+  let obscuraError = null;
+  try {
+    obscura = resolveObscuraBinary();
+  } catch (error) {
+    obscuraError = error instanceof Error ? error.message : String(error);
+  }
   let chromiumFork = null;
   let chromiumForkError = null;
   try {
@@ -116,7 +124,7 @@ export async function doctorReport() {
   } catch (error) {
     chromiumForkError = error instanceof Error ? error.message : String(error);
   }
-  const browser = chromiumFork ? "chromium-fork" : "cloak";
+  const browser = obscura ? "obscura" : chromiumFork ? "chromium-fork" : "cloak";
   const chromiumForkFonts = chromiumFork ? forkFontsDir(chromiumFork) : null;
   const chromiumForkFontsWarning = missingForkFontsWarning({
     chromiumFork,
@@ -125,7 +133,12 @@ export async function doctorReport() {
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (chromiumFork ? true : cloakOk) &&
+    (obscura
+      ? Boolean(chromiumFork || cloakOk)
+      : chromiumFork
+        ? true
+        : cloakOk) &&
+    !obscuraError &&
     !chromiumForkError;
   return {
     node: process.execPath,
@@ -134,6 +147,9 @@ export async function doctorReport() {
     playwright_core: core,
     playwright_version: version,
     playwright_pinned: PINNED_PLAYWRIGHT_VERSION,
+    obscura,
+    obscura_version: obscura ? OBSCURA_VERSION : null,
+    obscura_error: obscuraError,
     cloakbrowser: cloak.dir,
     cloakbrowser_version: cloak.version,
     cloakbrowser_pinned: PINNED_CLOAKBROWSER_VERSION,
@@ -307,20 +323,28 @@ export function doctorChecks(
   );
   add("Runtime", "Worker", report.worker_ok ? "ok" : "fail", report.worker, report.worker_ok ? null : "The package looks incomplete — reinstall betterwright.");
 
+  if (report.obscura) {
+    add("Browser", "Obscura", "ok", `${report.obscura_version} — resident engine (${report.obscura})`);
+  } else if (report.obscura_error) {
+    add("Browser", "Obscura", "fail", report.obscura_error, "Run `betterwright update`, or unset BETTERWRIGHT_OBSCURA_PATH/ROOT.");
+  } else {
+    add("Browser", "Obscura", "warn", "not installed — using the compatibility backend", "Run `betterwright update`.");
+  }
+
   if (report.chromium_fork) {
-    add("Browser", "Chromium fork", "ok", `${report.chromium_fork_version} — the default on this platform`);
+    add("Browser", "Pixel renderer", "ok", `Chromium ${report.chromium_fork_version} — launched only for visual captures`);
     if (report.chromium_fork_fonts_warning) {
       add("Browser", "Fork fonts", "warn", report.chromium_fork_fonts_warning);
     }
   } else if (report.chromium_fork_error) {
-    add("Browser", "Chromium fork", "fail", report.chromium_fork_error, "Run `betterwright update`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.");
+    add("Browser", "Pixel renderer", "fail", report.chromium_fork_error, "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.");
   } else {
-    add("Browser", "Chromium fork", "warn", "not installed — using CloakBrowser", "Run `betterwright update` for the fork (macOS arm64 / Linux x64 / Windows x64).");
+    add("Browser", "Pixel renderer", report.cloakbrowser_ok ? "ok" : "warn", report.cloakbrowser_ok ? "CloakBrowser (on demand)" : "not installed — screenshots are unavailable", "Run `betterwright setup`.");
   }
   add(
     "Browser",
     "CloakBrowser",
-    report.cloakbrowser_ok ? "ok" : report.chromium_fork ? "warn" : "fail",
+    report.cloakbrowser_ok ? "ok" : report.chromium_fork || report.obscura ? "warn" : "fail",
     report.cloakbrowser_ok
       ? `${report.cloakbrowser_binary_version} (${report.cloakbrowser_binary_tier})` +
         (report.cloakbrowser_binary ? ` — ${report.cloakbrowser_binary}` : "")

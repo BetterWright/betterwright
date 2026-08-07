@@ -159,6 +159,31 @@ test(
 );
 
 test(
+  "captcha.click reuses Obscura image-grid bounds against the resident DOM",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/grid`)}, { waitUntil: "domcontentloaded" });
+          const solved = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          for (const tile of solved.tiles.filter((entry) => entry.label === "traffic light")) {
+            await captcha.click(tile.bounds);
+          }
+          await human.click(page.locator("#verify"));
+          return page.locator('[name="bw-captcha-response"]').inputValue();
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.match(result.result, /^bw_grid_token_/);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
   "captcha.solve clears a managed-style verify challenge",
   opts,
   async () => {

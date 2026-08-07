@@ -58,17 +58,16 @@ client it does not know), or when you want to do it deliberately.
    (For the MCP path also install the SDK:
    `npm install -g betterwright @modelcontextprotocol/sdk`. In a project rather
    than globally, drop `-g` and prefix later commands with `npx`.)
-3. **Download the managed browser** (one-time, ~200 MB):
+3. **Download the managed browser** (one-time):
 
    ```bash
-   betterwright setup     # Chromium fork on supported hosts + Cloak fallback
-   # or: betterwright update   # fork only (switches default away from Cloak)
+   betterwright setup     # Obscura + an on-demand Chromium/Cloak pixel renderer
+   # or: betterwright update   # refresh Obscura only
    ```
 
-   On macOS arm64 / Linux x64 / Windows x64, setup/update fetch the pinned Chromium fork
-   (SHA-256 verified) into `~/.betterwright/chromium/`. Elsewhere (and with
-   `--cloak-only`), the CloakBrowser wrapper downloads its signed binary from
-   CloakHQ. npm installation itself has no hidden browser-download lifecycle
+   Setup fetches checksum-pinned Obscura into `~/.betterwright/obscura/` and
+   keeps the Chromium fork (or CloakBrowser fallback) as an on-demand pixel
+   renderer. npm installation itself has no hidden browser-download lifecycle
    script.
 4. **Verify** with `betterwright doctor` — it must end with
    `BetterWright is ready.` Every line it flags with `✗` names its own fix; if
@@ -250,11 +249,10 @@ usually swallow the error), and a missing browser.
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
-Managed launches use CloakBrowser in headed and headless modes to reduce
-common automation false positives; hosts with the native Chromium fork
-artifact installed (`~/.betterwright/chromium/`) run that instead — see
-[docs/chromium-fork.md](docs/chromium-fork.md). This is not a guarantee of
-undetectability.
+Headless DOM/API work uses Obscura; visual captures start the native Chromium
+fork (`~/.betterwright/chromium/`) or CloakBrowser only on demand. Headed and
+explicit `--cloak-only` sessions use the compatibility browser throughout. See
+[docs/obscura.md](docs/obscura.md). This is not a guarantee of undetectability.
 
 Broad discovery should use the host's web-search tool, then open selected
 first-party pages in BetterWright; the operator guidance says so. Set

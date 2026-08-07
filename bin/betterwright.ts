@@ -3,8 +3,8 @@
 //
 //   betterwright                  interactive agent console (type tasks, watch
 //                                 progress, answer the agent's questions)
-//   betterwright setup            install Chromium fork (mac/linux) + Cloak fallback
-//   betterwright update           download/refresh the Chromium fork (switches from Cloak)
+//   betterwright setup            install Obscura + the on-demand pixel renderer
+//   betterwright update           download/refresh the resident Obscura engine
 //   betterwright doctor           report runtime readiness
 //   betterwright run <file|-|-c>  execute a Playwright snippet in the
 //                                 persistent session (tabs/state survive calls)
@@ -74,6 +74,7 @@ import {
   resolveCoreDir,
 } from "../src/doctor.js";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.js";
+import { installObscura } from "../src/obscura-install.js";
 import { profileLabel, resolveProfileName } from "../src/profile-name.js";
 // `agentSystemPrompt` comes from the light prompt module, not index.js, which
 // would drag the whole browser/worker/vault graph in just to print a skill.
@@ -402,30 +403,24 @@ async function installCloakBrowser() {
   return 0;
 }
 
-/** Download the Chromium fork so discovery prefers it over Cloak. */
+/** Download the resident low-memory browser engine. */
 async function cmdUpdate(flags) {
   if (flags.has("--cloak-only")) {
     console.error(
-      "`betterwright update` installs the Chromium fork. Use `betterwright setup --cloak-only` for CloakBrowser alone.",
+      "`betterwright update` installs Obscura. Use `betterwright setup --cloak-only` for CloakBrowser alone.",
     );
     return 1;
   }
-  const result = await installChromiumFork({ force: flags.has("--force") });
+  const result = await installObscura({ force: flags.has("--force") });
   if (result.skipped) {
     console.log(result.skipped);
-    console.log("On this platform, keep using `betterwright setup` for CloakBrowser.");
+    console.log("On this platform, BetterWright keeps using its Chromium compatibility backend.");
     return 0;
   }
   console.log(
-    "\nUpdate complete. BetterWright will use the Chromium fork by default.",
+    "\nUpdate complete. BetterWright will use Obscura as its resident browser.",
   );
-  console.log("Run `betterwright doctor` to confirm (browser: chromium-fork).");
-  console.log(
-    "Tip: use a dedicated BETTERWRIGHT_HOME if you still need Cloak on this machine —",
-  );
-  console.log(
-    "fork and Cloak share the default profile and are not interchangeable.",
-  );
+  console.log("Run `betterwright doctor` to confirm (browser: obscura).");
   refreshAgentSkillsQuietly();
   return 0;
 }
@@ -433,23 +428,27 @@ async function cmdUpdate(flags) {
 async function cmdSetup(flags, { quiet = false }: any = {}) {
   if (flags.has("--chromium")) {
     console.error(
-      "The stock Chromium fallback was removed. Use `betterwright update` for the Chromium fork, or `betterwright setup` for managed CloakBrowser.",
+      "The stock Chromium fallback was removed. Use `betterwright setup` for Obscura plus its pixel renderer, or `betterwright setup --cloak-only`.",
     );
     return 1;
   }
 
   const cloakOnly = flags.has("--cloak-only");
   if (!cloakOnly) {
-    const result = await installChromiumFork({ force: flags.has("--force") });
-    if (result.skipped) {
-      console.log(result.skipped);
-    } else if (!result.alreadyInstalled) {
+    const obscura = await installObscura({ force: flags.has("--force") });
+    if (obscura.skipped) {
+      console.log(obscura.skipped);
+    } else if (!obscura.alreadyInstalled) {
       console.log(
-        "Chromium fork installed. Discovery will prefer it over CloakBrowser.",
+        "Obscura installed. It will stay resident for normal browser work.",
       );
     }
+    const renderer = await installChromiumFork({ force: flags.has("--force") });
+    if (renderer.skipped) console.log(renderer.skipped);
+    else if (!renderer.alreadyInstalled)
+      console.log("Chromium pixel renderer installed for on-demand captures.");
   } else {
-    console.log("Skipping Chromium fork (--cloak-only).");
+    console.log("Skipping Obscura and the Chromium renderer (--cloak-only).");
   }
 
   const cloakCode = await installCloakBrowser();
@@ -462,7 +461,7 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
     console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
     if (!cloakOnly) {
       console.log(
-        "On macOS arm64 / Linux x64 / Windows x64, doctor should report browser: chromium-fork after update/setup.",
+        "On supported platforms, doctor should report browser: obscura after update/setup.",
       );
     }
   }
@@ -568,21 +567,17 @@ async function cmdRun(arg, flags) {
 // A CLI-usage preamble that turns the operator guidance (which talks about
 // `run()`) into a self-contained skill for any agent that can run a shell
 // command.
-const SKILL_PREAMBLE = `# Browser tool: BetterWright
+const SKILL_PREAMBLE = `# BetterWright browser
 
-Operate a real, persistent web browser with the \`betterwright\` command whenever a task needs the live web. Pass async Playwright JavaScript; a trailing expression (or explicit \`return\`) is the result:
+Use \`betterwright\` for live-web tasks. Run async Playwright JavaScript with:
 
     betterwright run -c "await page.goto('https://example.com'); return page.title()"
 
-It prints one JSON object {ok, result, error, console, events, artifacts, pages, challenges, warnings, durationMs}; \`artifacts\` lists files written during the run — screenshots there have a \`path\`; open that image to actually see the page.
+It returns JSON with \`ok\`, \`result\`, \`error\`, \`console\`, \`events\`, \`artifacts\`, \`pages\`, \`challenges\`, \`warnings\`, and \`durationMs\`. Screenshot artifacts contain a path; inspect the image before relying on it.
 
-Invocations share one persistent session (background daemon): open tabs, page state, and the in-memory \`state\` object survive between \`run\` calls; logins/cookies persist in the on-disk profile. Act in small steps — one \`run\` per action-and-observe — and call \`run\` again to continue. The session auto-closes after ~15 idle minutes; run \`betterwright close\` when you finish to end it sooner; give parallel workers their own \`--session <name>\` (same logins, own tabs), or \`--profile <name>\` when a run needs a different signed-in identity (own cookie jar). Batch steps in one process by piping blank-line-separated snippets: \`printf '%s\\n\\n%s\\n' "snippetA" "snippetB" | betterwright repl\` (same session).
+The daemon preserves tabs, page state, and the in-memory \`state\` object between calls; the profile preserves cookies and logins. Work in small action-and-observe calls. Use \`--session\` for parallel work, \`--profile\` for a separate identity, and \`betterwright close\` when finished.
 
-Surface details for "Live view and handoff" below: \`browser_handoff\` action "start" opens it, "status" waits for takeover Done; \`live_view\` watches without pausing, \`handoff\` pauses until they click Done; interactive accepts \`/live\`; \`exec "<task>" --live-view\` opens the viewer at step 0; \`betterwright view\` prints a URL for the open tabs without closing them (takeover: Take control / the handoff action bar; the viewer also has its own tabs, address bar, and back/forward).
-
-Network access is policy-guarded: loopback and the private network are reachable by default; \`--block-private-network\` / \`--block-loopback\` lock down; \`--allow-host <host>\` / \`--block-host <host>\` adjust. Cloud-metadata endpoints are always blocked. Below, "\`run()\`" means "one \`betterwright run\` (or \`repl\`) snippet"; the "approval-gated download tool" is \`betterwright run --approve-downloads\`: one bounded download-enabled run, used only after the user explicitly approves.
-
-\`betterwright vault\` is the user's own command for reading their saved passwords, not a tool for you. Never run \`vault show --reveal\` (or its \`vault get\` alias), \`vault copy\`, or \`vault rm\`: a stored password must not enter your context or be deleted on your initiative, and fill happens inside the browser without one. \`betterwright vault list\` is metadata-only and fine when the user asks what is saved. When they want a password themselves, tell them to run \`betterwright vault copy <id>\` — it reaches their clipboard without either of us seeing it.`;
+The browser is network-policy guarded. Private and loopback access are allowed unless disabled; cloud metadata is always blocked. Stored passwords are user-owned: never run \`vault show --reveal\`/\`get\`, \`vault copy\`, or \`vault rm\`; use trusted credential fill instead.`;
 
 function cmdSkill(flags) {
   const body = agentSkillBody();

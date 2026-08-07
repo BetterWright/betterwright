@@ -30,7 +30,7 @@ function tempHome() {
 
 // Chromium's site isolation keys on scheme + eTLD+1 and ignores the port, so a
 // caller that needs a genuinely cross-site frame has to pass a distinct
-// loopback address, not just a distinct port.
+// loopback host, not just a distinct port.
 async function listen(handler, host = "127.0.0.1") {
   const server = http.createServer(handler);
   server.listen(0, host);
@@ -1180,7 +1180,7 @@ test("bot challenges in a cross-origin frame are detected", opts, async () => {
   const embed = await listen((_request, response) => {
     response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" });
     response.end("<!doctype html><body><h1>Verify you are human</h1></body>");
-  }, "127.0.0.2");
+  }, "localhost");
   const site = await listen((_request, response) => {
     response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" });
     response.end(

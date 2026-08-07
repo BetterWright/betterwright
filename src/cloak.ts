@@ -49,7 +49,11 @@ function isFreeBinary(binaryInfo, platformPrefix, versionPrefix) {
 
 /** Keep known Cloak/X11 viewport combinations coherent and non-zero. */
 export function managedCloakViewport(binaryInfo, headless) {
-  if (headless && isFreeBinary(binaryInfo, "darwin-", "145.")) {
+  // Cloak 145's macOS free build inherits the host window size even when the
+  // browser advertises a smaller 1440x900 screen. In headed mode that can make
+  // innerHeight larger than screen.height; use the same known-good viewport in
+  // both modes so geometry stays internally coherent.
+  if (isFreeBinary(binaryInfo, "darwin-", "145.")) {
     return { width: 1438, height: 679 };
   }
   if (!headless && isFreeBinary(binaryInfo, "linux-", "146.")) {

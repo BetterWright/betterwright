@@ -67,9 +67,12 @@ jobs:
       - name: Build TypeScript sources
         if: steps.existing.outputs.published != 'true'
         run: npm run build
-      - name: Install managed CloakBrowser
+      # The published default is Obscura with Cloak as its compatibility
+      # renderer. Install both so a release cannot reach npm after testing only
+      # the fallback backend.
+      - name: Install managed browsers
         if: steps.existing.outputs.published != 'true'
-        run: node dist/bin/betterwright.js setup --cloak-only
+        run: node dist/bin/betterwright.js setup
       - name: Verify Chromium fork update
         if: steps.existing.outputs.published != 'true'
         shell: bash

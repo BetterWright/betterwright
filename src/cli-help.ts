@@ -9,8 +9,8 @@
 
 export const COMMAND_SUMMARIES = [
   ["init", "guided first-time setup — browser, agent wiring, verification"],
-  ["setup", "download the managed browser (fork on mac/linux + Cloak fallback)"],
-  ["update", "download or refresh the Chromium fork"],
+  ["setup", "download Obscura and the on-demand pixel renderer"],
+  ["update", "download or refresh the resident Obscura engine"],
   ["doctor", "check that everything needed is installed and reachable"],
   ["run", "run one Playwright snippet in the persistent session"],
   ["repl", "run blank-line-separated snippets from stdin"],
@@ -54,33 +54,33 @@ Options:
   --yes            accept every default; never prompt (for scripts and CI)
   --skip-browser   do not download or verify the browser
   --skip-agents    do not touch any agent configuration
-  --cloak-only     use CloakBrowser rather than the Chromium fork
+  --cloak-only     use CloakBrowser rather than Obscura
 
 Safe to re-run: it reports what is already done and changes only what is not.`,
 
   setup: `Usage: betterwright setup [options]
 
-Download the managed browser (once). On macOS arm64, Linux x64, and Windows x64
-this installs BetterWright's Chromium fork into ~/.betterwright/chromium/ and
-the CloakBrowser binary as a fallback; elsewhere, CloakBrowser alone.
+Download the managed browser (once). Supported macOS, Linux, and Windows hosts
+get Obscura in ~/.betterwright/obscura/ as the resident engine. The existing
+Chromium/Cloak browser remains an on-demand pixel renderer for screenshots and
+live visual work, and is not kept resident during DOM/API-only tasks.
 
 Options:
-  --cloak-only   skip the Chromium fork; install CloakBrowser only
-  --force        re-download the fork even if it is already present
+  --cloak-only   skip Obscura and use CloakBrowser only
+  --force        re-download managed binaries even when already present
 
 Also refreshes agent skill files that are already installed, so they match the
 package version. Run \`betterwright doctor\` afterwards to confirm.`,
 
   update: `Usage: betterwright update [options]
 
-Download or refresh the Chromium fork only, and make it the default browser.
-Use \`betterwright setup\` for the fork plus the CloakBrowser fallback.
+Download or refresh Obscura, BetterWright's resident low-memory browser.
+Use \`betterwright setup\` to also install the on-demand pixel renderer.
 
 Options:
   --force   re-download even if the pinned version is already installed
 
-The fork and CloakBrowser cannot share a browser profile. If you need to move
-back to CloakBrowser, use a separate BETTERWRIGHT_HOME.`,
+Set BETTERWRIGHT_OBSCURA_PATH=off to keep using the compatibility backend.`,
 
   doctor: `Usage: betterwright doctor [options]
 

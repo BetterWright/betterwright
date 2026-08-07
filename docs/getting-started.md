@@ -43,8 +43,8 @@ alone.
 The individual steps remain available when you want them:
 
 ```bash
-npx betterwright setup     # Chromium fork on mac/linux; Cloak everywhere
-npx betterwright update    # download/refresh the fork (switches off Cloak default)
+npx betterwright setup     # Obscura + an on-demand Chromium/Cloak pixel renderer
+npx betterwright update    # download/refresh the resident Obscura engine
 npx betterwright doctor    # grouped readiness report; every ✗ names its fix
 ```
 
@@ -56,14 +56,28 @@ the lines that need attention.
 
 Upgrade the npm package with `npm install -g betterwright@latest` (or
 `npm update -g betterwright`), then run `betterwright update` so the
-pinned Chromium fork matches that package. Package updates are intentional
+pinned Obscura release matches that package. Package updates are intentional
 rather than automatic, so application lockfiles continue to control when a
 new BetterWright version is adopted.
 
-### Managed CloakBrowser backend
+### Obscura resident engine
 
-On platforms without a public fork artifact, or when you pass `--cloak-only`,
-launches use CloakBrowser. `betterwright setup` asks the
+Headless sessions prefer the pinned Obscura release installed at
+`~/.betterwright/obscura/`. It runs DOM, JavaScript, storage, and network work
+without a resident Chromium renderer. Screenshots start the installed Chromium
+fork or CloakBrowser only long enough to reproduce the page state and capture
+its pixels. See [obscura.md](obscura.md).
+
+Resolution order is an explicit `BETTERWRIGHT_OBSCURA_PATH`, an artifact under
+`BETTERWRIGHT_OBSCURA_ROOT`, zero-config discovery under
+`~/.betterwright/obscura/`, then the previous compatibility backend. An
+explicit path that is missing fails closed. Set either variable to `off` to
+disable Obscura.
+
+### Managed CloakBrowser pixel/compatibility backend
+
+On platforms without a public fork artifact, when pixels are requested, or
+when you pass `--cloak-only`, BetterWright uses CloakBrowser. `betterwright setup` asks the
 pinned official wrapper to fetch the correct binary directly from CloakHQ's
 release source and verify the published checksums with its pinned Ed25519
 signature before extraction. BetterWright ships the wrapper integration, not
@@ -87,19 +101,19 @@ doctor` reports both versions. For a reproducible deployment, set a full
 `CLOAKBROWSER_VERSION`; to keep an already installed build from checking for a
 newer stable build, set `CLOAKBROWSER_AUTO_UPDATE=false`.
 
-### Native Chromium fork (default on macOS arm64 / Linux x64 / Windows x64)
+### Native Chromium fork pixel renderer (macOS arm64 / Linux x64 / Windows x64)
 
-`betterwright setup` and `betterwright update` download BetterWright's own
+`betterwright setup` downloads BetterWright's own
 Chromium build into `~/.betterwright/chromium/` (SHA-256 verified from the
-pinned GitHub Release). Discovery then prefers the fork over CloakBrowser —
+pinned GitHub Release). Pixel capture prefers the fork over CloakBrowser —
 per-profile-stable canvas/audio farbling, platform masking (a Linux server
 presents as a consumer Mac), and bundled macOS-metric fonts. The npm package
 is only the JS/runtime; the ~200 MB zip is fetched on demand, never as an
 install lifecycle side effect. Details: [chromium-fork.md](chromium-fork.md).
 
 ```bash
-npx betterwright update          # install/refresh fork only
-npx betterwright update --force  # re-download even if present
+npx betterwright setup           # install Obscura and the pixel renderer
+npx betterwright setup --force   # re-download managed binaries
 npx betterwright setup --cloak-only  # CloakBrowser only (skip fork)
 ```
 
@@ -110,7 +124,7 @@ Resolution order:
    binary is an error — it fails closed, never silently downgrades.
 2. Zero-config discovery at `~/.betterwright/chromium/<platform>/`: if the
    artifact for this platform exists there, it is used automatically
-   (this is what `update` / default `setup` populate).
+   (this is what default `setup` populates).
 3. Otherwise the managed CloakBrowser backend.
 
 Force the managed path even with an artifact installed:

@@ -1,8 +1,9 @@
-// Local SOCKS5 proxy that funnels every browser transport connection through
-// the worker's network guard. Chromium is pointed at this proxy on the command
-// line, so even connections that bypass Playwright routing (service workers,
-// WebRTC-adjacent fetches, HTTP/3 fallbacks) are policy-checked and connect
-// only to pre-validated address literals — closing redirect-hop and
+// Local SOCKS5 + HTTP CONNECT proxy that funnels every browser transport
+// connection through the worker's network guard. Chromium uses SOCKS5;
+// engines whose HTTP stack cannot speak SOCKS5 use the same listener as an
+// HTTP proxy. Connections that bypass Playwright routing (service workers,
+// WebRTC-adjacent fetches, HTTP/3 fallbacks) are still policy-checked and
+// connect only to pre-validated address literals — closing redirect-hop and
 // DNS-rebinding gaps.
 //
 // This module is transport plumbing only: policy decisions stay in the worker,
@@ -13,7 +14,7 @@ import net from "node:net";
 
 const SOCKS_HANDSHAKE_TIMEOUT_MS = 15_000;
 const SOCKS_CONNECT_TIMEOUT_MS = 10_000;
-const MAX_SOCKS_HANDSHAKE_BYTES = 8_192;
+const MAX_PROXY_HANDSHAKE_BYTES = 65_536;
 const FAMILY_UNREACHABLE_TTL_MS = 30_000;
 const FAILURE_BACKOFF_BASE_MS = 25;
 const FAILURE_BACKOFF_MAX_MS = 1_000;
@@ -75,6 +76,55 @@ function socksReplyCode(error) {
   if (error?.code === "ECONNREFUSED") return 5;
   if (error?.code === "EAFNOSUPPORT") return 8;
   return 1;
+}
+
+function httpProxyStatus(error) {
+  return error?.code === "BW_PROXY_BLOCKED"
+    ? { code: 403, text: "Forbidden" }
+    : { code: 502, text: "Bad Gateway" };
+}
+
+function httpProxyAuthority(value, defaultPort) {
+  let parsed;
+  try {
+    parsed = new URL(`http://${String(value || "")}`);
+  } catch {
+    return null;
+  }
+  const port = Number(parsed.port) || defaultPort;
+  if (
+    !parsed.hostname ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash ||
+    !Number.isSafeInteger(port) ||
+    port <= 0 ||
+    port > 65_535
+  ) {
+    return null;
+  }
+  return { host: parsed.hostname.replace(/^\[|\]$/g, ""), port };
+}
+
+function httpProxyRequestHead(method, target, version, headerLines) {
+  const headers = [];
+  for (const line of headerLines) {
+    const separator = line.indexOf(":");
+    if (separator <= 0) return null;
+    const name = line.slice(0, separator).trim();
+    const lower = name.toLowerCase();
+    if (["connection", "host", "proxy-authorization", "proxy-connection"].includes(lower)) {
+      continue;
+    }
+    headers.push(`${name}:${line.slice(separator + 1)}`);
+  }
+  const path = `${target.pathname || "/"}${target.search || ""}`;
+  return Buffer.from(
+    `${method} ${path} ${version}\r\nHost: ${target.host}\r\nConnection: close\r\n${headers.join("\r\n")}\r\n\r\n`,
+    "latin1",
+  );
 }
 
 function ipv6FromBytes(value) {
@@ -818,7 +868,7 @@ export function createGuardProxy(
     trackProxySocket(client);
     client.setTimeout(SOCKS_HANDSHAKE_TIMEOUT_MS, () => client.destroy());
     let buffer = Buffer.alloc(0);
-    let stage = "greeting";
+    let stage = "detect";
     let processing = false;
 
     const reject = (code) => {
@@ -830,6 +880,100 @@ export function createGuardProxy(
       processing = true;
       try {
         while (!client.destroyed) {
+          if (stage === "detect") {
+            if (!buffer.length) return;
+            stage = buffer[0] === 5 ? "greeting" : "http";
+            continue;
+          }
+
+          if (stage === "http") {
+            const headerEnd = buffer.indexOf("\r\n\r\n");
+            if (headerEnd < 0) return;
+            const header = buffer.subarray(0, headerEnd).toString("latin1");
+            const lines = header.split("\r\n");
+            const requestLine = /^([A-Z]+) (\S+) (HTTP\/1\.[01])$/.exec(
+              lines.shift() || "",
+            );
+            if (!requestLine) {
+              client.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+              return;
+            }
+            const [, method, rawTarget, version] = requestLine;
+            const initialData = buffer.subarray(headerEnd + 4);
+            buffer = Buffer.alloc(0);
+            client.pause();
+            client.off("data", onData);
+            try {
+              let host;
+              let port;
+              let firstWrite = initialData;
+              if (method === "CONNECT") {
+                const authority = httpProxyAuthority(rawTarget, 443);
+                if (!authority) {
+                  client.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+                  return;
+                }
+                ({ host, port } = authority);
+              } else {
+                let target;
+                try {
+                  target = new URL(rawTarget);
+                } catch {
+                  target = null;
+                }
+                if (target?.protocol !== "http:") {
+                  client.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+                  return;
+                }
+                const decision = await guardUrl(
+                  target.href,
+                  {
+                    method,
+                    resourceType: "http-proxy",
+                    isNavigation: true,
+                  },
+                  executeId(),
+                );
+                if (!decision?.allowed) {
+                  throw proxyBlockedError(decision?.reason);
+                }
+                host = target.hostname.replace(/^\[|\]$/g, "");
+                port = Number(target.port) || 80;
+                const rewritten = httpProxyRequestHead(
+                  method,
+                  target,
+                  version,
+                  lines,
+                );
+                if (!rewritten) {
+                  client.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+                  return;
+                }
+                firstWrite = Buffer.concat([rewritten, initialData]);
+              }
+              const targetSocket = await connectGuardedTarget(host, port);
+              if (client.destroyed) {
+                targetSocket.destroy();
+                return;
+              }
+              client.setTimeout(0);
+              if (method === "CONNECT") {
+                client.write(
+                  "HTTP/1.1 200 Connection Established\r\nConnection: keep-alive\r\n\r\n",
+                );
+              }
+              if (firstWrite.length) targetSocket.write(firstWrite);
+              client.pipe(targetSocket).pipe(client);
+              client.resume();
+            } catch (error) {
+              const status = httpProxyStatus(error);
+              client.end(
+                `HTTP/1.1 ${status.code} ${status.text}\r\nConnection: close\r\n\r\n`,
+              );
+            }
+            return;
+          }
+
           if (stage === "greeting") {
             if (buffer.length < 2) return;
             const version = buffer[0];
@@ -917,8 +1061,9 @@ export function createGuardProxy(
     };
 
     const onData = (chunk) => {
-      if (buffer.length + chunk.length > MAX_SOCKS_HANDSHAKE_BYTES) {
-        reject(1);
+      if (buffer.length + chunk.length > MAX_PROXY_HANDSHAKE_BYTES) {
+        if (stage === "greeting" || stage === "request") reject(1);
+        else client.end("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
         return;
       }
       buffer = Buffer.concat([buffer, chunk]);
