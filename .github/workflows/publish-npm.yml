@@ -85,6 +85,7 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
+      # Build dist/ before the managed-browser steps consume the release CLI.
       - name: Build TypeScript sources
         if: steps.existing.outputs.published != 'true'
         run: npm run build
@@ -115,6 +116,13 @@ jobs:
       - name: Test managed CloakBrowser headed mode
         if: steps.existing.outputs.published != 'true'
         run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js
+      # npm publish runs prepublishOnly implicitly. Run that release gate as an
+      # explicit, visible final check after every step that can rebuild dist/,
+      # then suppress lifecycle scripts on the upload. The exact package smoke-
+      # tested here is therefore the package sent to npm, without a hidden rerun.
+      - name: Run final release verification
+        if: steps.existing.outputs.published != 'true'
+        run: npm run release:check
       - name: Select npm distribution tag
         if: steps.existing.outputs.published != 'true'
         id: npm_tag
@@ -136,4 +144,4 @@ jobs:
           fi
       - name: Publish to npm with provenance
         if: steps.existing.outputs.published != 'true'
-        run: npm publish --access public --tag "${{ steps.npm_tag.outputs.tag }}"
+        run: npm publish --ignore-scripts --access public --tag "${{ steps.npm_tag.outputs.tag }}"
