@@ -64,7 +64,8 @@ betterwright close --all     # stops every profile's daemon
 ```
 
 `BETTERWRIGHT_PROFILE=social` sets the identity for a whole shell (and is the
-only way to set it for the MCP server); `--profile` beats it. Both run at once
+only way to set it for the MCP server and the Pi extension); `--profile`
+beats it. Both run at once
 and both stay signed in, because each profile locks its own directory under
 `$BETTERWRIGHT_HOME/browser/profiles/`. Two runs of the *same*
 profile still serialize: the second gets an isolated, signed-out ephemeral

@@ -12,6 +12,7 @@ export interface PiExtensionOptions {
   closeBrowserOnShutdown?: boolean;
   guardrails?: Guardrails;
   maxSteps?: number;
+  profile?: string;
   requireEvidence?: boolean;
   session?: string;
   startUrl?: string;

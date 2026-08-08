@@ -432,6 +432,20 @@ test("native Pi extension reports invalid configuration and recovers from start 
     () => createPiExtension({ startUrl: "file:///tmp/page.html" })(new FakePi()),
     /http or https/,
   );
+  // Profile names become path segments; an invalid one must fail at
+  // extension load (option or BETTERWRIGHT_PROFILE env), not at first browse.
+  assert.throws(
+    () => createPiExtension({ profile: "../escape" })(new FakePi()),
+    /profile/i,
+  );
+  process.env.BETTERWRIGHT_PROFILE = "bad name";
+  try {
+    assert.throws(() => createPiExtension({})(new FakePi()), /profile/i);
+  } finally {
+    delete process.env.BETTERWRIGHT_PROFILE;
+  }
+  // A valid name is accepted (identity wiring is covered by resolvedBrowserOptions).
+  createPiExtension({ browser: new FakeBrowser({}), profile: "work" })(new FakePi());
 
   const { dir, screenshot } = await fixture();
   const browser = new FakeBrowser({ startFails: true, screenshot });
