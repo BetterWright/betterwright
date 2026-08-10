@@ -303,11 +303,10 @@ test("diffSnapshots flags oversized inputs instead of stalling", () => {
   assert.equal(result.tooLarge, true);
 });
 
-// The diff table is the only allocation in this file that scales with the
-// square of the input, so it grew a fast path (one-sided changes skip the
-// table entirely) and line interning (integer compares in the inner loop).
-// These pin the output against a straightforward reference so the
-// optimizations cannot quietly change which lines are reported.
+// Diff reconstruction uses sparse row checkpoints instead of retaining the
+// quadratic table, while the fast path skips all DP work for one-sided
+// changes. These pin the output against a straightforward reference so the
+// memory optimization cannot quietly change which lines are reported.
 
 /**
  * The 1.6.0 implementation, verbatim: shared prefix/suffix trimming, a full
@@ -390,8 +389,10 @@ test("diffSnapshots still agrees line-for-line with the 1.6.0 algorithm", () => 
   // A small alphabet makes repeated lines — and therefore interning
   // collisions and LCS ties — common rather than rare.
   const line = () => `- item ${Math.floor(random() * 6)}`;
+  // Lengths cross the 64-row checkpoint boundary so this covers both the
+  // single-block and multi-block reconstruction paths.
   for (let round = 0; round < 200; round += 1) {
-    const before = Array.from({ length: Math.floor(random() * 12) }, line);
+    const before = Array.from({ length: Math.floor(random() * 90) }, line);
     const after = before
       .filter(() => random() > 0.3)
       .flatMap((entry) => (random() > 0.75 ? [line(), entry] : [entry]));
@@ -420,12 +421,17 @@ test("a purely one-sided change reports every line without building a table", ()
   });
 });
 
-test("a diff at the size cap stays within the halved table budget", () => {
+test("a diff at the size cap reconstructs from bounded row checkpoints", () => {
   const before = Array.from({ length: 3_000 }, (_, i) => `- a${i}`).join("\n");
-  const after = Array.from({ length: 3_000 }, (_, i) => `- b${i}`).join("\n");
+  // One displaced shared line forces the LCS path; wholly disjoint inputs take
+  // the faster no-common-line branch instead.
+  const after = [
+    "- a2999",
+    ...Array.from({ length: 2_999 }, (_, i) => `- b${i}`),
+  ].join("\n");
   const result = diffSnapshots(before, after);
   assert.equal(result.changed, true);
   assert.equal(result.tooLarge, undefined);
-  assert.equal(result.additions, 3_000);
-  assert.equal(result.removals, 3_000);
+  assert.equal(result.additions, 2_999);
+  assert.equal(result.removals, 2_999);
 });

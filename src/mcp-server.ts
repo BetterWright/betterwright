@@ -156,8 +156,9 @@ function isLoopbackHost(host) {
   );
 }
 
-// The summary keys deliberately match a single documented shape (snake_case
-// duration_ms included) so MCP clients see one contract.
+// The summary uses one documented vocabulary (snake_case duration_ms included)
+// but omits optional fields when empty. These results become model context, so
+// repeating nulls and empty arrays on every successful call is real token cost.
 export async function contentForResult(result) {
   const imagePaths = new Set(piImageArtifacts(result).map((image) => image.path));
   const files = (result.artifacts || [])
@@ -171,25 +172,26 @@ export async function contentForResult(result) {
             .map((key) => [key, result.pendingCredential[key]]),
         )
       : (result.pendingCredential ?? null);
-  const summary = {
-    ok: result.ok,
-    // Coerce to null (not undefined) so the JSON keeps these keys, matching the
-    // documented summary shape on both success and failure.
-    result: result.result ?? null,
-    error: result.error ?? null,
-    pendingCredential,
-    console: result.console || [],
-    // Screenshots are returned as image content below, not as paths. Other
-    // files (downloads, spilled output) are listed here as paths only.
-    files,
-    pages: result.pages || [],
-    challenges: result.challenges || [],
-    // Deeper site/provider packs matching the open pages; read the `path` with
-    // your file tool before improvising site-specific behavior.
-    skills: result.skills || [],
-    warnings: result.warnings || [],
-    duration_ms: result.durationMs,
-  };
+  const summary: any = { ok: result.ok };
+  if (result.result !== undefined) summary.result = result.result;
+  if (result.error != null) summary.error = result.error;
+  if (pendingCredential != null) summary.pendingCredential = pendingCredential;
+  if (Array.isArray(result.console) && result.console.length)
+    summary.console = result.console;
+  // Screenshots are returned as image content below, not as paths. Other
+  // files (downloads, spilled output) are listed here as paths only.
+  if (files.length) summary.files = files;
+  if (Array.isArray(result.pages) && result.pages.length)
+    summary.pages = result.pages;
+  if (Array.isArray(result.challenges) && result.challenges.length)
+    summary.challenges = result.challenges;
+  // Deeper site/provider packs matching the open pages; read the `path` with
+  // your file tool before improvising site-specific behavior.
+  if (Array.isArray(result.skills) && result.skills.length)
+    summary.skills = result.skills;
+  if (Array.isArray(result.warnings) && result.warnings.length)
+    summary.warnings = result.warnings;
+  if (result.durationMs != null) summary.duration_ms = result.durationMs;
   return [
     { type: "text", text: JSON.stringify(summary) },
     ...(await piImageContent(result)),

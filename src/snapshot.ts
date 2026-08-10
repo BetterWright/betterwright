@@ -486,40 +486,100 @@ export function diffSnapshots(previous, current) {
   for (let k = 0; k < before.length; k += 1) beforeIds[k] = idOf(before[k]);
   for (let k = 0; k < after.length; k += 1) afterIds[k] = idOf(after[k]);
 
-  // Longest-common-subsequence table over the changed region. Every entry is a
-  // subsequence length, so it cannot exceed MAX_DIFF_LINES — Uint16Array holds
-  // it exactly and halves a table that reaches 18 MB at the size cap.
-  const rows = before.length + 1;
-  const cols = after.length + 1;
-  const table = new Uint16Array(rows * cols);
-  for (let i = before.length - 1; i >= 0; i -= 1) {
-    const rowBase = i * cols;
-    const nextBase = rowBase + cols;
-    const beforeId = beforeIds[i];
-    for (let j = after.length - 1; j >= 0; j -= 1) {
-      table[rowBase + j] =
-        beforeId === afterIds[j]
-          ? table[nextBase + j + 1] + 1
-          : Math.max(table[nextBase + j], table[rowBase + j + 1]);
+  // A wholesale replacement has no LCS to calculate. The old removal-on-tie
+  // table always emitted every old line followed by every new line; detect
+  // that exact result in linear time and allocate no DP rows at all.
+  const presentBefore = new Uint8Array(ids.size);
+  for (const id of beforeIds) presentBefore[id] = 1;
+  let sharesLine = false;
+  for (const id of afterIds) {
+    if (presentBefore[id]) {
+      sharesLine = true;
+      break;
     }
   }
+  if (!sharesLine) {
+    return {
+      changed: true,
+      diff: before
+        .map((line) => `- ${line}`)
+        .concat(after.map((line) => `+ ${line}`))
+        .join("\n"),
+      additions: after.length,
+      removals: before.length,
+    };
+  }
+
   const out = [];
   let additions = 0;
   let removals = 0;
+  const rowsPerCheckpoint = 64;
+  const cols = after.length + 1;
+
+  // Store only every 64th suffix row. The former implementation retained all
+  // 3001 rows until reconstruction finished: 18,012,002 table bytes at the
+  // public limit. Checkpoints plus one reconstructed block stay below 700 KiB
+  // at that same limit while preserving the exact old tie behavior.
+  const checkpoints = new Map();
+  let next = new Uint16Array(cols);
+  checkpoints.set(before.length, next.slice());
+  let currentRow = new Uint16Array(cols);
+  for (let i = before.length - 1; i >= 0; i -= 1) {
+    const beforeId = beforeIds[i];
+    for (let j = after.length - 1; j >= 0; j -= 1) {
+      currentRow[j] =
+        beforeId === afterIds[j]
+          ? next[j + 1] + 1
+          : Math.max(next[j], currentRow[j + 1]);
+    }
+    [next, currentRow] = [currentRow, next];
+    if (i > 0 && i % rowsPerCheckpoint === 0)
+      checkpoints.set(i, next.slice());
+  }
+
+  // Rebuild one small row block at a time and walk its decisions immediately.
+  // This is the same recurrence and removal-on-tie rule as the full table, so
+  // diff text remains byte-for-byte stable; only the lifetime of the rows
+  // changes.
   let i = 0;
   let j = 0;
+  const table = new Uint16Array(
+    (Math.min(rowsPerCheckpoint, before.length) + 1) * cols,
+  );
   while (i < before.length && j < after.length) {
-    if (beforeIds[i] === afterIds[j]) {
-      i += 1;
-      j += 1;
-    } else if (table[(i + 1) * cols + j] >= table[i * cols + j + 1]) {
-      out.push(`- ${before[i]}`);
-      removals += 1;
-      i += 1;
-    } else {
-      out.push(`+ ${after[j]}`);
-      additions += 1;
-      j += 1;
+    const blockStart = i;
+    const blockEnd = Math.min(
+      before.length,
+      (Math.floor(blockStart / rowsPerCheckpoint) + 1) * rowsPerCheckpoint,
+    );
+    const blockRows = blockEnd - blockStart + 1;
+    table.set(checkpoints.get(blockEnd), (blockRows - 1) * cols);
+    for (let local = blockRows - 2; local >= 0; local -= 1) {
+      const rowBase = local * cols;
+      const nextBase = rowBase + cols;
+      const beforeId = beforeIds[blockStart + local];
+      table[rowBase + after.length] = 0;
+      for (let column = after.length - 1; column >= 0; column -= 1) {
+        table[rowBase + column] =
+          beforeId === afterIds[column]
+            ? table[nextBase + column + 1] + 1
+            : Math.max(table[nextBase + column], table[rowBase + column + 1]);
+      }
+    }
+    while (i < blockEnd && j < after.length) {
+      const rowBase = (i - blockStart) * cols;
+      if (beforeIds[i] === afterIds[j]) {
+        i += 1;
+        j += 1;
+      } else if (table[rowBase + cols + j] >= table[rowBase + j + 1]) {
+        out.push(`- ${before[i]}`);
+        removals += 1;
+        i += 1;
+      } else {
+        out.push(`+ ${after[j]}`);
+        additions += 1;
+        j += 1;
+      }
     }
   }
   for (; i < before.length; i += 1) {

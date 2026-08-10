@@ -102,6 +102,29 @@ test("runAgentTask drives browser then finishes on done", async () => {
   assert.match(toolTurn.results[0].content, /"result":"HN"/);
 });
 
+test("successful browser observations omit empty optional fields", async () => {
+  const browser = fakeBrowser({
+    runs: [{ ok: true, result: "Example Domain", artifacts: [], durationMs: 7 }],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "title" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+  ]);
+
+  const result = await runAgentTask({ task: "read title", model, browser });
+  const observation = result.transcript.find((message) => message.role === "tool")
+    .results[0].content;
+  assert.equal(
+    observation,
+    '{"ok":true,"result":"Example Domain","duration_ms":7}',
+  );
+  assert.deepEqual(JSON.parse(observation), {
+    ok: true,
+    result: "Example Domain",
+    duration_ms: 7,
+  });
+});
+
 test("runAgentTask finishes in one turn when the code returns { finalAnswer }", async () => {
   const browser = fakeBrowser({
     runs: [

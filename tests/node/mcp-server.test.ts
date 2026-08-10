@@ -261,24 +261,32 @@ test("contentForResult separates screenshots from file paths", async () => {
   assert.deepEqual(Object.keys(summary), [
     "ok",
     "result",
-    "error",
     "pendingCredential",
     "console",
     "files",
     "pages",
-    "challenges",
-    "skills",
-    "warnings",
     "duration_ms",
   ]);
   assert.equal(summary.ok, true);
   assert.equal(summary.duration_ms, 12.3);
   assert.equal(summary.pendingCredential.pendingId, "pending-1");
   assert.equal(Object.hasOwn(summary.pendingCredential, "secret"), false);
-  assert.deepEqual(summary.skills, []);
   assert.deepEqual(summary.files, [{ kind: "download", path: "/tmp/report.pdf" }]);
   assert.equal(content[1].type, "image");
   assert.equal(content[1].mimeType, "image/png");
+});
+
+test("contentForResult omits empty model-context fields", async () => {
+  const [content] = await contentForResult({
+    ok: true,
+    result: "Example Domain",
+    artifacts: [],
+    durationMs: 7,
+  });
+  assert.equal(
+    content.text,
+    '{"ok":true,"result":"Example Domain","duration_ms":7}',
+  );
 });
 
 test("liveViewFromEnv defaults to LAN bind and disabled remote exposure", () => {
