@@ -314,19 +314,21 @@ function observationFromResult(result) {
   const screenshots = (result.artifacts || [])
     .filter((a) => a.path && /\.(png|jpe?g)$/i.test(a.path))
     .map((a) => ({ kind: a.kind, path: a.path }));
-  const summary = {
-    ok: result.ok,
-    result: result.result ?? null,
-    error: result.error ?? null,
-    pendingCredential: result.pendingCredential ?? null,
-    console: result.console || [],
-    pages: result.pages || [],
-    challenges: result.challenges || [],
-    skills: result.skills || [],
-    warnings: result.warnings || [],
-    screenshots,
-    duration_ms: result.durationMs,
-  };
+  // Empty arrays and null placeholders repeat on almost every successful call
+  // and convey nothing. Omit them from the model-facing observation: consumers
+  // already treat missing optional fields as empty, and long transcripts keep
+  // the saving once per browser step.
+  const summary: any = { ok: result.ok };
+  if (result.result !== undefined) summary.result = result.result;
+  if (result.error != null) summary.error = result.error;
+  if (result.pendingCredential != null)
+    summary.pendingCredential = result.pendingCredential;
+  for (const field of ["console", "pages", "challenges", "skills", "warnings"]) {
+    if (Array.isArray(result[field]) && result[field].length)
+      summary[field] = result[field];
+  }
+  if (screenshots.length) summary.screenshots = screenshots;
+  if (result.durationMs != null) summary.duration_ms = result.durationMs;
   let text = JSON.stringify(summary);
   if (text.length > OBSERVATION_LIMIT) {
     summary.result = "[truncated — inspect via a scoped snapshot]";
@@ -727,7 +729,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     const lines = batches.flatMap(({ source, lines: items }) =>
       items.map((line) => `- [${source}] ${line}`),
     );
-    messages.push({
+    appendTranscriptMessage({
       role: "user",
       text:
         "The human sent steering while you were working. " +
@@ -763,6 +765,15 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   // back to earlier work; otherwise start fresh.
   const history = Array.isArray(options.history) ? options.history : [];
   const messages = [...history, { role: "user", text: task }];
+  // The transcript only grows by appending complete JSON-safe messages. Track
+  // its exact serialized size as those messages arrive instead of rebuilding
+  // the entire string at every turn (quadratic total work on long runs).
+  let transcriptChars = JSON.stringify(messages).length;
+  function appendTranscriptMessage(message) {
+    const separator = messages.length ? 1 : 0;
+    messages.push(message);
+    transcriptChars += separator + JSON.stringify(message).length;
+  }
 
   let answer = "";
   let proof = null;
@@ -810,7 +821,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
         reason = "interrupted";
         break;
       }
-      if (JSON.stringify(messages).length > maxTranscriptChars) {
+      if (transcriptChars > maxTranscriptChars) {
         reason = "context_limit";
         break;
       }
@@ -840,7 +851,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
         contextTokens = response.usage.inputTokens || 0;
       }
       toolCallCount += toolCalls.length;
-      messages.push({ role: "assistant", text: response.text || "", toolCalls });
+      appendTranscriptMessage({ role: "assistant", text: response.text || "", toolCalls });
 
       // No tool call: the model answered in prose. Treat that text as the
       // result unless steering arrived while the model was answering.
@@ -1116,7 +1127,9 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
         }
         results.push({ id: call.id, name: call.name, content: `Unknown tool: ${call.name}` });
       }
-      messages.push({ role: "tool", results });
+      const toolMessage = { role: "tool", results };
+      const toolMessageChars = JSON.stringify(toolMessage).length;
+      appendTranscriptMessage(toolMessage);
       // A terminal or live-view message can arrive during model inference or a
       // long browser call. Apply it before accepting a completion from that
       // turn, so steering never becomes a stray follow-up task.
@@ -1134,6 +1147,10 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
         repeated = { signature: "", count: 0 };
         noProgress = false;
       }
+      // Steering can rewrite a batched `done` result after the message was
+      // appended. Account for that tiny mutation so the next cap check remains
+      // byte-for-byte equivalent to JSON.stringify(messages).length.
+      transcriptChars += JSON.stringify(toolMessage).length - toolMessageChars;
       if (finished) break;
       if (noProgress) {
         reason = "no_progress";

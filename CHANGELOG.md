@@ -9,6 +9,49 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-08-09
+
+A token, CPU, and memory efficiency patch. There are no client API removals;
+model-facing optional result fields are now omitted when empty and retain the
+same names and values whenever present.
+
+### Added
+
+- Added `benchmarks/efficiency`, a deterministic, browser-free comparison
+  harness for the model observation, long-transcript, and snapshot-diff paths.
+  The recorded figures compare five fresh-process samples of 1.7.0 (`273e51d`)
+  and 1.7.1 on an Apple M4 Pro with Node v24.16.0.
+
+### Changed
+
+- Built-in-agent and MCP observations no longer repeat null placeholders and
+  empty arrays on every browser call. A minimal successful observation is 53
+  serialized characters instead of 174 in the built-in agent and 168 over MCP;
+  with `js-tiktoken@1.0.21` `cl100k_base`, that is **44 → 15 tokens (65.9%
+  fewer)** and **43 → 15 (65.1% fewer)** respectively. Non-empty errors,
+  console lines, pages, challenges, skill hints, warnings, files, screenshots,
+  and pending-credential metadata are still returned. Across the 2,000-turn
+  harness workload, the accumulated transcript is **750,009 → 476,009
+  characters (36.5% smaller)**.
+
+- The built-in agent now accounts for each appended transcript message once
+  instead of serializing the complete, growing history before every turn. The
+  no-I/O 2,000-turn harness falls from **906.3 ms to 17.2 ms (52.8× faster)**,
+  with process peak RSS down **81.1 → 77.3 MiB (4.8%)**. Real model and browser
+  latency reduces the end-to-end percentage, but the removed CPU work and
+  temporary strings do not return.
+
+- Snapshot diffs detect wholly replaced line sets in linear time and reconstruct
+  other LCS diffs from sparse checkpoints plus one reusable 64-row block. At
+  the public 3,000-line cap, retained DP storage falls from **18,012,002 bytes
+  to under 700 KiB** while randomized differential tests keep output
+  byte-for-byte identical to 1.7.0. A wholesale replacement improves from
+  **18.8 → 1.3 ms (14.6×)** and **66.0 → 45.9 MiB peak RSS (30.4% lower)**.
+  An adversarial input sharing only one displaced line uses **51.1 MiB instead
+  of 66.3 MiB (22.9% lower)** but takes 33.9 ms instead of 15.7 ms because it
+  recomputes bounded row blocks; ordinary snapshot diffs first trim their large
+  common prefix and suffix and operate on a much smaller changed region.
+
 ## [1.7.0] - 2026-08-07
 
 A browser-backend and agent-efficiency release. The public BetterWright client
@@ -616,7 +659,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/BetterWright/betterwright/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/BetterWright/betterwright/compare/v1.6.3...v1.7.0
 [1.6.3]: https://github.com/BetterWright/betterwright/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/BetterWright/betterwright/compare/v1.6.1...v1.6.2
