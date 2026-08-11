@@ -13,6 +13,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { types as utilTypes } from "node:util";
 import vm from "node:vm";
 
 import {
@@ -2910,6 +2911,11 @@ function prepareArgument(value, property, realm) {
   }
   if (Array.isArray(value))
     return value.map((item) => prepareArgument(item, property, realm));
+  // RegExp values originate in the model's vm realm. Treating them as plain
+  // objects erases their non-enumerable source/flags and turns valid
+  // Playwright text/name matchers into {}, which later stringify as
+  // "[object Object]" inside internal selectors.
+  if (utilTypes.isRegExp(value)) return new RegExp(value.source, value.flags);
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
@@ -2919,6 +2925,28 @@ function prepareArgument(value, property, realm) {
     );
   }
   return value;
+}
+
+function argumentType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function validateMethodArguments(property, args) {
+  if (property !== "getByRole" || args[1]?.name === undefined) return;
+  const name = args[1].name;
+  if (typeof name === "string" || utilTypes.isRegExp(name)) return;
+  throw new TypeError(
+    `getByRole name must be a string or RegExp, received ${argumentType(name)}.`,
+  );
+}
+
+function assertPageHandle(value, helper) {
+  if (typeof value === "string" || typeof value === "number") return;
+  throw new TypeError(
+    `${helper} page handle must be a page ID string or numeric index, received ${argumentType(value)}.`,
+  );
 }
 
 function validateMethodPaths(kind, property, args) {
@@ -3894,6 +3922,7 @@ function wrap(value, realm) {
           prepareArgument(arg, property, realm),
         );
         const kind = objectKind(value);
+        validateMethodArguments(property, prepared);
         if (
           browserBackend === "obscura" &&
           ["Page", "Frame"].includes(kind) &&
@@ -5710,6 +5739,7 @@ function buildSandbox(session, consoleMessages, execution) {
     return wrap(page, realm);
   });
   sandbox.usePage = realm.safeFunction(async (selector) => {
+    assertPageHandle(selector, "usePage");
     const entries = [...session.pages.entries()].filter(
       ([, page]) => !page.isClosed(),
     );
@@ -5727,6 +5757,7 @@ function buildSandbox(session, consoleMessages, execution) {
   });
   sandbox.closePage = realm.safeFunction(async (selector) => {
     const target = selector === undefined ? session.currentId : selector;
+    assertPageHandle(target, "closePage");
     const entries = [...session.pages.entries()];
     const entry =
       typeof target === "number"

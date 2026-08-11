@@ -166,6 +166,45 @@ test("page summaries identify the active tab", opts, async () => {
   }
 });
 
+test("role names and page handles reject objects at the call boundary", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const regexName = await bw.run(`
+      await page.setContent('<input aria-label="Email">');
+      return page.getByRole('textbox', {name: /email/i}).count();
+    `);
+    assert.equal(regexName.ok, true, regexName.error);
+    assert.equal(regexName.result, 1);
+
+    const roleName = await bw.run(`
+      await page.getByRole('textbox', {name: {text: 'Email'}}).click();
+    `);
+    assert.equal(roleName.ok, false);
+    assert.equal(
+      roleName.error,
+      "getByRole name must be a string or RegExp, received object.",
+    );
+    assert.doesNotMatch(roleName.error, /\[object Object\]|InvalidSelector|timed out/i);
+
+    const pageHandle = await bw.run("await usePage(pages[0]);");
+    assert.equal(pageHandle.ok, false);
+    assert.equal(
+      pageHandle.error,
+      "usePage page handle must be a page ID string or numeric index, received object.",
+    );
+    assert.doesNotMatch(pageHandle.error, /\[object Object\]|Unknown page/i);
+
+    const closeHandle = await bw.run("await closePage({pageId: 'page-1'});");
+    assert.equal(closeHandle.ok, false);
+    assert.equal(
+      closeHandle.error,
+      "closePage page handle must be a page ID string or numeric index, received object.",
+    );
+  } finally {
+    await bw.close();
+  }
+});
+
 test("public search UIs route agents to the host search tool", opts, async () => {
   // Public search is allowed by default now, so opt into the block routing.
   const bw = new BetterWright({
