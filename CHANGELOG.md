@@ -9,11 +9,12 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
-## [1.7.2-beta.0] - 2026-08-11
+## [1.7.2] - 2026-08-11
 
-A beta of the boundary-validation fix for
-[#103](https://github.com/BetterWright/betterwright/issues/103). There are no
-public API removals or behavior changes for valid arguments.
+The stable boundary-validation fix for
+[#103](https://github.com/BetterWright/betterwright/issues/103), promoted from
+`1.7.2-beta.0` after beta testing. There are no public API removals or behavior
+changes for valid arguments.
 
 In the issue reproduction on a warm managed browser, the invalid role-name
 call now fails in 5 ms instead of exhausting the 30,000 ms run timeout. The
