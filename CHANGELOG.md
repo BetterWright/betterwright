@@ -9,6 +9,31 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.7.2-beta.0] - 2026-08-11
+
+A beta of the boundary-validation fix for
+[#103](https://github.com/BetterWright/betterwright/issues/103). There are no
+public API removals or behavior changes for valid arguments.
+
+In the issue reproduction on a warm managed browser, the invalid role-name
+call now fails in 5 ms instead of exhausting the 30,000 ms run timeout. The
+invalid page-handle call fails in 4 ms.
+
+### Fixed
+
+- `getByRole(role, {name})` now rejects object-valued names before Playwright
+  builds an internal selector. The error identifies the argument and received
+  type (`name must be a string or RegExp, received object`) instead of emitting
+  an `InvalidSelectorError` containing `[object Object]` or consuming the
+  action/run timeout. Cross-realm `RegExp` matchers are preserved rather than
+  being flattened to `{}`, so valid calls such as `{name: /email/i}` continue
+  to work.
+- `usePage(handle)` and `closePage(handle)` now reject non-string/non-number
+  handles at the helper boundary with the received type. Objects no longer
+  become misleading `Unknown page [object Object]` messages or silent
+  `{closed: false}` results; page ID strings, numeric indexes, and the omitted
+  current-page argument retain their existing behavior.
+
 ## [1.7.1] - 2026-08-09
 
 A token, CPU, and memory efficiency patch. There are no client API removals;
