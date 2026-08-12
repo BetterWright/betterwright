@@ -11,24 +11,26 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { cloakRuntime } from "../../dist/src/doctor.js";
+import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright } from "../../dist/src/index.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(__dirname, "fixtures", "captcha");
 
-const ready = (await cloakRuntime()).installed;
+const browserStatus = await doctorReport();
+const ready = browserStatus.ready;
+const browserUnavailable = `browser runtime not ready (doctor browser: ${browserStatus.browser})`;
 if (!ready && process.env.BETTERWRIGHT_REQUIRE_BROWSER) {
   throw new Error(
-    "BETTERWRIGHT_REQUIRE_BROWSER is set but managed CloakBrowser is unavailable.",
+    `BETTERWRIGHT_REQUIRE_BROWSER is set but no browser runtime is ready (doctor browser: ${browserStatus.browser}).`,
   );
 }
-const opts = { skip: ready ? false : "browser runtime not installed" };
+const opts = { skip: ready ? false : browserUnavailable };
 const liveOpts = {
   skip:
     !ready
-      ? "browser runtime not installed"
+      ? browserUnavailable
       : process.env.BETTERWRIGHT_LIVE_CAPTCHA === "1"
         ? false
         : "set BETTERWRIGHT_LIVE_CAPTCHA=1 to hit public captcha demos",

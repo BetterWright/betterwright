@@ -1,5 +1,5 @@
-// End-to-end Node tests. Skipped unless managed CloakBrowser is installed, so the
-// policy suite still runs on machines without the runtime installed.
+// End-to-end Node tests. Skipped unless doctor reports a ready managed browser, so
+// the policy suite still runs on machines without BetterChromium or the Cloak fallback.
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -8,21 +8,24 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { test } from "node:test";
 
-import { cloakRuntime } from "../../dist/src/doctor.js";
+import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
-const ready = (await cloakRuntime()).installed;
-// On a laptop without the runtime, skipping is friendly. In CI it would mean
+const browserStatus = await doctorReport();
+const ready = browserStatus.ready;
+// On a laptop without a ready browser, skipping is friendly. In CI it would mean
 // the entire integration suite silently reports green without running, so the
 // workflows set BETTERWRIGHT_REQUIRE_BROWSER=1 to turn that into a failure.
 if (!ready && process.env.BETTERWRIGHT_REQUIRE_BROWSER) {
   throw new Error(
-    "BETTERWRIGHT_REQUIRE_BROWSER is set but managed CloakBrowser is unavailable — " +
+    `BETTERWRIGHT_REQUIRE_BROWSER is set but no browser runtime is ready (doctor browser: ${browserStatus.browser}) — ` +
       "the browser integration suite would silently skip. Run `betterwright setup`.",
   );
 }
-const opts = { skip: ready ? false : "browser runtime not installed" };
+const opts = {
+  skip: ready ? false : `browser runtime not ready (doctor browser: ${browserStatus.browser})`,
+};
 
 function tempHome() {
   return makeTempDir("betterwright-test-");
