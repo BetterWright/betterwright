@@ -3,8 +3,8 @@
 //
 //   betterwright                  interactive agent console (type tasks, watch
 //                                 progress, answer the agent's questions)
-//   betterwright setup            install native BetterChromium
-//   betterwright update           refresh native BetterChromium
+//   betterwright setup            install the managed browser for this host
+//   betterwright update           refresh the managed browser for this host
 //   betterwright doctor           report runtime readiness
 //   betterwright run <file|-|-c>  execute a Playwright snippet in the
 //                                 persistent session (tabs/state survive calls)
@@ -51,6 +51,7 @@ import {
   makeLineReader,
   readExecTaskFromStdin,
 } from "../src/cli-io.js";
+import { chromiumForkNeedsSoftwareGpu } from "../src/cloak.js";
 import {
   daemonLogPath,
   daemonProfilesInHome,
@@ -412,12 +413,24 @@ async function cmdUpdate(flags) {
   }
   const result = await installChromiumFork({ force: flags.has("--force") });
   if (result.skipped) {
-    console.error(result.skipped);
-    console.error("BetterChromium is unavailable on this host. Use `betterwright setup --cloak-only` for compatibility mode.");
-    return 1;
+    console.log(result.skipped);
+    const cloakCode = await installCloakBrowser();
+    if (cloakCode !== 0) return cloakCode;
+    console.log("\nUpdate complete. BetterWright will use CloakBrowser automatically on this host.");
+    console.log("Run `betterwright doctor` to confirm (browser: cloak).");
+    refreshAgentSkillsQuietly();
+    return 0;
   }
-  console.log("\nUpdate complete. BetterWright will use BetterChromium.");
-  console.log("Run `betterwright doctor` to confirm (browser: chromium-fork).");
+  if (chromiumForkNeedsSoftwareGpu()) {
+    console.log("Installing the automatic WebGL-compatible backend for this GPU-less Linux host.");
+    const cloakCode = await installCloakBrowser();
+    if (cloakCode !== 0) return cloakCode;
+    console.log("\nUpdate complete. BetterWright will use CloakBrowser automatically on this host.");
+    console.log("Run `betterwright doctor` to confirm (browser: cloak).");
+  } else {
+    console.log("\nUpdate complete. BetterWright will use BetterChromium.");
+    console.log("Run `betterwright doctor` to confirm (browser: chromium-fork).");
+  }
   refreshAgentSkillsQuietly();
   return 0;
 }
@@ -429,6 +442,7 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
   }
 
   const cloakOnly = flags.has("--cloak-only");
+  let selectedBrowser = "chromium-fork";
   if (cloakOnly) {
     console.log("Selecting explicit CloakBrowser compatibility mode (--cloak-only).");
     const cloakCode = await installCloakBrowser();
@@ -437,11 +451,17 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
   } else {
     const chromium = await installChromiumFork({ force: flags.has("--force") });
     if (chromium.skipped) {
-      console.error(chromium.skipped);
-      console.error("Re-run with --cloak-only to explicitly install the compatibility backend.");
-      return 1;
-    }
-    if (!chromium.alreadyInstalled) {
+      console.log(chromium.skipped);
+      console.log("Installing the automatic compatibility backend for this platform.");
+      const cloakCode = await installCloakBrowser();
+      if (cloakCode !== 0) return cloakCode;
+      selectedBrowser = "cloak";
+    } else if (chromiumForkNeedsSoftwareGpu()) {
+      console.log("Installing the automatic WebGL-compatible backend for this GPU-less Linux host.");
+      const cloakCode = await installCloakBrowser();
+      if (cloakCode !== 0) return cloakCode;
+      selectedBrowser = "cloak";
+    } else if (!chromium.alreadyInstalled) {
       console.log("BetterChromium installed as the required browser backend.");
     }
   }
@@ -451,7 +471,7 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
     console.log(
       cloakOnly
         ? "Doctor should report browser: cloak when BETTERWRIGHT_CHROMIUM_ROOT=off is set."
-        : "Doctor should report browser: chromium-fork.",
+        : `Doctor should report browser: ${selectedBrowser}.`,
     );
   }
   refreshAgentSkillsQuietly();

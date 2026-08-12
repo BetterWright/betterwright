@@ -14,7 +14,9 @@ import { loadCodexAuth, loadGrokAuth } from "./auth.js";
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   resolveChromiumForkBinary,
+  selectManagedBrowserBackend,
 } from "./chromium-fork.js";
+import { chromiumForkNeedsSoftwareGpu } from "./cloak.js";
 import { forkFontsDir } from "./fork-identity.js";
 import { defaultHome } from "./home.js";
 import { optionalPeerAvailable } from "./optional-peer.js";
@@ -116,11 +118,11 @@ export async function doctorReport() {
   } catch (error) {
     chromiumForkError = error instanceof Error ? error.message : String(error);
   }
-  const chromiumOptOut = [
-    process.env.BETTERWRIGHT_CHROMIUM_PATH,
-    process.env.BETTERWRIGHT_CHROMIUM_ROOT,
-  ].some((value) => String(value || "").trim().toLowerCase() === "off");
-  const browser = chromiumFork ? "chromium-fork" : chromiumOptOut ? "cloak" : "unavailable";
+  const browserSelection = selectManagedBrowserBackend({
+    chromiumFork,
+    softwareGpu: chromiumForkNeedsSoftwareGpu(),
+  });
+  const browser = chromiumForkError ? "unavailable" : browserSelection.browser;
   const chromiumForkFonts = chromiumFork ? forkFontsDir(chromiumFork) : null;
   const chromiumForkFontsWarning = missingForkFontsWarning({
     chromiumFork,
@@ -129,7 +131,11 @@ export async function doctorReport() {
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    Boolean(chromiumFork || (chromiumOptOut && cloakOk)) &&
+    Boolean(
+      browser === "chromium-fork"
+        ? chromiumFork
+        : browser === "cloak" && cloakOk,
+    ) &&
     !chromiumForkError;
   return {
     node: process.execPath,
@@ -148,6 +154,7 @@ export async function doctorReport() {
     chromium_fork: chromiumFork,
     chromium_fork_version: chromiumFork ? BETTERWRIGHT_CHROMIUM_VERSION : null,
     chromium_fork_error: chromiumForkError,
+    cloak_fallback: browserSelection.cloakFallback,
     chromium_fork_fonts: chromiumForkFonts,
     chromium_fork_fonts_warning: chromiumForkFontsWarning,
     stealth_driver: stealth,
@@ -311,7 +318,15 @@ export function doctorChecks(
   );
   add("Runtime", "Worker", report.worker_ok ? "ok" : "fail", report.worker, report.worker_ok ? null : "The package looks incomplete — reinstall betterwright.");
 
-  if (report.chromium_fork) {
+  if (report.browser === "cloak" && report.cloak_fallback === "gpu-unavailable") {
+    add(
+      "Browser",
+      "BetterChromium",
+      "warn",
+      "installed, but no accessible Linux render device was found — using CloakBrowser compatibility mode so WebGL remains available",
+      "Optional: expose a read/write /dev/dri render device to use native BetterChromium.",
+    );
+  } else if (report.chromium_fork) {
     add(
       "Browser",
       "BetterChromium",
@@ -330,12 +345,17 @@ export function doctorChecks(
       "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
     );
   } else if (report.browser === "cloak") {
+    const automatic = report.cloak_fallback === "unsupported-platform";
     add(
       "Browser",
       "BetterChromium",
       "warn",
-      "explicitly disabled — using CloakBrowser compatibility mode",
-      "Run `betterwright setup` and unset BETTERWRIGHT_CHROMIUM_PATH/ROOT to restore the default backend.",
+      automatic
+        ? "no artifact is published for this platform — using CloakBrowser compatibility mode"
+        : "explicitly disabled — using CloakBrowser compatibility mode",
+      automatic
+        ? null
+        : "Run `betterwright setup` and unset BETTERWRIGHT_CHROMIUM_PATH/ROOT to restore the default backend.",
     );
   } else {
     add(
@@ -349,13 +369,29 @@ export function doctorChecks(
   add(
     "Browser",
     "CloakBrowser",
-    report.cloakbrowser_ok ? "ok" : report.chromium_fork ? "warn" : "fail",
+    report.cloakbrowser_ok
+      ? "ok"
+      : report.browser === "cloak"
+        ? "fail"
+        : report.chromium_fork
+          ? "warn"
+          : "fail",
     report.cloakbrowser_ok
       ? `${report.cloakbrowser_binary_version} (${report.cloakbrowser_binary_tier})` +
         (report.cloakbrowser_binary ? ` — ${report.cloakbrowser_binary}` : "") +
-        (report.browser === "cloak" ? " — explicit compatibility backend" : " — compatibility backend available")
-      : "binary not installed (optional compatibility backend)",
-    report.cloakbrowser_ok ? null : "Optional: run `betterwright setup --cloak-only` to download it.",
+        (report.browser === "cloak"
+          ? ["unsupported-platform", "gpu-unavailable"].includes(report.cloak_fallback)
+            ? " — automatic compatibility backend"
+            : " — explicit compatibility backend"
+          : " — compatibility backend available")
+      : report.browser === "cloak"
+        ? "binary not installed (required compatibility backend on this platform)"
+        : "binary not installed (optional compatibility backend)",
+    report.cloakbrowser_ok
+      ? null
+      : report.browser === "cloak"
+        ? "Run `betterwright setup` to download the compatibility backend."
+        : "Optional: run `betterwright setup --cloak-only` to download it.",
   );
   add("Browser", "In use", report.ready ? "ok" : "fail", report.browser, report.ready ? null : "Run `betterwright setup`.");
   // Optional isolated-world stealth driver. Reported here (not only in --json)

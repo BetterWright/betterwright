@@ -84,15 +84,15 @@ export interface BetterWrightOptions {
   /**
    * Extra Chromium switches appended to the managed launch arguments, for
    * host-level tuning the managed list has no opinion on —
-   * `["--disable-gpu", "--disable-software-rasterizer"]` on a GPU-less server
-   * being the motivating case. Also settable per host with
+   * `["--disk-cache-size=104857600"]` being one example. Also settable per host with
    * `BETTERWRIGHT_CHROMIUM_ARGS` (whitespace-separated, quotes allowed); both
    * sources apply.
    *
    * Switches BetterWright owns are rejected with a `TypeError`: proxy
    * selection, remote debugging, the profile directory, and the
    * `--fingerprint*` / `--lang` / `--bw-timezone` / `--headless` identity
-   * family. A switch that merely duplicates one already in the managed list is
+   * family, plus `--disable-software-rasterizer` because the selected backend
+   * must retain WebGL. A switch that merely duplicates one already in the managed list is
    * dropped — Chromium resolves duplicates last-wins, so appending it would
    * override BetterWright's value rather than lose to it — and the drop is
    * reported in the next result's `warnings`.

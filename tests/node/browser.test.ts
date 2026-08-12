@@ -26,7 +26,6 @@ if (!ready && process.env.BETTERWRIGHT_REQUIRE_BROWSER) {
 const opts = {
   skip: ready ? false : `browser runtime not ready (doctor browser: ${browserStatus.browser})`,
 };
-
 function tempHome() {
   return makeTempDir("betterwright-test-");
 }
@@ -98,6 +97,58 @@ test("navigate and read the title", opts, async () => {
     const result = await bw.run("await page.goto('https://example.com'); return page.title()");
     assert.equal(result.ok, true, result.error);
     assert.equal(result.result, "Example Domain");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("the selected managed browser keeps WebGL available with a coherent identity", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`return await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 2;
+      canvas.height = 2;
+      const gl = canvas.getContext("webgl");
+      if (!gl) return { available: false };
+      gl.clearColor(0.25, 0.5, 0.75, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      const pixels = new Uint8Array(4);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      const debug = gl.getExtension("WEBGL_debug_renderer_info");
+      return {
+        available: true,
+        vendor: debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : null,
+        renderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : null,
+        extensions: gl.getSupportedExtensions()?.length || 0,
+        pixels: [...pixels],
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+      };
+    });`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.available, true);
+    assert.equal(typeof result.result.vendor, "string");
+    assert.ok(result.result.vendor.length > 0);
+    assert.equal(typeof result.result.renderer, "string");
+    assert.ok(result.result.renderer.length > 0);
+    assert.ok(result.result.extensions > 0);
+    for (const [index, actual] of result.result.pixels.entries()) {
+      assert.ok(Math.abs(actual - [64, 128, 191, 255][index]) <= 1);
+    }
+    if (browserStatus.browser === "chromium-fork") {
+      assert.equal(result.result.vendor, "Google Inc. (Apple)");
+      assert.match(result.result.renderer, /ANGLE Metal Renderer: Apple M4 Pro/);
+      assert.equal(result.result.platform, "MacIntel");
+      assert.match(result.result.userAgent, /Macintosh/);
+    } else if (/Macintosh/.test(result.result.userAgent)) {
+      assert.equal(result.result.platform, "MacIntel");
+    } else if (/Windows/.test(result.result.userAgent)) {
+      assert.equal(result.result.platform, "Win32");
+    } else {
+      assert.match(result.result.userAgent, /Linux/);
+      assert.match(result.result.platform, /Linux/);
+    }
   } finally {
     await bw.close();
   }

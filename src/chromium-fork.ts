@@ -89,6 +89,60 @@ function configuredValue(value) {
   return String(value || "").trim();
 }
 
+/** Whether BetterWright publishes a native BetterChromium artifact here. */
+export function chromiumForkPlatformSupported({
+  platform = process.platform,
+  arch = process.arch,
+} = {}) {
+  return Object.hasOwn(PLATFORM_LAYOUT, `${platform}-${arch}`);
+}
+
+/**
+ * Select the managed browser after native-binary resolution.
+ *
+ * A host for which no artifact is published uses CloakBrowser automatically,
+ * matching the compatibility behavior BetterWright had before 1.8.0. A
+ * supported Linux host without an accessible render device also uses Cloak so
+ * it retains a working WebGL surface. A supported host with a missing artifact
+ * stays unavailable so a broken native install or sandbox mount cannot silently
+ * downgrade. Explicit paths and roots remain strict during resolution; Linux
+ * GPU capability still decides whether that resolved binary is safe to launch.
+ */
+export function selectManagedBrowserBackend({
+  chromiumFork = null,
+  env = process.env,
+  platform = process.platform,
+  arch = process.arch,
+  softwareGpu = false,
+} = {}) {
+  const explicitPath = configuredValue(env.BETTERWRIGHT_CHROMIUM_PATH);
+  const explicitRoot = configuredValue(env.BETTERWRIGHT_CHROMIUM_ROOT);
+  if (
+    explicitPath.toLowerCase() === "off" ||
+    explicitRoot.toLowerCase() === "off"
+  ) {
+    return { browser: "cloak", cloakFallback: "explicit" };
+  }
+
+  if (chromiumFork) {
+    if (softwareGpu) {
+      return { browser: "cloak", cloakFallback: "gpu-unavailable" };
+    }
+    return { browser: "chromium-fork", cloakFallback: null };
+  }
+
+  // A custom path/root is resolved strictly before this selector runs. Never
+  // interpret an invalid explicit configuration as permission to fall back.
+  if (explicitPath || explicitRoot) {
+    return { browser: "unavailable", cloakFallback: null };
+  }
+
+  if (!chromiumForkPlatformSupported({ platform, arch })) {
+    return { browser: "cloak", cloakFallback: "unsupported-platform" };
+  }
+  return { browser: "unavailable", cloakFallback: null };
+}
+
 /** Where deployments drop the fork artifact for zero-config discovery. */
 export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
   return path.join(home, ".betterwright", "chromium");
@@ -101,7 +155,8 @@ export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
  *  1. BETTERWRIGHT_CHROMIUM_PATH / BETTERWRIGHT_CHROMIUM_ROOT (strict: a
  *     configured-but-missing binary is an error).
  *  2. The default root (~/.betterwright/chromium) — if the artifact for this
- *     platform exists there, use it silently. Platforms without a shipped artifact report the native backend as missing.
+ *     platform exists there, use it silently. Backend selection routes hosts
+ *     without a published artifact to managed CloakBrowser.
  *  3. Either variable set to "off" forces the managed CloakBrowser path.
  */
 export function resolveChromiumForkBinary({

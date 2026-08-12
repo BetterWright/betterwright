@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   chromiumForkContextOptions,
+  chromiumForkPlatformSupported,
   resolveChromiumForkBinary,
+  selectManagedBrowserBackend,
 } from "../../dist/src/chromium-fork.js";
 
 const present = () => true;
@@ -40,7 +42,7 @@ test("default root discovers a deployed artifact (zero-config fork)", () => {
   );
 });
 
-test("platforms without a deployed artifact fall back to managed CloakBrowser", () => {
+test("supported platforms with a missing deployment remain unavailable", () => {
   assert.equal(
     resolveChromiumForkBinary({
       env: {},
@@ -51,6 +53,83 @@ test("platforms without a deployed artifact fall back to managed CloakBrowser", 
     }),
     null,
   );
+  assert.deepEqual(
+    selectManagedBrowserBackend({
+      chromiumFork: null,
+      env: {},
+      platform: "win32",
+      arch: "x64",
+    }),
+    { browser: "unavailable", cloakFallback: null },
+  );
+});
+
+test("unsupported platforms automatically select managed CloakBrowser", () => {
+  assert.equal(
+    resolveChromiumForkBinary({
+      env: {},
+      platform: "linux",
+      arch: "arm64",
+      home: "/home/pi",
+      existsSync: () => false,
+    }),
+    null,
+  );
+  assert.equal(
+    chromiumForkPlatformSupported({ platform: "linux", arch: "arm64" }),
+    false,
+  );
+  assert.deepEqual(
+    selectManagedBrowserBackend({
+      chromiumFork: null,
+      env: {},
+      platform: "linux",
+      arch: "arm64",
+    }),
+    { browser: "cloak", cloakFallback: "unsupported-platform" },
+  );
+});
+
+test("all published platform layouts select native BetterChromium", () => {
+  for (const [platform, arch] of [
+    ["darwin", "arm64"],
+    ["linux", "x64"],
+    ["win32", "x64"],
+  ]) {
+    assert.equal(chromiumForkPlatformSupported({ platform, arch }), true);
+    assert.deepEqual(
+      selectManagedBrowserBackend({
+        chromiumFork: "/managed/betterchromium",
+        env: {},
+        platform,
+        arch,
+      }),
+      { browser: "chromium-fork", cloakFallback: null },
+    );
+  }
+});
+
+test("GPU-less Linux selects Cloak even when the native artifact is explicit", () => {
+  assert.deepEqual(
+    selectManagedBrowserBackend({
+      chromiumFork: "/managed/betterchromium",
+      env: {},
+      platform: "linux",
+      arch: "x64",
+      softwareGpu: true,
+    }),
+    { browser: "cloak", cloakFallback: "gpu-unavailable" },
+  );
+  assert.deepEqual(
+    selectManagedBrowserBackend({
+      chromiumFork: "/managed/betterchromium",
+      env: { BETTERWRIGHT_CHROMIUM_PATH: "/managed/betterchromium" },
+      platform: "linux",
+      arch: "x64",
+      softwareGpu: true,
+    }),
+    { browser: "cloak", cloakFallback: "gpu-unavailable" },
+  );
 });
 
 test("explicit off forces managed CloakBrowser even with an artifact", () => {
@@ -60,6 +139,14 @@ test("explicit off forces managed CloakBrowser even with an artifact", () => {
       existsSync: present,
     }),
     null,
+  );
+  assert.deepEqual(
+    selectManagedBrowserBackend({
+      env: { BETTERWRIGHT_CHROMIUM_ROOT: "off" },
+      platform: "linux",
+      arch: "x64",
+    }),
+    { browser: "cloak", cloakFallback: "explicit" },
   );
   assert.equal(
     resolveChromiumForkBinary({
@@ -188,5 +275,13 @@ test("configured fork paths fail closed when missing or unsupported", () => {
         existsSync: present,
       }),
     /No BetterChromium artifact layout/,
+  );
+  assert.deepEqual(
+    selectManagedBrowserBackend({
+      env: { BETTERWRIGHT_CHROMIUM_ROOT: "/opt/betterwright" },
+      platform: "linux",
+      arch: "arm64",
+    }),
+    { browser: "unavailable", cloakFallback: null },
   );
 });

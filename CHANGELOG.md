@@ -9,6 +9,56 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-08-12
+
+A cross-platform compatibility and graphics fix for 1.8.0. BetterChromium
+remains the default wherever a pinned native artifact exists; unsupported hosts
+once again launch managed CloakBrowser without requiring an undocumented
+environment override.
+
+### Fixed
+
+- Linux arm64 systems, including Raspberry Pi, now automatically select
+  CloakBrowser because no BetterChromium artifact is published for that target.
+  The same routing applies to every unsupported OS/architecture pair.
+- `betterwright setup`, `betterwright update`, `betterwright init`, and
+  `betterwright doctor` now agree on the selected backend: unsupported hosts
+  install, update, verify, and report CloakBrowser without requiring
+  `BETTERWRIGHT_CHROMIUM_ROOT=off`.
+- Fixed [#109](https://github.com/BetterWright/betterwright/issues/109):
+  GPU-less Linux hosts now automatically use the managed CloakBrowser backend,
+  whose packaged software renderer keeps standard WebGL available instead of
+  presenting a macOS browser identity with the graphics surface blocked.
+  GPU-capable hosts retain native BetterChromium. The browser-level regression
+  test runs against whichever backend `doctor` selects and requires a real
+  context, extensions, pixel readback, and a coherent UA/platform/GPU identity.
+- Supported hosts with a missing BetterChromium install still fail closed with
+  setup guidance. Invalid explicit paths and roots remain errors rather than
+  silently switching browsers.
+- If BetterChromium 151 already upgraded a persistent profile, the older Cloak
+  backend uses a stable nested compatibility profile instead of crashing on a
+  forbidden profile downgrade. The original profile and logins stay untouched;
+  the compatibility profile maintains its own persistent sign-ins.
+
+### Security and performance
+
+- The fallback reuses the existing managed CloakBrowser launcher and keeps all
+  browser traffic on BetterWright's SOCKS guard; no direct or unguarded launch
+  path was added.
+- GPU-capable BetterChromium launches do not take a new compatibility path.
+  GPU detection is one bounded `/dev/dri` directory check at startup and adds
+  no per-page work or page-world scripts.
+- On the same GPU-less Linux container that reproduces BetterChromium's blocked
+  WebGL, the automatic Cloak fallback created WebGL, exposed 33 extensions, and
+  completed pixel readback correctly. Its first diagnostic launch took 8.76 s;
+  that single cold run validates compatibility and is not a speed benchmark.
+  1.8.1 makes no new memory or speed claim for this fallback.
+- A fresh-profile CreepJS verification completed its fingerprint in 2.27 s with
+  WebGL available, the captured Apple M4 Pro renderer, 0% `headless`, and 0%
+  `stealth`. Its `like headless` heuristic was 31%; because that check ran on a
+  different host from the issue's 44% report, this is recorded as validation,
+  not claimed as a comparable score reduction.
+
 ## [1.8.0] - 2026-08-12
 
 A native-browser overhaul centered on BetterChromium 151. Public archives for

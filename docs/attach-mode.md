@@ -90,14 +90,12 @@ directory under `doctor --json`).
    gives the same facts as the raw `ready` / `browser` fields.
 2. Run `betterwright setup` if the managed binary is missing.
 3. On Linux, confirm a display is present or use `xvfb-run`.
-4. If BetterWright reports that the profile was upgraded by a newer browser,
-   move or remove `$BETTERWRIGHT_HOME/browser/profile` and sign in again. The
-   guard deliberately stops before an older browser build can crash while
-   opening an incompatible profile. The usual cause is switching backends: the
-   Chromium fork and CloakBrowser ship different Chromium versions, so they
-   cannot share one profile. Vault credentials live outside the profile and
-   survive the reset; browser-saved logins do not. To keep both backends,
-   give each its own `BETTERWRIGHT_HOME`.
+4. If BetterWright reports that a compatibility profile was upgraded by a
+   newer browser, move only the path named in that error and sign in again.
+   BetterWright automatically isolates the normal BetterChromium-151-to-Cloak
+   fallback in 1.8.1; the guard remains for an already-upgraded compatibility
+   profile. Vault credentials live outside browser profiles and survive a
+   reset; browser-saved logins do not.
 
 The managed browser reduces common automation false positives; it cannot
 guarantee that a site will accept a session or never present a challenge.

@@ -4,15 +4,16 @@ BetterWright can run the pinned BetterChromium 151 fork while keeping
 its public `run()`, `human.*`, `captcha.*`, snapshot, policy, proxy, and vault
 APIs unchanged. On platforms with a checksum-pinned release asset,
 `betterwright setup` / `betterwright update` download the fork into the
-zero-config discovery root. It is the required/default runtime backend.
-CloakBrowser is selected only through an explicit compatibility opt-out.
+zero-config discovery root. It is the default runtime backend on supported
+hosts. Platforms without a published artifact automatically use the managed
+CloakBrowser compatibility backend.
 
 ## Install / update
 
 ```bash
 betterwright update          # download fork → ~/.betterwright/chromium/
 betterwright update --force  # re-fetch + re-verify even if already present
-betterwright setup           # install BetterChromium
+betterwright setup           # install the managed browser for this host
 betterwright setup --cloak-only  # explicit CloakBrowser compatibility mode
 ```
 
@@ -60,8 +61,9 @@ BetterWright fails closed instead of silently falling back to another browser.
 
 With neither variable set, BetterWright checks the default root
 `~/.betterwright/chromium/` for the current platform's artifact. Found → the
-fork runs with no configuration at all. If it is absent or unsupported, launch
-fails with setup guidance; BetterWright never silently switches browsers.
+fork runs with no configuration at all. If this platform has no published
+artifact, BetterWright automatically uses managed CloakBrowser. If the platform
+is supported but its artifact is missing, launch fails with setup guidance.
 
 ```text
 ~/.betterwright/chromium/
@@ -70,15 +72,40 @@ fails with setup guidance; BetterWright never silently switches browsers.
   win-x64/betterchromium.exe
 ```
 
-This makes mixed fleets trivial: run `betterwright update` (or `setup`) on a host only after its platform archive appears in the pinned manifest; every published platform then picks the native backend with the same configuration. Set
-`BETTERWRIGHT_CHROMIUM_ROOT=off` (or `BETTERWRIGHT_CHROMIUM_PATH=off`) only to
-explicitly select the managed CloakBrowser compatibility backend.
+This makes mixed fleets consistent: `betterwright update` (or `setup`) installs
+BetterChromium wherever the manifest has a matching archive and CloakBrowser
+everywhere else. Set `BETTERWRIGHT_CHROMIUM_ROOT=off` (or
+`BETTERWRIGHT_CHROMIUM_PATH=off`) to explicitly select CloakBrowser on a
+supported host.
+
+## Containers and OS sandboxes
+
+On supported platforms BetterChromium remains fail-closed: a missing native
+artifact does not silently change browser engines. A container or
+`bwrap --clearenv` lane must bind the installed artifact into the sandbox and
+set an absolute path inside that namespace, for example:
+
+```bash
+betterwright setup
+# Bind ~/.betterwright/chromium at /opt/betterwright/chromium in the sandbox,
+# then set this inside the cleared environment:
+export BETTERWRIGHT_CHROMIUM_ROOT=/opt/betterwright/chromium
+```
+
+The profile, runtime, and artifacts under `BETTERWRIGHT_HOME` need their normal
+writable mount. On Linux, binding an accessible `/dev/dri` render device keeps
+native BetterChromium selected. Without one, BetterWright automatically uses
+CloakBrowser so WebGL remains available; install and bind its cache too (or run
+`betterwright setup` inside the sandbox). Every network connection still passes
+through the worker's local SOCKS guard.
 
 **Profiles are not interchangeable.** Fork and Cloak share
 `$BETTERWRIGHT_HOME/browser/profile` by default. Prefer a dedicated home for
-fork deployments (e.g. `BETTERWRIGHT_HOME=~/.betterwright-fork`). Switching
-`off` after the fork has upgraded that profile requires deleting
-`browser/profile` first.
+fork deployments (e.g. `BETTERWRIGHT_HOME=~/.betterwright-fork`). If Chromium
+151 already upgraded the profile, 1.8.1 preserves it and opens the older Cloak
+backend in a stable nested compatibility profile. Sign-ins in the original
+profile are not copied, but new compatibility-backend sign-ins persist across
+restarts.
 
 **Match timezone/locale to egress** (or enable `geoip` with `upstreamProxy`).
 Nothing in the fork hard-codes Singapore or any other region — pin whatever

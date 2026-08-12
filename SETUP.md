@@ -61,14 +61,15 @@ client it does not know), or when you want to do it deliberately.
 3. **Download the managed browser** (one-time):
 
    ```bash
-   betterwright setup     # install native BetterChromium
-   # or: betterwright update   # refresh BetterChromium
+   betterwright setup     # install the managed browser for this host
+   # or: betterwright update   # refresh the managed browser
    ```
 
-   Setup fetches checksum-pinned BetterChromium into
-   `~/.betterwright/chromium/`. CloakBrowser is available only through the
-   explicit `--cloak-only` compatibility opt-out. npm installation itself has
-   no hidden browser-download lifecycle script.
+   On macOS arm64, Linux x64, and Windows x64, setup fetches checksum-pinned
+   BetterChromium into `~/.betterwright/chromium/`. Other platforms, plus Linux
+   without an accessible `/dev/dri` render device, automatically install
+   managed CloakBrowser compatibility mode. npm
+   installation itself has no hidden browser-download lifecycle script.
 4. **Verify** with `betterwright doctor` — it must end with
    `BetterWright is ready.` Every line it flags with `✗` names its own fix; if
    any remain, stop and report exactly what `doctor` printed. `!` lines are
@@ -249,11 +250,13 @@ usually swallow the error), and a missing browser.
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
-BetterChromium (`~/.betterwright/chromium/`) is the required/default
-backend on supported Linux x64 and macOS arm64 hosts. CloakBrowser is used only
-when explicitly selected with `betterwright setup --cloak-only` and
-`BETTERWRIGHT_CHROMIUM_ROOT=off`; it is never a silent fallback. See
-[docs/chromium-fork.md](docs/chromium-fork.md). This is not a guarantee of undetectability.
+BetterChromium (`~/.betterwright/chromium/`) is the default backend on
+supported macOS arm64, GPU-capable Linux x64, and Windows x64 hosts. Platforms
+without a published artifact and Linux hosts without an accessible `/dev/dri`
+render device automatically use managed CloakBrowser; `--cloak-only` and
+`BETTERWRIGHT_CHROMIUM_ROOT=off` force the same compatibility backend on a
+supported host. See [docs/chromium-fork.md](docs/chromium-fork.md). This is not
+a guarantee of undetectability.
 
 Broad discovery should use the host's web-search tool, then open selected
 first-party pages in BetterWright; the operator guidance says so. Set

@@ -7,6 +7,7 @@ import path from "node:path";
 import { test } from "node:test";
 import {
   assertProfileNotNewer,
+  compatibleBrowserProfile,
   managedChromiumForkArgs,
   managedCloakArgs,
   managedCloakViewport,
@@ -40,6 +41,29 @@ test("native fork keeps one warm page renderer without disabling site isolation"
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--renderer-process-limit=2",
   ]);
+});
+
+test("a lower-version compatibility backend preserves the upgraded profile", () => {
+  const profileDir = "/home/user/.betterwright/browser/profile";
+  assert.deepEqual(
+    compatibleBrowserProfile(profileDir, "146.0.7680.177", {
+      readFileSync: () => "151.0.7922.108\n",
+    }),
+    {
+      profileDir: path.join(profileDir, ".betterwright-compat-chromium-146"),
+      warning:
+        "The existing browser profile was upgraded by Chromium 151.0.7922.108; " +
+        "the Chromium 146.0.7680.177 compatibility backend is using " +
+        path.join(profileDir, ".betterwright-compat-chromium-146") +
+        " instead. The original profile and its logins were preserved.",
+    },
+  );
+  assert.deepEqual(
+    compatibleBrowserProfile(profileDir, "151.0.7922.108", {
+      readFileSync: () => "151.0.7922.108\n",
+    }),
+    { profileDir, warning: null },
+  );
 });
 
 test("managed Cloak viewports stay coherent on affected builds", () => {

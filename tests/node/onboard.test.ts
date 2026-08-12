@@ -44,6 +44,7 @@ const READY_REPORT = {
   chromium_fork: "/x/fork/chrome",
   chromium_fork_version: "150.0.0.0",
   chromium_fork_error: null,
+  cloak_fallback: null,
   chromium_fork_fonts: "/x/fork/fonts",
   chromium_fork_fonts_warning: null,
   stealth_driver: "1.61.1",
@@ -325,6 +326,35 @@ test("doctor only warns about missing fork font bundles on Linux", () => {
     }),
     null,
   );
+});
+
+test("doctor explains the automatic compatibility backend on unsupported hosts", () => {
+  const checks = doctorChecks({
+    ...READY_REPORT,
+    chromium_fork: null,
+    chromium_fork_version: null,
+    cloak_fallback: "unsupported-platform",
+    browser: "cloak",
+  });
+  const native = checks.find((check) => check.label === "BetterChromium");
+  const cloak = checks.find((check) => check.label === "CloakBrowser");
+  assert.equal(native.status, "warn");
+  assert.match(native.detail, /no artifact is published/);
+  assert.match(cloak.detail, /automatic compatibility backend/);
+});
+
+test("doctor explains the WebGL-compatible fallback on GPU-less Linux", () => {
+  const checks = doctorChecks({
+    ...READY_REPORT,
+    cloak_fallback: "gpu-unavailable",
+    browser: "cloak",
+  });
+  const native = checks.find((check) => check.label === "BetterChromium");
+  const cloak = checks.find((check) => check.label === "CloakBrowser");
+  assert.equal(native.status, "warn");
+  assert.match(native.detail, /no accessible Linux render device/);
+  assert.match(native.detail, /WebGL remains available/);
+  assert.match(cloak.detail, /automatic compatibility backend/);
 });
 
 test("doctor output groups checks and marks each status", () => {
