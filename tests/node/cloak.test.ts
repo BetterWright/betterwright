@@ -36,7 +36,7 @@ test("native fork keeps one warm page renderer without disabling site isolation"
     "--renderer-process-limit=2",
     "--fingerprint=12345",
   ]);
-  assert.deepEqual(managedChromiumForkArgs(""), [
+  assert.deepEqual(managedChromiumForkArgs("", { softwareGpu: false }), [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--renderer-process-limit=2",
   ]);
