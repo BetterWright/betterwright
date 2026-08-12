@@ -45,6 +45,7 @@ const READY_REPORT = {
   chromium_fork_version: "150.0.0.0",
   chromium_fork_error: null,
   cloak_fallback: null,
+  browser_selection_reason: "native-available",
   chromium_fork_fonts: "/x/fork/fonts",
   chromium_fork_fonts_warning: null,
   stealth_driver: "1.61.1",
@@ -334,6 +335,7 @@ test("doctor explains the automatic compatibility backend on unsupported hosts",
     chromium_fork: null,
     chromium_fork_version: null,
     cloak_fallback: "unsupported-platform",
+    browser_selection_reason: "unsupported-platform",
     browser: "cloak",
   });
   const native = checks.find((check) => check.label === "BetterChromium");
@@ -347,6 +349,7 @@ test("doctor explains the WebGL-compatible fallback on GPU-less Linux", () => {
   const checks = doctorChecks({
     ...READY_REPORT,
     cloak_fallback: "gpu-unavailable",
+    browser_selection_reason: "render-device-unavailable",
     browser: "cloak",
   });
   const native = checks.find((check) => check.label === "BetterChromium");
@@ -355,6 +358,30 @@ test("doctor explains the WebGL-compatible fallback on GPU-less Linux", () => {
   assert.match(native.detail, /no accessible Linux render device/);
   assert.match(native.detail, /WebGL remains available/);
   assert.match(cloak.detail, /automatic compatibility backend/);
+});
+
+test("doctor makes forced backend selection and its tradeoff explicit", () => {
+  const nativeChecks = doctorChecks({
+    ...READY_REPORT,
+    browser_selection_reason: "forced-chromium-fork",
+  });
+  const native = nativeChecks.find((check) => check.label === "BetterChromium");
+  assert.equal(native.status, "warn");
+  assert.match(native.detail, /BETTERWRIGHT_BACKEND=chromium-fork/);
+  assert.match(native.fix, /Verify WebGL/);
+
+  const cloakChecks = doctorChecks({
+    ...READY_REPORT,
+    chromium_fork: null,
+    chromium_fork_version: null,
+    browser: "cloak",
+    cloak_fallback: "explicit",
+    browser_selection_reason: "forced-cloak",
+  });
+  const cloak = cloakChecks.find((check) => check.label === "BetterChromium");
+  assert.equal(cloak.status, "warn");
+  assert.match(cloak.detail, /BETTERWRIGHT_BACKEND=cloak/);
+  assert.match(cloak.fix, /Unset BETTERWRIGHT_BACKEND/);
 });
 
 test("doctor output groups checks and marks each status", () => {

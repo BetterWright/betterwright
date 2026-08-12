@@ -155,6 +155,7 @@ export async function doctorReport() {
     chromium_fork_version: chromiumFork ? BETTERWRIGHT_CHROMIUM_VERSION : null,
     chromium_fork_error: chromiumForkError,
     cloak_fallback: browserSelection.cloakFallback,
+    browser_selection_reason: browserSelection.selectionReason,
     chromium_fork_fonts: chromiumForkFonts,
     chromium_fork_fonts_warning: chromiumForkFontsWarning,
     stealth_driver: stealth,
@@ -318,13 +319,21 @@ export function doctorChecks(
   );
   add("Runtime", "Worker", report.worker_ok ? "ok" : "fail", report.worker, report.worker_ok ? null : "The package looks incomplete — reinstall betterwright.");
 
-  if (report.browser === "cloak" && report.cloak_fallback === "gpu-unavailable") {
+  if (report.browser_selection_reason === "forced-chromium-fork") {
+    add(
+      "Browser",
+      "BetterChromium",
+      "warn",
+      `BetterChromium ${report.chromium_fork_version} — ${report.chromium_fork} — forced by BETTERWRIGHT_BACKEND=chromium-fork`,
+      "Verify WebGL inside this container or OS sandbox when /dev/dri is not visible.",
+    );
+  } else if (report.browser === "cloak" && report.cloak_fallback === "gpu-unavailable") {
     add(
       "Browser",
       "BetterChromium",
       "warn",
       "installed, but no accessible Linux render device was found — using CloakBrowser compatibility mode so WebGL remains available",
-      "Optional: expose a read/write /dev/dri render device to use native BetterChromium.",
+      "Expose a read/write /dev/dri render device, or set BETTERWRIGHT_BACKEND=chromium-fork to override this mount-based probe.",
     );
   } else if (report.chromium_fork) {
     add(
@@ -346,16 +355,21 @@ export function doctorChecks(
     );
   } else if (report.browser === "cloak") {
     const automatic = report.cloak_fallback === "unsupported-platform";
+    const forced = report.browser_selection_reason === "forced-cloak";
     add(
       "Browser",
       "BetterChromium",
       "warn",
       automatic
         ? "no artifact is published for this platform — using CloakBrowser compatibility mode"
-        : "explicitly disabled — using CloakBrowser compatibility mode",
+        : forced
+          ? "forced by BETTERWRIGHT_BACKEND=cloak — using CloakBrowser compatibility mode"
+          : "explicitly disabled — using CloakBrowser compatibility mode",
       automatic
         ? null
-        : "Run `betterwright setup` and unset BETTERWRIGHT_CHROMIUM_PATH/ROOT to restore the default backend.",
+        : forced
+          ? "Unset BETTERWRIGHT_BACKEND (or set it to auto) to restore automatic selection."
+          : "Run `betterwright setup` and unset BETTERWRIGHT_CHROMIUM_PATH/ROOT to restore the default backend.",
     );
   } else {
     add(

@@ -89,6 +89,17 @@ function configuredValue(value) {
   return String(value || "").trim();
 }
 
+/** Explicit backend preference, or automatic policy when unset. */
+export function configuredBrowserBackend(env = process.env) {
+  const value = configuredValue(env.BETTERWRIGHT_BACKEND).toLowerCase();
+  if (!value || value === "auto") return "auto";
+  if (value === "chromium-fork" || value === "cloak") return value;
+  throw new Error(
+    "BETTERWRIGHT_BACKEND must be auto, chromium-fork, or cloak; " +
+      `received ${JSON.stringify(value)}.`,
+  );
+}
+
 /** Whether BetterWright publishes a native BetterChromium artifact here. */
 export function chromiumForkPlatformSupported({
   platform = process.platform,
@@ -105,8 +116,9 @@ export function chromiumForkPlatformSupported({
  * supported Linux host without an accessible render device also uses Cloak so
  * it retains a working WebGL surface. A supported host with a missing artifact
  * stays unavailable so a broken native install or sandbox mount cannot silently
- * downgrade. Explicit paths and roots remain strict during resolution; Linux
- * GPU capability still decides whether that resolved binary is safe to launch.
+ * downgrade. Explicit paths and roots remain strict during resolution. In auto
+ * mode, Linux render-device accessibility decides whether the resolved binary
+ * is safe to launch; an explicit backend preference wins that heuristic.
  */
 export function selectManagedBrowserBackend({
   chromiumFork = null,
@@ -115,32 +127,103 @@ export function selectManagedBrowserBackend({
   arch = process.arch,
   softwareGpu = false,
 } = {}) {
+  const preference = configuredBrowserBackend(env);
   const explicitPath = configuredValue(env.BETTERWRIGHT_CHROMIUM_PATH);
   const explicitRoot = configuredValue(env.BETTERWRIGHT_CHROMIUM_ROOT);
+  if (preference === "cloak") {
+    return {
+      browser: "cloak",
+      cloakFallback: "explicit",
+      selectionReason: "forced-cloak",
+    };
+  }
+  if (preference === "chromium-fork") {
+    return chromiumFork
+      ? {
+          browser: "chromium-fork",
+          cloakFallback: null,
+          selectionReason: "forced-chromium-fork",
+        }
+      : {
+          browser: "unavailable",
+          cloakFallback: null,
+          selectionReason: "forced-chromium-fork-missing",
+        };
+  }
   if (
     explicitPath.toLowerCase() === "off" ||
     explicitRoot.toLowerCase() === "off"
   ) {
-    return { browser: "cloak", cloakFallback: "explicit" };
+    return {
+      browser: "cloak",
+      cloakFallback: "explicit",
+      selectionReason: "legacy-off",
+    };
   }
 
   if (chromiumFork) {
     if (softwareGpu) {
-      return { browser: "cloak", cloakFallback: "gpu-unavailable" };
+      return {
+        browser: "cloak",
+        cloakFallback: "gpu-unavailable",
+        selectionReason: "render-device-unavailable",
+      };
     }
-    return { browser: "chromium-fork", cloakFallback: null };
+    return {
+      browser: "chromium-fork",
+      cloakFallback: null,
+      selectionReason: "native-available",
+    };
   }
 
   // A custom path/root is resolved strictly before this selector runs. Never
   // interpret an invalid explicit configuration as permission to fall back.
   if (explicitPath || explicitRoot) {
-    return { browser: "unavailable", cloakFallback: null };
+    return {
+      browser: "unavailable",
+      cloakFallback: null,
+      selectionReason: "explicit-native-unavailable",
+    };
   }
 
   if (!chromiumForkPlatformSupported({ platform, arch })) {
-    return { browser: "cloak", cloakFallback: "unsupported-platform" };
+    return {
+      browser: "cloak",
+      cloakFallback: "unsupported-platform",
+      selectionReason: "unsupported-platform",
+    };
   }
-  return { browser: "unavailable", cloakFallback: null };
+  return {
+    browser: "unavailable",
+    cloakFallback: null,
+    selectionReason: "native-missing",
+  };
+}
+
+/** Result warning that makes every non-default backend decision observable. */
+export function browserSelectionWarning(selection, { softwareGpu = false } = {}) {
+  if (selection.selectionReason === "forced-chromium-fork") {
+    return softwareGpu
+      ? "Browser backend: BetterChromium, forced by BETTERWRIGHT_BACKEND=chromium-fork even though no accessible Linux render device was found; verify WebGL in this sandbox."
+      : "Browser backend: BetterChromium, forced by BETTERWRIGHT_BACKEND=chromium-fork.";
+  }
+  if (selection.selectionReason === "forced-cloak") {
+    return "Browser backend: CloakBrowser, forced by BETTERWRIGHT_BACKEND=cloak.";
+  }
+  if (selection.selectionReason === "render-device-unavailable") {
+    return (
+      "Browser backend: CloakBrowser compatibility mode because no accessible Linux " +
+      "render device was found. In a container or OS sandbox, set " +
+      "BETTERWRIGHT_BACKEND=chromium-fork to override this mount-based probe."
+    );
+  }
+  if (selection.selectionReason === "unsupported-platform") {
+    return "Browser backend: CloakBrowser compatibility mode because this platform has no published BetterChromium artifact.";
+  }
+  if (selection.selectionReason === "legacy-off") {
+    return "Browser backend: CloakBrowser because BETTERWRIGHT_CHROMIUM_PATH or BETTERWRIGHT_CHROMIUM_ROOT is set to off.";
+  }
+  return "";
 }
 
 /** Where deployments drop the fork artifact for zero-config discovery. */
@@ -152,12 +235,15 @@ export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
  * Resolve the pinned fork binary without changing BetterWright's public API.
  *
  * Resolution order:
- *  1. BETTERWRIGHT_CHROMIUM_PATH / BETTERWRIGHT_CHROMIUM_ROOT (strict: a
+ *  1. BETTERWRIGHT_BACKEND (forced Cloak needs no native path; forced native
+ *     conflicts with a legacy "off" path/root).
+ *  2. BETTERWRIGHT_CHROMIUM_PATH / BETTERWRIGHT_CHROMIUM_ROOT (strict: a
  *     configured-but-missing binary is an error).
- *  2. The default root (~/.betterwright/chromium) — if the artifact for this
+ *  3. The default root (~/.betterwright/chromium) — if the artifact for this
  *     platform exists there, use it silently. Backend selection routes hosts
  *     without a published artifact to managed CloakBrowser.
- *  3. Either variable set to "off" forces the managed CloakBrowser path.
+ *  4. Either path variable set to "off" forces managed CloakBrowser in auto
+ *     mode.
  */
 export function resolveChromiumForkBinary({
   env = process.env,
@@ -166,12 +252,20 @@ export function resolveChromiumForkBinary({
   home = os.homedir(),
   existsSync = fs.existsSync,
 } = {}) {
+  const preference = configuredBrowserBackend(env);
   const explicit = configuredValue(env.BETTERWRIGHT_CHROMIUM_PATH);
   let root = configuredValue(env.BETTERWRIGHT_CHROMIUM_ROOT);
+  if (preference === "cloak") return null;
   if (
     explicit.toLowerCase() === "off" ||
     root.toLowerCase() === "off"
   ) {
+    if (preference === "chromium-fork") {
+      throw new Error(
+        "BETTERWRIGHT_BACKEND=chromium-fork conflicts with " +
+          "BETTERWRIGHT_CHROMIUM_PATH/ROOT=off.",
+      );
+    }
     return null;
   }
 

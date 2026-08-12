@@ -120,7 +120,7 @@ test("Cloaking V2 options reach the worker and headedInvisible forces headed mod
   }
 });
 
-test("chromiumArgs reach the worker config and reserved switches fail at construction", async () => {
+test("chromiumArgs reach the worker config and only security-sensitive switches fail", async () => {
   const defaults = new BetterWright();
   const tuned = new BetterWright({
     chromiumArgs: ["--disable-gpu", "--disk-cache-size=1"],
@@ -138,10 +138,13 @@ test("chromiumArgs reach the worker config and reserved switches fail at constru
       () => new BetterWright({ chromiumArgs: ["--proxy-server=http://10.0.0.1:8080"] }),
       { name: "TypeError", message: /reserved by BetterWright/ },
     );
-    assert.throws(
-      () => new BetterWright({ chromiumArgs: ["--disable-software-rasterizer"] }),
-      { name: "TypeError", message: /retain its WebGL software fallback/ },
-    );
+    const compatible = new BetterWright({
+      chromiumArgs: ["--disable-software-rasterizer"],
+    });
+    assert.deepEqual(compatible._workerConfig().chromiumArgs, [
+      "--disable-software-rasterizer",
+    ]);
+    await compatible.close();
   } finally {
     await defaults.close();
     await tuned.close();

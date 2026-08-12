@@ -91,11 +91,13 @@ export interface BetterWrightOptions {
    * Switches BetterWright owns are rejected with a `TypeError`: proxy
    * selection, remote debugging, the profile directory, and the
    * `--fingerprint*` / `--lang` / `--bw-timezone` / `--headless` identity
-   * family, plus `--disable-software-rasterizer` because the selected backend
-   * must retain WebGL. A switch that merely duplicates one already in the managed list is
+   * family. A switch that merely duplicates one already in the managed list is
    * dropped — Chromium resolves duplicates last-wins, so appending it would
    * override BetterWright's value rather than lose to it — and the drop is
-   * reported in the next result's `warnings`.
+   * reported in the next result's `warnings`. The common
+   * `--disable-software-rasterizer` compatibility flag is also dropped with a
+   * warning, rather than failing launch, because the selected backend must
+   * retain WebGL.
    */
   chromiumArgs?: string[];
   /**
