@@ -51,6 +51,7 @@ import {
   makeLineReader,
   readExecTaskFromStdin,
 } from "../src/cli-io.js";
+import { chromiumForkNeedsSoftwareGpu } from "../src/cloak.js";
 import {
   daemonLogPath,
   daemonProfilesInHome,
@@ -420,8 +421,16 @@ async function cmdUpdate(flags) {
     refreshAgentSkillsQuietly();
     return 0;
   }
-  console.log("\nUpdate complete. BetterWright will use BetterChromium.");
-  console.log("Run `betterwright doctor` to confirm (browser: chromium-fork).");
+  if (chromiumForkNeedsSoftwareGpu()) {
+    console.log("Installing the automatic WebGL-compatible backend for this GPU-less Linux host.");
+    const cloakCode = await installCloakBrowser();
+    if (cloakCode !== 0) return cloakCode;
+    console.log("\nUpdate complete. BetterWright will use CloakBrowser automatically on this host.");
+    console.log("Run `betterwright doctor` to confirm (browser: cloak).");
+  } else {
+    console.log("\nUpdate complete. BetterWright will use BetterChromium.");
+    console.log("Run `betterwright doctor` to confirm (browser: chromium-fork).");
+  }
   refreshAgentSkillsQuietly();
   return 0;
 }
@@ -444,6 +453,11 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
     if (chromium.skipped) {
       console.log(chromium.skipped);
       console.log("Installing the automatic compatibility backend for this platform.");
+      const cloakCode = await installCloakBrowser();
+      if (cloakCode !== 0) return cloakCode;
+      selectedBrowser = "cloak";
+    } else if (chromiumForkNeedsSoftwareGpu()) {
+      console.log("Installing the automatic WebGL-compatible backend for this GPU-less Linux host.");
       const cloakCode = await installCloakBrowser();
       if (cloakCode !== 0) return cloakCode;
       selectedBrowser = "cloak";

@@ -102,20 +102,19 @@ export function chromiumForkPlatformSupported({
  *
  * A host for which no artifact is published uses CloakBrowser automatically,
  * matching the compatibility behavior BetterWright had before 1.8.0. A
- * supported host with a missing artifact stays unavailable so a broken native
- * install or sandbox mount cannot silently downgrade. Explicit paths and roots
- * remain strict in resolveChromiumForkBinary().
+ * supported Linux host without an accessible render device also uses Cloak so
+ * it retains a working WebGL surface. A supported host with a missing artifact
+ * stays unavailable so a broken native install or sandbox mount cannot silently
+ * downgrade. Explicit paths and roots remain strict during resolution; Linux
+ * GPU capability still decides whether that resolved binary is safe to launch.
  */
 export function selectManagedBrowserBackend({
   chromiumFork = null,
   env = process.env,
   platform = process.platform,
   arch = process.arch,
+  softwareGpu = false,
 } = {}) {
-  if (chromiumFork) {
-    return { browser: "chromium-fork", cloakFallback: null };
-  }
-
   const explicitPath = configuredValue(env.BETTERWRIGHT_CHROMIUM_PATH);
   const explicitRoot = configuredValue(env.BETTERWRIGHT_CHROMIUM_ROOT);
   if (
@@ -123,6 +122,13 @@ export function selectManagedBrowserBackend({
     explicitRoot.toLowerCase() === "off"
   ) {
     return { browser: "cloak", cloakFallback: "explicit" };
+  }
+
+  if (chromiumFork) {
+    if (softwareGpu) {
+      return { browser: "cloak", cloakFallback: "gpu-unavailable" };
+    }
+    return { browser: "chromium-fork", cloakFallback: null };
   }
 
   // A custom path/root is resolved strictly before this selector runs. Never

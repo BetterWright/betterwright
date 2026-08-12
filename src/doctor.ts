@@ -16,6 +16,7 @@ import {
   resolveChromiumForkBinary,
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
+import { chromiumForkNeedsSoftwareGpu } from "./cloak.js";
 import { forkFontsDir } from "./fork-identity.js";
 import { defaultHome } from "./home.js";
 import { optionalPeerAvailable } from "./optional-peer.js";
@@ -117,7 +118,10 @@ export async function doctorReport() {
   } catch (error) {
     chromiumForkError = error instanceof Error ? error.message : String(error);
   }
-  const browserSelection = selectManagedBrowserBackend({ chromiumFork });
+  const browserSelection = selectManagedBrowserBackend({
+    chromiumFork,
+    softwareGpu: chromiumForkNeedsSoftwareGpu(),
+  });
   const browser = chromiumForkError ? "unavailable" : browserSelection.browser;
   const chromiumForkFonts = chromiumFork ? forkFontsDir(chromiumFork) : null;
   const chromiumForkFontsWarning = missingForkFontsWarning({
@@ -127,7 +131,11 @@ export async function doctorReport() {
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    Boolean(chromiumFork || (browser === "cloak" && cloakOk)) &&
+    Boolean(
+      browser === "chromium-fork"
+        ? chromiumFork
+        : browser === "cloak" && cloakOk,
+    ) &&
     !chromiumForkError;
   return {
     node: process.execPath,
@@ -310,7 +318,15 @@ export function doctorChecks(
   );
   add("Runtime", "Worker", report.worker_ok ? "ok" : "fail", report.worker, report.worker_ok ? null : "The package looks incomplete — reinstall betterwright.");
 
-  if (report.chromium_fork) {
+  if (report.browser === "cloak" && report.cloak_fallback === "gpu-unavailable") {
+    add(
+      "Browser",
+      "BetterChromium",
+      "warn",
+      "installed, but no accessible Linux render device was found — using CloakBrowser compatibility mode so WebGL remains available",
+      "Optional: expose a read/write /dev/dri render device to use native BetterChromium.",
+    );
+  } else if (report.chromium_fork) {
     add(
       "Browser",
       "BetterChromium",
@@ -353,12 +369,18 @@ export function doctorChecks(
   add(
     "Browser",
     "CloakBrowser",
-    report.cloakbrowser_ok ? "ok" : report.chromium_fork ? "warn" : "fail",
+    report.cloakbrowser_ok
+      ? "ok"
+      : report.browser === "cloak"
+        ? "fail"
+        : report.chromium_fork
+          ? "warn"
+          : "fail",
     report.cloakbrowser_ok
       ? `${report.cloakbrowser_binary_version} (${report.cloakbrowser_binary_tier})` +
         (report.cloakbrowser_binary ? ` — ${report.cloakbrowser_binary}` : "") +
         (report.browser === "cloak"
-          ? report.cloak_fallback === "unsupported-platform"
+          ? ["unsupported-platform", "gpu-unavailable"].includes(report.cloak_fallback)
             ? " — automatic compatibility backend"
             : " — explicit compatibility backend"
           : " — compatibility backend available")

@@ -26,26 +26,33 @@ environment override.
   install, update, verify, and report CloakBrowser without requiring
   `BETTERWRIGHT_CHROMIUM_ROOT=off`.
 - Fixed [#109](https://github.com/BetterWright/betterwright/issues/109):
-  GPU-less Linux hosts now keep standard WebGL available through the packaged
-  SwiftShader renderer instead of presenting a macOS browser identity with the
-  graphics surface blocked. Explicit GPU-capable hosts retain hardware
-  acceleration. The browser-level regression test requires a real context,
-  extensions, pixel readback, and the captured Apple vendor/renderer identity.
+  GPU-less Linux hosts now automatically use the managed CloakBrowser backend,
+  whose packaged software renderer keeps standard WebGL available instead of
+  presenting a macOS browser identity with the graphics surface blocked.
+  GPU-capable hosts retain native BetterChromium. The browser-level regression
+  test runs against whichever backend `doctor` selects and requires a real
+  context, extensions, pixel readback, and a coherent UA/platform/GPU identity.
 - Supported hosts with a missing BetterChromium install still fail closed with
   setup guidance. Invalid explicit paths and roots remain errors rather than
   silently switching browsers.
+- If BetterChromium 151 already upgraded a persistent profile, the older Cloak
+  backend uses a stable nested compatibility profile instead of crashing on a
+  forbidden profile downgrade. The original profile and logins stay untouched;
+  the compatibility profile maintains its own persistent sign-ins.
 
 ### Security and performance
 
 - The fallback reuses the existing managed CloakBrowser launcher and keeps all
   browser traffic on BetterWright's SOCKS guard; no direct or unguarded launch
   path was added.
-- Supported BetterChromium launches do not take a new compatibility path. The
-  selection change is one constant-time platform lookup at startup and adds no
-  per-page work, retained processes, or page-world scripts.
-- The SwANGLE path starts only when Linux has no accessible hardware render
-  device. It restores standards-compatible WebGL but uses CPU rendering, so
-  1.8.1 makes no new memory or speed claim for that fallback.
+- GPU-capable BetterChromium launches do not take a new compatibility path.
+  GPU detection is one bounded `/dev/dri` directory check at startup and adds
+  no per-page work or page-world scripts.
+- On the same GPU-less Linux container that reproduces BetterChromium's blocked
+  WebGL, the automatic Cloak fallback created WebGL, exposed 33 extensions, and
+  completed pixel readback correctly. Its first diagnostic launch took 8.76 s;
+  that single cold run validates compatibility and is not a speed benchmark.
+  1.8.1 makes no new memory or speed claim for this fallback.
 - A fresh-profile CreepJS verification completed its fingerprint in 2.27 s with
   WebGL available, the captured Apple M4 Pro renderer, 0% `headless`, and 0%
   `stealth`. Its `like headless` heuristic was 31%; because that check ran on a

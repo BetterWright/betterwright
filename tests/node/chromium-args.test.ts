@@ -128,7 +128,7 @@ test("profile, identity, and headless switches are rejected with their alternati
     ["--fingerprint=1234", /`locale`, `timezone`, and `platform`/],
     ["--fingerprint-platform=windows", /`locale`, `timezone`, and `platform`/],
     ["--fingerprint-locale=de-DE", /`locale`, `timezone`, and `platform`/],
-    ["--disable-software-rasterizer", /manages the software renderer/],
+    ["--disable-software-rasterizer", /retain its WebGL software fallback/],
   ];
   for (const [arg, message] of cases) {
     // Node regex-matches RegExp values in the expectation object; its types
@@ -208,7 +208,7 @@ test("the WebRTC proxy boundary cannot be displaced on either browser backend", 
   }
 });
 
-test("GPU-less Linux uses packaged SwANGLE while hardware hosts stay native", () => {
+test("GPU capability detection distinguishes accessible DRI devices", () => {
   assert.equal(
     chromiumForkNeedsSoftwareGpu({
       platform: "linux",
@@ -240,14 +240,10 @@ test("GPU-less Linux uses packaged SwANGLE while hardware hosts stay native", ()
     false,
   );
 
-  const software = managedChromiumForkArgs("seed", { softwareGpu: true });
-  assert.ok(software.includes("--use-gl=angle"));
-  assert.ok(software.includes("--use-angle=swiftshader"));
-  assert.ok(!software.includes("--enable-unsafe-swiftshader"));
-
-  const hardware = managedChromiumForkArgs("seed", { softwareGpu: false });
-  assert.ok(!hardware.some((arg) => arg.startsWith("--use-gl=")));
-  assert.ok(!hardware.some((arg) => arg.startsWith("--use-angle=")));
+  const native = managedChromiumForkArgs("seed");
+  assert.ok(!native.some((arg) => arg.startsWith("--use-gl=")));
+  assert.ok(!native.some((arg) => arg.startsWith("--use-angle=")));
+  assert.ok(!native.includes("--enable-unsafe-swiftshader"));
 });
 
 test("a switch repeated by the caller is applied once", () => {

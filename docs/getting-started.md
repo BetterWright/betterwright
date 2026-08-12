@@ -133,11 +133,11 @@ Whitespace-separated; quote a value that contains spaces
 together.
 
 On Linux without an accessible `/dev/dri` render device, BetterWright selects
-the packaged SwANGLE software GPU automatically so standard WebGL remains
-available. `--disable-software-rasterizer` is reserved because it recreates the
-blocked graphics surface fixed in 1.8.1. `--disable-gpu` remains available as
-a caller-controlled compatibility switch, but it is not recommended for the
-macOS identity profile.
+managed CloakBrowser automatically so standard WebGL remains available.
+`--disable-software-rasterizer` is reserved because it recreates the blocked
+graphics surface fixed in 1.8.1. `--disable-gpu` remains available as a
+caller-controlled compatibility switch, but it is not recommended for either
+managed backend.
 
 Two rules keep this from undermining the managed browser:
 
@@ -160,15 +160,16 @@ country. Pin `timezone` and `locale` to the geography of the IP sites see
 geo-sensitive gates (e.g. Google `/sorry`); the same binary with
 `Asia/Singapore` + `en-US` does not.
 
-**Do not share one profile across backends.** Cloak (~146) and the fork
-(150) both write `$BETTERWRIGHT_HOME/browser/profile`. Once the fork has
-opened that directory, falling back to Cloak fails closed
-(`assertProfileNotNewer`). Use a separate `BETTERWRIGHT_HOME` for fork
-hosts, or delete `browser/profile` when switching backends (saved site
-logins in that profile are lost).
+**Profiles are versioned by backend.** Cloak (~146) cannot open a profile that
+BetterChromium 151 already upgraded. BetterWright 1.8.1 detects that boundary,
+preserves the newer profile, and gives Cloak a stable nested compatibility
+profile. Its sign-ins persist independently; existing BetterChromium cookies
+are intentionally not copied into the older format. A separate
+`BETTERWRIGHT_HOME` remains useful when operators want visibly separate homes.
 
-macOS arm64, Linux x64, and Windows x64 hosts all get the fork artifact with
-one config and no platform branching in deployment code.
+macOS arm64, Linux x64, and Windows x64 hosts all get the fork artifact. Linux
+without an accessible render device also gets Cloak for automatic WebGL-safe
+selection.
 
 ### Idle CPU and page parking
 

@@ -58,11 +58,12 @@ what real Chrome returns for the non-debug parameters. The WebGL2 context
 inherits the same base implementation, so one interception covers both.
 
 Chromium 151 no longer guarantees an automatic software WebGL fallback. The
-BetterWright launcher checks for an accessible Linux `/dev/dri` render device:
-hardware-capable hosts keep Chromium's native selection, while GPU-less hosts
-select the SwANGLE implementation already shipped in the verified archive.
-This keeps the standard WebGL context, extensions, and pixel readback available
-for the masked identity without opting into `--enable-unsafe-swiftshader`.
+r1 Linux BetterChromium binary cannot initialize its bundled SwANGLE renderer
+when no accessible `/dev/dri` render device exists, leaving WebGL blocked. The
+BetterWright launcher therefore keeps native BetterChromium on GPU-capable
+hosts and automatically selects managed CloakBrowser on GPU-less Linux. That
+backend supplies a working software-rendered WebGL context without opting into
+Chromium's lower-security `--enable-unsafe-swiftshader` switch.
 
 ## 3. Canvas noise
 

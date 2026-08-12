@@ -93,16 +93,19 @@ export BETTERWRIGHT_CHROMIUM_ROOT=/opt/betterwright/chromium
 ```
 
 The profile, runtime, and artifacts under `BETTERWRIGHT_HOME` need their normal
-writable mount. On Linux, binding `/dev/dri` is optional: when no accessible
-render device exists, BetterWright uses the packaged SwANGLE software renderer
-so WebGL remains available. Every network connection still passes through the
-worker's local SOCKS guard.
+writable mount. On Linux, binding an accessible `/dev/dri` render device keeps
+native BetterChromium selected. Without one, BetterWright automatically uses
+CloakBrowser so WebGL remains available; install and bind its cache too (or run
+`betterwright setup` inside the sandbox). Every network connection still passes
+through the worker's local SOCKS guard.
 
 **Profiles are not interchangeable.** Fork and Cloak share
 `$BETTERWRIGHT_HOME/browser/profile` by default. Prefer a dedicated home for
-fork deployments (e.g. `BETTERWRIGHT_HOME=~/.betterwright-fork`). Switching
-`off` after the fork has upgraded that profile requires deleting
-`browser/profile` first.
+fork deployments (e.g. `BETTERWRIGHT_HOME=~/.betterwright-fork`). If Chromium
+151 already upgraded the profile, 1.8.1 preserves it and opens the older Cloak
+backend in a stable nested compatibility profile. Sign-ins in the original
+profile are not copied, but new compatibility-backend sign-ins persist across
+restarts.
 
 **Match timezone/locale to egress** (or enable `geoip` with `upstreamProxy`).
 Nothing in the fork hard-codes Singapore or any other region — pin whatever

@@ -48,7 +48,9 @@ import {
 } from "./chromium-fork.js";
 import {
   assertProfileNotNewer,
+  chromiumForkNeedsSoftwareGpu,
   cloakBinaryInfo,
+  compatibleBrowserProfile,
   launchCloakPersistentContext,
   managedChromiumForkArgs,
   managedCloakArgs,
@@ -1540,6 +1542,26 @@ async function ensureBrowser(config) {
   launchPromise = (async () => {
     mkdirPrivate(launchConfig.artifactsDir);
 
+    const forkBinary = resolveChromiumForkBinary();
+    const browserSelection = selectManagedBrowserBackend({
+      chromiumFork: forkBinary,
+      softwareGpu: chromiumForkNeedsSoftwareGpu(),
+    });
+    if (browserSelection.browser === "unavailable") {
+      throw new Error(
+        "BetterChromium is required but not installed. Run `betterwright setup`, " +
+          "or explicitly select CloakBrowser with `betterwright setup --cloak-only` " +
+          "and BETTERWRIGHT_CHROMIUM_ROOT=off. Hosts without a published " +
+          "BetterChromium artifact, and GPU-less Linux hosts, use CloakBrowser automatically.",
+      );
+    }
+    const activeForkBinary =
+      browserSelection.browser === "chromium-fork" ? forkBinary : null;
+    let binaryInfo = null;
+    if (!activeForkBinary) {
+      binaryInfo = await cloakBinaryInfo();
+    }
+
     mkdirPrivate(launchConfig.runtimeDir);
     profileLock = acquireProfileLock(
       launchConfig.profileDir,
@@ -1547,7 +1569,14 @@ async function ensureBrowser(config) {
     );
     startProfileLockHeartbeat();
     profileMode = profileLock.ephemeral ? "ephemeral" : "persistent";
-    profileWarning = profileLock.warning;
+    const compatible = activeForkBinary
+      ? { profileDir: profileLock.profileDir, warning: null }
+      : compatibleBrowserProfile(profileLock.profileDir, binaryInfo?.version);
+    const browserProfileDir = compatible.profileDir;
+    mkdirPrivate(browserProfileDir);
+    profileWarning = [compatible.warning, profileLock.warning]
+      .filter(Boolean)
+      .join(" ");
     transportProxyPort = await guardProxy.ensure();
 
     const headless = launchConfig.headless !== false;
@@ -1566,23 +1595,11 @@ async function ensureBrowser(config) {
     }
     guardProxy.setUpstream(upstream);
 
-    const forkBinary = resolveChromiumForkBinary();
-    const browserSelection = selectManagedBrowserBackend({
-      chromiumFork: forkBinary,
-    });
-    if (browserSelection.browser === "unavailable") {
-      throw new Error(
-        "BetterChromium is required but not installed. Run `betterwright setup`, " +
-          "or explicitly select CloakBrowser with `betterwright setup --cloak-only` " +
-          "and BETTERWRIGHT_CHROMIUM_ROOT=off. Hosts without a published " +
-          "BetterChromium artifact use CloakBrowser automatically.",
-      );
-    }
-    const args = forkBinary
+    const args = activeForkBinary
       ? managedChromiumForkArgs(
-          fingerprintSeedForProfile(profileLock.profileDir),
+          fingerprintSeedForProfile(browserProfileDir),
         )
-      : managedCloakArgs(fingerprintSeedForProfile(profileLock.profileDir));
+      : managedCloakArgs(fingerprintSeedForProfile(browserProfileDir));
 
     // Cloaking V2: one coherent identity across the Chromium and network
     // layers. geoip resolves the locale/timezone to match the egress
@@ -1609,7 +1626,7 @@ async function ensureBrowser(config) {
         timezone: identity.timezone || undefined,
         platform: launchConfig.platform || undefined,
         headedInvisible: launchConfig.headedInvisible === true,
-        nativeFork: Boolean(forkBinary),
+        nativeFork: Boolean(activeForkBinary),
       });
       args.push(...v2Plan.args);
     }
@@ -1620,7 +1637,7 @@ async function ensureBrowser(config) {
     // geometry + DPR flags make screen.* coherent in headless; UA, UA-CH and navigator.platform are owned by the native startup profile in every process.
     let forkIdentity = null;
     if (
-      forkBinary &&
+      activeForkBinary &&
       v2Plan &&
       v2Plan.identity.platform === "macos" &&
       launchConfig.platform !== "linux" &&
@@ -1638,7 +1655,7 @@ async function ensureBrowser(config) {
     let forkEnv = null;
     if (forkIdentity) {
       const fonts = prepareForkFontsConfig({
-        forkBinary,
+        forkBinary: activeForkBinary,
         runtimeDir: launchConfig.runtimeDir,
       });
       if (fonts) forkEnv = { ...process.env, FONTCONFIG_FILE: fonts.confPath };
@@ -1667,19 +1684,19 @@ async function ensureBrowser(config) {
       bypass: "<-loopback>",
     };
 
-    if (forkBinary) {
+    if (activeForkBinary) {
       if (!profileLock.ephemeral) {
         assertProfileNotNewer(
-          profileLock.profileDir,
+          browserProfileDir,
           BETTERWRIGHT_CHROMIUM_VERSION,
         );
       }
       useSetContentCompatibility = true;
       const { chromium } = await import("playwright-core");
       browserContext = await chromium.launchPersistentContext(
-        profileLock.profileDir,
+        browserProfileDir,
         {
-          executablePath: forkBinary,
+          executablePath: activeForkBinary,
           headless,
           ...chromiumForkContextOptions(),
           proxy,
@@ -1700,9 +1717,8 @@ async function ensureBrowser(config) {
       // not appear to change hardware on every restart. Its blanket humanizer is
       // intentionally disabled; BetterWright's frame-safe human helpers remain
       // the only model-facing interaction layer.
-      const binaryInfo = await cloakBinaryInfo();
       if (!profileLock.ephemeral) {
-        assertProfileNotNewer(profileLock.profileDir, binaryInfo?.version);
+        assertProfileNotNewer(browserProfileDir, binaryInfo?.version);
       }
       // Patched Cloak builds can report stale lifecycle events to Playwright's
       // protocol-level setContent implementation. The document-write fallback
@@ -1710,7 +1726,7 @@ async function ensureBrowser(config) {
       useSetContentCompatibility = true;
       const viewport = managedCloakViewport(binaryInfo, headless);
       browserContext = await launchCloakPersistentContext({
-        userDataDir: profileLock.profileDir,
+        userDataDir: browserProfileDir,
         headless,
         humanize: false,
         ...(viewport ? { viewport } : {}),

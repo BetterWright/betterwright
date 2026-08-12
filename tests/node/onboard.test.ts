@@ -343,6 +343,20 @@ test("doctor explains the automatic compatibility backend on unsupported hosts",
   assert.match(cloak.detail, /automatic compatibility backend/);
 });
 
+test("doctor explains the WebGL-compatible fallback on GPU-less Linux", () => {
+  const checks = doctorChecks({
+    ...READY_REPORT,
+    cloak_fallback: "gpu-unavailable",
+    browser: "cloak",
+  });
+  const native = checks.find((check) => check.label === "BetterChromium");
+  const cloak = checks.find((check) => check.label === "CloakBrowser");
+  assert.equal(native.status, "warn");
+  assert.match(native.detail, /no accessible Linux render device/);
+  assert.match(native.detail, /WebGL remains available/);
+  assert.match(cloak.detail, /automatic compatibility backend/);
+});
+
 test("doctor output groups checks and marks each status", () => {
   const text = formatDoctorChecks(doctorChecks(READY_REPORT));
   assert.match(text, /^Runtime$/m);

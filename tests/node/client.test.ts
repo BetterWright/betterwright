@@ -140,7 +140,7 @@ test("chromiumArgs reach the worker config and reserved switches fail at constru
     );
     assert.throws(
       () => new BetterWright({ chromiumArgs: ["--disable-software-rasterizer"] }),
-      { name: "TypeError", message: /manages the software renderer/ },
+      { name: "TypeError", message: /retain its WebGL software fallback/ },
     );
   } finally {
     await defaults.close();

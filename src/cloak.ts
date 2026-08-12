@@ -4,6 +4,18 @@ import { pathToFileURL } from "node:url";
 
 let cloakModulePromise = null;
 
+function versionMajor(value) {
+  return Number.parseInt(String(value || "").split(".")[0], 10);
+}
+
+function storedProfileVersion(profileDir, readFileSync = fs.readFileSync) {
+  try {
+    return readFileSync(path.join(profileDir, "Last Version"), "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Guard against opening a profile that a newer Chromium already upgraded.
  * Chromium records its version in a "Last Version" file and does not downgrade
@@ -15,16 +27,11 @@ let cloakModulePromise = null;
  * unparseable version, or a fresh profile, is a no-op.
  */
 export function assertProfileNotNewer(profileDir, runningVersion) {
-  const major = (value) => Number.parseInt(String(value || "").split(".")[0], 10);
-  const runningMajor = major(runningVersion);
+  const runningMajor = versionMajor(runningVersion);
   if (!Number.isFinite(runningMajor)) return;
-  let stored;
-  try {
-    stored = fs.readFileSync(path.join(profileDir, "Last Version"), "utf8").trim();
-  } catch {
-    return; /* fresh profile, or Chromium has not written the marker yet */
-  }
-  const profileMajor = major(stored);
+  const stored = storedProfileVersion(profileDir);
+  if (!stored) return; /* fresh profile, or Chromium has not written the marker yet */
+  const profileMajor = versionMajor(stored);
   if (Number.isFinite(profileMajor) && profileMajor > runningMajor) {
     throw new Error(
       `Browser profile at ${profileDir} was upgraded by a newer Chromium ` +
@@ -37,6 +44,37 @@ export function assertProfileNotNewer(profileDir, runningVersion) {
         "or point BETTERWRIGHT_HOME at a separate directory per backend.",
     );
   }
+}
+
+/**
+ * Keep a lower-version compatibility backend away from a profile upgraded by
+ * newer Chromium. The original profile is preserved in place; the stable
+ * nested path gives the compatibility backend persistence across restarts.
+ */
+export function compatibleBrowserProfile(profileDir, runningVersion, {
+  readFileSync = fs.readFileSync,
+} = {}) {
+  const runningMajor = versionMajor(runningVersion);
+  const stored = storedProfileVersion(profileDir, readFileSync);
+  const profileMajor = versionMajor(stored);
+  if (
+    !Number.isFinite(runningMajor) ||
+    !Number.isFinite(profileMajor) ||
+    profileMajor <= runningMajor
+  ) {
+    return { profileDir, warning: null };
+  }
+  const isolated = path.join(
+    profileDir,
+    `.betterwright-compat-chromium-${runningMajor}`,
+  );
+  return {
+    profileDir: isolated,
+    warning:
+      `The existing browser profile was upgraded by Chromium ${stored}; ` +
+      `the Chromium ${runningVersion} compatibility backend is using ${isolated} ` +
+      "instead. The original profile and its logins were preserved.",
+  };
 }
 
 function isFreeBinary(binaryInfo, platformPrefix, versionPrefix) {
@@ -104,21 +142,10 @@ export function chromiumForkNeedsSoftwareGpu({
   return true;
 }
 
-/** Native fork arguments: guarded WebRTC, graphics, and fingerprint seed. */
-export function managedChromiumForkArgs(
-  fingerprintSeed,
-  { softwareGpu = chromiumForkNeedsSoftwareGpu() }: any = {},
-) {
+/** Native fork arguments: guarded WebRTC and a stable fingerprint seed. */
+export function managedChromiumForkArgs(fingerprintSeed) {
   return [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
-    // Chromium 151 no longer guarantees automatic software WebGL fallback.
-    // On Linux hosts without an accessible DRI device, explicitly use the
-    // packaged SwANGLE renderer so ordinary WebGL remains available. This is
-    // the normal ANGLE GL driver, not the lower-security
-    // --enable-unsafe-swiftshader WebGL fallback.
-    ...(softwareGpu
-      ? ["--use-gl=angle", "--use-angle=swiftshader"]
-      : []),
     // Chromium 151 otherwise keeps a spare renderer resident beside the page
     // and Top Chrome WebUI renderers. Two is a soft ceiling: Chromium still
     // creates site-isolated renderers when security requires them, but it does

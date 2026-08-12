@@ -109,6 +109,29 @@ test("all published platform layouts select native BetterChromium", () => {
   }
 });
 
+test("GPU-less Linux selects Cloak even when the native artifact is explicit", () => {
+  assert.deepEqual(
+    selectManagedBrowserBackend({
+      chromiumFork: "/managed/betterchromium",
+      env: {},
+      platform: "linux",
+      arch: "x64",
+      softwareGpu: true,
+    }),
+    { browser: "cloak", cloakFallback: "gpu-unavailable" },
+  );
+  assert.deepEqual(
+    selectManagedBrowserBackend({
+      chromiumFork: "/managed/betterchromium",
+      env: { BETTERWRIGHT_CHROMIUM_PATH: "/managed/betterchromium" },
+      platform: "linux",
+      arch: "x64",
+      softwareGpu: true,
+    }),
+    { browser: "cloak", cloakFallback: "gpu-unavailable" },
+  );
+});
+
 test("explicit off forces managed CloakBrowser even with an artifact", () => {
   assert.equal(
     resolveChromiumForkBinary({

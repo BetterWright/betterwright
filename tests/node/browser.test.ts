@@ -26,13 +26,6 @@ if (!ready && process.env.BETTERWRIGHT_REQUIRE_BROWSER) {
 const opts = {
   skip: ready ? false : `browser runtime not ready (doctor browser: ${browserStatus.browser})`,
 };
-const nativeForkOpts = {
-  skip:
-    browserStatus.browser === "chromium-fork"
-      ? false
-      : `requires BetterChromium (doctor browser: ${browserStatus.browser})`,
-};
-
 function tempHome() {
   return makeTempDir("betterwright-test-");
 }
@@ -109,7 +102,7 @@ test("navigate and read the title", opts, async () => {
   }
 });
 
-test("BetterChromium keeps WebGL available with its native identity", nativeForkOpts, async () => {
+test("the selected managed browser keeps WebGL available with a coherent identity", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
     const result = await bw.run(`return await page.evaluate(() => {
@@ -129,14 +122,33 @@ test("BetterChromium keeps WebGL available with its native identity", nativeFork
         renderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : null,
         extensions: gl.getSupportedExtensions()?.length || 0,
         pixels: [...pixels],
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
       };
     });`);
     assert.equal(result.ok, true, result.error);
     assert.equal(result.result.available, true);
-    assert.equal(result.result.vendor, "Google Inc. (Apple)");
-    assert.match(result.result.renderer, /ANGLE Metal Renderer: Apple M4 Pro/);
+    assert.equal(typeof result.result.vendor, "string");
+    assert.ok(result.result.vendor.length > 0);
+    assert.equal(typeof result.result.renderer, "string");
+    assert.ok(result.result.renderer.length > 0);
     assert.ok(result.result.extensions > 0);
-    assert.equal(result.result.pixels.length, 4);
+    for (const [index, actual] of result.result.pixels.entries()) {
+      assert.ok(Math.abs(actual - [64, 128, 191, 255][index]) <= 1);
+    }
+    if (browserStatus.browser === "chromium-fork") {
+      assert.equal(result.result.vendor, "Google Inc. (Apple)");
+      assert.match(result.result.renderer, /ANGLE Metal Renderer: Apple M4 Pro/);
+      assert.equal(result.result.platform, "MacIntel");
+      assert.match(result.result.userAgent, /Macintosh/);
+    } else if (/Macintosh/.test(result.result.userAgent)) {
+      assert.equal(result.result.platform, "MacIntel");
+    } else if (/Windows/.test(result.result.userAgent)) {
+      assert.equal(result.result.platform, "Win32");
+    } else {
+      assert.match(result.result.userAgent, /Linux/);
+      assert.match(result.result.platform, /Linux/);
+    }
   } finally {
     await bw.close();
   }
