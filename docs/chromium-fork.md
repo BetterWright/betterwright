@@ -48,7 +48,9 @@ artifacts/
   win-x64/betterchromium.exe
 ```
 
-No renamed public archive is currently listed until rebuilt BetterChromium bytes have verified SHA-256 checksums. Windows x64 has a defined build and package layout, but it must remain absent from the download manifest until its release archive checksum is verified.
+The public manifest contains verified macOS arm64, Linux x64, and Windows x64
+archives. A platform archive is accepted only when its complete bytes match the
+SHA-256 value pinned in `src/chromium-fork.ts`.
 
 `BETTERWRIGHT_CHROMIUM_PATH` takes precedence over
 `BETTERWRIGHT_CHROMIUM_ROOT`. Configured paths must be absolute and must exist;
@@ -88,6 +90,18 @@ The fork is launched through stock `playwright-core` over normal CDP. Custom
 behavior lives in Chromium/V8 (deferred inspector console delivery). No
 page-world stealth shim is installed. Patchright/`stealthRuntimeFix` is
 rejected when the fork is configured.
+
+## Runtime Efficiency
+
+The managed launch profile applies a soft renderer-process ceiling of two.
+That removes Chromium 151's unused spare renderer for the normal one-page
+workload while retaining Chromium's ability to exceed the ceiling whenever
+site isolation requires another process.
+
+Screenshots are encoded with Playwright's CSS-pixel scale. This does not change
+the page viewport, device pixel ratio, screen metrics, canvas/WebGL rendering,
+or WebGPU identity. It only avoids storing four physical pixels for every CSS
+pixel in proof artifacts produced by the captured DPR-2 profile.
 
 ## Identity
 

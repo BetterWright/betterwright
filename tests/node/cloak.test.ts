@@ -7,6 +7,7 @@ import path from "node:path";
 import { test } from "node:test";
 import {
   assertProfileNotNewer,
+  managedChromiumForkArgs,
   managedCloakArgs,
   managedCloakViewport,
 } from "../../dist/src/cloak.js";
@@ -27,6 +28,18 @@ test("managed Cloak arguments omit resolver rules and suppress bad-flag bars", (
     args.some((arg) => arg.startsWith("--host-resolver-rules")),
     false,
   );
+});
+
+test("native fork keeps one warm page renderer without disabling site isolation", () => {
+  assert.deepEqual(managedChromiumForkArgs("12345"), [
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--renderer-process-limit=2",
+    "--fingerprint=12345",
+  ]);
+  assert.deepEqual(managedChromiumForkArgs(""), [
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--renderer-process-limit=2",
+  ]);
 });
 
 test("managed Cloak viewports stay coherent on affected builds", () => {

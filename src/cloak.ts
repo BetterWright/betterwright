@@ -82,6 +82,12 @@ export function managedCloakArgs(fingerprintSeed) {
 export function managedChromiumForkArgs(fingerprintSeed) {
   return [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    // Chromium 151 otherwise keeps a spare renderer resident beside the page
+    // and Top Chrome WebUI renderers. Two is a soft ceiling: Chromium still
+    // creates site-isolated renderers when security requires them, but it does
+    // not retain an unused ~120 MiB process for a workload that already has a
+    // warm persistent browser.
+    "--renderer-process-limit=2",
     ...(fingerprintSeed ? [`--fingerprint=${fingerprintSeed}`] : []),
   ];
 }
