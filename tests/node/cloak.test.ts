@@ -31,7 +31,7 @@ test("managed Cloak arguments omit resolver rules and suppress bad-flag bars", (
 });
 
 test("native fork keeps one warm page renderer without disabling site isolation", () => {
-  assert.deepEqual(managedChromiumForkArgs("12345"), [
+  assert.deepEqual(managedChromiumForkArgs("12345", { softwareGpu: false }), [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--renderer-process-limit=2",
     "--fingerprint=12345",
