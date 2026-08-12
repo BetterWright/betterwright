@@ -94,6 +94,15 @@ jobs:
       - name: Install managed browsers
         if: steps.existing.outputs.published != 'true'
         run: node dist/bin/betterwright.js setup
+      - name: Enable Chromium sandbox user namespaces
+        if: steps.existing.outputs.published != 'true'
+        shell: bash
+        run: |
+          # BetterChromium keeps Chromium's sandbox enabled; its Linux sandbox
+          # needs unprivileged user namespaces on AppArmor-restricted runners.
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - name: Verify BetterChromium update
         if: steps.existing.outputs.published != 'true'
         shell: bash

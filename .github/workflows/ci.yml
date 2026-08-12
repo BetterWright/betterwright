@@ -81,6 +81,14 @@ jobs:
           key: managed-browsers-${{ runner.os }}-cloak-${{ steps.browser_pins.outputs.cloak }}-chromium-${{ steps.browser_pins.outputs.chromium }}
       - name: Install managed browsers
         run: node dist/bin/betterwright.js setup
+      - name: Enable Chromium sandbox user namespaces
+        shell: bash
+        run: |
+          # BetterChromium keeps Chromium's sandbox enabled; its Linux sandbox
+          # needs unprivileged user namespaces on AppArmor-restricted runners.
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
       # broken BetterChromium install cannot report green by skipping tests.
       - run: npm test
