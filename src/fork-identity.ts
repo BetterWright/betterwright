@@ -1,119 +1,118 @@
-// Fork identity: a realistic consumer macOS fingerprint for the native
-// Chromium fork, replacing the host identity (typically a headless Linux
-// server, which abuse-score engines weight heavily).
+// Native-fork identity contract. Capture constants live in a versioned data
+// module; this file validates configuration and materializes an immutable
+// launch/context profile without changing page-world APIs.
 
 import fs from "node:fs";
 import path from "node:path";
-//
-// Every value below was captured from a real MacBook Pro 14" (Mac16,8,
-// Apple M4 Pro, 12 cores, 24 GB, macOS 26.6, 1800x1169@2x scaled display)
-// running genuine Google Chrome 150.0.7871.129 — the exact version the fork
-// pins. Values are version-parameterized so a future version bump only
-// changes BETTERWRIGHT_CHROMIUM_VERSION.
-//
-// Application is two-layer:
-//   1. Chromium layer: launch flags (--fingerprint-platform, window
-//      geometry, device scale factor) plus the baseline context userAgent.
-//   2. CDP emulation layer: Emulation.setUserAgentOverride with full
-//      UserAgentMetadata per page. This is the DevTools emulation protocol —
-//      no page-world JavaScript shims, so nothing is observable via getter
-//      inspection or Function.prototype.toString probes.
-//
-// Surfaces CDP cannot reach (WebGL renderer, canvas/audio, hardware
-// concurrency on some builds, fonts) are binary patches in the fork tree —
-// see docs/chromium-fork-patches.md.
 
-/**
- * Build the macOS identity for a Chromium version.
- * @param {string} chromiumVersion e.g. "150.0.7871.129"
- */
-export function forkMacIdentity(chromiumVersion) {
-  const version = String(chromiumVersion || "").trim();
-  const major = version.split(".")[0];
-  return {
-    platform: "macos",
+import { CHROMIUM_151_MACOS_M4_PRO_PROFILE } from "./fork-identity-profile-151.js";
 
-    // Headed consumer-Chrome UA (real headless inserts "HeadlessChrome";
-    // masked here and by the binary patch).
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-      `(KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`,
+const CHROMIUM_VERSION_PATTERN = /^\d+\.\d+\.\d+\.\d+$/;
 
-    // navigator.platform — set through Emulation.setUserAgentOverride's
-    // platform parameter, no JS patch required.
-    navigatorPlatform: "MacIntel",
-    acceptLanguage: "en-US,en",
+function canonicalLocale(locale) {
+  const configured = String(locale || "").trim();
+  if (!configured) throw new TypeError("Fork identity locale must be a non-empty BCP 47 tag.");
+  let parsed;
+  try {
+    parsed = new Intl.Locale(configured);
+  } catch {
+    throw new TypeError(`Invalid fork identity locale: ${configured}`);
+  }
+  const canonical = parsed.toString();
+  if (canonical.includes("-u-") || canonical.includes("-x-")) {
+    throw new TypeError("Fork identity locale must not contain Unicode or private-use extensions.");
+  }
+  return { canonical, language: parsed.language };
+}
 
-    // Sec-CH-UA* request headers and navigator.userAgentData, exactly as
-    // emitted by real Google Chrome 150 on macOS 26.6 (Apple Silicon).
-    userAgentMetadata: {
-      brands: [
-        { brand: "Not;A=Brand", version: "8" },
-        { brand: "Chromium", version: major },
-        { brand: "Google Chrome", version: major },
-      ],
-      fullVersionList: [
-        { brand: "Not;A=Brand", version: "8.0.0.0" },
-        { brand: "Chromium", version },
-        { brand: "Google Chrome", version },
-      ],
-      fullVersion: version,
-      platform: "macOS",
-      platformVersion: "26.6.0",
-      architecture: "arm",
-      model: "",
-      mobile: false,
-      bitness: "64",
-      wow64: false,
-    },
-
-    // M4 Pro: 12 logical cores; deviceMemory is Chrome's bucketed value as
-    // reported on the real 24 GB machine.
-    hardwareConcurrency: 12,
-    deviceMemory: 16,
-
-    // 14" MacBook Pro at the 1800x1169 "More Space" scaled resolution, DPR
-    // 2. availHeight 1049 = 1169 - 39px menu bar - 81px visible Dock, the
-    // real NSScreen.visibleFrame on the capture machine.
-    screen: {
-      width: 1800,
-      height: 1169,
-      availWidth: 1800,
-      availHeight: 1049,
-      colorDepth: 24,
-      pixelDepth: 24,
-      devicePixelRatio: 2,
-    },
-
-    // Only patchable in the binary (docs/chromium-fork-patches.md). Captured
-    // from the real machine's WebGL2 context.
-    webgl: {
-      unmaskedVendor: "Google Inc. (Apple)",
-      unmaskedRenderer:
-        "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
-    },
-  };
+/** Derive Chromium's Accept-Language preference from one configured locale. */
+export function acceptLanguageForLocale(locale) {
+  const { canonical, language } = canonicalLocale(locale);
+  return canonical === language ? canonical : `${canonical},${language};q=0.9`;
 }
 
 /**
- * Apply the identity to one page over CDP. Best-effort per command: an
- * unrecognized emulation command on an older fork build must not break
- * page setup.
+ * Build the immutable Chromium 151 macOS identity contract.
+ * The browser version is runtime data; all captured hardware values are
+ * sourced from CHROMIUM_151_MACOS_M4_PRO_PROFILE.
  */
-async function applyForkIdentityToPage(cdp, identity) {
-  await cdp.send("Emulation.setUserAgentOverride", {
-    userAgent: identity.userAgent,
-    acceptLanguage: identity.acceptLanguage,
-    platform: identity.navigatorPlatform,
-    userAgentMetadata: identity.userAgentMetadata,
-  });
-  try {
-    await cdp.send("Emulation.setHardwareConcurrencyOverride", {
-      hardwareConcurrency: identity.hardwareConcurrency,
-    });
-  } catch {
-    // Not available on all Chromium builds; the binary patch covers it.
+export function forkMacIdentity(chromiumVersion, { locale = "en-US" } = {}) {
+  const version = String(chromiumVersion || "").trim();
+  if (!CHROMIUM_VERSION_PATTERN.test(version)) {
+    throw new TypeError(
+      `Fork identity Chromium version must have four numeric components; got ${version || "empty"}.`,
+    );
   }
+  const major = Number(version.split(".")[0]);
+  const profile = CHROMIUM_151_MACOS_M4_PRO_PROFILE;
+  if (major !== profile.chromiumMajor) {
+    throw new RangeError(
+      `Identity profile ${profile.id} supports Chromium ${profile.chromiumMajor}, not ${major}.`,
+    );
+  }
+  const { canonical: configuredLocale } = canonicalLocale(locale);
+  const grease = profile.userAgentMetadata.greaseBrand;
+  const brands = Object.freeze([
+    grease,
+    Object.freeze({ brand: "Chromium", version: String(major) }),
+    Object.freeze({ brand: "Google Chrome", version: String(major) }),
+  ]);
+  const fullVersionList = Object.freeze([
+    Object.freeze({ brand: grease.brand, version: `${grease.version}.0.0.0` }),
+    Object.freeze({ brand: "Chromium", version }),
+    Object.freeze({ brand: "Google Chrome", version }),
+  ]);
+  return Object.freeze({
+    profileId: profile.id,
+    profileSchemaVersion: profile.schemaVersion,
+    chromiumVersion: version,
+    locale: configuredLocale,
+    acceptLanguage: acceptLanguageForLocale(configuredLocale),
+    platform: profile.platform,
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      `(KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`,
+    navigatorPlatform: profile.navigatorPlatform,
+    userAgentMetadata: Object.freeze({
+      brands,
+      fullVersionList,
+      fullVersion: version,
+      platform: profile.userAgentMetadata.platform,
+      platformVersion: profile.userAgentMetadata.platformVersion,
+      architecture: profile.userAgentMetadata.architecture,
+      model: profile.userAgentMetadata.model,
+      mobile: profile.userAgentMetadata.mobile,
+      bitness: profile.userAgentMetadata.bitness,
+      wow64: profile.userAgentMetadata.wow64,
+    }),
+    hardwareConcurrency: profile.hardwareConcurrency,
+    deviceMemory: profile.deviceMemory,
+    screen: profile.screen,
+    media: profile.media,
+    webgl: profile.webgl,
+    webgpu: profile.webgpu,
+  });
+}
+
+/** Context options that must agree with the native fork identity at launch. */
+export function forkIdentityContextOptions(identity) {
+  if (!identity || typeof identity.userAgent !== "string" || !identity.locale) {
+    throw new TypeError("A validated fork identity is required.");
+  }
+  return Object.freeze({ userAgent: identity.userAgent, locale: identity.locale });
+}
+
+/** Native launch geometry for the versioned identity capture. */
+export function forkIdentityGeometryArgs(identity, { headedInvisible = false } = {}) {
+  if (!identity?.screen || identity.profileId !== CHROMIUM_151_MACOS_M4_PRO_PROFILE.id) {
+    throw new TypeError("A validated Chromium 151 macOS fork identity is required.");
+  }
+  const args = [
+    `--window-size=${identity.screen.width},${identity.screen.height}`,
+    `--force-device-scale-factor=${identity.screen.devicePixelRatio}`,
+  ];
+  if (headedInvisible) args.push("--window-position=32000,32000");
+  return Object.freeze(args);
 }
 
 /** Absolute path to the artifact's `fonts/ttf` directory, or null if absent. */
@@ -127,13 +126,6 @@ export function forkFontsDir(forkBinary) {
   }
 }
 
-/**
- * Point the fork's fontconfig at the bundled macOS-metric font set
- * (research/assemble-mac-fonts.sh; ships as <artifact>/fonts/ttf next to the
- * binary). The conf is generated at launch so absolute paths follow wherever
- * the artifact is deployed. Returns null when no font bundle is present —
- * the fork then exposes the host fontconfig, which is a known Linux tell.
- */
 export function prepareForkFontsConfig({ forkBinary, runtimeDir }) {
   const fontsDir = forkFontsDir(forkBinary);
   if (!fontsDir) return null;
@@ -155,29 +147,4 @@ export function prepareForkFontsConfig({ forkBinary, runtimeDir }) {
     { mode: 0o600 },
   );
   return { confPath, cacheDir, fontsDir };
-}
-
-/**
- * Install the identity on a persistent context: all existing pages plus
- * every page created later. Pair with the context-level `userAgent`
- * baseline so the first navigation of a brand-new page still sends the
- * right User-Agent before its CDP session attaches.
- *
- * Known gaps (binary patch territory): service-worker requests and
- * WebGL/canvas/audio/hardware surfaces.
- */
-export async function installForkIdentityEmulation(context, identity) {
-  const applyTo = async (page) => {
-    try {
-      const cdp = await context.newCDPSession(page);
-      await applyForkIdentityToPage(cdp, identity);
-    } catch {
-      // Page closed mid-attach or session refused; identity for that page
-      // still carries the context-level userAgent baseline.
-    }
-  };
-  context.on("page", (page) => {
-    void applyTo(page);
-  });
-  await Promise.all(context.pages().map((page) => applyTo(page)));
 }

@@ -45,8 +45,21 @@ test("explicit platform wins over the fork macos default", () => {
 
 test("headedInvisible parks a real window off-screen at preset size", () => {
   const args = v2LaunchArgs({ platform: "macos", headedInvisible: true });
-  assert.ok(args.includes("--window-size=1920,1015"));
+  assert.ok(args.includes("--window-size=1800,1169"));
   assert.ok(args.includes("--window-position=32000,32000"));
+});
+
+test("launch plan derives Accept-Language and canonical locale", () => {
+  const plan = buildV2LaunchPlan({ locale: "zh-hant-tw", nativeFork: true });
+  assert.equal(plan.identity.locale, "zh-Hant-TW");
+  assert.equal(plan.identity.acceptLanguage, "zh-Hant-TW,zh;q=0.9");
+  assert.ok(plan.args.includes("--lang=zh-Hant-TW"));
+});
+
+test("launch configuration validation is strict", () => {
+  assert.throws(() => buildV2LaunchPlan({ locale: "bad_locale" }), /Invalid fork identity locale/);
+  assert.throws(() => buildV2LaunchPlan({ timezone: "Mars/Olympus" }), /Invalid browser identity timezone/);
+  assert.throws(() => buildV2LaunchPlan({ platform: "android" }), /Unsupported browser identity platform/);
 });
 
 test("geo identity: explicit values win, no lookup performed", async () => {

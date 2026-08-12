@@ -87,7 +87,7 @@ function assertManagedCloakOnly(options) {
     .toLowerCase();
   if (browser !== "cloak") {
     throw new TypeError(
-      'BetterWright only supports the managed CloakBrowser backend; browser must be "cloak".',
+      'BetterWright only supports the managed BetterWright browser backend; browser must be "cloak".',
     );
   }
   if (String(options.executablePath || "").trim()) {
@@ -297,7 +297,7 @@ export class BetterWright {
    *   parked off-screen, retaining headed compositing without occupying the
    *   visible desktop.
    * @param {"macos"|"windows"|"linux"} [options.platform] identity platform
-   *   presented to sites. The native Chromium fork defaults to "macos" (a
+   *   presented to sites. The BetterChromium fork defaults to "macos" (a
    *   realistic consumer-Mac fingerprint captured from real Chrome on Apple
    *   Silicon); the managed CloakBrowser path defaults to the host platform.
    * @param {string[]} [options.chromiumArgs] extra Chromium switches appended
@@ -505,7 +505,7 @@ export class BetterWright {
         (rootHint && rootHint.toLowerCase() !== "off");
       if (nativeForkConfigured) {
         throw new BrowserError(
-          "stealthRuntimeFix cannot be combined with BetterWright Chromium; " +
+          "stealthRuntimeFix cannot be combined with BetterChromium; " +
             "the native fork requires the pinned stock playwright-core driver.",
         );
       }

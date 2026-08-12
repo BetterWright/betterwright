@@ -36,7 +36,13 @@ export const PI_EVIDENCE_PARAMETERS = {
       type: "string",
       enum: ["initialize", "prove", "audit"],
       description:
-        "Initialize the exact task checklist, prove visible requirements, or audit what remains.",
+        "Initialize a task checklist, prove visible requirements, or audit what remains. A ready, audited checklist may be followed by another initialize.",
+    },
+    name: {
+      type: "string",
+      minLength: 1,
+      description:
+        "For initialize: optional checklist or journey name. Omitted names receive a deterministic fallback.",
     },
     requirements: {
       type: "array",
@@ -417,22 +423,48 @@ export function createPiExtension(options: any = {}) {
     let pendingStartWarning = "";
     let stepCount = 0;
     let checklistInitialized = false;
+    let currentChecklistName = null;
+    let currentChecklistAudited = false;
     let completionNudges = 0;
     const evidenceChecklist = new Map();
+    const archivedChecklists: any[] = [];
     const withLogin = browser
       ? Boolean(browser.vault)
       : !Object.hasOwn(options.browserOptions || {}, "vault") ||
         Boolean(options.browserOptions.vault);
 
-    function checklistState() {
+    function currentChecklistState() {
       const requirements = [...evidenceChecklist.values()];
       const pending = requirements.filter((item) => item.status !== "proven");
       return {
-        initialized: checklistInitialized,
+        name: currentChecklistName,
+        audited: currentChecklistAudited,
         ready: checklistInitialized && pending.length === 0,
         pending: pending.map((item) => item.id),
         requirements,
       };
+    }
+
+    function checklistState() {
+      const currentChecklist = currentChecklistState();
+      return {
+        initialized: checklistInitialized,
+        ready: currentChecklist.ready,
+        pending: currentChecklist.pending,
+        requirements: currentChecklist.requirements,
+        currentChecklist,
+        archivedChecklists,
+      };
+    }
+
+    function nextChecklistName() {
+      const used = new Set([
+        currentChecklistName,
+        ...archivedChecklists.map((checklist) => checklist.name),
+      ]);
+      let index = archivedChecklists.length + 1;
+      while (used.has(`checklist-${index}`)) index += 1;
+      return `checklist-${index}`;
     }
 
     function checklistResult(extra: any = {}) {
@@ -571,24 +603,43 @@ export function createPiExtension(options: any = {}) {
     async function executeEvidence(params, signal) {
       const operation = String(params.operation || "");
       if (operation === "initialize") {
-        if (checklistInitialized) {
+        const existing = currentChecklistState();
+        if (checklistInitialized && !existing.ready) {
           throw new Error(
-            "browser_evidence is already initialized; prove or audit the existing checklist.",
+            "browser_evidence cannot replace a pending checklist; prove every requirement and audit it while ready first.",
+          );
+        }
+        if (checklistInitialized && !existing.audited) {
+          throw new Error(
+            "browser_evidence cannot replace a ready checklist before it has been audited.",
           );
         }
         if (!Array.isArray(params.requirements) || !params.requirements.length) {
           throw new Error("initialize requires at least one task requirement.");
         }
+        const requestedName =
+          params.name === undefined ? "" : String(params.name).trim();
+        if (params.name !== undefined && !requestedName) {
+          throw new Error("initialize name must be non-empty when provided.");
+        }
+        const name = requestedName || nextChecklistName();
+        if (
+          name === currentChecklistName ||
+          archivedChecklists.some((checklist) => checklist.name === name)
+        ) {
+          throw new Error(`Checklist name is already in use: ${name}`);
+        }
+        const nextRequirements = new Map();
         for (const input of params.requirements) {
           const id = String(input?.id || "").trim();
           const description = String(input?.description || "").trim();
           if (!id || !description) {
             throw new Error("Every task requirement needs a non-empty id and description.");
           }
-          if (evidenceChecklist.has(id)) {
+          if (nextRequirements.has(id)) {
             throw new Error(`Duplicate task requirement id: ${id}`);
           }
-          evidenceChecklist.set(id, {
+          nextRequirements.set(id, {
             id,
             description,
             status: "pending",
@@ -597,7 +648,15 @@ export function createPiExtension(options: any = {}) {
             proofUrl: null,
           });
         }
+        if (checklistInitialized) archivedChecklists.push(existing);
+        evidenceChecklist.clear();
+        for (const [id, requirement] of nextRequirements) {
+          evidenceChecklist.set(id, requirement);
+        }
         checklistInitialized = true;
+        currentChecklistName = name;
+        currentChecklistAudited = false;
+        completionNudges = 0;
         return checklistResult({
           instruction:
             "Browse until each item is visibly established, then use browser_evidence prove on the page that shows it.",
@@ -608,6 +667,7 @@ export function createPiExtension(options: any = {}) {
         throw new Error("Initialize browser_evidence before proving or auditing.");
       }
       if (operation === "audit") {
+        if (currentChecklistState().ready) currentChecklistAudited = true;
         const state = checklistState();
         return checklistResult({
           instruction: state.ready
@@ -724,11 +784,11 @@ export function createPiExtension(options: any = {}) {
       name: "browser_evidence",
       label: "BetterWright Evidence Checklist",
       description:
-        "Track atomic browser-task requirements and capture grounded proof screenshots. Initialize before browsing, prove only requirements visible on the current page, then audit before finishing.",
+        "Track named, sequential browser-task checklists and capture grounded proof screenshots. Initialize before browsing, prove only requirements visible on the current page, and audit while ready. After that, initialize may archive the completed checklist and start the next journey.",
       promptSnippet:
-        "Initialize the exact task checklist, capture requirement-linked proof frames, and audit completion",
+        "Initialize named task checklists, capture requirement-linked proof frames, audit completion, and retain prior journeys",
       promptGuidelines: [
-        "Use browser_evidence initialize before browser calls with one atomic item per explicit filter, ranking, action, and requested datum; prove only items visible in the attached frame, and audit before the final answer.",
+        "Use browser_evidence initialize before browser calls with an optional non-empty journey name and one atomic item per explicit filter, ranking, action, and requested datum; prove only items visible in the attached frame, and audit while ready before the final answer or before initializing the next sequential journey.",
       ],
       parameters: PI_EVIDENCE_PARAMETERS,
       execute: (_id, params, signal) => executeEvidence(params, signal),

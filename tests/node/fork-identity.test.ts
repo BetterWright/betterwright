@@ -4,50 +4,66 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  acceptLanguageForLocale,
   forkFontsDir,
+  forkIdentityContextOptions,
+  forkIdentityGeometryArgs,
   forkMacIdentity,
   prepareForkFontsConfig,
 } from "../../dist/src/fork-identity.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
-test("fork mac identity carries no linux or headless markers", () => {
-  const id = forkMacIdentity("150.0.7871.129");
-  assert.match(id.userAgent, /Macintosh; Intel Mac OS X 10_15_7/);
-  assert.match(id.userAgent, /Chrome\/150\.0\.0\.0 Safari\/537\.36$/);
+test("Chromium 151 identity exposes a stable versioned contract", () => {
+  const id = forkMacIdentity("151.0.7890.1", { locale: "de-de" });
+  assert.equal(id.profileId, "macos-m4-pro-chromium-151-v1");
+  assert.equal(id.profileSchemaVersion, 1);
+  assert.equal(id.chromiumVersion, "151.0.7890.1");
+  assert.equal(id.locale, "de-DE");
+  assert.equal(id.acceptLanguage, "de-DE,de;q=0.9");
+  assert.ok(Object.isFrozen(id));
+  assert.ok(Object.isFrozen(id.screen));
+  assert.match(id.userAgent, /Chrome\/151\.0\.0\.0 Safari\/537\.36$/);
   assert.doesNotMatch(id.userAgent, /Linux|X11|Headless/);
   assert.equal(id.navigatorPlatform, "MacIntel");
   assert.equal(id.userAgentMetadata.platform, "macOS");
   assert.equal(id.userAgentMetadata.architecture, "arm");
-  assert.equal(id.userAgentMetadata.mobile, false);
 });
 
-test("fork mac identity tracks the pinned chromium version", () => {
-  const id = forkMacIdentity("151.1.2.3");
-  const brands = id.userAgentMetadata.fullVersionList;
-  assert.deepEqual(
-    brands.find((b) => b.brand === "Chromium"),
-    { brand: "Chromium", version: "151.1.2.3" },
-  );
-  assert.deepEqual(
-    brands.find((b) => b.brand === "Google Chrome"),
-    { brand: "Google Chrome", version: "151.1.2.3" },
-  );
-  assert.ok(
-    id.userAgentMetadata.brands.some(
-      (b) => b.brand === "Google Chrome" && b.version === "151",
-    ),
-  );
-  assert.match(id.userAgent, /Chrome\/151\.0\.0\.0/);
+test("Accept-Language is derived from configured locale", () => {
+  assert.equal(acceptLanguageForLocale("en-US"), "en-US,en;q=0.9");
+  assert.equal(acceptLanguageForLocale("ja"), "ja");
+  assert.equal(acceptLanguageForLocale("zh-hant-tw"), "zh-Hant-TW,zh;q=0.9");
 });
 
-test("fork mac identity matches real consumer hardware", () => {
-  const id = forkMacIdentity("150.0.7871.129");
+test("fork identity rejects malformed or unsupported configuration", () => {
+  assert.throws(() => forkMacIdentity("151"), /four numeric components/);
+  assert.throws(() => forkMacIdentity("150.0.7871.129"), /supports Chromium 151/);
+  assert.throws(
+    () => forkMacIdentity("151.0.7890.1", { locale: "not_a_locale" }),
+    /Invalid fork identity locale/,
+  );
+  assert.throws(() => acceptLanguageForLocale("en-US-u-ca-gregory"), /extensions/);
+});
+
+test("identity context and geometry stay coherent with the capture", () => {
+  const id = forkMacIdentity("151.0.7890.1", { locale: "fr-CA" });
+  assert.deepEqual(forkIdentityContextOptions(id), {
+    userAgent: id.userAgent,
+    locale: "fr-CA",
+  });
+  assert.deepEqual(forkIdentityGeometryArgs(id), [
+    "--window-size=1800,1169",
+    "--force-device-scale-factor=2",
+  ]);
+  assert.deepEqual(forkIdentityGeometryArgs(id, { headedInvisible: true }), [
+    "--window-size=1800,1169",
+    "--force-device-scale-factor=2",
+    "--window-position=32000,32000",
+  ]);
   assert.equal(id.hardwareConcurrency, 12);
   assert.equal(id.deviceMemory, 16);
-  assert.equal(id.screen.devicePixelRatio, 2);
-  assert.ok(id.screen.availHeight < id.screen.height); // menu bar + dock
+  assert.equal(id.screen.availHeight, 1049);
   assert.match(id.webgl.unmaskedRenderer, /ANGLE Metal Renderer: Apple M4 Pro/);
-  assert.equal(id.webgl.unmaskedVendor, "Google Inc. (Apple)");
 });
 
 test("fonts config is generated next to the binary's font bundle", () => {

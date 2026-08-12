@@ -159,7 +159,7 @@ test(
 );
 
 test(
-  "captcha.click reuses Obscura image-grid bounds against the resident DOM",
+  "captcha.click activates an image-grid target in the native browser",
   opts,
   async () => {
     const server = await startFixtureServer();

@@ -64,31 +64,28 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
-      # The release default needs both engines: Obscura stays resident for
-      # ordinary headless work and Cloak supplies the compatibility renderer.
-      # Exact version keys invalidate either cached download when its pin moves;
-      # setup still validates a cache hit and repairs a partial install.
+      # BetterChromium is the release default. CloakBrowser is
+      # tested separately as the explicit compatibility opt-out.
       - name: Read the managed browser versions
         id: browser_pins
         shell: bash
         run: |
           echo "cloak=$(node -p 'require("./package.json").dependencies.cloakbrowser')" >> "$GITHUB_OUTPUT"
-          echo "obscura=$(sed -n 's/^export const OBSCURA_VERSION = "\([^"]*\)";/\1/p' src/obscura.ts)" >> "$GITHUB_OUTPUT"
+          echo "chromium=$(node -e 'import("./dist/src/chromium-fork.js").then(m => console.log(m.BETTERWRIGHT_CHROMIUM_VERSION))')" >> "$GITHUB_OUTPUT"
       - name: Cache the managed browser downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cloakbrowser
-            ~/.betterwright/obscura
-          key: managed-browsers-${{ runner.os }}-cloak-${{ steps.browser_pins.outputs.cloak }}-obscura-${{ steps.browser_pins.outputs.obscura }}
+            ~/.betterwright/chromium
+          key: managed-browsers-${{ runner.os }}-cloak-${{ steps.browser_pins.outputs.cloak }}-chromium-${{ steps.browser_pins.outputs.chromium }}
       - name: Install managed browsers
         run: node dist/bin/betterwright.js setup
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
-      # broken Obscura/Cloak install cannot report green by skipping browser tests.
+      # broken BetterChromium install cannot report green by skipping tests.
       - run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
-          BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Test managed CloakBrowser headed mode
         run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js
 

@@ -22,12 +22,12 @@ test("Chromium fork stays disabled when no runtime path is configured", () => {
     resolveChromiumForkBinary({ env: {}, home: NO_FORK_HOME }),
     null,
   );
-  assert.equal(BETTERWRIGHT_CHROMIUM_VERSION, "150.0.7871.129");
+  assert.equal(BETTERWRIGHT_CHROMIUM_VERSION, "151.0.7922.108");
 });
 
 test("default root discovers a deployed artifact (zero-config fork)", () => {
   const home = "/home/deploy";
-  const binary = path.join(home, ".betterwright", "chromium", "linux-x64", "chrome");
+  const binary = path.join(home, ".betterwright", "chromium", "linux-x64", "betterchromium");
   assert.equal(
     resolveChromiumForkBinary({
       env: {},
@@ -144,10 +144,10 @@ test("artifact root resolves native macOS, Linux, and Windows layouts", () => {
     path.join(
       "/opt/betterwright",
       "mac-arm64",
-      "Chromium.app",
+      "BetterChromium.app",
       "Contents",
       "MacOS",
-      "Chromium",
+      "BetterChromium",
     ),
   );
   assert.equal(
@@ -157,7 +157,7 @@ test("artifact root resolves native macOS, Linux, and Windows layouts", () => {
       arch: "x64",
       existsSync: present,
     }),
-    path.join("/opt/betterwright", "linux-x64", "chrome"),
+    path.join("/opt/betterwright", "linux-x64", "betterchromium"),
   );
   assert.equal(
     resolveChromiumForkBinary({
@@ -166,7 +166,7 @@ test("artifact root resolves native macOS, Linux, and Windows layouts", () => {
       arch: "x64",
       existsSync: present,
     }),
-    path.join("/opt/betterwright", "win-x64", "chrome.exe"),
+    path.join("/opt/betterwright", "win-x64", "betterchromium.exe"),
   );
 });
 
@@ -187,6 +187,6 @@ test("configured fork paths fail closed when missing or unsupported", () => {
         arch: "riscv64",
         existsSync: present,
       }),
-    /No BetterWright Chromium artifact layout/,
+    /No BetterChromium artifact layout/,
   );
 });

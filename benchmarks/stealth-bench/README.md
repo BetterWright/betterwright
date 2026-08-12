@@ -15,15 +15,30 @@ dataset hash.
 ```bash
 node benchmarks/stealth-bench/runner.js \
   --dataset /path/to/browser-use-benchmark/Stealth_Bench_V1.enc \
+  --binary /absolute/path/to/betterchromium \
   --mode headless \
   --task-ids 1,2,3 \
   --output /tmp/betterwright-stealth-headless.json
 ```
 
-Use `--binary /path/to/Chromium` to test a local fork build and
-`--upstream-proxy socks5://...` for an IP-matched proxy run. The runner treats
-CAPTCHAs and anti-bot interstitials as blocked; it explicitly does not solve
-them, because the measurement is clean access rather than solver performance.
+`--binary` is required, must be an existing executable absolute path, and must
+report the pinned BetterChromium version. The runner sets only
+`BETTERWRIGHT_CHROMIUM_PATH`; it removes any conflicting Chromium root and CloakBrowser
+binary override so a missing or invalid fork fails closed instead of silently
+benchmarking another backend.
+
+Use `--upstream-proxy socks5://user:pass@host:port` for an IP-matched proxy run.
+Results retain only the proxy protocol, host, port, and whether authentication
+was configured; credentials, URL path, query, and fragment are omitted. Every
+report records the encrypted dataset hash, pinned Chromium version and release
+build, exact binary SHA-256 and size, mode, model, effort, task selection,
+timeout, and safety controls.
+
+The runner treats CAPTCHAs and anti-bot interstitials as blocked. It prohibits
+CAPTCHA solving and clicking, rejects screenshot calls/artifacts, keeps task
+plaintext in memory only, denies downloads, and stores only task metadata,
+verdicts, and hashes. The measurement is clean access rather than solver
+performance.
 
 The upstream benchmark repository does not publish a repository-wide license.
 Keep its encrypted dataset in the external checkout and do not vendor it here.

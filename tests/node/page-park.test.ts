@@ -35,14 +35,14 @@ function fakePage({ closed = false }: any = {}) {
 
 const deps = (page) => ({ newCDPSession: () => page.newCDPSession() });
 
-test("parking disables page script and stops animation timelines", async () => {
+test("parking freezes the native page lifecycle and stops animation timelines", async () => {
   const page = fakePage();
   assert.equal(await parkPage(page, deps(page)), true);
   assert.equal(isParked(page), true);
   assert.deepEqual(page.sent, [
     "Animation.enable",
     { method: "Animation.setPlaybackRate", playbackRate: 0 },
-    { method: "Emulation.setScriptExecutionDisabled", value: true },
+    { method: "Page.setWebLifecycleState", state: "frozen" },
   ]);
 });
 
@@ -55,21 +55,16 @@ test("parking never purges V8 memory — the call crashes the pinned fork", asyn
   assert.ok(!methods.some((method) => String(method).startsWith("Memory.")));
 });
 
-test("unparking restores script and playback in that order", async () => {
+test("unparking activates the lifecycle before restoring playback", async () => {
   const page = fakePage();
   await parkPage(page, deps(page));
   page.sent.length = 0;
   assert.equal(await unparkPage(page), true);
   assert.equal(isParked(page), false);
-  // Order between the two is not fixed — waking pipelines them — so compare
-  // as a set. What matters is that both landed, with the restoring values.
-  assert.deepEqual(
-    [...page.sent].sort((a, b) => a.method.localeCompare(b.method)),
-    [
-      { method: "Animation.setPlaybackRate", playbackRate: 1 },
-      { method: "Emulation.setScriptExecutionDisabled", value: false },
-    ],
-  );
+  assert.deepEqual(page.sent, [
+    { method: "Page.setWebLifecycleState", state: "active" },
+    { method: "Animation.setPlaybackRate", playbackRate: 1 },
+  ]);
 });
 
 test("parking twice is a no-op, and so is unparking a page that was never parked", async () => {
@@ -177,12 +172,10 @@ test("a wake that overtakes an unfinished park leaves the page running", async (
   await unparkPage(page);
   await parking;
   assert.equal(isParked(page), false);
-  // Script execution must be on when the dust settles, whatever order the
-  // sends landed in.
-  const scriptSends = page.sent.filter(
-    (entry) => entry.method === "Emulation.setScriptExecutionDisabled",
+  const lifecycleSends = page.sent.filter(
+    (entry) => entry.method === "Page.setWebLifecycleState",
   );
-  assert.equal(scriptSends[scriptSends.length - 1]?.value ?? false, false);
+  assert.equal(lifecycleSends[lifecycleSends.length - 1]?.state ?? "active", "active");
 });
 
 test("a park countermanded before it runs never touches the browser", async () => {

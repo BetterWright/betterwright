@@ -9,6 +9,49 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-12
+
+A native-browser overhaul centered on BetterChromium 151. Public platform
+archives are not yet downloadable: their release checksums are still pending.
+
+### Added
+
+- Added reproducible BetterChromium 151 build and packaging definitions for
+  macOS arm64, Linux x64, and Windows x64. All three platform artifact layouts
+  are supported, but archives remain outside the download manifest until their
+  final SHA-256 checksums are verified.
+- Added a browser-process benchmark harness for cold and warm startup,
+  navigation, process-tree memory and CPU, renderer counts, and long-session
+  growth, including native idle-page lifecycle measurements.
+- Added sequential `browser_evidence` checklists for issue
+  [#106](https://github.com/BetterWright/betterwright/issues/106), requiring
+  atomic task requirements to be initialized, visibly proved, and audited
+  before an agent can finish.
+
+### Changed
+
+- Renamed the Chromium fork and its release/artifact identity to
+  BetterChromium, pinned to Chromium 151.
+- Removed Obscura and made native BetterChromium the required/default backend
+  on supported hosts. CloakBrowser remains an explicit compatibility opt-out
+  and is never selected as a silent fallback.
+- Centralized the captured macOS identity so launch flags, browser contexts,
+  rendering surfaces, and WebGPU report one versioned hardware profile.
+- Idle pages now use Chromium's native frozen/active lifecycle with reversible
+  animation scheduling, preserving timers and `requestAnimationFrame` state
+  across parking.
+- Hardened the encrypted Stealth Bench runner to require and fingerprint the
+  intended BetterChromium binary, sanitize proxy metadata, reject CAPTCHA and
+  screenshot paths, and fail closed on backend drift. A three-task sample
+  passed **2/3**; this is a sample result, not a full-benchmark score.
+
+### Fixed
+
+- Issue [#106](https://github.com/BetterWright/betterwright/issues/106) browser
+  tasks no longer complete from an ungrounded aggregate assertion: evidence is
+  collected in checklist order and completion remains blocked while any
+  required item lacks current-page proof.
+
 ## [1.7.2] - 2026-08-11
 
 The stable boundary-validation fix for
@@ -80,17 +123,10 @@ same names and values whenever present.
 
 ## [1.7.0] - 2026-08-07
 
-A browser-backend and agent-efficiency release. The public BetterWright client
-surface remains compatible, while ordinary headless work moves from a
-multi-process Chromium renderer to Obscura's lightweight DOM runtime.
+A browser and agent-efficiency release.
 
 ### Added
 
-- Headless sessions now use checksum-pinned Obscura 0.1.11 for resident DOM,
-  JavaScript, storage, cookie, and guarded network execution. Normal proof PNGs
-  are rendered by one bounded Obscura canvas call from sanitized live state;
-  they no longer start Chromium. Painted debug captures retain the bounded
-  compatibility bridge.
 - Added the frozen, same-origin `site` surface for inspecting application
   assets and request metadata, reading bounded text excerpts, and issuing
   cookie-bearing requests. This provides general client-app tooling without
@@ -110,12 +146,6 @@ multi-process Chromium renderer to Obscura's lightweight DOM runtime.
 
 ### Changed
 
-- `betterwright setup` installs Obscura plus the pixel renderer; `update`
-  refreshes the pinned Obscura release. Headed and explicit `--cloak-only`
-  sessions retain the Chromium/Cloak compatibility backend.
-- Credentials, known provider CAPTCHA frames, and live view promote an Obscura
-  session once to the full compatibility browser and keep it resident for that
-  session. Ordinary browsing and local CAPTCHA stages stay on Obscura.
 - The generated browser skill is 647 words instead of 1,434. The concise form
   won the Qwen 3.8 Max evaluation with 23.1% fewer reported tokens, 19.9% less
   wall time, fewer browser calls, and no browser failures while retaining the
@@ -132,28 +162,9 @@ multi-process Chromium renderer to Obscura's lightweight DOM runtime.
 
 ### Fixed
 
-- Obscura now asks the kernel for an ephemeral port and BetterWright discovers
-  only a loopback listener owned by the spawned child PID/inode, removing the
-  CDP endpoint race reported during review.
 - `site.read()` and `site.request()` cap response bytes while streaming,
   including chunked responses, rather than buffering an unbounded body before
   truncation.
-- Obscura locator compatibility now covers the CSS and internal role, text,
-  label, attribute, state, form, and pointer operations needed by existing
-  BetterWright clients. CAPTCHA tile bounds remain mapped to their resident DOM
-  locators, and pointer actions emit the motion/press sequence challenge
-  listeners expect.
-- Obscura navigation now fails closed through the same URL/search policy as the
-  compatibility browser. APIs that need full browser subsystems—downloads,
-  uploads, service workers, multiple pages or frames, explicit page-network
-  calls, and manual credential entry—promote once without client-side changes.
-- Persistent Obscura profiles now restore and durably save bounded cookies.
-  Native snapshots retain titles, links, and actionable refs, while human
-  click, type, scroll, drag, overlay dismissal, and same-origin challenge-frame
-  discovery stay on the lightweight backend.
-- Promotion and shutdown preserve bounded page state, never replay password
-  values, seed storage before navigation, and stop the owned Obscura process
-  before CDP teardown so failed launches cannot leave a browser orphaned.
 - Cloak 145 headed windows on macOS now use a coherent viewport instead of
   occasionally reporting a viewport taller than the advertised screen.
 
@@ -346,7 +357,7 @@ drop-in replacement for 1.6.0.
   unit suite that surfaced this — 49 failing tests at first contact — now
   passes and gates on Windows.
 - `human.type` actually clears the field before typing on the default
-  BetterWright Chromium fork. Its clear step pressed `Control+A` and trusted
+  BetterChromium fork. Its clear step pressed `Control+A` and trusted
   the browser to select-all, but the fork does not run the select-all editing
   command for synthesized keyboard events, so typed text landed in front of
   the old value. The clear now selects through the element itself, which works
@@ -399,7 +410,7 @@ drop-in replacement for 1.6.0.
 
 ### Added
 
-- The pinned BetterWright Chromium 150 fork now ships for Windows x64 in
+- The pinned BetterChromium 150 fork now ships for Windows x64 in
   addition to macOS arm64 and Linux x64. `betterwright setup` and
   `betterwright update` verify and install the Windows artifact using the
   built-in `tar.exe`, then select it as the zero-configuration default.
@@ -685,7 +696,9 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/BetterWright/betterwright/compare/v1.7.2...v1.8.0
+[1.7.2]: https://github.com/BetterWright/betterwright/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/BetterWright/betterwright/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/BetterWright/betterwright/compare/v1.6.3...v1.7.0
 [1.6.3]: https://github.com/BetterWright/betterwright/compare/v1.6.2...v1.6.3

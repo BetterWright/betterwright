@@ -33,7 +33,7 @@ jobs:
     name: Publish trusted package
     runs-on: ubuntu-latest
     environment: npm
-    # Downloads two browsers and runs the full integration suite before it
+    # Downloads BetterChromium and runs the full integration suite before it
     # publishes. Generous, but bounded: a hung browser launch should fail the
     # release rather than hold the npm environment open for six hours.
     timeout-minutes: 45
@@ -89,30 +89,27 @@ jobs:
       - name: Build TypeScript sources
         if: steps.existing.outputs.published != 'true'
         run: npm run build
-      # The published default is Obscura with Cloak as its compatibility
-      # renderer. Install both so a release cannot reach npm after testing only
-      # the fallback backend.
+      # The published default is BetterChromium. Cloak is tested
+      # separately as an explicit compatibility opt-out.
       - name: Install managed browsers
         if: steps.existing.outputs.published != 'true'
         run: node dist/bin/betterwright.js setup
-      - name: Verify Obscura update
+      - name: Verify BetterChromium update
         if: steps.existing.outputs.published != 'true'
         shell: bash
         run: |
           node dist/bin/betterwright.js update --force
           node -e "
-            import { resolveObscuraBinary } from './dist/src/obscura.js';
-            const binary = resolveObscuraBinary();
-            if (!binary) throw new Error('update did not install discoverable Obscura');
-            console.log('Obscura update ok:', binary);
+            import { resolveChromiumForkBinary } from './dist/src/chromium-fork.js';
+            const binary = resolveChromiumForkBinary();
+            if (!binary) throw new Error('update did not install BetterChromium');
+            console.log('BetterChromium update ok:', binary);
           "
       - name: Run browser integration suite
         if: steps.existing.outputs.published != 'true'
         run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
-          # Keep integration/Cloak e2e on Cloak even if a fork exists on the runner.
-          BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Test managed CloakBrowser headed mode
         if: steps.existing.outputs.published != 'true'
         run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js
@@ -123,11 +120,8 @@ jobs:
       - name: Run final release verification
         if: steps.existing.outputs.published != 'true'
         run: npm run release:check
-        # setup installed both managed browsers for the integration gates
-        # above. Keep the unit suite hermetic so it cannot discover and launch
-        # those real binaries; browser behavior has already been tested here.
+        # Keep the unit suite hermetic; browser behavior was tested above.
         env:
-          BETTERWRIGHT_OBSCURA_ROOT: "off"
           BETTERWRIGHT_CHROMIUM_ROOT: "off"
       - name: Select npm distribution tag
         if: steps.existing.outputs.published != 'true'

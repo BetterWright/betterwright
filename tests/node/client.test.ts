@@ -71,7 +71,7 @@ test("public search result UIs are allowed by default and block is opt-in", asyn
   }
 });
 
-test("CloakBrowser is the managed default", async () => {
+test("the managed browser family remains the public default", async () => {
   const browser = new BetterWright();
   try {
     assert.equal(browser.browserFlavor, "cloak");
@@ -166,11 +166,11 @@ test("headed and headless modes use the same managed Cloak profile", async () =>
 test("stock browsers, custom executables, and CDP attach are rejected", () => {
   assert.throws(
     () => new BetterWright({ browser: "chromium" }),
-    /only supports the managed CloakBrowser backend/,
+    /only supports the managed BetterWright browser backend/g,
   );
   assert.throws(
     () => new BetterWright({ browser: "other" }),
-    /only supports the managed CloakBrowser backend/,
+    /only supports the managed BetterWright browser backend/g,
   );
   assert.throws(
     () => new BetterWright({ executablePath: "/opt/chromium" }),
@@ -190,7 +190,7 @@ test("legacy environment settings cannot re-enable a stock browser", () => {
     process.env.BETTERWRIGHT_BROWSER = "chromium";
     assert.throws(
       () => new BetterWright(),
-      /only supports the managed CloakBrowser backend/,
+      /only supports the managed BetterWright browser backend/g,
     );
     process.env.BETTERWRIGHT_BROWSER = "cloak";
     process.env.BETTERWRIGHT_CONNECT_OVER_CDP = "http://127.0.0.1:9222";
@@ -365,8 +365,7 @@ export async function launchPersistentContext(options) {
   process.env.BETTERWRIGHT_TEST_CLOSE_MARKER = marker;
   const browser = new BetterWright({
     home,
-    // This regression exercises the compatibility browser's launch path;
-    // headed sessions intentionally do not use resident Obscura.
+    // This regression explicitly opts into the Cloak compatibility path.
     headless: false,
     vault: false,
   });

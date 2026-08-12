@@ -17,7 +17,6 @@ import {
 } from "./chromium-fork.js";
 import { forkFontsDir } from "./fork-identity.js";
 import { defaultHome } from "./home.js";
-import { OBSCURA_VERSION, resolveObscuraBinary } from "./obscura.js";
 import { optionalPeerAvailable } from "./optional-peer.js";
 import { staleAgentSkillReport } from "./skill-install.js";
 
@@ -110,13 +109,6 @@ export async function doctorReport() {
   const workerOk = fs.existsSync(worker);
   const cloakOk = cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed;
   const stealth = stealthDriverVersion();
-  let obscura = null;
-  let obscuraError = null;
-  try {
-    obscura = resolveObscuraBinary();
-  } catch (error) {
-    obscuraError = error instanceof Error ? error.message : String(error);
-  }
   let chromiumFork = null;
   let chromiumForkError = null;
   try {
@@ -124,7 +116,11 @@ export async function doctorReport() {
   } catch (error) {
     chromiumForkError = error instanceof Error ? error.message : String(error);
   }
-  const browser = obscura ? "obscura" : chromiumFork ? "chromium-fork" : "cloak";
+  const chromiumOptOut = [
+    process.env.BETTERWRIGHT_CHROMIUM_PATH,
+    process.env.BETTERWRIGHT_CHROMIUM_ROOT,
+  ].some((value) => String(value || "").trim().toLowerCase() === "off");
+  const browser = chromiumFork ? "chromium-fork" : chromiumOptOut ? "cloak" : "unavailable";
   const chromiumForkFonts = chromiumFork ? forkFontsDir(chromiumFork) : null;
   const chromiumForkFontsWarning = missingForkFontsWarning({
     chromiumFork,
@@ -133,12 +129,7 @@ export async function doctorReport() {
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (obscura
-      ? Boolean(chromiumFork || cloakOk)
-      : chromiumFork
-        ? true
-        : cloakOk) &&
-    !obscuraError &&
+    Boolean(chromiumFork || (chromiumOptOut && cloakOk)) &&
     !chromiumForkError;
   return {
     node: process.execPath,
@@ -147,9 +138,6 @@ export async function doctorReport() {
     playwright_core: core,
     playwright_version: version,
     playwright_pinned: PINNED_PLAYWRIGHT_VERSION,
-    obscura,
-    obscura_version: obscura ? OBSCURA_VERSION : null,
-    obscura_error: obscuraError,
     cloakbrowser: cloak.dir,
     cloakbrowser_version: cloak.version,
     cloakbrowser_pinned: PINNED_CLOAKBROWSER_VERSION,
@@ -323,33 +311,51 @@ export function doctorChecks(
   );
   add("Runtime", "Worker", report.worker_ok ? "ok" : "fail", report.worker, report.worker_ok ? null : "The package looks incomplete — reinstall betterwright.");
 
-  if (report.obscura) {
-    add("Browser", "Obscura", "ok", `${report.obscura_version} — resident engine (${report.obscura})`);
-  } else if (report.obscura_error) {
-    add("Browser", "Obscura", "fail", report.obscura_error, "Run `betterwright update`, or unset BETTERWRIGHT_OBSCURA_PATH/ROOT.");
-  } else {
-    add("Browser", "Obscura", "warn", "not installed — using the compatibility backend", "Run `betterwright update`.");
-  }
-
   if (report.chromium_fork) {
-    add("Browser", "Pixel renderer", "ok", `Chromium ${report.chromium_fork_version} — launched only for visual captures`);
+    add(
+      "Browser",
+      "BetterChromium",
+      "ok",
+      `BetterChromium ${report.chromium_fork_version} — ${report.chromium_fork}`,
+    );
     if (report.chromium_fork_fonts_warning) {
       add("Browser", "Fork fonts", "warn", report.chromium_fork_fonts_warning);
     }
   } else if (report.chromium_fork_error) {
-    add("Browser", "Pixel renderer", "fail", report.chromium_fork_error, "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.");
+    add(
+      "Browser",
+      "BetterChromium",
+      "fail",
+      report.chromium_fork_error,
+      "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
+    );
+  } else if (report.browser === "cloak") {
+    add(
+      "Browser",
+      "BetterChromium",
+      "warn",
+      "explicitly disabled — using CloakBrowser compatibility mode",
+      "Run `betterwright setup` and unset BETTERWRIGHT_CHROMIUM_PATH/ROOT to restore the default backend.",
+    );
   } else {
-    add("Browser", "Pixel renderer", report.cloakbrowser_ok ? "ok" : "warn", report.cloakbrowser_ok ? "CloakBrowser (on demand)" : "not installed — screenshots are unavailable", "Run `betterwright setup`.");
+    add(
+      "Browser",
+      "BetterChromium",
+      "fail",
+      "not installed",
+      "Run `betterwright setup`. Use `--cloak-only` only for explicit compatibility mode.",
+    );
   }
   add(
     "Browser",
     "CloakBrowser",
-    report.cloakbrowser_ok ? "ok" : report.chromium_fork || report.obscura ? "warn" : "fail",
+    report.cloakbrowser_ok ? "ok" : report.chromium_fork ? "warn" : "fail",
     report.cloakbrowser_ok
       ? `${report.cloakbrowser_binary_version} (${report.cloakbrowser_binary_tier})` +
-        (report.cloakbrowser_binary ? ` — ${report.cloakbrowser_binary}` : "")
-      : "binary not installed",
-    report.cloakbrowser_ok ? null : "Run `betterwright setup` to download it.",
+        (report.cloakbrowser_binary ? ` — ${report.cloakbrowser_binary}` : "") +
+        (report.browser === "cloak" ? " — explicit compatibility backend" : " — compatibility backend available")
+      : "binary not installed (optional compatibility backend)",
+    report.cloakbrowser_ok ? null : "Optional: run `betterwright setup --cloak-only` to download it.",
   );
   add("Browser", "In use", report.ready ? "ok" : "fail", report.browser, report.ready ? null : "Run `betterwright setup`.");
   // Optional isolated-world stealth driver. Reported here (not only in --json)

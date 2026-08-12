@@ -230,17 +230,16 @@ step from what it sees, in a browser that must still be there next turn:
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
 | [**Human-shaped input**](docs/browser-api.md#human-shaped-interactions) | Curved pointer movement, paced typing, eased wheel — no extra dependency |
-| [**Obscura resident engine**](docs/obscura.md) | Rust/V8 DOM and network execution stays resident; Chromium starts only when pixels are requested |
 | [**Cloaking V2**](docs/cloaking-v2.md) | Coherent native fingerprint: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; the two public reCAPTCHA v3 score-detector demos in the stealth report return a server-verified 0.9 headed and headless |
-| [**Native Chromium fork**](docs/chromium-fork.md) | On-demand pixel renderer: per-profile-stable canvas/audio farbling, platform masking, macOS-metric fonts. Auto-detected at `~/.betterwright/chromium/` on macOS arm64, Linux x64, and Windows x64 |
+| [**BetterChromium**](docs/chromium-fork.md) | Required/default browser on supported Linux x64 and macOS arm64: per-profile-stable canvas/audio farbling, platform masking, macOS-metric fonts. CloakBrowser is explicit compatibility opt-out only |
 | [**Skill packs**](docs/skills.md) | Per-site and per-password-manager guidance the driving agent reads on demand — your own or the built-in loop — surfaced automatically when an open page matches |
 | [**Download approval**](docs/browser-api.md) | Denied by default; a trusted host approves one download run at a time |
 | [**Operator guidance**](docs/agent-prompt.md) | `betterwright skill` / `agentSystemPrompt()` — decisive action on authorized tasks, with optional confirmation/spending guardrails |
 
 ## Install
 
-Requires **Node.js 22+**. Setup downloads the pinned Obscura resident engine
-plus a Chromium/Cloak pixel renderer used only for visual captures. Nothing is
+Requires **Node.js 22+**. Setup downloads the pinned native BetterWright
+Chromium browser. CloakBrowser is available only as an explicit compatibility opt-out. Nothing is
 downloaded as an npm lifecycle side effect, so installs stay predictable with
 `--ignore-scripts`.
 
@@ -253,8 +252,8 @@ betterwright init      # guided: browser + agent wiring + a real page load
 are all available on their own:
 
 ```bash
-betterwright setup     # Obscura + on-demand pixel renderer
-betterwright update    # refresh the pinned Obscura engine
+betterwright setup     # install native BetterChromium
+betterwright update    # refresh pinned BetterChromium
 betterwright doctor    # what is installed, what is missing, how to fix it
 ```
 
@@ -318,7 +317,7 @@ server reads too. See
 | [Integration guide (SETUP.md)](SETUP.md) | [Live view & handoff](docs/live-view.md) | [Cloaking V2](docs/cloaking-v2.md) |
 | [The built-in agent](docs/agent.md) | [CAPTCHA helpers](docs/captcha.md) | [Chromium fork](docs/chromium-fork.md) |
 | [JavaScript API](docs/javascript.md) | [Network policy](docs/network-policy.md) | [Headed / headless](docs/attach-mode.md) |
-| [Browser API (snippet globals)](docs/browser-api.md) | [Obscura engine](docs/obscura.md) | [Operator guidance](docs/agent-prompt.md) |
+| [Browser API (snippet globals)](docs/browser-api.md) | [BetterChromium](docs/chromium-fork.md) | [Operator guidance](docs/agent-prompt.md) |
 | [CAPTCHA recipes](docs/browser-recipes.md) | | Benchmarks: [Online-Mind2Web, 92.7% self-judged](benchmarks/online-mind2web/REPORT.md) · [agent head-to-head](benchmarks/exec-headtohead/REPORT.md) |
 
 The Online-Mind2Web figure is 278/300 on the pinned 2025-11-23 snapshot, scored
