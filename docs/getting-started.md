@@ -60,24 +60,29 @@ pinned BetterChromium release matches that package. Package updates are intentio
 rather than automatic, so application lockfiles continue to control when a
 new BetterWright version is adopted.
 
-### BetterChromium
+### BetterChromium and cross-platform fallback
 
-On supported Linux x64 and macOS arm64 hosts, native BetterChromium is
-the required/default backend for every session, including screenshots,
+On supported macOS arm64, Linux x64, and Windows x64 hosts, native
+BetterChromium is the default backend for every session, including screenshots,
 credentials, CAPTCHA handling, and live view. `betterwright setup` installs it
 under `~/.betterwright/chromium/`; `betterwright update` refreshes the pinned
 release. There is no silent fallback when it is missing or fails to launch.
 
+When BetterWright does not publish a BetterChromium artifact for the current
+OS/architecture (for example Linux arm64 on Raspberry Pi), `setup` and `update`
+install managed CloakBrowser and the runtime selects it automatically. This is
+platform routing, not error recovery: a missing artifact on a supported host
+still fails closed.
+
 ### Explicit CloakBrowser compatibility mode
 
-CloakBrowser is retained for operators who deliberately opt out of the native
-backend. Run `betterwright setup --cloak-only`, then set
+CloakBrowser is also retained for operators who deliberately opt out of the
+native backend on a supported host. Run `betterwright setup --cloak-only`, then set
 `BETTERWRIGHT_CHROMIUM_ROOT=off` (or `BETTERWRIGHT_CHROMIUM_PATH=off`) when
-launching. BetterWright never selects CloakBrowser merely because native
-Chromium is absent. The wrapper verifies its signed browser release before
-extraction; `CLOAKBROWSER_BINARY_PATH` may point at an official existing binary.
+launching. The wrapper verifies its signed browser release before extraction;
+`CLOAKBROWSER_BINARY_PATH` may point at an official existing binary.
 
-### BetterChromium backend (macOS arm64 / Linux x64)
+### BetterChromium backend (macOS arm64 / Linux x64 / Windows x64)
 
 `betterwright setup` downloads BetterWright's own
 Chromium build into `~/.betterwright/chromium/` (SHA-256 verified from the
@@ -101,7 +106,10 @@ Resolution order:
 2. Zero-config discovery at `~/.betterwright/chromium/<platform>/`: if the
    artifact for this platform exists there, it is used automatically
    (this is what default `setup` populates).
-3. Otherwise launch fails with setup guidance. CloakBrowser is selected only when either variable is explicitly `off`.
+3. If this platform has no published artifact, use managed CloakBrowser
+   automatically. If the platform is supported but its artifact is missing,
+   launch fails with setup guidance. Either variable set to `off` explicitly
+   selects CloakBrowser on any platform.
 
 Force the managed path even with an artifact installed:
 
@@ -112,24 +120,32 @@ export BETTERWRIGHT_CHROMIUM_ROOT=off
 ### Extra Chromium switches
 
 BetterWright builds its own launch arguments, but a host can append switches the
-managed list has no opinion on. The common case is a server with no GPU, where
-Chromium otherwise runs a SwiftShader `gpu-process` that burns a fraction of a
-core for the life of the browser, compositing frames nothing will display:
+managed list has no opinion on. For example, a host can cap Chromium's on-disk
+HTTP cache without changing browser identity or network routing:
 
 ```bash
-export BETTERWRIGHT_CHROMIUM_ARGS="--disable-gpu --disable-software-rasterizer"
+export BETTERWRIGHT_CHROMIUM_ARGS="--disk-cache-size=104857600"
 ```
 
 Whitespace-separated; quote a value that contains spaces
 (`--host-rules="MAP * 127.0.0.1"`). The same list is settable in code as
-`chromiumArgs: ["--disable-gpu"]`, and both sources apply together.
+`chromiumArgs: ["--disk-cache-size=104857600"]`, and both sources apply
+together.
+
+On Linux without an accessible `/dev/dri` render device, BetterWright selects
+the packaged SwANGLE software GPU automatically so standard WebGL remains
+available. `--disable-software-rasterizer` is reserved because it recreates the
+blocked graphics surface fixed in 1.8.1. `--disable-gpu` remains available as
+a caller-controlled compatibility switch, but it is not recommended for the
+macOS identity profile.
 
 Two rules keep this from undermining the managed browser:
 
 - **Reserved switches are rejected** with a `TypeError` naming the supported
   alternative — proxy selection (`--proxy-server`, `--no-proxy-server`, …),
   remote debugging, `--user-data-dir` / `--profile-directory`, and the identity
-  family (`--fingerprint*`, `--lang`, `--bw-timezone`, `--headless`). These are
+  family (`--fingerprint*`, `--lang`, `--bw-timezone`, `--headless`), plus
+  `--disable-software-rasterizer`. These are
   the switches that decide where traffic goes, who can drive the browser, which
   profile is opened, and what identity is presented.
 - **Duplicates are dropped, not appended.** Chromium resolves a repeated switch

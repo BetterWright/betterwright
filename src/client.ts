@@ -302,8 +302,8 @@ export class BetterWright {
    *   Silicon); the managed CloakBrowser path defaults to the host platform.
    * @param {string[]} [options.chromiumArgs] extra Chromium switches appended
    *   to the managed launch arguments, for host-level tuning the managed list
-   *   has no opinion on — `["--disable-gpu", "--disable-software-rasterizer"]`
-   *   on a GPU-less server being the motivating case. Also settable per host
+   *   has no opinion on. GPU-less Linux hosts automatically use the packaged
+   *   software renderer so WebGL stays available. Also settable per host
    *   via `BETTERWRIGHT_CHROMIUM_ARGS` (whitespace-separated); both apply.
    *   Switches BetterWright owns — proxy, remote debugging, profile directory,
    *   and the `--fingerprint*`/locale/timezone identity family — are rejected

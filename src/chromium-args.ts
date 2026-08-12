@@ -4,10 +4,9 @@
 // proxy boundary, locale/timezone/platform masking) and that list is
 // load-bearing: it is what keeps the managed browser's identity coherent and
 // every connection on the guard proxy. But it left no room for the
-// host-specific switches that have nothing to do with identity. The motivating
-// case is `--disable-gpu` on a GPU-less server, where Chromium otherwise parks
-// a SwiftShader gpu-process on a fraction of a core for the whole life of a
-// lease, compositing frames nothing will ever display.
+// host-specific switches that have nothing to do with identity. GPU-less Linux
+// hosts are handled by BetterWright's managed SwANGLE selection so WebGL stays
+// available; callers do not need to disable the software renderer themselves.
 //
 // PRECEDENCE. Chromium's base::CommandLine parses argv left to right into a
 // map, so a repeated switch is won by the LAST occurrence. Appending caller
@@ -54,6 +53,10 @@ const RESERVED = Object.freeze({
   // Headless is resolved from the `headless` option and must not desync from
   // the viewport and window-geometry decisions made alongside it.
   "--headless": "use the `headless` option",
+  // GPU-less Linux uses the packaged software renderer to retain the standard
+  // WebGL surface. Disabling it recreates issue #109's blocked-GPU identity.
+  "--disable-software-rasterizer":
+    "BetterWright manages the software renderer on GPU-less hosts",
 });
 
 const RESERVED_PREFIXES = Object.freeze([

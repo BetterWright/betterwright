@@ -15,6 +15,19 @@ import { makeTempDir } from "./helpers/temp-dir.js";
 
 const ready = (await cloakRuntime()).installed;
 const opts = { skip: ready ? false : "browser runtime not installed" };
+// This integration suite gates on the CloakBrowser binary specifically, so
+// select the same backend for the workers it launches. Otherwise a supported
+// host with no BetterChromium artifact would run instead of skipping, then
+// fail before reaching the credential behavior under test.
+const previousChromiumRoot = process.env.BETTERWRIGHT_CHROMIUM_ROOT;
+if (ready) process.env.BETTERWRIGHT_CHROMIUM_ROOT = "off";
+test.after(() => {
+  if (previousChromiumRoot === undefined) {
+    delete process.env.BETTERWRIGHT_CHROMIUM_ROOT;
+  } else {
+    process.env.BETTERWRIGHT_CHROMIUM_ROOT = previousChromiumRoot;
+  }
+});
 
 function tempHome() {
   return makeTempDir("betterwright-credential-test-");

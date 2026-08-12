@@ -9,6 +9,49 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-08-12
+
+A cross-platform compatibility and graphics fix for 1.8.0. BetterChromium
+remains the default wherever a pinned native artifact exists; unsupported hosts
+once again launch managed CloakBrowser without requiring an undocumented
+environment override.
+
+### Fixed
+
+- Linux arm64 systems, including Raspberry Pi, now automatically select
+  CloakBrowser because no BetterChromium artifact is published for that target.
+  The same routing applies to every unsupported OS/architecture pair.
+- `betterwright setup`, `betterwright update`, `betterwright init`, and
+  `betterwright doctor` now agree on the selected backend: unsupported hosts
+  install, update, verify, and report CloakBrowser without requiring
+  `BETTERWRIGHT_CHROMIUM_ROOT=off`.
+- Fixed [#109](https://github.com/BetterWright/betterwright/issues/109):
+  GPU-less Linux hosts now keep standard WebGL available through the packaged
+  SwiftShader renderer instead of presenting a macOS browser identity with the
+  graphics surface blocked. Explicit GPU-capable hosts retain hardware
+  acceleration. The browser-level regression test requires a real context,
+  extensions, pixel readback, and the captured Apple vendor/renderer identity.
+- Supported hosts with a missing BetterChromium install still fail closed with
+  setup guidance. Invalid explicit paths and roots remain errors rather than
+  silently switching browsers.
+
+### Security and performance
+
+- The fallback reuses the existing managed CloakBrowser launcher and keeps all
+  browser traffic on BetterWright's SOCKS guard; no direct or unguarded launch
+  path was added.
+- Supported BetterChromium launches do not take a new compatibility path. The
+  selection change is one constant-time platform lookup at startup and adds no
+  per-page work, retained processes, or page-world scripts.
+- The SwANGLE path starts only when Linux has no accessible hardware render
+  device. It restores standards-compatible WebGL but uses CPU rendering, so
+  1.8.1 makes no new memory or speed claim for that fallback.
+- A fresh-profile CreepJS verification completed its fingerprint in 2.27 s with
+  WebGL available, the captured Apple M4 Pro renderer, 0% `headless`, and 0%
+  `stealth`. Its `like headless` heuristic was 31%; because that check ran on a
+  different host from the issue's 44% report, this is recorded as validation,
+  not claimed as a comparable score reduction.
+
 ## [1.8.0] - 2026-08-12
 
 A native-browser overhaul centered on BetterChromium 151. Public archives for

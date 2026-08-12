@@ -8,7 +8,11 @@ import {
   parseChromiumArgs,
   resolveChromiumArgs,
 } from "../../dist/src/chromium-args.js";
-import { managedChromiumForkArgs, managedCloakArgs } from "../../dist/src/cloak.js";
+import {
+  chromiumForkNeedsSoftwareGpu,
+  managedChromiumForkArgs,
+  managedCloakArgs,
+} from "../../dist/src/cloak.js";
 
 test("empty and whitespace-only argument strings parse to nothing", () => {
   for (const raw of ["", "   ", "\t\n", null, undefined]) {
@@ -124,6 +128,7 @@ test("profile, identity, and headless switches are rejected with their alternati
     ["--fingerprint=1234", /`locale`, `timezone`, and `platform`/],
     ["--fingerprint-platform=windows", /`locale`, `timezone`, and `platform`/],
     ["--fingerprint-locale=de-DE", /`locale`, `timezone`, and `platform`/],
+    ["--disable-software-rasterizer", /manages the software renderer/],
   ];
   for (const [arg, message] of cases) {
     // Node regex-matches RegExp values in the expectation object; its types
@@ -150,11 +155,11 @@ test("a switch merely prefixed like a reserved one is still allowed", () => {
 
 test("the option and the environment variable both contribute, option first", () => {
   const resolved = resolveChromiumArgs(["--disable-gpu"], {
-    BETTERWRIGHT_CHROMIUM_ARGS: "--disable-software-rasterizer --mute-audio",
+    BETTERWRIGHT_CHROMIUM_ARGS: "--disk-cache-size=1 --mute-audio",
   });
   assert.deepEqual(resolved, [
     "--disable-gpu",
-    "--disable-software-rasterizer",
+    "--disk-cache-size=1",
     "--mute-audio",
   ]);
 });
@@ -201,6 +206,48 @@ test("the WebRTC proxy boundary cannot be displaced on either browser backend", 
     assert.ok(args.includes(`${boundary}=disable_non_proxied_udp`));
     assert.equal(args.filter((arg) => arg.startsWith(boundary)).length, 1);
   }
+});
+
+test("GPU-less Linux uses packaged SwANGLE while hardware hosts stay native", () => {
+  assert.equal(
+    chromiumForkNeedsSoftwareGpu({
+      platform: "linux",
+      readdirSync: () => ["renderD128", "card0"],
+      accessSync: (device) => {
+        if (device.endsWith("renderD128")) return;
+        throw new Error("inaccessible");
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    chromiumForkNeedsSoftwareGpu({
+      platform: "linux",
+      readdirSync: () => ["renderD128"],
+      accessSync: () => {
+        throw new Error("not bound into sandbox");
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    chromiumForkNeedsSoftwareGpu({
+      platform: "darwin",
+      readdirSync: () => {
+        throw new Error("must not inspect DRI on macOS");
+      },
+    }),
+    false,
+  );
+
+  const software = managedChromiumForkArgs("seed", { softwareGpu: true });
+  assert.ok(software.includes("--use-gl=angle"));
+  assert.ok(software.includes("--use-angle=swiftshader"));
+  assert.ok(!software.includes("--enable-unsafe-swiftshader"));
+
+  const hardware = managedChromiumForkArgs("seed", { softwareGpu: false });
+  assert.ok(!hardware.some((arg) => arg.startsWith("--use-gl=")));
+  assert.ok(!hardware.some((arg) => arg.startsWith("--use-angle=")));
 });
 
 test("a switch repeated by the caller is applied once", () => {

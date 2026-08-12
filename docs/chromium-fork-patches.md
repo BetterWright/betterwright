@@ -57,6 +57,13 @@ inherit them, which the CDP emulation layer cannot reach.
 what real Chrome returns for the non-debug parameters. The WebGL2 context
 inherits the same base implementation, so one interception covers both.
 
+Chromium 151 no longer guarantees an automatic software WebGL fallback. The
+BetterWright launcher checks for an accessible Linux `/dev/dri` render device:
+hardware-capable hosts keep Chromium's native selection, while GPU-less hosts
+select the SwANGLE implementation already shipped in the verified archive.
+This keeps the standard WebGL context, extensions, and pixel readback available
+for the masked identity without opting into `--enable-unsafe-swiftshader`.
+
 ## 3. Canvas noise
 
 The goal is a canvas hash that is unique to a profile and seed and **stable

@@ -44,6 +44,7 @@ import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   chromiumForkContextOptions,
   resolveChromiumForkBinary,
+  selectManagedBrowserBackend,
 } from "./chromium-fork.js";
 import {
   assertProfileNotNewer,
@@ -1566,22 +1567,22 @@ async function ensureBrowser(config) {
     guardProxy.setUpstream(upstream);
 
     const forkBinary = resolveChromiumForkBinary();
-    const chromiumOptOut = [
-      process.env.BETTERWRIGHT_CHROMIUM_PATH,
-      process.env.BETTERWRIGHT_CHROMIUM_ROOT,
-    ].some((value) => String(value || "").trim().toLowerCase() === "off");
-    if (!forkBinary && !chromiumOptOut) {
+    const browserSelection = selectManagedBrowserBackend({
+      chromiumFork: forkBinary,
+    });
+    if (browserSelection.browser === "unavailable") {
       throw new Error(
         "BetterChromium is required but not installed. Run `betterwright setup`, " +
           "or explicitly select CloakBrowser with `betterwright setup --cloak-only` " +
-          "and BETTERWRIGHT_CHROMIUM_ROOT=off.",
+          "and BETTERWRIGHT_CHROMIUM_ROOT=off. Hosts without a published " +
+          "BetterChromium artifact use CloakBrowser automatically.",
       );
     }
-      const args = forkBinary
-        ? managedChromiumForkArgs(
-            fingerprintSeedForProfile(profileLock.profileDir),
-          )
-        : managedCloakArgs(fingerprintSeedForProfile(profileLock.profileDir));
+    const args = forkBinary
+      ? managedChromiumForkArgs(
+          fingerprintSeedForProfile(profileLock.profileDir),
+        )
+      : managedCloakArgs(fingerprintSeedForProfile(profileLock.profileDir));
 
     // Cloaking V2: one coherent identity across the Chromium and network
     // layers. geoip resolves the locale/timezone to match the egress
@@ -1643,8 +1644,7 @@ async function ensureBrowser(config) {
       if (fonts) forkEnv = { ...process.env, FONTCONFIG_FILE: fonts.confPath };
     }
     // Caller-supplied switches go last, after every argument BetterWright
-    // derives, so a host can tune things the managed list has no opinion on
-    // (`--disable-gpu` on a GPU-less server being the motivating case).
+    // derives, so a host can tune things the managed list has no opinion on.
     // Switches that collide with a managed one are dropped rather than
     // appended: Chromium resolves duplicates last-wins, so appending would
     // override BetterWright's value instead of losing to it. See

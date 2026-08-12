@@ -78,10 +78,47 @@ export function managedCloakArgs(fingerprintSeed) {
   ];
 }
 
-/** Native fork arguments: WebRTC proxy boundary plus optional fingerprint seed. */
-export function managedChromiumForkArgs(fingerprintSeed) {
+/** Whether Linux lacks an accessible hardware-rendering device. */
+export function chromiumForkNeedsSoftwareGpu({
+  platform = process.platform,
+  readdirSync = fs.readdirSync,
+  accessSync = fs.accessSync,
+} = {}) {
+  if (platform !== "linux") return false;
+  let devices = [];
+  try {
+    devices = readdirSync("/dev/dri")
+      .filter((name) => /^(?:renderD|card)\d+$/.test(name))
+      .map((name) => path.join("/dev/dri", name));
+  } catch {
+    return true;
+  }
+  for (const device of devices) {
+    try {
+      accessSync(device, fs.constants.R_OK | fs.constants.W_OK);
+      return false;
+    } catch {
+      /* try the next DRI device */
+    }
+  }
+  return true;
+}
+
+/** Native fork arguments: guarded WebRTC, graphics, and fingerprint seed. */
+export function managedChromiumForkArgs(
+  fingerprintSeed,
+  { softwareGpu = chromiumForkNeedsSoftwareGpu() }: any = {},
+) {
   return [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    // Chromium 151 no longer guarantees automatic software WebGL fallback.
+    // On Linux hosts without an accessible DRI device, explicitly use the
+    // packaged SwANGLE renderer so ordinary WebGL remains available. This is
+    // the normal ANGLE GL driver, not the lower-security
+    // --enable-unsafe-swiftshader WebGL fallback.
+    ...(softwareGpu
+      ? ["--use-gl=angle", "--use-angle=swiftshader"]
+      : []),
     // Chromium 151 otherwise keeps a spare renderer resident beside the page
     // and Top Chrome WebUI renderers. Two is a soft ceiling: Chromium still
     // creates site-isolated renderers when security requires them, but it does

@@ -9,8 +9,8 @@
 
 export const COMMAND_SUMMARIES = [
   ["init", "guided first-time setup — browser, agent wiring, verification"],
-  ["setup", "download native BetterChromium"],
-  ["update", "download or refresh native BetterChromium"],
+  ["setup", "download the managed browser for this host"],
+  ["update", "download or refresh the managed browser for this host"],
   ["doctor", "check that everything needed is installed and reachable"],
   ["run", "run one Playwright snippet in the persistent session"],
   ["repl", "run blank-line-separated snippets from stdin"],
@@ -54,27 +54,26 @@ Options:
   --yes            accept every default; never prompt (for scripts and CI)
   --skip-browser   do not download or verify the browser
   --skip-agents    do not touch any agent configuration
-  --cloak-only     explicitly use CloakBrowser compatibility mode
+  --cloak-only     force CloakBrowser compatibility mode
 
 Safe to re-run: it reports what is already done and changes only what is not.`,
 
   setup: `Usage: betterwright setup [options]
 
-Download native BetterChromium, the required/default backend on supported
-Linux x64 and macOS arm64 hosts. CloakBrowser is available only as an explicit
-compatibility opt-out and is never selected as a silent fallback.
+Download native BetterChromium, the default backend on supported macOS arm64,
+Linux x64, and Windows x64 hosts. On other platforms, setup automatically
+installs the managed CloakBrowser compatibility backend.
 
 Options:
-  --cloak-only   install CloakBrowser compatibility mode instead of BetterChromium
+  --cloak-only   force CloakBrowser compatibility mode instead of BetterChromium
   --force        re-download the managed browser even when already present
 
 Also refreshes installed agent skill files. Run \`betterwright doctor\` afterwards.`,
 
   update: `Usage: betterwright update [options]
 
-Download or refresh native BetterChromium. This command fails on hosts
-without a native artifact; use \`betterwright setup --cloak-only\` only when you
-intend to opt out to the compatibility backend.
+Download or refresh the managed browser: native BetterChromium when a pinned
+artifact is published for this host, otherwise CloakBrowser compatibility mode.
 
 Options:
   --force   re-download even if the pinned version is already installed`,
