@@ -1,4 +1,4 @@
-// Download + install the BetterWright Chromium fork into the zero-config
+// Download + install the BetterChromium fork into the zero-config
 // discovery root (~/.betterwright/chromium). Used by `betterwright update`
 // and by default `betterwright setup` on platforms that ship an artifact.
 //
@@ -54,7 +54,7 @@ function downloadToFile(url, destPath, { redirectsLeft = 5 }: any = {}) {
       url,
       {
         headers: {
-          "User-Agent": "betterwright-chromium-fork-install",
+          "User-Agent": "betterchromium-install",
           Accept: "application/octet-stream",
         },
       },
@@ -158,7 +158,7 @@ export async function installChromiumFork({
     return {
       binary: null,
       root: defaultChromiumForkRoot({ home }),
-      skipped: `No public Chromium fork artifact for ${key}; use managed CloakBrowser.`,
+      skipped: `No public BetterChromium artifact for ${key}; use managed CloakBrowser.`,
     };
   }
 
@@ -175,7 +175,7 @@ export async function installChromiumFork({
       existsSync,
     });
     if (resolved) {
-      log(`Chromium fork already installed: ${resolved}`);
+      log(`BetterChromium already installed: ${resolved}`);
       log(
         `Re-run with --force to re-download ${BETTERWRIGHT_CHROMIUM_VERSION}.`,
       );
@@ -188,7 +188,7 @@ export async function installChromiumFork({
   const url = releaseDownloadUrl(repo, releaseTag, asset.name);
 
   try {
-    log(`Downloading BetterWright Chromium ${BETTERWRIGHT_CHROMIUM_VERSION}...`);
+    log(`Downloading BetterChromium ${BETTERWRIGHT_CHROMIUM_VERSION}...`);
     log(`  ${url}`);
     await download(url, zipPath);
 

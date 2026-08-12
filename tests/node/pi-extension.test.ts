@@ -51,12 +51,14 @@ class FakeBrowser {
   screenshot: any;
   startFails: boolean;
   vault: any;
+  proofUrls: string[];
 
   constructor({
     screenshot,
     downloadPolicy = "ask",
     startFails = false,
     vault = {},
+    proofUrls = [],
   }: Record<string, any> = {}) {
     this.calls = [];
     this.fills = [];
@@ -65,6 +67,7 @@ class FakeBrowser {
     this.screenshot = screenshot;
     this.startFails = startFails;
     this.vault = vault;
+    this.proofUrls = [...proofUrls];
   }
 
   async fillCredential(options) {
@@ -91,7 +94,9 @@ class FakeBrowser {
     if (code.includes("screenshot(")) {
       const url = code.includes('name: "pi-start"')
         ? "https://example.com/start"
-        : "https://example.com/result";
+        : code.includes('name: "pi-evidence"') && this.proofUrls.length
+          ? this.proofUrls.shift()
+          : "https://example.com/result";
       return {
         ok: true,
         result: {
@@ -244,6 +249,107 @@ test("native Pi extension grounds required checklist items in proof frames", asy
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+
+test("native Pi extension retains sequential named evidence checklists", async () => {
+  const browser = new FakeBrowser({
+    proofUrls: [
+      "https://example.com/search?journey=first",
+      "https://example.com/cart?journey=second",
+    ],
+  });
+  const pi = new FakePi();
+  createPiExtension({ browser, requireEvidence: true, autoScreenshot: false })(pi);
+  const evidence = pi.tools.get("browser_evidence");
+
+  const first = await evidence.execute("call-1", {
+    operation: "initialize",
+    name: "find-product",
+    requirements: [{ id: "first-result", description: "Show the first result" }],
+  });
+  assert.equal(first.details.currentChecklist.name, "find-product");
+  await evidence.execute("call-2", {
+    operation: "prove",
+    proofs: [{ id: "first-result", evidence: "The first result is visible" }],
+  });
+  const firstAudit = await evidence.execute("call-3", { operation: "audit" });
+  assert.equal(firstAudit.details.currentChecklist.audited, true);
+
+  const second = await evidence.execute("call-4", {
+    operation: "initialize",
+    name: "add-to-cart",
+    requirements: [{ id: "cart", description: "Add the result to the cart" }],
+  });
+  assert.equal(second.details.currentChecklist.name, "add-to-cart");
+  assert.equal(second.details.archivedChecklists.length, 1);
+  await evidence.execute("call-5", {
+    operation: "prove",
+    proofs: [{ id: "cart", evidence: "The cart shows the requested result" }],
+  });
+  const finalAudit = await evidence.execute("call-6", { operation: "audit" });
+
+  assert.equal(finalAudit.details.initialized, true);
+  assert.equal(finalAudit.details.ready, true);
+  assert.deepEqual(finalAudit.details.pending, []);
+  assert.equal(finalAudit.details.archivedChecklists.length, 1);
+  const archived = finalAudit.details.archivedChecklists[0];
+  assert.equal(archived.name, "find-product");
+  assert.equal(archived.ready, true);
+  assert.equal(archived.audited, true);
+  assert.deepEqual(archived.requirements[0], {
+    id: "first-result",
+    description: "Show the first result",
+    status: "proven",
+    evidence: "The first result is visible",
+    proofStep: 1,
+    proofUrl: "https://example.com/search?journey=first",
+  });
+  assert.equal(finalAudit.details.currentChecklist.name, "add-to-cart");
+  assert.equal(finalAudit.details.currentChecklist.audited, true);
+  assert.deepEqual(finalAudit.details.currentChecklist.requirements[0], {
+    id: "cart",
+    description: "Add the result to the cart",
+    status: "proven",
+    evidence: "The cart shows the requested result",
+    proofStep: 2,
+    proofUrl: "https://example.com/cart?journey=second",
+  });
+});
+
+test("native Pi extension rejects replacing incomplete or unaudited checklists", async () => {
+  const browser = new FakeBrowser();
+  const pi = new FakePi();
+  createPiExtension({ browser, requireEvidence: true, autoScreenshot: false })(pi);
+  const evidence = pi.tools.get("browser_evidence");
+  const requirements = [{ id: "result", description: "Show the requested result" }];
+
+  const initialized = await evidence.execute("call-1", {
+    operation: "initialize",
+    requirements,
+  });
+  assert.equal(initialized.details.currentChecklist.name, "checklist-1");
+  await assert.rejects(
+    evidence.execute("call-2", {
+      operation: "initialize",
+      name: "replacement",
+      requirements,
+    }),
+    /cannot replace a pending checklist/,
+  );
+
+  await evidence.execute("call-3", {
+    operation: "prove",
+    proofs: [{ id: "result", evidence: "The requested result is visible" }],
+  });
+  await assert.rejects(
+    evidence.execute("call-4", {
+      operation: "initialize",
+      name: "replacement",
+      requirements,
+    }),
+    /cannot replace a ready checklist before it has been audited/,
+  );
 });
 
 test("native Pi extension rejects contradictory proof and continues pending work", async () => {

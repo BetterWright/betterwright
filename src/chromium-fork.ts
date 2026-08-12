@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const BETTERWRIGHT_CHROMIUM_VERSION = "150.0.7871.129";
+export const BETTERWRIGHT_CHROMIUM_VERSION = "151.0.7922.108";
+export const BETTERCHROMIUM_PRODUCT_NAME = "BetterChromium";
 
 // Playwright 1.61.1 defaults that deliberately change normal browser behavior.
 // Keep its lifecycle, profile, proxy, and CDP-pipe arguments, but let the fork
@@ -50,17 +51,17 @@ export function chromiumForkContextOptions({
 export const PLATFORM_LAYOUT = Object.freeze({
   "darwin-arm64": path.join(
     "mac-arm64",
-    "Chromium.app",
+    "BetterChromium.app",
     "Contents",
     "MacOS",
-    "Chromium",
+    "BetterChromium",
   ),
-  "linux-x64": path.join("linux-x64", "chrome"),
-  "win32-x64": path.join("win-x64", "chrome.exe"),
+  "linux-x64": path.join("linux-x64", "betterchromium"),
+  "win32-x64": path.join("win-x64", "betterchromium.exe"),
 });
 
 /** GitHub release that hosts the per-platform fork zip artifacts. */
-export const CHROMIUM_FORK_RELEASE_TAG = `chromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`;
+export const CHROMIUM_FORK_RELEASE_TAG = `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r1`;
 
 /**
  * Public download manifest for `betterwright update` / default `setup`.
@@ -68,19 +69,19 @@ export const CHROMIUM_FORK_RELEASE_TAG = `chromium-${BETTERWRIGHT_CHROMIUM_VERSI
  */
 export const CHROMIUM_FORK_ASSETS = Object.freeze({
   "darwin-arm64": Object.freeze({
-    name: "betterwright-chromium-mac-arm64.zip",
+    name: "betterchromium-mac-arm64.zip",
     sha256:
-      "074cefbde9a8cf10f2ee15cddb1ac67613ebda3b1549e8948ad9eeafbe522ad6",
+      "22484b810c601697afd7d0a82f39ced7f24ac7d8a2b01e52c5a61e9a6096ec67",
   }),
   "linux-x64": Object.freeze({
-    name: "betterwright-chromium-linux-x64.zip",
+    name: "betterchromium-linux-x64.zip",
     sha256:
-      "676249346f0fd91e8b2768190efbb958cc20239bedacd6c53d541882a57bf4a0",
+      "2a6808f9706d233e9bcd2e14d8d5162be87f9b99614146b1fa5496e7aa5163c9",
   }),
   "win32-x64": Object.freeze({
-    name: "betterwright-chromium-win-x64.zip",
+    name: "betterchromium-win-x64.zip",
     sha256:
-      "977cb811fdc7198723865b741b24da329128d5d1d519f5599e2b4cb1b9dadafa",
+      "03d8abb5d6064bbd808cf52c2a327692502c4ca6c565b2e1cdb639200c52dccb",
   }),
 });
 
@@ -100,8 +101,7 @@ export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
  *  1. BETTERWRIGHT_CHROMIUM_PATH / BETTERWRIGHT_CHROMIUM_ROOT (strict: a
  *     configured-but-missing binary is an error).
  *  2. The default root (~/.betterwright/chromium) — if the artifact for this
- *     platform exists there, use it silently. Platforms without a shipped
- *     artifact fall through to managed CloakBrowser.
+ *     platform exists there, use it silently. Platforms without a shipped artifact report the native backend as missing.
  *  3. Either variable set to "off" forces the managed CloakBrowser path.
  */
 export function resolveChromiumForkBinary({
@@ -138,17 +138,17 @@ export function resolveChromiumForkBinary({
     }
     const layout = PLATFORM_LAYOUT[`${platform}-${arch}`];
     if (!layout) {
-      if (implicit) return null; // no artifact for this platform: managed path
+      if (implicit) return null; // runtime reports the unsupported native backend
       throw new Error(
-        `No BetterWright Chromium artifact layout for ${platform}-${arch}.`,
+        `No BetterChromium artifact layout for ${platform}-${arch}.`,
       );
     }
     candidate = path.join(root, layout);
   }
 
   if (!existsSync(candidate)) {
-    if (implicit) return null; // artifact not deployed here: managed path
-    throw new Error(`BetterWright Chromium binary not found: ${candidate}`);
+    if (implicit) return null; // runtime reports the missing required backend
+    throw new Error(`BetterChromium binary not found: ${candidate}`);
   }
   return candidate;
 }

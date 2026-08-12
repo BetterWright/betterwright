@@ -74,7 +74,7 @@ export interface BetterWrightOptions {
   timezone?: string;
   headedInvisible?: boolean;
   /**
-   * Identity platform presented to sites. The native Chromium fork defaults
+   * Identity platform presented to sites. The BetterChromium fork defaults
    * to "macos" — a realistic consumer-Mac fingerprint (UA, UA-CH,
    * navigator.platform, screen geometry) captured from genuine Chrome 150 on
    * an Apple-Silicon MacBook Pro. The managed CloakBrowser path defaults to

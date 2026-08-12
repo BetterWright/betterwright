@@ -1,0 +1,356 @@
+diff --git a/include/v8-inspector.h b/include/v8-inspector.h
+index cdd94163e3d673a0a3ad23b4d1a65dab71fec49d..0633cadab38abcb6f6c7c12c09e7c45125d5baea 100644
+--- a/include/v8-inspector.h
++++ b/include/v8-inspector.h
+@@ -8,6 +8,7 @@
+ #include <stdint.h>
+ 
+ #include <cctype>
++#include <functional>
+ #include <memory>
+ 
+ #include "cppgc/garbage-collected.h"  // NOLINT(build/include_directory)
+@@ -318,6 +319,16 @@ class V8_EXPORT V8InspectorClient {
+       v8::Isolate* isolate, v8::Local<v8::String> label,
+       const v8::LocalVector<v8::Value>& args) {}
+   virtual void consoleClear(int contextGroupId) {}
++
++  // Schedules a unit of inspector work off the current call path. Embedders
++  // override to post the task onto the isolate's foreground task runner.
++  // Default runs the task inline (upstream behavior).
++  virtual void scheduleInspectorWork(std::function<void()> task) { task(); }
++
++  // Flushes inspector work that must precede an embedder protocol event.
++  // Embedders with deferred work override this at protocol ordering
++  // boundaries; the upstream synchronous default has nothing to flush.
++  virtual void flushPendingInspectorWork() {}
+   virtual double currentTimeMS() { return 0; }
+   typedef void (*TimerCallback)(void*);
+   virtual void startRepeatingTimer(double, TimerCallback, void* data) {}
+diff --git a/src/inspector/v8-console-agent-impl.cc b/src/inspector/v8-console-agent-impl.cc
+index 1fc082c4a0a344435cb496c1d84bd7276bef0a8c..3d0321a496e0bc3bec112e89c10c070af73835a8 100644
+--- a/src/inspector/v8-console-agent-impl.cc
++++ b/src/inspector/v8-console-agent-impl.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "src/inspector/v8-console-agent-impl.h"
+ 
++#include <algorithm>
++
+ #include "src/inspector/protocol/Protocol.h"
+ #include "src/inspector/v8-console-message.h"
+ #include "src/inspector/v8-inspector-impl.h"
+@@ -50,8 +52,13 @@ void V8ConsoleAgentImpl::restore() {
+   enable();
+ }
+ 
++void V8ConsoleAgentImpl::reset() { m_lastReportedSequence = 0; }
++
+ void V8ConsoleAgentImpl::messageAdded(V8ConsoleMessage* message) {
+-  if (m_enabled) reportMessage(message, true);
++  if (!m_enabled) return;
++  if (message->SequenceNumber() <= m_lastReportedSequence) return;
++  m_lastReportedSequence = message->SequenceNumber();
++  reportMessage(message, false);
+ }
+ 
+ bool V8ConsoleAgentImpl::enabled() { return m_enabled; }
+@@ -80,6 +87,8 @@ void V8ConsoleAgentImpl::reportAllMessages() {
+ 
+ bool V8ConsoleAgentImpl::reportMessage(V8ConsoleMessage* message,
+                                        bool generatePreview) {
++  m_lastReportedSequence =
++      std::max(m_lastReportedSequence, message->SequenceNumber());
+   DCHECK_EQ(V8MessageOrigin::kConsole, message->origin());
+   message->reportToFrontend(&m_frontend);
+   m_frontend.flush();
+diff --git a/src/inspector/v8-console-agent-impl.h b/src/inspector/v8-console-agent-impl.h
+index 009375b04a606257fb819f60b994e4dbc6700554..a987e45eddf0ebc543600271e1652d44e0553884 100644
+--- a/src/inspector/v8-console-agent-impl.h
++++ b/src/inspector/v8-console-agent-impl.h
+@@ -41,6 +41,7 @@ class V8ConsoleAgentImpl : public protocol::Console::Backend {
+   protocol::DictionaryValue* m_state;
+   protocol::Console::Frontend m_frontend;
+   bool m_enabled;
++  uint64_t m_lastReportedSequence = 0;
+ };
+ 
+ }  // namespace v8_inspector
+diff --git a/src/inspector/v8-console-message.cc b/src/inspector/v8-console-message.cc
+index b67782ec337bca7cc9b9a166d89e8f78e427d638..b7d28e79658592378e52ea1334007d2b5dcd79e7 100644
+--- a/src/inspector/v8-console-message.cc
++++ b/src/inspector/v8-console-message.cc
+@@ -581,22 +581,51 @@ void V8ConsoleMessageStorage::addMessage(
+ 
+   TraceV8ConsoleMessageEvent(message->origin(), message->type());
+ 
+-  inspector->forEachSession(
+-      contextGroupId, [&message](V8InspectorSessionImpl* session) {
+-        if (message->origin() == V8MessageOrigin::kConsole) {
+-          session->consoleAgent()->messageAdded(message.get());
+-        }
+-        session->runtimeAgent()->messageAdded(message.get());
+-      });
++  message->SetSequenceNumber(m_nextSequenceNumber++);
++
++  // Defer session reporting so console.* keeps its no-inspector cost profile
++  // even with a DevTools-protocol client attached. When no session currently
++  // consumes console events, skip reporting entirely; the message remains in
++  // storage for enable-time replay.
++  bool hasConsumer = false;
++  inspector->forEachSession(contextGroupId,
++                            [&hasConsumer](V8InspectorSessionImpl* session) {
++                              if (session->runtimeAgent()->enabled() ||
++                                  session->consoleAgent()->enabled()) {
++                                hasConsumer = true;
++                              }
++                            });
++  if (hasConsumer) {
++    m_pendingReports.push_back(message.get());
++    if (!m_flushScheduled) {
++      m_flushScheduled = true;
++      uint64_t flushId = ++m_flushGeneration;
++      inspector->client()->scheduleInspectorWork(
++          [inspector, contextGroupId, flushId]() {
++            if (V8ConsoleMessageStorage* storage =
++                    inspector->consoleMessageStorage(contextGroupId)) {
++              storage->FlushPendingReports(flushId);
++            }
++          });
++    }
++  }
+   if (inspector->consoleMessageStorage(contextGroupId) != this) return;
+ 
+   DCHECK(m_messages.size() <= maxConsoleMessageCount);
+   if (m_messages.size() == maxConsoleMessageCount) {
++    if (!m_pendingReports.empty() &&
++        m_pendingReports.front() == m_messages.front().get()) {
++      m_pendingReports.erase(m_pendingReports.begin());
++    }
+     m_estimatedSize -= m_messages.front()->estimatedSize();
+     m_messages.pop_front();
+   }
+   while (m_estimatedSize + message->estimatedSize() > maxConsoleMessageV8Size &&
+          !m_messages.empty()) {
++    if (!m_pendingReports.empty() &&
++        m_pendingReports.front() == m_messages.front().get()) {
++      m_pendingReports.erase(m_pendingReports.begin());
++    }
+     m_estimatedSize -= m_messages.front()->estimatedSize();
+     m_messages.pop_front();
+   }
+@@ -605,8 +634,25 @@ void V8ConsoleMessageStorage::addMessage(
+   m_estimatedSize += m_messages.back()->estimatedSize();
+ }
+ 
++void V8ConsoleMessageStorage::FlushPendingReports(uint64_t flushId) {
++  if (flushId != m_flushGeneration) return;
++  m_flushScheduled = false;
++  std::vector<V8ConsoleMessage*> pending;
++  pending.swap(m_pendingReports);
++  m_inspector->forEachSession(
++      m_contextGroupId, [&pending](V8InspectorSessionImpl* session) {
++        for (V8ConsoleMessage* message : pending) {
++          if (message->origin() == V8MessageOrigin::kConsole) {
++            session->consoleAgent()->messageAdded(message);
++          }
++          session->runtimeAgent()->messageAdded(message);
++        }
++      });
++}
++
+ void V8ConsoleMessageStorage::clear() {
+   m_messages.clear();
++  m_pendingReports.clear();
+   m_estimatedSize = 0;
+   m_inspector->forEachSession(m_contextGroupId,
+                               [](V8InspectorSessionImpl* session) {
+diff --git a/src/inspector/v8-console-message.h b/src/inspector/v8-console-message.h
+index 369ad61c250335a8a3ed9fcdc20a176d0f595f39..a24cbbb2a1715e92ec3d4076e41f2f1ce0d59bc2 100644
+--- a/src/inspector/v8-console-message.h
++++ b/src/inspector/v8-console-message.h
+@@ -10,6 +10,7 @@
+ #include <memory>
+ #include <set>
+ #include <tuple>
++#include <vector>
+ 
+ #include "include/v8-local-handle.h"
+ #include "include/v8-persistent-handle.h"
+@@ -72,6 +73,11 @@ class V8ConsoleMessage {
+   ConsoleAPIType type() const;
+   void contextDestroyed(int contextId);
+ 
++  // Monotonic id assigned by V8ConsoleMessageStorage::addMessage. Sessions
++  // use it to deduplicate deferred reports against enable-time replays.
++  uint64_t SequenceNumber() const { return m_sequenceNumber; }
++  void SetSequenceNumber(uint64_t value) { m_sequenceNumber = value; }
++
+   int estimatedSize() const {
+     return m_v8Size + static_cast<int>(m_message.length() * sizeof(UChar));
+   }
+@@ -108,6 +114,7 @@ class V8ConsoleMessage {
+   Arguments m_arguments;
+   String16 m_detailedMessage;
+   String16 m_consoleContext;
++  uint64_t m_sequenceNumber = 0;
+ };
+ 
+ class V8ConsoleMessageStorage {
+@@ -124,6 +131,11 @@ class V8ConsoleMessageStorage {
+   void contextDestroyed(int contextId);
+   void clear();
+ 
++  // Reports queued messages to enabled sessions. Invoked off the console
++  // call path via V8InspectorClient::scheduleInspectorWork so page-observed
++  // console.* cost stays at the no-inspector baseline.
++  void FlushPendingReports(uint64_t flushId);
++
+   bool shouldReportDeprecationMessage(int contextId, const String16& method);
+ 
+   int count(int contextId, int consoleContextId, const String16& id);
+@@ -153,6 +165,13 @@ class V8ConsoleMessageStorage {
+     std::map<LabelKey, double> m_timers;
+   };
+   std::map<int, PerContextData> m_data;
++
++  // Messages added since the last flush, in arrival order. Pointers are
++  // owned by m_messages; entries are retired when their message is evicted.
++  std::vector<V8ConsoleMessage*> m_pendingReports;
++  bool m_flushScheduled = false;
++  uint64_t m_flushGeneration = 0;
++  uint64_t m_nextSequenceNumber = 1;
+ };
+ 
+ }  // namespace v8_inspector
+diff --git a/src/inspector/v8-inspector-session-impl.cc b/src/inspector/v8-inspector-session-impl.cc
+index a8559bc81c48d3277b8be4aef12276f5afb1f0a4..48784aad2901ef897ad5947e985ec9862b6f5718 100644
+--- a/src/inspector/v8-inspector-session-impl.cc
++++ b/src/inspector/v8-inspector-session-impl.cc
+@@ -213,6 +213,7 @@ void V8InspectorSessionImpl::FlushProtocolNotifications() {
+ }
+ 
+ void V8InspectorSessionImpl::reset() {
++  m_consoleAgent->reset();
+   m_debuggerAgent->reset();
+   m_runtimeAgent->reset();
+   discardInjectedScripts();
+diff --git a/src/inspector/v8-runtime-agent-impl.cc b/src/inspector/v8-runtime-agent-impl.cc
+index e6ce30cc7ec2b57580af32038a2fd40d2d7b52b5..c7a007c564d3ed71555979512c3cbb7ceed2840a 100644
+--- a/src/inspector/v8-runtime-agent-impl.cc
++++ b/src/inspector/v8-runtime-agent-impl.cc
+@@ -32,6 +32,7 @@
+ 
+ #include <inttypes.h>
+ 
++#include <algorithm>
+ #include <memory>
+ 
+ #include "../../third_party/inspector_protocol/crdtp/json.h"
+@@ -1173,6 +1174,7 @@ Response V8RuntimeAgentImpl::disable() {
+ }
+ 
+ void V8RuntimeAgentImpl::reset() {
++  m_lastReportedConsoleSequence = 0;
+   m_compiledScripts.clear();
+   if (m_enabled) {
+     int sessionId = m_session->sessionId();
+@@ -1225,11 +1227,17 @@ void V8RuntimeAgentImpl::inspect(
+ }
+ 
+ void V8RuntimeAgentImpl::messageAdded(V8ConsoleMessage* message) {
+-  if (m_enabled) reportMessage(message, true);
++  if (!m_enabled) return;
++  if (message->SequenceNumber() <= m_lastReportedConsoleSequence) return;
++  // Reporting already runs on the deferred inspector task, so preserve the
++  // upstream protocol preview without adding work to the page's console call.
++  reportMessage(message, true);
+ }
+ 
+ bool V8RuntimeAgentImpl::reportMessage(V8ConsoleMessage* message,
+                                        bool generatePreview) {
++  m_lastReportedConsoleSequence =
++      std::max(m_lastReportedConsoleSequence, message->SequenceNumber());
+   message->reportToFrontend(&m_frontend, m_session, generatePreview);
+   m_frontend.flush();
+   return m_inspector->hasConsoleMessageStorage(m_session->contextGroupId());
+diff --git a/src/inspector/v8-runtime-agent-impl.h b/src/inspector/v8-runtime-agent-impl.h
+index b0efbe69a86a923a514c03f95ab215402453734e..2e9d587d2926f79500a207b763d7b453ba253808 100644
+--- a/src/inspector/v8-runtime-agent-impl.h
++++ b/src/inspector/v8-runtime-agent-impl.h
+@@ -176,6 +176,7 @@ class V8RuntimeAgentImpl : public protocol::Runtime::Backend {
+   V8InspectorImpl* m_inspector;
+   std::shared_ptr<V8DebuggerBarrier> m_debuggerBarrier;
+   bool m_enabled;
++  uint64_t m_lastReportedConsoleSequence = 0;
+   std::unordered_map<String16, std::unique_ptr<v8::Global<v8::Script>>>
+       m_compiledScripts;
+   // Binding name -> executionContextIds mapping.
+diff --git a/test/inspector/runtime/runtime-restore-expected.txt b/test/inspector/runtime/runtime-restore-expected.txt
+index 0072588abcf58c01c4ba78a895e712f07a88221b..b275c24f3e1051e1585633624ed4d759304de6b1 100644
+--- a/test/inspector/runtime/runtime-restore-expected.txt
++++ b/test/inspector/runtime/runtime-restore-expected.txt
+@@ -59,6 +59,10 @@ will reconnect..
+     }
+ }
+ 
++Running test: testConsoleAgentsAfterContextGroupReset
++Runtime messages: before reset, after reset
++Console messages: before reset, after reset
++
+ Running test: testSetCustomObjectFormatterEnabled
+ will reconnect..
+ will reconnect..
+diff --git a/test/inspector/runtime/runtime-restore.js b/test/inspector/runtime/runtime-restore.js
+index 77fa823e7e86658ab60389b09d3d10bac506f33f..05f0d302b14da761713db9fd0eb3e23501e50f99 100644
+--- a/test/inspector/runtime/runtime-restore.js
++++ b/test/inspector/runtime/runtime-restore.js
+@@ -54,6 +54,48 @@ InspectorTest.runTestSuite([
+       });
+   },
+ 
++  function testConsoleAgentsAfterContextGroupReset(next) {
++    const resetGroup = new InspectorTest.ContextGroup();
++    resetGroup.createContext();
++    const resetSession = resetGroup.connect();
++    const ResetProtocol = resetSession.Protocol;
++    const runtimeMessages = [];
++    const consoleMessages = [];
++    ResetProtocol.Runtime.onConsoleAPICalled(message => {
++      runtimeMessages.push(message.params.args[0].value);
++    });
++    ResetProtocol.Console.onMessageAdded(message => {
++      consoleMessages.push(message.params.message.text);
++    });
++    ResetProtocol.Runtime.enable()
++        .then(ResetProtocol.Console.enable)
++        .then(
++            () => ResetProtocol.Runtime.evaluate(
++                {expression: 'console.log("before reset");'}))
++        .then(() => {
++          const created = ResetProtocol.Runtime.onceExecutionContextCreated();
++          resetGroup.reset();
++          resetGroup.createContext();
++          return created;
++        })
++        .then(message => ResetProtocol.Runtime.evaluate({
++          contextId: message.params.context.id,
++          expression: 'console.log("after reset");'
++        }))
++        .then(() => {
++          InspectorTest.log(`Runtime messages: ${runtimeMessages.join(', ')}`);
++          InspectorTest.log(`Console messages: ${consoleMessages.join(', ')}`);
++        })
++        .then(ResetProtocol.Console.disable)
++        .then(ResetProtocol.Runtime.disable)
++        .then(() => {
++          ResetProtocol.Runtime.onConsoleAPICalled(null);
++          ResetProtocol.Console.onMessageAdded(null);
++          resetSession.disconnect();
++          next();
++        });
++  },
++
+   function testSetCustomObjectFormatterEnabled(next) {
+     Protocol.Runtime.onConsoleAPICalled(InspectorTest.logMessage);
+     Protocol.Runtime.discardConsoleEntries()

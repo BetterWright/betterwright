@@ -61,14 +61,14 @@ client it does not know), or when you want to do it deliberately.
 3. **Download the managed browser** (one-time):
 
    ```bash
-   betterwright setup     # Obscura + an on-demand Chromium/Cloak pixel renderer
-   # or: betterwright update   # refresh Obscura only
+   betterwright setup     # install native BetterChromium
+   # or: betterwright update   # refresh BetterChromium
    ```
 
-   Setup fetches checksum-pinned Obscura into `~/.betterwright/obscura/` and
-   keeps the Chromium fork (or CloakBrowser fallback) as an on-demand pixel
-   renderer. npm installation itself has no hidden browser-download lifecycle
-   script.
+   Setup fetches checksum-pinned BetterChromium into
+   `~/.betterwright/chromium/`. CloakBrowser is available only through the
+   explicit `--cloak-only` compatibility opt-out. npm installation itself has
+   no hidden browser-download lifecycle script.
 4. **Verify** with `betterwright doctor` — it must end with
    `BetterWright is ready.` Every line it flags with `✗` names its own fix; if
    any remain, stop and report exactly what `doctor` printed. `!` lines are
@@ -249,10 +249,11 @@ usually swallow the error), and a missing browser.
 The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
-Headless DOM/API work uses Obscura; visual captures start the native Chromium
-fork (`~/.betterwright/chromium/`) or CloakBrowser only on demand. Headed and
-explicit `--cloak-only` sessions use the compatibility browser throughout. See
-[docs/obscura.md](docs/obscura.md). This is not a guarantee of undetectability.
+BetterChromium (`~/.betterwright/chromium/`) is the required/default
+backend on supported Linux x64 and macOS arm64 hosts. CloakBrowser is used only
+when explicitly selected with `betterwright setup --cloak-only` and
+`BETTERWRIGHT_CHROMIUM_ROOT=off`; it is never a silent fallback. See
+[docs/chromium-fork.md](docs/chromium-fork.md). This is not a guarantee of undetectability.
 
 Broad discovery should use the host's web-search tool, then open selected
 first-party pages in BetterWright; the operator guidance says so. Set

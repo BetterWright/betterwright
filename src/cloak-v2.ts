@@ -12,20 +12,24 @@
 //
 // Headless parity comes from the patched binary plus BetterWright's existing
 // binary-specific viewport compatibility layer.
-// Page-world shims are intentionally avoided: live reCAPTCHA verification
-// showed that the old init pack made Cloak easier, not harder, to detect.
+// Page-world APIs remain native; V2 only configures browser launch and context data.
+
+import { acceptLanguageForLocale } from "./fork-identity.js";
+import { CHROMIUM_151_MACOS_M4_PRO_PROFILE } from "./fork-identity-profile-151.js";
 
 /** Window sizes used only when parking a headed browser off-screen. */
 const HEADED_WINDOW_SIZES = Object.freeze({
   macos: Object.freeze({
-    width: 1920,
-    height: 1015,
+    width: CHROMIUM_151_MACOS_M4_PRO_PROFILE.screen.width,
+    height: CHROMIUM_151_MACOS_M4_PRO_PROFILE.screen.height,
   }),
   windows: Object.freeze({
     width: 1920,
     height: 1040,
   }),
 });
+
+const SUPPORTED_PLATFORMS = new Set(["macos", "windows", "linux"]);
 
 const COUNTRY_LOCALE = Object.freeze({
   US: "en-US", GB: "en-GB", CA: "en-CA", AU: "en-AU", NZ: "en-NZ", IE: "en-IE",
@@ -36,6 +40,25 @@ const COUNTRY_LOCALE = Object.freeze({
   ZA: "en-ZA", AE: "ar-AE", TR: "tr-TR", RU: "ru-RU", UA: "uk-UA", CZ: "cs-CZ",
 });
 
+function validatePlatform(platform) {
+  if (!SUPPORTED_PLATFORMS.has(platform)) {
+    throw new TypeError(`Unsupported browser identity platform: ${platform}`);
+  }
+  return platform;
+}
+
+function validateTimezone(timezone) {
+  if (!timezone) return null;
+  const configured = String(timezone).trim();
+  if (!configured) throw new TypeError("Browser identity timezone must not be blank.");
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: configured }).format();
+  } catch {
+    throw new TypeError(`Invalid browser identity timezone: ${configured}`);
+  }
+  return configured;
+}
+
 /** Chromium args V2 adds on top of the base managed set. */
 export function v2LaunchArgs({
   locale,
@@ -45,14 +68,22 @@ export function v2LaunchArgs({
   nativeFork = false,
 }: any = {}) {
   const args = [];
-  if (locale) {
-    args.push(`--lang=${locale}`, `--fingerprint-locale=${locale}`);
+  validatePlatform(platform);
+  const configuredLocale = locale
+    ? acceptLanguageForLocale(locale).split(",", 1)[0]
+    : null;
+  const configuredTimezone = validateTimezone(timezone);
+  if (configuredLocale) {
+    args.push(
+      `--lang=${configuredLocale}`,
+      `--fingerprint-locale=${configuredLocale}`,
+    );
   }
-  if (timezone) {
+  if (configuredTimezone) {
     args.push(
       nativeFork
-        ? `--bw-timezone=${timezone}`
-        : `--fingerprint-timezone=${timezone}`,
+        ? `--bw-timezone=${configuredTimezone}`
+        : `--fingerprint-timezone=${configuredTimezone}`,
     );
   }
   if (platform) {
@@ -122,7 +153,7 @@ export function buildV2LaunchPlan({
   // The native fork masks the host platform as a consumer Mac by default: a
   // headless-Linux identity is a strong automation signal. The managed
   // CloakBrowser path keeps its host-derived coherent identity.
-  const resolvedPlatform =
+  const resolvedPlatform = validatePlatform(
     platform ||
     (nativeFork
       ? "macos"
@@ -130,15 +161,24 @@ export function buildV2LaunchPlan({
         ? "macos"
         : process.platform === "win32"
           ? "windows"
-          : "linux");
+          : "linux"),
+  );
+  const acceptLanguage = acceptLanguageForLocale(locale);
+  const configuredLocale = acceptLanguage.split(",", 1)[0];
+  const configuredTimezone = validateTimezone(timezone);
   return {
     args: v2LaunchArgs({
-      locale,
-      timezone,
+      locale: configuredLocale,
+      timezone: configuredTimezone,
       platform: resolvedPlatform,
       headedInvisible,
       nativeFork,
     }),
-    identity: { locale, timezone: timezone || null, platform: resolvedPlatform },
+    identity: Object.freeze({
+      locale: configuredLocale,
+      acceptLanguage,
+      timezone: configuredTimezone,
+      platform: resolvedPlatform,
+    }),
   };
 }

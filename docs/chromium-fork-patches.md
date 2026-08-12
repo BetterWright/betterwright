@@ -1,6 +1,6 @@
 # Chromium fork patch set
 
-The pinned BetterWright Chromium 150 fork carries a small set of source patches
+The pinned BetterChromium 151 fork carries a small set of source patches
 on top of upstream Chromium. This page is the reference for what each one
 changes and why it lives in the browser source rather than in the JS layer.
 Install, discovery, and the runtime options are in
@@ -14,7 +14,7 @@ readback, audio rendering, and font enumeration.
 
 Every patch is gated on `--fingerprint-platform=macos`, the flag the launcher
 passes, and per-profile variation is keyed to `--fingerprint=<seed>`. The masked
-values are the ones genuine Google Chrome 150.0.7871.129 reports on Apple
+values are the ones genuine Google Chrome 151.0.7922.108 reports on Apple
 silicon under macOS 26.6 — the same table `src/fork-identity.ts` applies from
 the launch side, so both layers describe one machine rather than two.
 
@@ -122,7 +122,7 @@ Avenir Next 304) instead of collapsing onto a single fallback.
 
 ## 8. Linux font-data file sharing
 
-[`patches/chromium-150/font-data-file-sharing.patch`](../patches/chromium-150/font-data-file-sharing.patch)
+[`patches/chromium-151/font-data-file-sharing.patch`](../patches/chromium-151/font-data-file-sharing.patch)
 applies from the Chromium source root. It was validated against Chromium
 `e69b30bba288603e514cffb4c79c359cac68e923` and Skia
 `bee4c917220040e147f14964635ff92ce6c5a3f6`.
@@ -144,7 +144,7 @@ copies.
 
 ## 9. Linux renderer soft limit
 
-[`patches/chromium-150/renderer-process-soft-limit.patch`](../patches/chromium-150/renderer-process-soft-limit.patch)
+[`patches/chromium-151/renderer-process-soft-limit.patch`](../patches/chromium-151/renderer-process-soft-limit.patch)
 applies from the Chromium source root and makes four the Linux fork's default
 **soft** renderer-process limit, keeping `--renderer-process-limit` as an
 explicit override. Chromium's memory-derived default allows dozens of renderers
@@ -154,7 +154,7 @@ adding useful parallelism on four vCPUs.
 The default is set through `RenderProcessHost::SetMaxRendererProcessCount()`
 during Linux startup — the same global-override path as the command-line switch
 — rather than `ContentBrowserClient::GetMaxRendererProcessCountOverride()`,
-because Chromium 150's `RemoveRendererProcessLimit` feature can bypass
+because Chromium 151's `RemoveRendererProcessLimit` feature can bypass
 calculated and embedder limits while deliberately preserving explicit global
 overrides.
 
@@ -196,6 +196,6 @@ checks against stock-Chrome behavior, plus the live score endpoints described in
 
 ```bash
 npm run build:harness
-BETTERWRIGHT_CHROMIUM_PATH=/path/to/linux-x64/chrome \
+BETTERWRIGHT_CHROMIUM_PATH=/path/to/linux-x64/betterchromium \
   node research/stealth-report.js --live
 ```

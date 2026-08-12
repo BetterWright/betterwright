@@ -67,23 +67,31 @@ expectMatch(
   /PINNED_CLOAKBROWSER_VERSION = "([^"]+)"/,
   pkg.dependencies.cloakbrowser,
 );
-const obscuraSource = read("src/obscura.ts");
-const obscuraVersion = obscuraSource.match(/OBSCURA_VERSION = "([^"]+)"/)?.[1];
-if (!obscuraVersion) failures.push("Obscura runtime version pin is missing");
-else if (!/OBSCURA_RELEASE_TAG = `v\$\{OBSCURA_VERSION\}`/.test(obscuraSource)) {
-  failures.push("Obscura release tag must derive from OBSCURA_VERSION");
+// BetterChromium release identity and archive pins must move in lockstep.
+const chromiumSource = read("src/chromium-fork.ts");
+const chromiumVersion = chromiumSource.match(/BETTERWRIGHT_CHROMIUM_VERSION = "([^"]+)"/)?.[1];
+if (!chromiumVersion) failures.push("BetterChromium version pin is missing");
+else if (!/CHROMIUM_FORK_RELEASE_TAG = `betterchromium-\$\{BETTERWRIGHT_CHROMIUM_VERSION\}-r[0-9]+`/.test(chromiumSource)) {
+  failures.push("BetterChromium release tag must be versioned as betterchromium-<version>-rN");
+}
+const assetEntries = [...chromiumSource.matchAll(/name: "(betterchromium-(?:mac-arm64|linux-x64|win-x64)\.zip)",\s+sha256:\s+"([a-f0-9]{64})"/g)];
+const declaredAssetNames = [...chromiumSource.matchAll(/name: "([^"]+)"/g)].map((match) => match[1]);
+if (assetEntries.length !== declaredAssetNames.length) {
+  failures.push("every BetterChromium asset must use a betterchromium-* filename and verified SHA-256");
+}
+if (declaredAssetNames.some((name) => name.includes("win-x64")) &&
+    !assetEntries.some(([_, name]) => name === "betterchromium-win-x64.zip")) {
+  failures.push("Windows x64 must not enter the BetterChromium manifest without a verified checksum");
 }
 
-// CI and trusted publishing must exercise the default two-engine install. A
-// `--cloak-only` setup here would let Obscura-specific release failures reach
-// npm even though the package's default runtime had never launched.
+// CI and trusted publishing must exercise the BetterChromium install.
 for (const workflow of [".github/workflows/ci.yml", ".github/workflows/publish-npm.yml"]) {
   const source = read(workflow);
   const managedSetup = source.match(
     /- name: Install managed browsers\n(?:\s+if:[^\n]+\n)?\s+run:\s*([^\n]+)/,
   )?.[1]?.trim();
   if (managedSetup !== "node dist/bin/betterwright.js setup") {
-    failures.push(`${workflow} must install both managed browsers with default setup`);
+    failures.push(`${workflow} must install BetterChromium with default setup`);
   }
 }
 
@@ -98,5 +106,5 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(
-  `versions aligned: betterwright ${pkg.version}, obscura ${obscuraVersion}, playwright-core ${pkg.dependencies["playwright-core"]}, cloakbrowser ${pkg.dependencies.cloakbrowser}`,
+  `versions aligned: betterwright ${pkg.version}, BetterChromium ${chromiumVersion}, playwright-core ${pkg.dependencies["playwright-core"]}, cloakbrowser ${pkg.dependencies.cloakbrowser}`,
 );

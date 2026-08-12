@@ -43,8 +43,8 @@ alone.
 The individual steps remain available when you want them:
 
 ```bash
-npx betterwright setup     # Obscura + an on-demand Chromium/Cloak pixel renderer
-npx betterwright update    # download/refresh the resident Obscura engine
+npx betterwright setup     # install native BetterChromium
+npx betterwright update    # download/refresh BetterChromium
 npx betterwright doctor    # grouped readiness report; every ✗ names its fix
 ```
 
@@ -56,65 +56,41 @@ the lines that need attention.
 
 Upgrade the npm package with `npm install -g betterwright@latest` (or
 `npm update -g betterwright`), then run `betterwright update` so the
-pinned Obscura release matches that package. Package updates are intentional
+pinned BetterChromium release matches that package. Package updates are intentional
 rather than automatic, so application lockfiles continue to control when a
 new BetterWright version is adopted.
 
-### Obscura resident engine
+### BetterChromium
 
-Headless sessions prefer the pinned Obscura release installed at
-`~/.betterwright/obscura/`. It runs DOM, JavaScript, storage, and network work
-without a resident Chromium renderer. Screenshots start the installed Chromium
-fork or CloakBrowser only long enough to reproduce the page state and capture
-its pixels. See [obscura.md](obscura.md).
+On supported Linux x64 and macOS arm64 hosts, native BetterChromium is
+the required/default backend for every session, including screenshots,
+credentials, CAPTCHA handling, and live view. `betterwright setup` installs it
+under `~/.betterwright/chromium/`; `betterwright update` refreshes the pinned
+release. There is no silent fallback when it is missing or fails to launch.
 
-Resolution order is an explicit `BETTERWRIGHT_OBSCURA_PATH`, an artifact under
-`BETTERWRIGHT_OBSCURA_ROOT`, zero-config discovery under
-`~/.betterwright/obscura/`, then the previous compatibility backend. An
-explicit path that is missing fails closed. Set either variable to `off` to
-disable Obscura.
+### Explicit CloakBrowser compatibility mode
 
-### Managed CloakBrowser pixel/compatibility backend
+CloakBrowser is retained for operators who deliberately opt out of the native
+backend. Run `betterwright setup --cloak-only`, then set
+`BETTERWRIGHT_CHROMIUM_ROOT=off` (or `BETTERWRIGHT_CHROMIUM_PATH=off`) when
+launching. BetterWright never selects CloakBrowser merely because native
+Chromium is absent. The wrapper verifies its signed browser release before
+extraction; `CLOAKBROWSER_BINARY_PATH` may point at an official existing binary.
 
-On platforms without a public fork artifact, when pixels are requested, or
-when you pass `--cloak-only`, BetterWright uses CloakBrowser. `betterwright setup` asks the
-pinned official wrapper to fetch the correct binary directly from CloakHQ's
-release source and verify the published checksums with its pinned Ed25519
-signature before extraction. BetterWright ships the wrapper integration, not
-the separately licensed browser binary, and does not redistribute that binary.
-
-To use a CloakBrowser binary already installed through an official channel,
-point `CLOAKBROWSER_BINARY_PATH` at it before starting BetterWright:
-
-```bash
-export CLOAKBROWSER_BINARY_PATH="$HOME/.cloakbrowser/chromium-.../chrome"
-```
-
-The managed backend keeps one stable fingerprint seed and persistent profile.
-That removes several stock automation signals and can reduce false positives;
-it cannot guarantee that a site will accept the session or never issue a
-challenge.
-
-BetterWright pins the CloakBrowser npm wrapper, while the separately cached
-browser binary follows CloakBrowser's signed stable channel. `betterwright
-doctor` reports both versions. For a reproducible deployment, set a full
-`CLOAKBROWSER_VERSION`; to keep an already installed build from checking for a
-newer stable build, set `CLOAKBROWSER_AUTO_UPDATE=false`.
-
-### Native Chromium fork pixel renderer (macOS arm64 / Linux x64 / Windows x64)
+### BetterChromium backend (macOS arm64 / Linux x64)
 
 `betterwright setup` downloads BetterWright's own
 Chromium build into `~/.betterwright/chromium/` (SHA-256 verified from the
-pinned GitHub Release). Pixel capture prefers the fork over CloakBrowser —
+pinned GitHub Release). The runtime uses the fork for all browser work —
 per-profile-stable canvas/audio farbling, platform masking (a Linux server
 presents as a consumer Mac), and bundled macOS-metric fonts. The npm package
 is only the JS/runtime; the ~200 MB zip is fetched on demand, never as an
 install lifecycle side effect. Details: [chromium-fork.md](chromium-fork.md).
 
 ```bash
-npx betterwright setup           # install Obscura and the pixel renderer
-npx betterwright setup --force   # re-download managed binaries
-npx betterwright setup --cloak-only  # CloakBrowser only (skip fork)
+npx betterwright setup           # install native BetterChromium
+npx betterwright setup --force   # re-download BetterChromium
+npx betterwright setup --cloak-only  # explicit CloakBrowser opt-out
 ```
 
 Resolution order:
@@ -125,7 +101,7 @@ Resolution order:
 2. Zero-config discovery at `~/.betterwright/chromium/<platform>/`: if the
    artifact for this platform exists there, it is used automatically
    (this is what default `setup` populates).
-3. Otherwise the managed CloakBrowser backend.
+3. Otherwise launch fails with setup guidance. CloakBrowser is selected only when either variable is explicitly `off`.
 
 Force the managed path even with an artifact installed:
 

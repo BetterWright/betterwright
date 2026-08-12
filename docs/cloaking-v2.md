@@ -1,7 +1,7 @@
 # Cloaking V2
 
 Cloaking V2 keeps BetterWright's managed browser identity coherent across the
-two layers that sites score. For the opt-in Chromium 150/V8 inspector fork, see
+two layers that sites score. For the opt-in Chromium 151/V8 inspector fork, see
 [chromium-fork.md](chromium-fork.md).
 
 1. **Chromium layer** - CloakBrowser's source-level patches, a stable

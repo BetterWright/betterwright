@@ -1,0 +1,12 @@
+is_debug = false
+is_component_build = false
+symbol_level = 0
+target_cpu = "x64"
+clang_use_chrome_plugins = false
+dcheck_always_on = false
+disable_fieldtrial_testing_config = true
+treat_warnings_as_errors = false
+use_remoteexec = false
+chrome_pgo_phase = 0
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"

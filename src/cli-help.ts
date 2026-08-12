@@ -9,8 +9,8 @@
 
 export const COMMAND_SUMMARIES = [
   ["init", "guided first-time setup — browser, agent wiring, verification"],
-  ["setup", "download Obscura and the on-demand pixel renderer"],
-  ["update", "download or refresh the resident Obscura engine"],
+  ["setup", "download native BetterChromium"],
+  ["update", "download or refresh native BetterChromium"],
   ["doctor", "check that everything needed is installed and reachable"],
   ["run", "run one Playwright snippet in the persistent session"],
   ["repl", "run blank-line-separated snippets from stdin"],
@@ -54,33 +54,30 @@ Options:
   --yes            accept every default; never prompt (for scripts and CI)
   --skip-browser   do not download or verify the browser
   --skip-agents    do not touch any agent configuration
-  --cloak-only     use CloakBrowser rather than Obscura
+  --cloak-only     explicitly use CloakBrowser compatibility mode
 
 Safe to re-run: it reports what is already done and changes only what is not.`,
 
   setup: `Usage: betterwright setup [options]
 
-Download the managed browser (once). Supported macOS, Linux, and Windows hosts
-get Obscura in ~/.betterwright/obscura/ as the resident engine. The existing
-Chromium/Cloak browser remains an on-demand pixel renderer for screenshots and
-live visual work, and is not kept resident during DOM/API-only tasks.
+Download native BetterChromium, the required/default backend on supported
+Linux x64 and macOS arm64 hosts. CloakBrowser is available only as an explicit
+compatibility opt-out and is never selected as a silent fallback.
 
 Options:
-  --cloak-only   skip Obscura and use CloakBrowser only
-  --force        re-download managed binaries even when already present
+  --cloak-only   install CloakBrowser compatibility mode instead of BetterChromium
+  --force        re-download the managed browser even when already present
 
-Also refreshes agent skill files that are already installed, so they match the
-package version. Run \`betterwright doctor\` afterwards to confirm.`,
+Also refreshes installed agent skill files. Run \`betterwright doctor\` afterwards.`,
 
   update: `Usage: betterwright update [options]
 
-Download or refresh Obscura, BetterWright's resident low-memory browser.
-Use \`betterwright setup\` to also install the on-demand pixel renderer.
+Download or refresh native BetterChromium. This command fails on hosts
+without a native artifact; use \`betterwright setup --cloak-only\` only when you
+intend to opt out to the compatibility backend.
 
 Options:
-  --force   re-download even if the pinned version is already installed
-
-Set BETTERWRIGHT_OBSCURA_PATH=off to keep using the compatibility backend.`,
+  --force   re-download even if the pinned version is already installed`,
 
   doctor: `Usage: betterwright doctor [options]
 

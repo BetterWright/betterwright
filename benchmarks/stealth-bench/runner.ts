@@ -1,22 +1,111 @@
 #!/usr/bin/env node
 
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
+import {
+  BETTERWRIGHT_CHROMIUM_VERSION,
+  CHROMIUM_FORK_RELEASE_TAG,
+} from "../../dist/src/chromium-fork.js";
 import { BetterWright, codexModel, runAgentTask } from "../../dist/src/index.js";
 
 export const DATASET_NAME = "Stealth_Bench_V1";
 export const PINNED_DATASET_SHA256 =
   "d9a842e6cf924929b25b39d1d96b6aa9eb89e05fe942598dfda85bf468d7cfda";
 
+const execFileAsync = promisify(execFile);
+
 const BLOCK_PATTERN =
   /\b(?:access denied|are you human|automated queries|bot detected|captcha|challenge-platform|checking your browser|cloudflare ray id|datadome|enable javascript and cookies|just a moment|perimeterx|press and hold|request blocked|security check|temporarily blocked|verify you are human|verify your identity|unusual traffic)\b/i;
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+export async function resolveBenchmarkBinary(value?) {
+  const binary = String(value || "").trim();
+  if (!binary) {
+    throw new Error(
+      "--binary is required; Stealth Bench only runs the BetterChromium.",
+    );
+  }
+  if (!path.isAbsolute(binary)) throw new Error("--binary must be an absolute path.");
+  let stat;
+  try {
+    stat = await fs.stat(binary);
+  } catch (error) {
+    if (error?.code === "ENOENT") throw new Error(`--binary was not found: ${binary}`);
+    throw error;
+  }
+  if (!stat.isFile()) throw new Error(`--binary must point to a file: ${binary}`);
+  try {
+    await fs.access(binary, fs.constants.X_OK);
+  } catch {
+    throw new Error(`--binary is not executable: ${binary}`);
+  }
+  return binary;
+}
+
+export function sanitizeEgressMetadata(upstreamProxy?) {
+  if (!upstreamProxy) return { type: "direct" };
+  const parsed = new URL(upstreamProxy);
+  if (!new Set(["http:", "socks5:"]).has(parsed.protocol)) {
+    throw new Error("--upstream-proxy must be an http:// or socks5:// URL.");
+  }
+  return {
+    type: "upstream_proxy",
+    protocol: parsed.protocol.slice(0, -1),
+    hostname: parsed.hostname,
+    port: parsed.port || null,
+    authenticated: Boolean(parsed.username || parsed.password),
+  };
+}
+
+export async function benchmarkBinaryMetadata(
+  binary,
+  options: { probeVersion?: (binary: string) => Promise<string> } = {},
+) {
+  const bytes = await fs.readFile(binary);
+  const probeVersion =
+    options.probeVersion ||
+    (async (filename) => {
+      const { stdout, stderr } = await execFileAsync(filename, ["--version"], {
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+      return `${stdout}${stderr}`.trim();
+    });
+  const reportedVersion = await probeVersion(binary);
+  const versionMatch = reportedVersion.match(/(?:Chromium|Chrome)\s+(\d+(?:\.\d+){3})/i);
+  const chromiumVersion = versionMatch?.[1];
+  const acceptedVersions = new Set([BETTERWRIGHT_CHROMIUM_VERSION, "150.0.7871.129"]);
+  if (!chromiumVersion || !acceptedVersions.has(chromiumVersion)) {
+    throw new Error(
+      `--binary must report the candidate BetterChromium ${BETTERWRIGHT_CHROMIUM_VERSION} or preserved baseline 150.0.7871.129; got ${reportedVersion || "no version"}.`,
+    );
+  }
+  return {
+    name: "BetterChromium",
+    chromium_version: chromiumVersion,
+    build: chromiumVersion === BETTERWRIGHT_CHROMIUM_VERSION
+      ? CHROMIUM_FORK_RELEASE_TAG
+      : "preserved-chromium-150-baseline",
+    reported_version: reportedVersion,
+    path: binary,
+    sha256: sha256(bytes),
+    size_bytes: bytes.length,
+  };
+}
+
+export function configureForkEnvironment(binary, env = process.env) {
+  env.BETTERWRIGHT_CHROMIUM_PATH = binary;
+  delete env.BETTERWRIGHT_CHROMIUM_ROOT;
+  delete env.CLOAKBROWSER_BINARY_PATH;
 }
 
 function decodedFernetToken(encryptedText) {
@@ -55,7 +144,12 @@ export function normalizeTask(input) {
   const taskId = String(input?.task_id ?? "").trim();
   const instruction = String(input?.confirmed_task ?? "").trim();
   const category = String(input?.category ?? "").trim();
-  const website = new URL(String(input?.website ?? "").trim());
+  const websiteInput = String(input?.website ?? "").trim();
+  const website = new URL(
+    /^[a-z][a-z0-9+.-]*:\/\//i.test(websiteInput)
+      ? websiteInput
+      : `https://${websiteInput}`,
+  );
   if (!/^\d+$/.test(taskId)) throw new TypeError(`Invalid Stealth Bench task ID: ${taskId}`);
   if (!instruction) throw new TypeError(`Stealth Bench task ${taskId} has no instruction.`);
   if (!category) throw new TypeError(`Stealth Bench task ${taskId} has no category.`);
@@ -126,6 +220,7 @@ export function buildTaskPrompt(task) {
     "",
     "This run measures whether the browser reaches and operates the site without anti-bot intervention.",
     "Do not call captcha.solve, click a CAPTCHA, or work around an access-denied page.",
+    "Do not capture screenshots. Use DOM text and challenge metadata only.",
     "Return PASSED only after completing the requested steps without a challenge.",
     "Return BLOCKED when an anti-bot, CAPTCHA, security check, or access-denied page prevents completion.",
     "Return FAILED only for a non-anti-bot failure. Keep the final reason brief.",
@@ -197,12 +292,22 @@ export async function runTask(
     vault: false,
     credentialCapture: false,
     downloadPolicy: "deny",
-    stealthRuntimeFix: true,
+    stealthRuntimeFix: false,
     ...(options.upstreamProxy ? { upstreamProxy: options.upstreamProxy, geoip: true } : {}),
   });
   const originalRun = browser.run.bind(browser);
   browser.run = async (...args) => {
+    const source = String(args[0] || "");
+    if (/\bscreenshot\s*\(/i.test(source)) {
+      throw new Error("Screenshots are disabled for Stealth Bench.");
+    }
+    if (/\bcaptcha\s*\.\s*solve\s*\(/i.test(source)) {
+      throw new Error("CAPTCHA solving is disabled for Stealth Bench.");
+    }
     const result = await originalRun(...args);
+    if (result?.screenshots?.length || result?.artifacts?.some((item) => item?.kind === "screenshot")) {
+      throw new Error("Stealth Bench produced a forbidden screenshot artifact.");
+    }
     observations.push({
       challenges: result?.challenges || [],
       warnings: result?.warnings || [],
@@ -275,7 +380,10 @@ async function main(argv = process.argv.slice(2)) {
   if (!cli.dataset) throw new Error("--dataset is required.");
   if (!cli.output) throw new Error("--output is required.");
   const headless = parseMode(cli.mode || "headless");
-  if (cli.binary) process.env.CLOAKBROWSER_BINARY_PATH = path.resolve(cli.binary);
+  const binary = await resolveBenchmarkBinary(cli.binary);
+  configureForkEnvironment(binary);
+  const browserMetadata = await benchmarkBinaryMetadata(binary);
+  const egress = sanitizeEgressMetadata(cli.upstreamProxy);
   const loaded = await loadStealthTasks(path.resolve(cli.dataset), {
     allowUnpinned: cli.allowUnpinned,
   });
@@ -291,14 +399,34 @@ async function main(argv = process.argv.slice(2)) {
   const records = [];
   for (const [index, task] of selected.entries()) {
     console.log(`[${index + 1}/${selected.length}] ${task.taskId} ${task.category} ${headless ? "headless" : "headed"}`);
-    const record = await runTask(task, {
-      headless,
-      timeoutMs,
-      upstreamProxy: cli.upstreamProxy,
-      model: cli.model,
-      effort: cli.effort,
-      onStep: ({ step, tool, note }) => console.log(`  step ${step} ${tool}: ${note || ""}`),
-    });
+    const taskStarted = Date.now();
+    let record;
+    try {
+      record = await runTask(task, {
+        headless,
+        timeoutMs,
+        upstreamProxy: cli.upstreamProxy,
+        model: cli.model,
+        effort: cli.effort,
+        onStep: ({ step, tool, note }) => console.log(`  step ${step} ${tool}: ${note || ""}`),
+      });
+    } catch (error) {
+      const message = String(error?.message || error || "unknown task failure");
+      record = {
+        task_id: task.taskId,
+        category: task.category,
+        website: task.website,
+        mode: headless ? "headless" : "headed",
+        status: BLOCK_PATTERN.test(message) ? "blocked" : "failed",
+        challenge_count: BLOCK_PATTERN.test(message) ? 1 : 0,
+        agent_reason: "runner_error",
+        error_sha256: sha256(message),
+        duration_ms: Date.now() - taskStarted,
+        started_at: new Date(taskStarted).toISOString(),
+        finished_at: new Date().toISOString(),
+        final_url: null,
+      };
+    }
     records.push(record);
     console.log(`  ${record.status} (${Math.round(record.duration_ms / 1000)}s)`);
   }
@@ -306,11 +434,28 @@ async function main(argv = process.argv.slice(2)) {
   const output = {
     benchmark: DATASET_NAME,
     dataset: loaded.metadata,
-    browser: "BetterWright Chromium fork",
-    binary: cli.binary ? path.resolve(cli.binary) : "managed",
+    browser: browserMetadata,
     mode: headless ? "headless" : "headed",
     model: cli.model || "gpt-5.6-sol",
     effort: cli.effort || "high",
+    egress,
+    run_controls: {
+      timeout_minutes: timeoutMs / 60_000,
+      allow_unpinned_dataset: cli.allowUnpinned === true,
+      requested_task_ids: cli.taskIds || null,
+      requested_category: cli.category || null,
+      requested_limit: cli.limit === undefined ? null : Number(cli.limit),
+      selected_task_ids: selected.map((task) => task.taskId),
+      isolated_profile_per_task: true,
+      concurrency: 1,
+      geoip_from_upstream: Boolean(cli.upstreamProxy),
+      screenshots: "disabled",
+      captcha_solving: "disabled",
+      captcha_clicking: "prohibited",
+      plaintext_task_persistence: "disabled",
+      downloads: "denied",
+      credential_capture: "disabled",
+    },
     task_count: records.length,
     passed,
     blocked: records.filter((record) => record.status === "blocked").length,

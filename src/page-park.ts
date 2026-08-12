@@ -18,11 +18,10 @@
 // 2x device scale factor) does nothing either: the loop is not frame-paced, so
 // it simply renders more of them for the same CPU.
 //
-// WHAT WORKS is stopping the page itself, which is what this module does:
-// disable the page's script execution and set its animation timelines to rate
-// zero. Both are reversible CDP state, both are invisible to automation —
-// Playwright's own evaluate/locator/screenshot calls keep working on a parked
-// page, because CDP evaluation is not page script.
+// Parking uses Chromium's native page lifecycle plus its animation scheduler.
+// A frozen target retains JavaScript state, pending timers and rAF registrations;
+// returning it to active resumes those queues instead of disabling script in the
+// renderer. This matches a background/occluded tab without rewriting page APIs.
 //
 // WHEN. Only between executions. `parkSession` runs when a session's last
 // in-flight execution unwinds and `unparkSession` runs before the next one
@@ -31,12 +30,8 @@
 // driving the browser. That scoping is what makes this safe to have on by
 // default.
 //
-// THE COST, stated plainly: a parked page's script does not run. Timers,
-// clicks, typing, navigation, screenshots and network all behave normally on
-// unpark, but a requestAnimationFrame chain is a chain — the pending callback
-// never fires while parked, so nothing re-registers it, and a page whose
-// animation is driven by rAF stays still after it is unparked. Pages animated
-// by CSS/Web Animations resume exactly where they left off. Set
+// Frozen pages intentionally stop timers, rAF and animations while idle. They
+// resume through the native lifecycle when the next execution begins. Set
 // `parkBackgroundPages: false` (or BETTERWRIGHT_PARK_BACKGROUND_PAGES=0) to opt
 // out.
 
@@ -114,10 +109,9 @@ function enqueue(page, work) {
  * this step. Re-reads `desired` at execution time rather than capturing it, so
  * a park queued and then countermanded before it ran is simply not applied.
  *
- * Order matters within each direction. Parking pauses animations first, while
- * script can still run, so the page cannot start a fresh one in the gap;
- * waking restores script first, so the page is live before it is animated
- * again.
+ * Order matters within each direction. Parking pauses animation timelines before
+ * freezing the native page lifecycle; waking activates the lifecycle before
+ * restoring playback so pending timers and rAF registrations can resume.
  */
 function reconcile(page, newCDPSession) {
   return enqueue(page, async () => {
@@ -129,7 +123,7 @@ function reconcile(page, newCDPSession) {
       // domain reports nothing we consume, it is enabled only to drive the rate.
       await cdp.send("Animation.enable");
       await cdp.send("Animation.setPlaybackRate", { playbackRate: 0 });
-      await cdp.send("Emulation.setScriptExecutionDisabled", { value: true });
+      await cdp.send("Page.setWebLifecycleState", { state: "frozen" });
       // NOT Memory.forciblyPurgeJavaScriptMemory. Reclaiming the parked page's
       // V8 heap looks like free memory and measured as a browser-wide crash on
       // the pinned fork (150.0.7871.129): the call returns success and takes the
@@ -143,19 +137,16 @@ function reconcile(page, newCDPSession) {
       state.applied = "active";
       return;
     }
-    // Waking is on the critical path of every execution — the model is already
-    // waiting — and unlike parking the two calls have no ordering requirement
-    // between them, so they go down the same CDP connection together.
-    await Promise.all([
-      cdp.send("Emulation.setScriptExecutionDisabled", { value: false }),
-      cdp.send("Animation.setPlaybackRate", { playbackRate: 1 }),
-    ]);
+    // Native lifecycle activation must land first: it lets pending timers and
+    // rAF registrations resume before animation timelines begin advancing.
+    await cdp.send("Page.setWebLifecycleState", { state: "active" });
+    await cdp.send("Animation.setPlaybackRate", { playbackRate: 1 });
     state.applied = "active";
   });
 }
 
 /**
- * Stop a page's own scripts and animations.
+ * Freeze a page through Chromium's native lifecycle and animation scheduler.
  *
  * @returns whether *this call* parked the page — false for a page that was
  *   already parked, is closed, belongs to a browser that refused to park, or

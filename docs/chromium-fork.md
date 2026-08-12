@@ -1,23 +1,23 @@
-# Native Chromium Fork
+# BetterChromium
 
-BetterWright can run the pinned BetterWright Chromium 150 fork while keeping
+BetterWright can run the pinned BetterChromium 151 fork while keeping
 its public `run()`, `human.*`, `captcha.*`, snapshot, policy, proxy, and vault
-APIs unchanged. On macOS arm64, Linux x64, and Windows x64,
+APIs unchanged. On platforms with a checksum-pinned release asset,
 `betterwright setup` / `betterwright update` download the fork into the
-zero-config discovery root; CloakBrowser remains the fallback when no artifact
-is present.
+zero-config discovery root. It is the required/default runtime backend.
+CloakBrowser is selected only through an explicit compatibility opt-out.
 
 ## Install / update
 
 ```bash
 betterwright update          # download fork → ~/.betterwright/chromium/
 betterwright update --force  # re-fetch + re-verify even if already present
-betterwright setup           # fork (when shipped) + CloakBrowser fallback
-betterwright setup --cloak-only
+betterwright setup           # install BetterChromium
+betterwright setup --cloak-only  # explicit CloakBrowser compatibility mode
 ```
 
 Artifacts come from a revisioned GitHub Release tag such as
-`chromium-<version>-r2` (see `CHROMIUM_FORK_RELEASE_TAG` /
+`betterchromium-<version>-r1` (see `CHROMIUM_FORK_RELEASE_TAG` /
 `CHROMIUM_FORK_ASSETS` in `src/chromium-fork.ts`). Revisioning keeps older
 published BetterWright packages bound to their original immutable assets.
 Each zip is SHA-256 pinned in the manifest before extract. Apple-licensed
@@ -28,7 +28,7 @@ fonts are **not** in the public zip.
 Use an exact executable path:
 
 ```bash
-export BETTERWRIGHT_CHROMIUM_PATH=/absolute/path/to/chrome
+export BETTERWRIGHT_CHROMIUM_PATH=/absolute/path/to/betterchromium
 betterwright run -c 'return await page.title()'
 ```
 
@@ -43,12 +43,12 @@ The artifact-root layout is fixed:
 
 ```text
 artifacts/
-  mac-arm64/Chromium.app/Contents/MacOS/Chromium
-  linux-x64/chrome
-  win-x64/chrome.exe
+  mac-arm64/BetterChromium.app/Contents/MacOS/BetterChromium
+  linux-x64/betterchromium
+  win-x64/betterchromium.exe
 ```
 
-macOS arm64, Linux x64, and Windows x64 are built and runtime-tested.
+No renamed public archive is currently listed until rebuilt BetterChromium bytes have verified SHA-256 checksums. Windows x64 has a defined build and package layout, but it must remain absent from the download manifest until its release archive checksum is verified.
 
 `BETTERWRIGHT_CHROMIUM_PATH` takes precedence over
 `BETTERWRIGHT_CHROMIUM_ROOT`. Configured paths must be absolute and must exist;
@@ -58,21 +58,19 @@ BetterWright fails closed instead of silently falling back to another browser.
 
 With neither variable set, BetterWright checks the default root
 `~/.betterwright/chromium/` for the current platform's artifact. Found → the
-fork runs with no configuration at all. Not found (or no artifact shipped for
-the platform) → managed CloakBrowser, exactly as before.
+fork runs with no configuration at all. If it is absent or unsupported, launch
+fails with setup guidance; BetterWright never silently switches browsers.
 
 ```text
 ~/.betterwright/chromium/
-  mac-arm64/Chromium.app/Contents/MacOS/Chromium
-  linux-x64/chrome          (+ fonts/ttf/ for the macOS-metric font set)
-  win-x64/chrome.exe
+  mac-arm64/BetterChromium.app/Contents/MacOS/BetterChromium
+  linux-x64/betterchromium          (+ fonts/ttf/ for the macOS-metric font set)
+  win-x64/betterchromium.exe
 ```
 
-This makes mixed fleets trivial: run `betterwright update` (or `setup`) on
-macOS arm64, Linux x64, and Windows x64 hosts, and every machine picks the
-right backend with the same configuration. Set
-`BETTERWRIGHT_CHROMIUM_ROOT=off` (or `BETTERWRIGHT_CHROMIUM_PATH=off`) to force
-the managed path on a host that has the artifact installed.
+This makes mixed fleets trivial: run `betterwright update` (or `setup`) on a host only after its platform archive appears in the pinned manifest; every published platform then picks the native backend with the same configuration. Set
+`BETTERWRIGHT_CHROMIUM_ROOT=off` (or `BETTERWRIGHT_CHROMIUM_PATH=off`) only to
+explicitly select the managed CloakBrowser compatibility backend.
 
 **Profiles are not interchangeable.** Fork and Cloak share
 `$BETTERWRIGHT_HOME/browser/profile` by default. Prefer a dedicated home for
@@ -110,7 +108,7 @@ consumer Mac by default (`platform: "macos"`; opt out with `platform:
 "linux"` or `"windows"` in the constructor / `--platform=` on the CLI).
 
 The identity is not invented — every value was captured from genuine Google
-Chrome 150.0.7871.129 (the fork's exact pinned version) on an Apple M4 Pro
+Chrome 151.0.7922.108 (the fork's exact pinned version) on an Apple M4 Pro
 MacBook Pro running macOS 26.6: UA and UA-CH (brands, `macOS` 26.6.0,
 `arm`), `navigator.platform = MacIntel`, 1800×1169 @2x screen geometry with
 real menu-bar/Dock `availHeight`, 12 cores, `deviceMemory` 16. See
