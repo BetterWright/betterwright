@@ -17,9 +17,11 @@
 //      error naming the supported alternative. These are the ones that decide
 //      where traffic goes (proxy), who can drive the browser (remote
 //      debugging), which profile is opened, and what identity is presented.
-//   2. A switch that merely collides with one already in the managed list is
-//      dropped, and reported back so the caller learns it was ignored rather
-//      than silently getting different behavior than they asked for.
+//   2. A switch that merely collides with one already in the managed list, or
+//      is common compatibility boilerplate that would break the selected
+//      backend, is dropped and reported back. The caller learns it was ignored
+//      rather than getting an upgrade-time launch failure or different
+//      behavior than they asked for.
 //
 // Everything else is appended last and takes effect.
 
@@ -53,8 +55,13 @@ const RESERVED = Object.freeze({
   // Headless is resolved from the `headless` option and must not desync from
   // the viewport and window-geometry decisions made alongside it.
   "--headless": "use the `headless` option",
-  // Every automatically selected backend must retain a working WebGL surface.
-  // Disabling its software fallback recreates issue #109's blocked-GPU state.
+});
+
+// Common Chromium boilerplate that cannot take effect safely but also should
+// not turn an otherwise compatible pre-existing configuration into a hard
+// launch failure. Unlike RESERVED, these switches survive normalization and
+// are dropped by mergeChromiumArgs so the result can carry a clear warning.
+const DROP_WITH_WARNING = Object.freeze({
   "--disable-software-rasterizer":
     "the managed browser must retain its WebGL software fallback",
 });
@@ -195,7 +202,7 @@ export function mergeChromiumArgs(managedArgs, extraArgs) {
   const taken = new Set(managedArgs.map(switchName));
   for (const arg of extraArgs) {
     const name = switchName(arg);
-    if (taken.has(name)) {
+    if (Object.hasOwn(DROP_WITH_WARNING, name) || taken.has(name)) {
       if (!ignored.includes(name)) ignored.push(name);
       continue;
     }
@@ -205,11 +212,27 @@ export function mergeChromiumArgs(managedArgs, extraArgs) {
   return { args, ignored };
 }
 
-/** Human-readable note for switches that were dropped as duplicates. */
+/** Human-readable note for switches that were dropped. */
 export function chromiumArgsWarning(ignored) {
   if (!ignored?.length) return "";
-  return (
-    `Ignored Chromium ${ignored.length === 1 ? "switch" : "switches"} ${ignored.join(", ")}: ` +
-    "already set by BetterWright, whose value takes precedence."
+  const compatibility = ignored.filter((name) =>
+    Object.hasOwn(DROP_WITH_WARNING, name)
   );
+  const duplicates = ignored.filter((name) =>
+    !Object.hasOwn(DROP_WITH_WARNING, name)
+  );
+  const notes = [];
+  if (compatibility.length) {
+    notes.push(
+      `Ignored Chromium ${compatibility.length === 1 ? "switch" : "switches"} ${compatibility.join(", ")}: ` +
+        compatibility.map((name) => DROP_WITH_WARNING[name]).join("; ") + ".",
+    );
+  }
+  if (duplicates.length) {
+    notes.push(
+      `Ignored Chromium ${duplicates.length === 1 ? "switch" : "switches"} ${duplicates.join(", ")}: ` +
+        "already set by BetterWright, whose value takes precedence.",
+    );
+  }
+  return notes.join(" ");
 }

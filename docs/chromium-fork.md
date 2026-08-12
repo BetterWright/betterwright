@@ -57,6 +57,18 @@ SHA-256 value pinned in `src/chromium-fork.ts`.
 `BETTERWRIGHT_CHROMIUM_ROOT`. Configured paths must be absolute and must exist;
 BetterWright fails closed instead of silently falling back to another browser.
 
+Set the backend policy independently of artifact location:
+
+```bash
+export BETTERWRIGHT_BACKEND=auto            # default: use capability policy
+export BETTERWRIGHT_BACKEND=chromium-fork   # require the native fork
+export BETTERWRIGHT_BACKEND=cloak           # require compatibility mode
+```
+
+An invalid value is an error. Forced BetterChromium remains fail-closed when
+its artifact is absent; forced Cloak ignores native path settings because they
+are irrelevant to the selected backend.
+
 ## Zero-Config Discovery and Platform Routing
 
 With neither variable set, BetterWright checks the default root
@@ -96,8 +108,12 @@ The profile, runtime, and artifacts under `BETTERWRIGHT_HOME` need their normal
 writable mount. On Linux, binding an accessible `/dev/dri` render device keeps
 native BetterChromium selected. Without one, BetterWright automatically uses
 CloakBrowser so WebGL remains available; install and bind its cache too (or run
-`betterwright setup` inside the sandbox). Every network connection still passes
-through the worker's local SOCKS guard.
+`betterwright setup` inside the sandbox). When a minimal `bwrap --dev` or
+container mount hides `/dev/dri` and the operator has independently verified
+the native path, set `BETTERWRIGHT_BACKEND=chromium-fork` inside the cleared
+environment. The forced choice and missing-device warning appear in run results
+and `betterwright doctor`; verify WebGL in that exact sandbox. Every network
+connection still passes through the worker's local SOCKS guard.
 
 **Profiles are not interchangeable.** Fork and Cloak share
 `$BETTERWRIGHT_HOME/browser/profile` by default. Prefer a dedicated home for

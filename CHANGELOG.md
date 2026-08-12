@@ -9,6 +9,47 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-08-12
+
+A compatibility patch for the two regressions reported in
+[#111](https://github.com/BetterWright/betterwright/issues/111). Existing
+Chromium argument lists launch again, and container operators can make backend
+selection deterministic instead of relying on a device-mount heuristic.
+
+### Fixed
+
+- `--disable-software-rasterizer` is now ignored with a result warning instead
+  of throwing before browser launch. BetterWright still retains the software
+  WebGL fallback required by the selected backend, but common headless-Chromium
+  boilerplate no longer breaks an upgrade. Security boundaries such as proxy,
+  remote-debugging, profile, and fingerprint switches remain hard errors.
+- Added `BETTERWRIGHT_BACKEND=auto|chromium-fork|cloak`. The default `auto`
+  policy is unchanged; `chromium-fork` overrides the Linux `/dev/dri` probe for
+  bubblewrap, containers, and other mount namespaces where the host's device
+  tree is hidden. A forced native backend still fails closed if the artifact is
+  missing. `cloak` selects the compatibility backend directly.
+- Runtime result warnings now expose every non-default routing decision, and
+  `betterwright doctor --json` always exposes the selected backend and exact
+  reason. Human-readable doctor output calls out automatic render-device
+  fallback, forced native selection, and forced Cloak selection with the
+  corresponding fix or tradeoff.
+- `setup` and `update` honor the same explicit backend selector as runtime and
+  doctor, including conflicts and unsupported-platform failures.
+
+### Measured impact
+
+- The deterministic regression in #111 changes from 0/5 pre-launch failures to
+  5/5 successful forced-BetterChromium launches in the local macOS arm64
+  regression repetition, with the caller's incompatible flag removed and both
+  decisions reported. Linux x64 remains covered by the release workflow; this
+  5/5 result is compatibility evidence, not a cross-platform speed benchmark.
+- Backend selection performs one environment-value parse in addition to the
+  existing startup-only `/dev/dri` probe. It adds no per-page script, network
+  hop, or persistent process, so 1.8.2 makes no new speed or RSS claim.
+- The speed and memory table in #111 was collected after 1.8.1 had silently
+  selected CloakBrowser. Those numbers are not presented as BetterChromium
+  gains in this release.
+
 ## [1.8.1] - 2026-08-12
 
 A cross-platform compatibility and graphics fix for 1.8.0. BetterChromium

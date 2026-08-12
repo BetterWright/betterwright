@@ -254,9 +254,12 @@ BetterChromium (`~/.betterwright/chromium/`) is the default backend on
 supported macOS arm64, GPU-capable Linux x64, and Windows x64 hosts. Platforms
 without a published artifact and Linux hosts without an accessible `/dev/dri`
 render device automatically use managed CloakBrowser; `--cloak-only` and
-`BETTERWRIGHT_CHROMIUM_ROOT=off` force the same compatibility backend on a
-supported host. See [docs/chromium-fork.md](docs/chromium-fork.md). This is not
-a guarantee of undetectability.
+`BETTERWRIGHT_BACKEND=cloak` force the same compatibility backend on a
+supported host. In a sandbox that hides `/dev/dri`, explicitly require the
+native backend with `BETTERWRIGHT_BACKEND=chromium-fork`; doctor reports the
+routing reason and warns that WebGL must be verified inside that namespace.
+See [docs/chromium-fork.md](docs/chromium-fork.md). This is not a guarantee of
+undetectability.
 
 Broad discovery should use the host's web-search tool, then open selected
 first-party pages in BetterWright; the operator guidance says so. Set

@@ -111,6 +111,20 @@ Resolution order:
    launch fails with setup guidance. Either variable set to `off` explicitly
    selects CloakBrowser on any platform.
 
+Backend policy can also be stated directly:
+
+```bash
+export BETTERWRIGHT_BACKEND=auto            # default policy
+export BETTERWRIGHT_BACKEND=chromium-fork   # require BetterChromium
+export BETTERWRIGHT_BACKEND=cloak           # require CloakBrowser
+```
+
+`chromium-fork` is the escape hatch for containers and OS sandboxes where
+`/dev/dri` is hidden by the mount namespace even though the operator has
+verified the native backend. It fails closed when the native artifact cannot be
+resolved. `betterwright doctor --json` reports `browser_selection_reason` so a
+routing decision is never silent.
+
 Force the managed path even with an artifact installed:
 
 ```bash
@@ -134,18 +148,17 @@ together.
 
 On Linux without an accessible `/dev/dri` render device, BetterWright selects
 managed CloakBrowser automatically so standard WebGL remains available.
-`--disable-software-rasterizer` is reserved because it recreates the blocked
-graphics surface fixed in 1.8.1. `--disable-gpu` remains available as a
-caller-controlled compatibility switch, but it is not recommended for either
-managed backend.
+`--disable-software-rasterizer` is ignored with a result warning because it
+would recreate the blocked graphics surface fixed in 1.8.1; it does not fail
+launch. `--disable-gpu` remains available as a caller-controlled compatibility
+switch, but it is not recommended for either managed backend.
 
 Two rules keep this from undermining the managed browser:
 
 - **Reserved switches are rejected** with a `TypeError` naming the supported
   alternative — proxy selection (`--proxy-server`, `--no-proxy-server`, …),
   remote debugging, `--user-data-dir` / `--profile-directory`, and the identity
-  family (`--fingerprint*`, `--lang`, `--bw-timezone`, `--headless`), plus
-  `--disable-software-rasterizer`. These are
+  family (`--fingerprint*`, `--lang`, `--bw-timezone`, `--headless`). These are
   the switches that decide where traffic goes, who can drive the browser, which
   profile is opened, and what identity is presented.
 - **Duplicates are dropped, not appended.** Chromium resolves a repeated switch

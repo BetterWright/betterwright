@@ -102,6 +102,27 @@ test("navigate and read the title", opts, async () => {
   }
 });
 
+test("stock software-rasterizer boilerplate warns without blocking launch", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    chromiumArgs: ["--disable-software-rasterizer"],
+  });
+  try {
+    const result = await bw.run("return 42");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 42);
+    assert.ok(
+      result.warnings.some((warning) =>
+        /Ignored Chromium switch --disable-software-rasterizer/.test(warning),
+      ),
+      JSON.stringify(result.warnings),
+    );
+  } finally {
+    await bw.close();
+  }
+});
+
 test("the selected managed browser keeps WebGL available with a coherent identity", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {

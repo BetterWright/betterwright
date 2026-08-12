@@ -42,6 +42,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { formatAgentUsage } from "../src/agent-usage.js";
+import { configuredBrowserBackend } from "../src/chromium-fork.js";
 import { installChromiumFork } from "../src/chromium-fork-install.js";
 import { collectValues, firstPositional, flagValue } from "../src/cli-flags.js";
 import { helpFor, MAIN_USAGE, wantsHelp } from "../src/cli-help.js";
@@ -411,9 +412,25 @@ async function cmdUpdate(flags) {
     );
     return 1;
   }
+  const backend = configuredBrowserBackend();
+  if (backend === "cloak") {
+    console.log("BETTERWRIGHT_BACKEND=cloak selects the compatibility backend.");
+    const cloakCode = await installCloakBrowser();
+    if (cloakCode !== 0) return cloakCode;
+    console.log("\nUpdate complete. BetterWright will use CloakBrowser.");
+    console.log("Run `betterwright doctor` to confirm (browser: cloak).");
+    refreshAgentSkillsQuietly();
+    return 0;
+  }
   const result = await installChromiumFork({ force: flags.has("--force") });
   if (result.skipped) {
     console.log(result.skipped);
+    if (backend === "chromium-fork") {
+      console.error(
+        "BETTERWRIGHT_BACKEND=chromium-fork was requested, but no native artifact is published for this host.",
+      );
+      return 1;
+    }
     const cloakCode = await installCloakBrowser();
     if (cloakCode !== 0) return cloakCode;
     console.log("\nUpdate complete. BetterWright will use CloakBrowser automatically on this host.");
@@ -421,14 +438,19 @@ async function cmdUpdate(flags) {
     refreshAgentSkillsQuietly();
     return 0;
   }
-  if (chromiumForkNeedsSoftwareGpu()) {
-    console.log("Installing the automatic WebGL-compatible backend for this GPU-less Linux host.");
+  if (chromiumForkNeedsSoftwareGpu() && backend !== "chromium-fork") {
+    console.log("Installing the automatic WebGL-compatible backend because no accessible Linux render device was found.");
     const cloakCode = await installCloakBrowser();
     if (cloakCode !== 0) return cloakCode;
     console.log("\nUpdate complete. BetterWright will use CloakBrowser automatically on this host.");
     console.log("Run `betterwright doctor` to confirm (browser: cloak).");
   } else {
     console.log("\nUpdate complete. BetterWright will use BetterChromium.");
+    if (backend === "chromium-fork" && chromiumForkNeedsSoftwareGpu()) {
+      console.log(
+        "Backend forced despite no accessible Linux render device; verify WebGL inside the sandbox.",
+      );
+    }
     console.log("Run `betterwright doctor` to confirm (browser: chromium-fork).");
   }
   refreshAgentSkillsQuietly();
@@ -442,35 +464,59 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
   }
 
   const cloakOnly = flags.has("--cloak-only");
+  const backend = configuredBrowserBackend();
+  if (cloakOnly && backend === "chromium-fork") {
+    console.error(
+      "`--cloak-only` conflicts with BETTERWRIGHT_BACKEND=chromium-fork.",
+    );
+    return 1;
+  }
   let selectedBrowser = "chromium-fork";
-  if (cloakOnly) {
-    console.log("Selecting explicit CloakBrowser compatibility mode (--cloak-only).");
+  if (cloakOnly || backend === "cloak") {
+    console.log(
+      cloakOnly
+        ? "Selecting explicit CloakBrowser compatibility mode (--cloak-only)."
+        : "Selecting CloakBrowser from BETTERWRIGHT_BACKEND=cloak.",
+    );
     const cloakCode = await installCloakBrowser();
     if (cloakCode !== 0) return cloakCode;
-    console.log("Set BETTERWRIGHT_CHROMIUM_ROOT=off when launching BetterWright.");
+    if (cloakOnly && backend === "auto") {
+      console.log("Set BETTERWRIGHT_BACKEND=cloak when launching BetterWright.");
+    }
   } else {
     const chromium = await installChromiumFork({ force: flags.has("--force") });
     if (chromium.skipped) {
       console.log(chromium.skipped);
+      if (backend === "chromium-fork") {
+        console.error(
+          "BETTERWRIGHT_BACKEND=chromium-fork was requested, but no native artifact is published for this host.",
+        );
+        return 1;
+      }
       console.log("Installing the automatic compatibility backend for this platform.");
       const cloakCode = await installCloakBrowser();
       if (cloakCode !== 0) return cloakCode;
       selectedBrowser = "cloak";
-    } else if (chromiumForkNeedsSoftwareGpu()) {
-      console.log("Installing the automatic WebGL-compatible backend for this GPU-less Linux host.");
+    } else if (chromiumForkNeedsSoftwareGpu() && backend !== "chromium-fork") {
+      console.log("Installing the automatic WebGL-compatible backend because no accessible Linux render device was found.");
       const cloakCode = await installCloakBrowser();
       if (cloakCode !== 0) return cloakCode;
       selectedBrowser = "cloak";
     } else if (!chromium.alreadyInstalled) {
       console.log("BetterChromium installed as the required browser backend.");
     }
+    if (backend === "chromium-fork" && chromiumForkNeedsSoftwareGpu()) {
+      console.log(
+        "Backend forced despite no accessible Linux render device; verify WebGL inside the sandbox.",
+      );
+    }
   }
 
   if (!quiet) {
     console.log("\nSetup complete. Run `betterwright doctor` to confirm.");
     console.log(
-      cloakOnly
-        ? "Doctor should report browser: cloak when BETTERWRIGHT_CHROMIUM_ROOT=off is set."
+      cloakOnly || backend === "cloak"
+        ? "Doctor should report browser: cloak when BETTERWRIGHT_BACKEND=cloak is set."
         : `Doctor should report browser: ${selectedBrowser}.`,
     );
   }

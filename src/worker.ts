@@ -42,6 +42,7 @@ import {
 } from "./chromium-args.js";
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
+  browserSelectionWarning,
   chromiumForkContextOptions,
   resolveChromiumForkBinary,
   selectManagedBrowserBackend,
@@ -175,6 +176,7 @@ let profileWarning = "";
 // of BetterWright's own, so the caller is told rather than left wondering why
 // a switch had no effect.
 let chromiumArgsNote = "";
+let backendSelectionNote = "";
 // Set by the client via `--import` when stealthRuntimeFix is on: the driver is
 // patchright-core and every page.evaluate runs in an isolated world.
 const stealthActive = process.env.BETTERWRIGHT_STEALTH_ACTIVE === "1";
@@ -1543,15 +1545,19 @@ async function ensureBrowser(config) {
     mkdirPrivate(launchConfig.artifactsDir);
 
     const forkBinary = resolveChromiumForkBinary();
+    const softwareGpu = chromiumForkNeedsSoftwareGpu();
     const browserSelection = selectManagedBrowserBackend({
       chromiumFork: forkBinary,
-      softwareGpu: chromiumForkNeedsSoftwareGpu(),
+      softwareGpu,
+    });
+    backendSelectionNote = browserSelectionWarning(browserSelection, {
+      softwareGpu,
     });
     if (browserSelection.browser === "unavailable") {
       throw new Error(
         "BetterChromium is required but not installed. Run `betterwright setup`, " +
           "or explicitly select CloakBrowser with `betterwright setup --cloak-only` " +
-          "and BETTERWRIGHT_CHROMIUM_ROOT=off. Hosts without a published " +
+          "and BETTERWRIGHT_BACKEND=cloak. Hosts without a published " +
           "BetterChromium artifact, and GPU-less Linux hosts, use CloakBrowser automatically.",
       );
     }
@@ -3395,6 +3401,7 @@ async function buildEnvelope(
     artifacts: redactDeep(artifacts),
     warnings: [
       ...(profileWarning ? [profileWarning] : []),
+      ...(backendSelectionNote ? [backendSelectionNote] : []),
       ...(chromiumArgsNote ? [chromiumArgsNote] : []),
       ...(stealthActive ? [STEALTH_WARNING] : []),
       ...(challenges.length ? [challenges[0].advice] : []),

@@ -128,7 +128,6 @@ test("profile, identity, and headless switches are rejected with their alternati
     ["--fingerprint=1234", /`locale`, `timezone`, and `platform`/],
     ["--fingerprint-platform=windows", /`locale`, `timezone`, and `platform`/],
     ["--fingerprint-locale=de-DE", /`locale`, `timezone`, and `platform`/],
-    ["--disable-software-rasterizer", /retain its WebGL software fallback/],
   ];
   for (const [arg, message] of cases) {
     // Node regex-matches RegExp values in the expectation object; its types
@@ -196,6 +195,18 @@ test("a collision keeps BetterWright's value and reports the dropped switch", ()
   assert.ok(args.includes("--test-type"));
   assert.ok(!args.some((arg) => arg.startsWith("--test-type=")));
   assert.ok(args.includes("--disable-gpu"));
+});
+
+test("software rasterizer boilerplate is dropped with a warning instead of failing launch", () => {
+  const extra = normalizeChromiumArgs(["--disable-software-rasterizer"]);
+  assert.deepEqual(extra, ["--disable-software-rasterizer"]);
+  const { args, ignored } = mergeChromiumArgs([], extra);
+  assert.deepEqual(args, []);
+  assert.deepEqual(ignored, ["--disable-software-rasterizer"]);
+  assert.match(
+    chromiumArgsWarning(ignored),
+    /managed browser must retain its WebGL software fallback/,
+  );
 });
 
 test("the WebRTC proxy boundary cannot be displaced on either browser backend", () => {
