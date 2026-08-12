@@ -815,9 +815,11 @@ function makeArtifactPath(
 }
 
 async function assertScreenshotPixelLimit(page, options) {
-  const scale = await page
-    .evaluate(() => window.devicePixelRatio || 1)
-    .catch(() => 1);
+  const scale = options.scale === "css"
+    ? 1
+    : await page
+        .evaluate(() => window.devicePixelRatio || 1)
+        .catch(() => 1);
   const metrics = options.clip
     ? {
         width: Number(options.clip.width),
@@ -918,8 +920,15 @@ async function captureScreenshot(
   fallback,
   options,
 ) {
-  await assertScreenshotPixelLimit(page, options);
-  const content = await page.screenshot(options);
+  // Preserve the browser-visible devicePixelRatio, screen geometry, rendering
+  // surface and WebGPU identity while encoding proof artifacts at one output
+  // pixel per CSS pixel. The captured macOS profile uses DPR 2, so device-scale
+  // output quadrupled screenshot surface area without adding useful evidence.
+  // `scale: "css"` affects only the trusted artifact encoder; page APIs and
+  // layout remain identical.
+  const screenshotOptions = { scale: "css", ...options };
+  await assertScreenshotPixelLimit(page, screenshotOptions);
+  const content = await page.screenshot(screenshotOptions);
   const perFileLimit = configuredLimit(
     launchConfig.maxScreenshotBytes,
     DEFAULT_SCREENSHOT_LIMIT,

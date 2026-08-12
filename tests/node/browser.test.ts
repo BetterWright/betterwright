@@ -1155,6 +1155,30 @@ test("screenshot without an extension still yields a png", opts, async () => {
   }
 });
 
+test("screenshots encode at CSS scale without changing page identity", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<main style="width:100px;height:100px;background:#369"></main>');
+      const viewport = await page.evaluate(() => ({
+        width: innerWidth,
+        height: innerHeight,
+        devicePixelRatio,
+      }));
+      const artifact = await screenshot({kind: 'debug', name: 'css-scale.png'});
+      return {viewport, artifact};
+    `);
+    assert.equal(result.ok, true, result.error);
+    const image = fs.readFileSync(result.result.artifact.path);
+    assert.equal(image.subarray(1, 4).toString("ascii"), "PNG");
+    assert.equal(image.readUInt32BE(16), result.result.viewport.width);
+    assert.equal(image.readUInt32BE(20), result.result.viewport.height);
+    assert.ok(result.result.viewport.devicePixelRatio >= 1);
+  } finally {
+    await bw.close();
+  }
+});
+
 test("visible bot challenges include actionable state and a vision artifact", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {

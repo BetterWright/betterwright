@@ -11,15 +11,14 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [1.8.0] - 2026-08-12
 
-A native-browser overhaul centered on BetterChromium 151. Public platform
-archives are not yet downloadable: their release checksums are still pending.
+A native-browser overhaul centered on BetterChromium 151. Public archives for
+all three supported platforms are published and SHA-256 pinned.
 
 ### Added
 
 - Added reproducible BetterChromium 151 build and packaging definitions for
-  macOS arm64, Linux x64, and Windows x64. All three platform artifact layouts
-  are supported, but archives remain outside the download manifest until their
-  final SHA-256 checksums are verified.
+  macOS arm64, Linux x64, and Windows x64, plus verified archives in the public
+  download manifest.
 - Added a browser-process benchmark harness for cold and warm startup,
   navigation, process-tree memory and CPU, renderer counts, and long-session
   growth, including native idle-page lifecycle measurements.
@@ -37,6 +36,22 @@ archives are not yet downloadable: their release checksums are still pending.
   and is never selected as a silent fallback.
 - Centralized the captured macOS identity so launch flags, browser contexts,
   rendering surfaces, and WebGPU report one versioned hardware profile.
+- BetterChromium now uses a soft two-renderer ceiling, which still permits
+  security-required site-isolated renderers but no longer retains Chromium
+  151's unused spare process. Proof screenshots encode at CSS-pixel scale while
+  the page continues to expose and render with its captured DPR-2 identity. A
+  default benchmark proof falls from 3600x2164 to 1800x1082 encoded pixels.
+  In seven-run Apple M4 Max measurements against the pre-optimization 1.8.0
+  code, warm startup improved **7.3%**, navigation-plus-proof improved
+  **21.2%**, cold/warm peak process-tree RSS fell **12.0%**, active CPU fell
+  **31.4%**, and active renderers fell from **3 to 2**. Cold startup improved
+  **0.8%** and 100-turn RSS growth improved **4.6%**.
+- Against the standard 1.7.2 installation in the same seven-run harness, cold
+  and warm startup improved **22.4%** and **21.2%**, and navigation-plus-proof
+  improved **91.3%**. Cold/warm peak RSS was **1.9%/1.5% higher**. The native
+  browser remains resident, so idle RSS is higher than 1.7.2's Obscura-backed
+  idle state; the peak figures compare the periods when both versions are
+  actively producing browser proofs.
 - Idle pages now use Chromium's native frozen/active lifecycle with reversible
   animation scheduling, preserving timers and `requestAnimationFrame` state
   across parking.
