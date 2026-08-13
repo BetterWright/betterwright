@@ -1,3 +1,24 @@
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 89df9311afa2cf904d3e99ea23aaf4ace6353e3f..bcbaf19d5819487adcdbe147b4585bb913621ffd 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -4223,6 +4223,16 @@ GetPreferredColorScheme(const WebPreferences& web_prefs,
+       }
+     }
+   }
++#if BUILDFLAG(IS_LINUX)
++  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          "fingerprint-platform") == "macos") {
++    // Dark appearance is part of the captured macOS identity. Override only
++    // the preferred schemes; do not enable force-dark page transformations.
++    preferred_color_scheme = blink::mojom::PreferredColorScheme::kDark;
++    preferred_root_scrollbar_color_scheme =
++        blink::mojom::PreferredColorScheme::kDark;
++  }
++#endif
+   return {preferred_color_scheme, preferred_root_scrollbar_color_scheme};
+ }
+ 
 diff --git a/chrome/browser/headless/headless_mode_init.cc b/chrome/browser/headless/headless_mode_init.cc
 index efa123b3109827bdf3839b9c5bc968999aa4dcc7..957eefd2b222474ce23f9bb8d946ae3737e76d3f 100644
 --- a/chrome/browser/headless/headless_mode_init.cc
@@ -14,6 +35,22 @@ index efa123b3109827bdf3839b9c5bc968999aa4dcc7..957eefd2b222474ce23f9bb8d946ae37
      }
  
      // If Ozone/Headless is enabled, Vulkan initialization crashes unless
+diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
+index cb230d68cbe49cc69d8ad623101cae5e242d24b5..2166f7bbcc77f8727ee5967f1b924f6bf3f723ec 100644
+--- a/chrome/renderer/chrome_content_renderer_client.cc
++++ b/chrome/renderer/chrome_content_renderer_client.cc
+@@ -1430,6 +1430,11 @@ void ChromeContentRendererClient::
+ #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN) || \
+     BUILDFLAG(IS_MAC)
+   blink::WebRuntimeFeatures::EnableWebShare(true);
++#elif BUILDFLAG(IS_LINUX)
++  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          "fingerprint-platform") == "macos") {
++    blink::WebRuntimeFeatures::EnableWebShare(true);
++  }
+ #endif
+ 
+   if (base::FeatureList::IsEnabled(
 diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
 index 608bea5cb386438757146a531bbc0293b3eb9775..e06ab88d8a76fd167d8024a5587f0e55635e1ce1 100644
 --- a/components/embedder_support/user_agent_utils.cc
@@ -22,12 +59,12 @@ index 608bea5cb386438757146a531bbc0293b3eb9775..e06ab88d8a76fd167d8024a5587f0e55
  
  namespace {
  
-+constexpr char kBetterChromiumFingerprintSwitch[] = "fingerprint";
-+constexpr char kBetterChromiumFingerprintPlatformSwitch[] = "fingerprint-platform";
++constexpr char kBetterWrightFingerprintSwitch[] = "fingerprint";
++constexpr char kBetterWrightFingerprintPlatformSwitch[] = "fingerprint-platform";
 +
-+bool IsBetterChromiumMacFingerprint() {
++bool IsBetterWrightMacFingerprint() {
 +  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-+             kBetterChromiumFingerprintPlatformSwitch) == "macos";
++             kBetterWrightFingerprintPlatformSwitch) == "macos";
 +}
 +
  #if BUILDFLAG(IS_WIN)
@@ -38,10 +75,10 @@ index 608bea5cb386438757146a531bbc0293b3eb9775..e06ab88d8a76fd167d8024a5587f0e55
  #if !BUILDFLAG(CHROMIUM_BRANDING)
    brand = version_info::GetProductName();
 +#else
-+  // BetterChromium presents the Chrome product token in its legacy UA. Keep
++  // BetterWright presents the Chrome product token in its legacy UA. Keep
 +  // UA Client Hints coherent with it, but only for the managed fork profile.
 +  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-+          kBetterChromiumFingerprintSwitch)) {
++          kBetterWrightFingerprintSwitch)) {
 +    brand = "Google Chrome";
 +  }
  #endif
@@ -57,10 +94,10 @@ index 608bea5cb386438757146a531bbc0293b3eb9775..e06ab88d8a76fd167d8024a5587f0e55
 -  if (base::CommandLine::ForCurrentProcess()->HasSwitch(kHeadless)) {
 -    product.insert(0, "Headless");
 +
-+  // BetterChromium: force consumer-Mac UA when --fingerprint-platform=macos.
++  // BetterWright: force consumer-Mac UA when --fingerprint-platform=macos.
 +  // Never emit the Headless marker (already removed above) and never emit the
 +  // host Linux "X11; Linux ..." token while masked.
-+  if (IsBetterChromiumMacFingerprint()) {
++  if (IsBetterWrightMacFingerprint()) {
 +    return base::StrCat(
 +        {"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
 +         "AppleWebKit/537.36 (KHTML, like Gecko) ",
@@ -73,8 +110,8 @@ index 608bea5cb386438757146a531bbc0293b3eb9775..e06ab88d8a76fd167d8024a5587f0e55
    metadata.wow64 = IsWoW64();
    metadata.platform_version = GetPlatformVersion();
 +
-+  // BetterChromium: coerce UA-CH metadata to the capture-machine Mac identity.
-+  if (IsBetterChromiumMacFingerprint()) {
++  // BetterWright: coerce UA-CH metadata to the capture-machine Mac identity.
++  if (IsBetterWrightMacFingerprint()) {
 +    metadata.platform = "macOS";
 +    metadata.platform_version = "26.6.0";
 +    metadata.architecture = "arm";
@@ -113,6 +150,91 @@ index 64b27b57c2d6e57582f080636fac1a362825e0a7..fc32d7f02b3d2240650662ff646ce50c
  #if BUILDFLAG(IS_ANDROID)
  TEST_F(UserAgentUtilsTest, UserAgentMetadataForXrDevice) {
    if (base::android::device_info::is_automotive()) {
+diff --git a/components/services/font_data/BUILD.gn b/components/services/font_data/BUILD.gn
+index 2305b75361e51ea3938359be33c357b811fbbca4..6b0cf621f8e998a7e8a6f9236062e0576c1fb13c 100644
+--- a/components/services/font_data/BUILD.gn
++++ b/components/services/font_data/BUILD.gn
+@@ -30,6 +30,24 @@ source_set("lib") {
+   public_deps = [ "//skia" ]
+ }
+ 
++test("font_data_service_unittests") {
++  sources = [ "font_data_service_impl_unittest.cc" ]
++  deps = [
++    ":lib",
++    "//base",
++    "//base/test:test_support",
++    "//components/services/font_data/public/mojom",
++    "//mojo/core/test:run_all_unittests",
++    "//mojo/public/cpp/bindings",
++    "//mojo/public/cpp/system",
++    "//skia",
++    "//testing/gtest",
++    "//ui/gfx",
++  ]
++
++  data_deps = [ "//third_party/test_fonts" ]
++}
++
+ source_set("unit_tests") {
+   testonly = true
+   sources = [ "font_data_service_impl_unittest.cc" ]
+diff --git a/components/services/font_data/font_data_service_impl.cc b/components/services/font_data/font_data_service_impl.cc
+index 4917c5780e7a3ba4af1e0039054822e0b804b01f..b8500a433425dcd4e2b04069529f48cad64966e9 100644
+--- a/components/services/font_data/font_data_service_impl.cc
++++ b/components/services/font_data/font_data_service_impl.cc
+@@ -121,12 +121,6 @@ std::tuple<base::File, uint64_t> FontDataServiceImpl::GetFileHandle(
+   typeface.getResourceName(&font_path);
+   base::UmaHistogramBoolean("Chrome.FontDataService.EmptyPathOnGetFileHandle",
+                             font_path.isEmpty());
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+-  // TODO(crbug.com/463411679): `getResourceName()` is not implemented for
+-  // Linux nor ChromeOS, so the returned file will always be invalid and a
+-  // memory region will be shared instead.
+-  CHECK(font_path.isEmpty());
+-#endif  // BUILDFLAG(IS_LINUX)
+   if (font_path.isEmpty()) {
+     return {};
+   }
+diff --git a/components/services/font_data/font_data_service_impl_unittest.cc b/components/services/font_data/font_data_service_impl_unittest.cc
+index 67971d671283ced5ea68cf92e3b8cb86910d53c8..21f9fa97cd517eabe12b747b8d6ed45392287547 100644
+--- a/components/services/font_data/font_data_service_impl_unittest.cc
++++ b/components/services/font_data/font_data_service_impl_unittest.cc
+@@ -208,18 +208,10 @@ TEST_F(FontDataServiceImplUnitTest, MatchFamilyName) {
+   font_service_->MatchFamilyName(
+       family_name, CreateTypefaceStyle(400, 5, mojom::TypefaceSlant::kRoman),
+       &out_result);
+-#if BUILDFLAG(IS_WIN)
+   EXPECT_EQ(impl_.GetCacheSizeForTesting(), 0u);
+   EXPECT_TRUE(out_result->typeface_data->is_font_file());
+   EXPECT_TRUE(
+       out_result->typeface_data->get_font_file()->file_handle.IsValid());
+-#else
+-  // For now, on Linux/ChromeOS we always hit the memory region fallback, and
+-  // therefore also adds to the cache.
+-  EXPECT_EQ(impl_.GetCacheSizeForTesting(), 1u);
+-  EXPECT_TRUE(out_result->typeface_data->is_region());
+-  EXPECT_TRUE(out_result->typeface_data->get_region().IsValid());
+-#endif
+ }
+ 
+ TEST_F(FontDataServiceImplUnitTest, MatchFamilyNameMemoryCacheSize) {
+@@ -339,15 +331,9 @@ TEST_F(FontDataServiceImplUnitTest, LegacyMakeTypefaceNullFamilyName) {
+   font_service_->LegacyMakeTypeface(
+       std::nullopt, CreateTypefaceStyle(400, 5, mojom::TypefaceSlant::kRoman),
+       &out_result);
+-#if BUILDFLAG(IS_WIN)
+   EXPECT_TRUE(out_result->typeface_data->is_font_file());
+   EXPECT_TRUE(
+       out_result->typeface_data->get_font_file()->file_handle.IsValid());
+-#else
+-  // For now, on Linux/ChromeOS we always hit the memory region fallback.
+-  EXPECT_TRUE(out_result->typeface_data->is_region());
+-  EXPECT_TRUE(out_result->typeface_data->get_region().IsValid());
+-#endif
+ }
+ 
+ #if BUILDFLAG(IS_WIN)
 diff --git a/content/app/content_main_runner_impl.cc b/content/app/content_main_runner_impl.cc
 index efb9034ceff1c98a6731c86094cc8c2c9eafe733..c4a4c5458b9cac89e20d72c736859112e35e04d0 100644
 --- a/content/app/content_main_runner_impl.cc
@@ -261,23 +383,28 @@ index 2a8abef097d85d97616a60d603e98784dddfa5ed..18095f150b898327f2ab187eb11d0177
        sandbox::policy::switches::kDisableLandlockSandbox,
        sandbox::policy::switches::kDisableSeccompFilterSandbox,
 diff --git a/content/browser/renderer_host/render_widget_host_view_aura.cc b/content/browser/renderer_host/render_widget_host_view_aura.cc
-index 65a5a552af843455f7208d32962b32a651b0470d..333b4a1474b548a82d047d5d631527b3d852ac74 100644
+index 65a5a552af843455f7208d32962b32a651b0470d..5cb22adbd5c3fd482a01a424e60539aca4085057 100644
 --- a/content/browser/renderer_host/render_widget_host_view_aura.cc
 +++ b/content/browser/renderer_host/render_widget_host_view_aura.cc
-@@ -1283,6 +1283,19 @@ gfx::Rect RenderWidgetHostViewAura::GetBoundsInRootWindow() {
+@@ -1283,6 +1283,24 @@ gfx::Rect RenderWidgetHostViewAura::GetBoundsInRootWindow() {
  
  #endif
  
-+#if BUILDFLAG(IS_WIN)
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("headless")) {
-+    // Headless windows host no browser chrome, so their frame equals the
-+    // content area. Report the frame a windowed browser would have for the
-+    // same content size, keeping window.outer* coherent with a regular
-+    // desktop window. The origin is untouched, so screen-space coordinate
-+    // transforms used by the input pipeline are unaffected.
-+    // Resize borders (8px per side) + caption/tab-strip/toolbar area.
-+    bounds.set_width(bounds.width() + 16);
-+    bounds.set_height(bounds.height() + 88);
++#if BUILDFLAG(IS_LINUX)
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch("headless") &&
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          "fingerprint-platform") == "macos") {
++    // Ozone headless has no native browser frame. Once content bounds exist,
++    // preserve their width and add 86 DIPs of browser chrome. During initial
++    // synchronous reads the content bounds can still be empty, so use the
++    // captured 1800x1168 maximized macOS frame while preserving the origin.
++    const gfx::Rect content_bounds = window_->GetBoundsInScreen();
++    if (content_bounds.IsEmpty()) {
++      bounds.set_size(gfx::Size(1800, 1168));
++    } else {
++      bounds = content_bounds;
++      bounds.set_height(content_bounds.height() + 86);
++    }
 +  }
 +#endif
 +
@@ -379,13 +506,13 @@ index cccfafe8f93a0228d08352c6d4f27391935848ba..62595839504e51504decd6f809cd0c32
  
  namespace {
  
-+bool IsBetterChromiumMacFingerprint() {
++bool IsBetterWrightMacFingerprint() {
 +  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
 +             "fingerprint-platform") == "macos";
 +}
 +
  String GetReducedNavigatorPlatform() {
-+  if (IsBetterChromiumMacFingerprint()) {
++  if (IsBetterWrightMacFingerprint()) {
 +    return "MacIntel";
 +  }
  #if BUILDFLAG(IS_ANDROID)
@@ -396,7 +523,7 @@ index cccfafe8f93a0228d08352c6d4f27391935848ba..62595839504e51504decd6f809cd0c32
  unsigned int NavigatorBase::hardwareConcurrency() const {
    unsigned int hardware_concurrency =
 -      NavigatorConcurrentHardware::hardwareConcurrency();
-+      IsBetterChromiumMacFingerprint()
++      IsBetterWrightMacFingerprint()
 +          ? 12u
 +          : NavigatorConcurrentHardware::hardwareConcurrency();
  
@@ -589,6 +716,35 @@ index d24d61e57a9c159f613a03a18c6be553261f8eff..967d269194b0c42d7687d940c8904e5d
  };
  
  }  // namespace blink
+diff --git a/third_party/blink/renderer/core/layout/layout_theme.cc b/third_party/blink/renderer/core/layout/layout_theme.cc
+index 0a21b54050de0f40cc42c0f8fc40a75063719316..9374f280fe4dffa6bf80efe50f5cc1c99320567a 100644
+--- a/third_party/blink/renderer/core/layout/layout_theme.cc
++++ b/third_party/blink/renderer/core/layout/layout_theme.cc
+@@ -21,6 +21,7 @@
+ 
+ #include "third_party/blink/renderer/core/layout/layout_theme.h"
+ 
++#include "base/command_line.h"
+ #include "build/build_config.h"
+ #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
+ #include "third_party/blink/public/resources/grit/blink_resources.h"
+@@ -785,6 +786,16 @@ Color LayoutTheme::SystemColorFromColorProvider(
+   SkColor system_theme_color;
+   switch (css_value_id) {
+     case CSSValueID::kActivetext:
++#if BUILDFLAG(IS_LINUX)
++      if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++              "fingerprint-platform") == "macos") {
++        // Match macOS system blue instead of exposing Linux's red active-link
++        // system color. Use the platform's brighter blue in dark appearance.
++        return color_scheme == mojom::blink::ColorScheme::kDark
++                   ? Color::FromRGBA32(0xFF0A84FF)
++                   : Color::FromRGBA32(0xFF007AFF);
++      }
++#endif
+       system_theme_color =
+           color_provider->GetColor(ui::kColorCssSystemActiveText);
+       break;
 diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
 index fd13b9751061e301acba8b07fb329ed9e003fd11..ffcf1ff3d8248ca3ba8b71fb9de0ad108a2a7655 100644
 --- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
@@ -606,7 +762,7 @@ index fd13b9751061e301acba8b07fb329ed9e003fd11..ffcf1ff3d8248ca3ba8b71fb9de0ad10
              image_data_pixmap.info(), image_data_pixmap.writable_addr(),
              image_data_pixmap.rowBytes(), sx, sy);
 +    if (read_pixels_successful && FingerprintFarblingEnabled()) {
-+      // BetterChromium fork: same deterministic noise as the encode paths, so
++      // BetterWright fork: same deterministic noise as the encode paths, so
 +      // getImageData and toDataURL tell the same per-profile story.
 +      const SkImageInfo& noise_info = image_data_pixmap.info();
 +      if (noise_info.bytesPerPixel() == 4) {
@@ -635,7 +791,7 @@ index aed92e0ec46ada61b10cc7d7afaa1e20b08b7e36..0bc09607d39789bcf7ccd68d16d26dd1
        return;
      }
  
-+    // BetterChromium fork: deterministic per-profile dither on the rendered
++    // BetterWright fork: deterministic per-profile dither on the rendered
 +    // buffer so OfflineAudioContext fingerprints are unique per seed and
 +    // stable across restarts.
 +    if (FingerprintFarblingEnabled()) {
@@ -694,7 +850,7 @@ index 319e17ecde751471006f7c910e68081c551c5dd1..c6d394c86919cd70dc0bceb81ea63a0e
        return;
      }
      ContextGL()->ReadPixels(x, y, width, height, format, type, data);
-+    // BetterChromium fork: deterministic per-profile noise on WebGL readbacks
++    // BetterWright fork: deterministic per-profile noise on WebGL readbacks
 +    // (the common RGBA/UNSIGNED_BYTE fingerprint path only).
 +    if (FingerprintFarblingEnabled() && format == GL_RGBA &&
 +        type == GL_UNSIGNED_BYTE && width > 0 && height > 0) {
@@ -720,7 +876,7 @@ index 44527d0a7b264441eac9c25fa8b9347aeeb5c7d1..797bd80dcddeec8ff1cdab5b51cff0bb
    }
    description_ = String::FromUtf8(info.device);
    driver_ = String::FromUtf8(info.description);
-+  // BetterChromium's macOS profile reports the captured Chrome 151 adapter
++  // BetterWright's macOS profile reports the captured Chrome 151 adapter
 +  // identity while preserving the real backend's feature and limit set. Never
 +  // advertise Metal-only capabilities on a Linux Vulkan/SwiftShader backend.
 +  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -931,7 +1087,7 @@ index c76f6553e1cec3e66ee4f4435bdda02fb044e57f..3edd606d0a6ed4ae1adc10a3e415ea7f
 +  FarbleIfEnabled();
 +}
 +
-+// BetterChromium fork: route every canvas readback (toDataURL, toBlob,
++// BetterWright fork: route every canvas readback (toDataURL, toBlob,
 +// OffscreenCanvas.convertToBlob, audits) through a private copy carrying
 +// deterministic per-profile noise. peekPixels memory belongs to the source
 +// image, so noise is never written in place; RasterFromData keeps the noisy
@@ -969,7 +1125,7 @@ index 7788473df7e915a0f5d53b7c134cf1ad8177582e..7266c25c6808ec4182354f1e3562faf4
  
    bool IsValid() { return is_valid_; }  // Only used by Create()
  
-+  // Deterministic per-profile canvas farbling (BetterChromium fork); copies
++  // Deterministic per-profile canvas farbling (BetterWright fork); copies
 +  // the pixels, applies seed-keyed noise, and repoints pixmap_.
 +  void FarbleIfEnabled();
 +
@@ -980,7 +1136,7 @@ diff --git a/ui/display/mac/screen_mac_headless.mm b/ui/display/mac/screen_mac_h
 index 07adf400a5d2e3dfc5212bd381a3f5b8c021e393..6c03b41c30b6653ee83f87cbc52e5846bae64a56 100644
 --- a/ui/display/mac/screen_mac_headless.mm
 +++ b/ui/display/mac/screen_mac_headless.mm
-@@ -38,7 +38,31 @@
+@@ -38,7 +38,31 @@ std::vector<headless::HeadlessScreenInfo> GetHeadlessScreenInfos() {
      CHECK(screen_infos_or_error.has_value()) << screen_infos_or_error.error();
      screen_infos = screen_infos_or_error.value();
    } else {
@@ -1025,7 +1181,7 @@ index 8d7bd2782bdae1e92fdcf59b32559d4710fb4044..bdba3a423755b0afc6cbb8d5767f6cec
 -        HeadlessScreenInfo({.bounds = GetHeadlessDisplayBounds(),
 -                            .device_pixel_ratio = kHeadlessDisplayScale}));
 +    // Canonical desktop profile when nothing overrides the geometry.
-+    // BetterChromium --fingerprint-platform=macos uses the capture-machine
++    // BetterWright --fingerprint-platform=macos uses the capture-machine
 +    // MacBook Pro 14" "More Space" display (1800x1169 @2x, availHeight 1049),
 +    // and wins over --ozone-override-screen-size so Playwright/headless
 +    // defaults cannot leave a 1920x1080 Linux tell.
@@ -1072,7 +1228,6 @@ index 01053984134daae675611ae1f449de166444b7db..d66c2762fa807c119e58a176119767e3
    }
  
    return screen_info;
-
 diff --git a/build/config/chrome_build.gni b/build/config/chrome_build.gni
 --- a/build/config/chrome_build.gni
 +++ b/build/config/chrome_build.gni

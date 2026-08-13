@@ -50,6 +50,7 @@ test("identity context and geometry stay coherent with the capture", () => {
   assert.deepEqual(forkIdentityContextOptions(id), {
     userAgent: id.userAgent,
     locale: "fr-CA",
+    colorScheme: "dark",
   });
   assert.deepEqual(forkIdentityGeometryArgs(id), [
     "--window-size=1800,1169",
