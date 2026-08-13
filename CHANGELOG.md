@@ -9,6 +9,39 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-08-13
+
+A Linux BetterChromium identity-coherence release. BetterChromium now derives
+its default timezone from the browser's actual egress IP before web content
+starts, while preserving explicit operator configuration and the existing
+native anti-detection profile.
+
+### Changed
+
+- Published BetterChromium `151.0.7922.108-r2` and pinned setup/update to its
+  immutable artifacts. The Linux archive includes all required resource packs
+  and its wrapper launches the packaged `betterchromium` executable correctly.
+- On Linux, BetterChromium resolves an IANA timezone through a bounded isolated
+  Chromium preflight using Chromium's own system, PAC, and command-line proxy
+  routing. `--bw-timezone` and `--fingerprint-timezone` always win; failed
+  lookup does not block launch. Profile-installed proxy extensions are not
+  loaded by the isolated preflight.
+- The captured macOS identity now reports coherent outer-window geometry, dark
+  appearance, macOS `ActiveText`, and native Web Share availability on Linux.
+  These are Chromium-source changes gated by the managed identity, not
+  detector-specific page scripts.
+
+### Verification
+
+- Extracted Linux r2 reports the egress-derived timezone (`Asia/Singapore` in
+  the release validation), `navigator.webdriver = false`, no headless UA marker,
+  and the captured macOS UA/platform/client-hints identity. An explicit
+  `--bw-timezone=Europe/Berlin` override reports `Europe/Berlin`.
+- Live CreepJS reports 0% headless, 19% like-headless, and 0% stealth. The 19%
+  consists of three APIs that current CreepJS itself expects to be absent from
+  macOS Chrome (`ContentIndex`, `ContactsManager`, and `downlinkMax`), so they
+  are intentionally not exposed merely to optimize the benchmark.
+
 ## [1.8.2] - 2026-08-12
 
 A compatibility patch for the two regressions reported in

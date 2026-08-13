@@ -8,9 +8,10 @@ trap 'rm -rf "$stage"' EXIT
 case "$platform" in
   linux)
     mkdir -p "$stage/linux-x64"
-    (cd "$out" && cp -a chrome chrome-wrapper chrome-sandbox icudtl.dat libEGL.so libGLESv2.so libvk_swiftshader.so resources.pak snapshot_blob.bin v8_context_snapshot.bin vk_swiftshader_icd.json locales resources "$stage/linux-x64/" 2>/dev/null || true)
+    (cd "$out" && cp -a chrome chrome-wrapper chrome-sandbox chrome_crashpad_handler icudtl.dat libEGL.so libGLESv2.so libvk_swiftshader.so resources.pak chrome_100_percent.pak chrome_200_percent.pak headless_command_resources.pak snapshot_blob.bin v8_context_snapshot.bin vk_swiftshader_icd.json product_logo_48.png locales resources "$stage/linux-x64/" 2>/dev/null || true)
     [[ -x "$stage/linux-x64/chrome" ]] || { echo "staged Linux chrome missing" >&2; exit 1; }
     mv "$stage/linux-x64/chrome" "$stage/linux-x64/betterchromium"
+    sed -i 's|"$HERE/chrome"|"$HERE/betterchromium"|' "$stage/linux-x64/chrome-wrapper"
     (cd "$stage" && zip -qry "$dest" linux-x64)
     ;;
   mac)

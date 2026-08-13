@@ -18,7 +18,7 @@ betterwright setup --cloak-only  # explicit CloakBrowser compatibility mode
 ```
 
 Artifacts come from a revisioned GitHub Release tag such as
-`betterchromium-<version>-r1` (see `CHROMIUM_FORK_RELEASE_TAG` /
+`betterchromium-<version>-rN` (see `CHROMIUM_FORK_RELEASE_TAG` /
 `CHROMIUM_FORK_ASSETS` in `src/chromium-fork.ts`). Revisioning keeps older
 published BetterWright packages bound to their original immutable assets.
 Each zip is SHA-256 pinned in the manifest before extract. Apple-licensed
