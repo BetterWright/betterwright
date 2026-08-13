@@ -5068,6 +5068,26 @@ function candidateFrames(page, provider) {
   return matched.length ? matched : frames.slice(0, 8);
 }
 
+/**
+ * Page-coordinate box of a provider's challenge frame, taken from the frame
+ * element itself. Turnstile mounts its iframe in a closed shadow root, where
+ * neither `document.querySelector` nor a Playwright selector can see it, so
+ * walking back from the attached frame is the only way to locate the widget.
+ */
+async function widgetFrameBox(page, provider) {
+  for (const frame of candidateFrames(page, provider)) {
+    const element = await frame.frameElement().catch(() => null);
+    if (!element) continue;
+    try {
+      const box = await element.boundingBox().catch(() => null);
+      if (box && box.width > 0 && box.height > 0) return box;
+    } finally {
+      await element.dispose().catch(() => {});
+    }
+  }
+  return null;
+}
+
 async function elementBoxInPage(_page, _frame, locator) {
   const handle = await locator.elementHandle({ timeout: 1_500 }).catch(() => null);
   if (!handle) return null;
@@ -5088,7 +5108,7 @@ async function findClickableInScopes(page, scopes, selectors) {
       const visible = await locator.isVisible({ timeout: 400 }).catch(() => false);
       if (!visible) continue;
       const box = await elementBoxInPage(page, scope, locator);
-      if (box) return { locator, box, scope };
+      if (box) return { locator, box, scope, selector };
     }
   }
   return null;
@@ -5114,6 +5134,23 @@ async function challengeStillPresent(page, provider) {
   if (Object.keys(metadata.tokens).length) return { present: false, metadata };
   const challenge = detectBotChallenge(metadata);
   return { present: Boolean(challenge), metadata, challenge };
+}
+
+/**
+ * Widget container box for clicking. `challengeWidgetBox` exists to crop
+ * screenshots and so demands a puzzle-sized box; a checkbox widget is a wide,
+ * short strip that the size gate rejects. Clicking only needs a real target.
+ */
+async function challengeWidgetClickBox(page, provider) {
+  const scopes = [page, ...candidateFrames(page, provider)];
+  for (const scope of scopes) {
+    const widget = scope.locator(CHALLENGE_WIDGET_SELECTORS.join(", ")).first();
+    const visible = await widget.isVisible({ timeout: 400 }).catch(() => false);
+    if (!visible) continue;
+    const box = await elementBoxInPage(page, scope, widget);
+    if (box && box.width >= 24 && box.height >= 16) return box;
+  }
+  return null;
 }
 
 async function challengeWidgetBox(page, provider) {
@@ -5611,27 +5648,62 @@ async function runCaptchaSolveAction(
     case "click_checkbox": {
       // Prefer real checkbox/controls; never fall through to a bare `body` hit
       // when a verify button is available (managed / generic widgets).
+      // The widget's own control first, then the widget itself, and only then
+      // generic page buttons. Order matters: VERIFY_BUTTON_SELECTORS ends in
+      // `button[type='submit']`, which on a demo or login page is the host
+      // form's own button. Reaching that before the widget submits the form
+      // unsolved while the attempt log still claims a successful click.
       const preferred = CHECKBOX_SELECTORS.filter((selector) => selector !== "body");
       let found = await findClickableInScopes(page, scopes, preferred);
       if (!found) {
-        found = await findClickableInScopes(page, scopes, VERIFY_BUTTON_SELECTORS);
-      }
-      if (!found) {
-        // Fall back: click the first matching widget iframe itself (left side).
+        // Turnstile mounts its iframe in a CLOSED shadow root, so neither the
+        // DOM nor a Playwright selector can see it. The frame stays attached
+        // and its frame element still reports real page geometry, which is the
+        // only remaining way to reach the checkbox.
+        const frameBox = await widgetFrameBox(page, provider);
+        if (frameBox) {
+          const point = await humanClickBox(page, session, frameBox, { leftBias: true });
+          return { ok: true, point, target: "frame_element" };
+        }
+        // Widget iframes that are visible in the DOM. Every pattern has to name
+        // a challenge: a bare `title*="widget"` also matches ordinary site
+        // furniture such as chat launchers, and clicking one of those reports a
+        // solve while opening a support window.
         const iframe = page
           .locator(
-            'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], iframe[src*="challenges.cloudflare" i], iframe[title*="captcha" i], iframe[title*="challenge" i], iframe[title*="widget" i]',
+            'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], iframe[src*="challenges.cloudflare" i], iframe[title*="captcha" i], iframe[title*="challenge" i], iframe[title*="verification" i], iframe[title*="security check" i]',
           )
           .first();
-        const box = await iframe.boundingBox().catch(() => null);
-        if (!box) return { ok: false, reason: "checkbox_not_found" };
-        const point = await humanClickBox(page, session, box, { leftBias: true });
-        return { ok: true, point, target: "iframe" };
+        // Bounded: an unmatched locator otherwise blocks for Playwright's 30s
+        // default, which is the whole solve budget spent before the first click.
+        const box = await iframe.boundingBox({ timeout: 800 }).catch(() => null);
+        if (box) {
+          const point = await humanClickBox(page, session, box, { leftBias: true });
+          return { ok: true, point, target: "iframe" };
+        }
+        // The widget container itself, for challenges that render inline rather
+        // than in a frame. Still ahead of the generic buttons below.
+        const inlineBox = await challengeWidgetClickBox(page, provider);
+        if (inlineBox) {
+          const point = await humanClickBox(page, session, inlineBox, { leftBias: true });
+          return { ok: true, point, target: "widget" };
+        }
+        found = await findClickableInScopes(page, scopes, VERIFY_BUTTON_SELECTORS);
+        if (!found) return { ok: false, reason: "checkbox_not_found" };
+        const verifyPoint = await humanClickBox(page, session, found.box, {
+          leftBias: found.box.width > 80,
+        });
+        return {
+          ok: true,
+          point: verifyPoint,
+          target: "verify_button",
+          selector: found.selector || null,
+        };
       }
       const point = await humanClickBox(page, session, found.box, {
         leftBias: found.box.width > 80,
       });
-      return { ok: true, point, target: "checkbox" };
+      return { ok: true, point, target: "checkbox", selector: found.selector || null };
     }
     case "click_verify": {
       // Challenge-frame controls first so a host-page Submit cannot steal the
@@ -6033,6 +6105,10 @@ async function solveCaptchaOnPage(page, session, options: any = {}) {
       description: action.description,
       ok: Boolean(outcome.ok),
       reason: outcome.reason || null,
+      // Which control the action actually hit. Without this a click on the
+      // wrong element is indistinguishable from a click on the widget.
+      target: outcome.target || null,
+      selector: outcome.selector || null,
       atMs: Date.now() - started,
     });
 

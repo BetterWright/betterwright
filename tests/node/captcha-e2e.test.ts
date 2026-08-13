@@ -50,6 +50,7 @@ async function startFixtureServer() {
     else if (url.pathname === "/motion") file = "motion.html";
     else if (url.pathname === "/drag") file = "drag.html";
     else if (url.pathname === "/managed") file = "managed.html";
+    else if (url.pathname === "/submit-decoy") file = "submit-decoy.html";
     else if (url.pathname === "/checkbox") file = "checkbox.html";
     else if (url.pathname !== "/" && url.pathname !== "/index.html") {
       res.writeHead(404);
@@ -250,6 +251,33 @@ test(
         assert.equal(result.ok, true, result.error);
         assert.deepEqual(result.result.picks, [0, 4, 8]);
         assert.match(result.result.token, /^bw_grid_token_/);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "the widget is clicked before the host page's own submit button",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/submit-decoy`)}, { waitUntil: "domcontentloaded" });
+          const solved = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          const posted = await page.locator("#posted").innerText();
+          return { solved, token, posted };
+        `);
+        assert.equal(result.ok, true, result.error);
+        // The widget must be what gets clicked. Falling through to the page's
+        // own submit button would post the form with no token.
+        assert.match(result.result.token, /^bw_decoy_token_/);
+        assert.equal(result.result.posted, "");
+        assert.equal(result.result.solved.status, "ready");
       });
     } finally {
       await server.close();
