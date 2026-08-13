@@ -102,7 +102,7 @@ distinct per seed.
 - `navigator_device_memory.cc` — `deviceMemory` reports `16`, Chrome's bucketed
   value for the masked configuration.
 
-## 6. Screen geometry
+## 6. Screen and window geometry
 
 `ui/ozone/platform/headless/headless_screen.cc` reports bounds of **3600×2338
 physical** with `TLBR(78,0,162,0)` insets. Under
@@ -110,7 +110,38 @@ physical** with `TLBR(78,0,162,0)` insets. Under
 `availHeight 1049`, `dpr 2` — the menu bar and Dock accounted for, as on the
 machine being described.
 
-## 7. Fonts
+Linux Ozone headless does not have a native browser frame, and its Aura
+top-level and content bounds can be empty during initial synchronous page
+reads. Under the macOS mask only,
+`RenderWidgetHostViewAura::GetBoundsInRootWindow()` returns the captured
+`1800×1168` maximized frame while content bounds are empty, preserving the
+reported origin. Once content bounds exist, it retains their width and adds 86
+CSS px of vertical browser chrome, so the observed `1800×1082` viewport reaches
+the same outer size. This keeps early and later `window.outerWidth/outerHeight`
+reads coherent and nonzero, one pixel below the `1800×1169` screen height as is
+plausible for maximized macOS bounds. Unmasked Linux and all non-Linux behavior
+are unchanged.
+
+## 7. Native platform-exposure surfaces
+
+Two renderer features also follow the macOS identity on Linux, without page
+scripts or prototype overrides:
+
+- `chrome_content_browser_client.cc` sets Blink's preferred content and root
+  scrollbar color schemes to dark. This makes `prefers-color-scheme: dark` part
+  of the captured identity without enabling force-dark page transformations.
+  The Playwright launch context reinforces the native source preference through
+  its native `colorScheme: "dark"` media-emulation option, not a page shim.
+- `layout_theme.cc` maps the `ActiveText` CSS system color to macOS system blue
+  (`#007aff` in light appearance, `#0a84ff` in the captured dark appearance),
+  instead of exposing Linux's red active-link color.
+- `chrome_content_renderer_client.cc` enables Blink Web Share when
+  `--fingerprint-platform=macos`; stock Linux remains disabled, while upstream
+  Android, ChromeOS, Windows, and macOS behavior is unchanged. This exposes the
+  native Blink API surface, but Linux still has no macOS share-sheet backend,
+  so availability does not guarantee a successful platform share operation.
+
+## 8. Fonts
 
 Font metrics are the strongest Linux-to-macOS tell, and nothing in the JS layer
 can fake them:
@@ -128,7 +159,7 @@ With that set in place, `fc-list` enumerates 470 faces and `measureText` widths
 differ per family (Helvetica Neue 291, Menlo 247, Georgia 307, Palatino 307,
 Avenir Next 304) instead of collapsing onto a single fallback.
 
-## 8. Linux font-data file sharing
+## 9. Linux font-data file sharing
 
 [`patches/chromium-151/font-data-file-sharing.patch`](../patches/chromium-151/font-data-file-sharing.patch)
 applies from the Chromium source root. It was validated against Chromium
@@ -150,7 +181,7 @@ This matters most with the bundled mac-metric collection above, where the old
 fallback held large font mappings alongside deleted `/tmp/.org.chromium.*`
 copies.
 
-## 9. Linux renderer soft limit
+## 10. Linux renderer soft limit
 
 [`patches/chromium-151/renderer-process-soft-limit.patch`](../patches/chromium-151/renderer-process-soft-limit.patch)
 applies from the Chromium source root and makes four the Linux fork's default
@@ -183,7 +214,7 @@ CPU-seconds per 1,000 operations improved between 1.55% and 8.67%. On a host
 where same-site renderer parallelism matters more than memory, raise the limit
 with `BETTERWRIGHT_CHROMIUM_ARGS=--renderer-process-limit=N`.
 
-## 10. Build flags
+## 11. Build flags
 
 `out/LinuxStatic` builds with `proprietary_codecs=true`,
 `ffmpeg_branding="Chrome"`, `is_component_build=false`, and `target_cpu="x64"`.

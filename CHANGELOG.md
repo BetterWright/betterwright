@@ -9,31 +9,55 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-08-13
+
+A browser-coherence and local challenge-solving release. BetterChromium derives
+its default timezone from the browser's actual egress IP before web content
+starts, and BetterWright adds bounded local motion, drag-fit, and numbered
+image-grid CAPTCHA handling.
+
 ### Added
 
-- Image-grid CAPTCHAs (hCaptcha / reCAPTCHA puzzles) now return a tight numbered
-  crop instead of a full-page screenshot. After looking at that image, finish
-  with `captcha.solve({ tiles: [indexes] })` or `captcha.clickTiles(indexes)` —
-  the same look-then-click loop Aside uses, without a third-party solver.
-- `captcha.solve()` distinguishes hCaptcha motion (“shape that grows”) and
-  drag-to-fit puzzles from image grids, and ignores widget chrome (EN / Skip /
-  Refresh) when numbering tiles. Motion stages sample animation frames, click
-  the shape that grew, and confirm **Next**. Drag-to-fit drags the filled piece
-  onto the hollow slot. Image grids still hand a numbered crop to host vision.
+- Image-grid CAPTCHAs now return a tight numbered crop for a local
+  `captcha.solve({ tiles: [indexes] })` or `captcha.clickTiles(indexes)` handoff.
+  Stale picks are rejected when a challenge replaces its grid.
+- `captcha.solve()` distinguishes hCaptcha motion and drag-to-fit puzzles from
+  image grids. Automatic work remains bounded to at most three stages.
+
+### Changed
+
+- Published BetterChromium `151.0.7922.108-r2` and pinned setup/update to its
+  immutable artifacts. The Linux archive includes all required resource packs
+  and its wrapper launches the packaged `betterchromium` executable correctly.
+- On Linux, BetterChromium resolves an IANA timezone through a bounded isolated
+  Chromium preflight using Chromium's own system, PAC, and command-line proxy
+  routing. `--bw-timezone` and `--fingerprint-timezone` always win; failed
+  lookup does not block launch. Profile-installed proxy extensions are not
+  loaded by the isolated preflight.
+- The captured macOS identity now reports coherent outer-window geometry, dark
+  appearance, macOS `ActiveText`, and native Web Share availability on Linux.
+  These are Chromium-source changes gated by the managed identity, not
+  detector-specific page scripts.
 
 ### Fixed
 
-- Headed Chromium no longer shows the unsupported `--host-resolver-rules`
-  infobar. Playwright injects `MAP * ~NOTFOUND` whenever a SOCKS `proxy` option
-  is set; BetterWright now points Chromium at the guard with `--proxy-server`
-  and `--proxy-bypass-list` instead, so that switch never reaches the command
-  line. The SOCKS guard still resolves hostnames and re-validates every IP.
-- Captcha (and other) screenshots no longer stall for 30s on `document.fonts`.
-  Playwright's encoder times out sooner and falls back to CDP, which captures
-  the current surface without waiting for webfonts that never settle.
-- Challenge-widget crops prefer the puzzle iframe (`frame=challenge` / bframe)
-  over the checkbox iframe, so motion/grid inspect shots are the widget rather
-  than the full page.
+- Headed Chromium no longer shows Playwright's unsupported
+  `--host-resolver-rules` infobar when using the SOCKS guard. The guard still
+  resolves hostnames and re-validates every IP.
+- CAPTCHA screenshots no longer wait 30 seconds for unsettled webfonts, and
+  challenge crops prefer the puzzle iframe over the checkbox iframe.
+- Widget clicks now prefer specific challenge controls, including closed-shadow
+  iframe geometry, before host-page submit buttons.
+
+### Verification
+
+- Extracted Linux r2 reports the egress-derived timezone (`Asia/Singapore` in
+  release validation), `navigator.webdriver = false`, no headless UA marker,
+  and the captured macOS identity. `--bw-timezone=Europe/Berlin` overrides it.
+- Live CreepJS reports 0% headless, 19% like-headless, and 0% stealth. The three
+  remaining heuristics conflict with genuine macOS Chrome API availability and
+  were intentionally not enabled merely to optimize the benchmark.
+
 
 ## [1.8.2] - 2026-08-12
 

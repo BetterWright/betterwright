@@ -1,5 +1,161 @@
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+index b5cc00e4c8..49eba0eab7 100644
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -9,12 +9,17 @@
+ #include <iostream>
+ #include <memory>
+ #include <optional>
++#include <string>
++#include <vector>
+
+ #include "base/command_line.h"
+ #include "base/environment.h"
++#include "base/files/file_util.h"
++#include "base/files/scoped_temp_dir.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback_helpers.h"
+ #include "base/no_destructor.h"
++#include "base/process/launch.h"
+ #include "base/sampling_heap_profiler/poisson_allocation_sampler.h"
+ #include "base/time/time.h"
+ #include "build/build_config.h"
+@@ -66,6 +71,101 @@ std::optional<base::CommandLine>& GetInitialCommandLineStorage() {
+   return *initial_command_line;
+ }
+
++#if BUILDFLAG(IS_LINUX)
++constexpr char kBetterChromiumTimezoneProbe[] = "bw-timezone-probe";
++
++bool IsSafeIanaTimezone(std::string_view timezone) {
++  if (timezone.empty() || timezone.front() == '/' ||
++      timezone.find("..") != std::string_view::npos ||
++      timezone.find('/') == std::string_view::npos) {
++    return false;
++  }
++  for (char c : timezone) {
++    if (!(base::IsAsciiAlphaNumeric(c) || c == '/' || c == '_' || c == '-' ||
++          c == '+' || c == '.')) {
++      return false;
++    }
++  }
++  return base::PathExists(
++      base::FilePath(FILE_PATH_LITERAL("/usr/share/zoneinfo"))
++          .Append(base::FilePath::FromASCII(timezone)));
++}
++
++std::string ExtractEgressTimezone(std::string_view output) {
++  constexpr std::string_view kTimezone = "\"timezone\"";
++  constexpr std::string_view kId = "\"id\"";
++  size_t position = output.find(kTimezone);
++  if (position == std::string_view::npos) {
++    return {};
++  }
++  position = output.find(kId, position + kTimezone.size());
++  if (position == std::string_view::npos) {
++    return {};
++  }
++  position = output.find(':', position + kId.size());
++  position = position == std::string_view::npos
++                 ? position
++                 : output.find('\"', position + 1);
++  if (position == std::string_view::npos) {
++    return {};
++  }
++  const size_t end = output.find('\"', position + 1);
++  if (end == std::string_view::npos) {
++    return {};
++  }
++  std::string timezone(output.substr(position + 1, end - position - 1));
++  return IsSafeIanaTimezone(timezone) ? timezone : std::string();
++}
++
++void MaybeAppendEgressTimezone(base::CommandLine* command_line) {
++  if (command_line->HasSwitch(switches::kProcessType) ||
++      command_line->HasSwitch(kBetterChromiumTimezoneProbe) ||
++      command_line->HasSwitch(switches::kBwTimezone) ||
++      command_line->HasSwitch(switches::kFingerprintTimezone)) {
++    return;
++  }
++
++  base::ScopedTempDir profile;
++  if (!profile.CreateUniqueTempDir(FILE_PATH_LITERAL("betterchromium-timezone"))) {
++    return;
++  }
++
++  // `timeout` bounds DNS, proxy negotiation, and the remote endpoint together.
++  // The child is this same binary with an isolated profile, so system, PAC, and
++  // command-line proxy routing are resolved by Chromium rather than by curl.
++  std::vector<std::string> probe = {
++      "/usr/bin/timeout", "15", command_line->GetProgram().value(),
++      "--headless", "--disable-gpu", "--no-first-run",
++      "--no-default-browser-check", "--disable-extensions", "--disable-sync",
++      "--disable-background-networking", "--metrics-recording-only",
++      "--bw-timezone-probe",
++      "--user-data-dir=" + profile.GetPath().value(), "--dump-dom"};
++  constexpr const char* kNetworkSwitches[] = {
++      "proxy-server", "proxy-pac-url", "proxy-bypass-list",
++      "host-resolver-rules", "host-rules", "auth-server-whitelist",
++      "auth-negotiate-delegate-whitelist", "ignore-certificate-errors",
++      "ignore-certificate-errors-spki-list", "no-sandbox"};
++  for (const char* name : kNetworkSwitches) {
++    if (!command_line->HasSwitch(name)) {
++      continue;
++    }
++    const std::string value = command_line->GetSwitchValueASCII(name);
++    probe.push_back(value.empty() ? "--" + std::string(name)
++                                  : "--" + std::string(name) + "=" + value);
++  }
++  probe.push_back("https://ipwho.is/?fields=success,timezone");
++
++  std::string output;
++  if (!base::GetAppOutput(probe, &output)) {
++    return;
++  }
++  const std::string timezone = ExtractEgressTimezone(output);
++  if (!timezone.empty()) {
++    command_line->AppendSwitchASCII(switches::kBwTimezone, timezone);
++  }
++}
++#endif  // BUILDFLAG(IS_LINUX)
++
+ }  // namespace
+
+ const base::CommandLine& GetInitialBrowserCommandLine() {
+@@ -161,6 +261,10 @@ int ChromeMain(int argc, const char** argv) {
+
+   base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
+
++#if BUILDFLAG(IS_LINUX)
++  MaybeAppendEgressTimezone(command_line);
++#endif
++
+   // Capture the unpolluted command line snapshot in the browser process.
+   // This must happen immediately after CommandLine::Init to ensure we capture
+   // the state before any internal programmatic mutations.
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 89df9311af..bcbaf19d58 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -4223,6 +4223,16 @@ GetPreferredColorScheme(const WebPreferences& web_prefs,
+       }
+     }
+   }
++#if BUILDFLAG(IS_LINUX)
++  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          "fingerprint-platform") == "macos") {
++    // Dark appearance is part of the captured macOS identity. Override only
++    // the preferred schemes; do not enable force-dark page transformations.
++    preferred_color_scheme = blink::mojom::PreferredColorScheme::kDark;
++    preferred_root_scrollbar_color_scheme =
++        blink::mojom::PreferredColorScheme::kDark;
++  }
++#endif
+   return {preferred_color_scheme, preferred_root_scrollbar_color_scheme};
+ }
+
 diff --git a/chrome/browser/headless/headless_mode_init.cc b/chrome/browser/headless/headless_mode_init.cc
-index efa123b3109827bdf3839b9c5bc968999aa4dcc7..957eefd2b222474ce23f9bb8d946ae3737e76d3f 100644
+index efa123b310..957eefd2b2 100644
 --- a/chrome/browser/headless/headless_mode_init.cc
 +++ b/chrome/browser/headless/headless_mode_init.cc
 @@ -99,8 +99,10 @@ class HeadlessModeHandleImpl : public HeadlessModeHandle {
@@ -12,40 +168,56 @@ index efa123b3109827bdf3839b9c5bc968999aa4dcc7..957eefd2b222474ce23f9bb8d946ae37
 -                                     "800,600");
 +                                     mac_mask ? "3600,2338" : "1920,1080");
      }
- 
+
      // If Ozone/Headless is enabled, Vulkan initialization crashes unless
+diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
+index cb230d68cb..2166f7bbcc 100644
+--- a/chrome/renderer/chrome_content_renderer_client.cc
++++ b/chrome/renderer/chrome_content_renderer_client.cc
+@@ -1430,6 +1430,11 @@ void ChromeContentRendererClient::
+ #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN) || \
+     BUILDFLAG(IS_MAC)
+   blink::WebRuntimeFeatures::EnableWebShare(true);
++#elif BUILDFLAG(IS_LINUX)
++  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          "fingerprint-platform") == "macos") {
++    blink::WebRuntimeFeatures::EnableWebShare(true);
++  }
+ #endif
+
+   if (base::FeatureList::IsEnabled(
 diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
-index 608bea5cb386438757146a531bbc0293b3eb9775..e06ab88d8a76fd167d8024a5587f0e55635e1ce1 100644
+index 608bea5cb3..e06ab88d8a 100644
 --- a/components/embedder_support/user_agent_utils.cc
 +++ b/components/embedder_support/user_agent_utils.cc
 @@ -58,6 +58,14 @@ namespace embedder_support {
- 
+
  namespace {
- 
-+constexpr char kBetterChromiumFingerprintSwitch[] = "fingerprint";
-+constexpr char kBetterChromiumFingerprintPlatformSwitch[] = "fingerprint-platform";
+
++constexpr char kBetterWrightFingerprintSwitch[] = "fingerprint";
++constexpr char kBetterWrightFingerprintPlatformSwitch[] = "fingerprint-platform";
 +
-+bool IsBetterChromiumMacFingerprint() {
++bool IsBetterWrightMacFingerprint() {
 +  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-+             kBetterChromiumFingerprintPlatformSwitch) == "macos";
++             kBetterWrightFingerprintPlatformSwitch) == "macos";
 +}
 +
  #if BUILDFLAG(IS_WIN)
- 
+
  // The registry key where the UniversalApiContract version value can be read
 @@ -165,6 +173,13 @@ const blink::UserAgentBrandList GetUserAgentBrandList(
    std::optional<std::string> brand;
  #if !BUILDFLAG(CHROMIUM_BRANDING)
    brand = version_info::GetProductName();
 +#else
-+  // BetterChromium presents the Chrome product token in its legacy UA. Keep
++  // BetterWright presents the Chrome product token in its legacy UA. Keep
 +  // UA Client Hints coherent with it, but only for the managed fork profile.
 +  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-+          kBetterChromiumFingerprintSwitch)) {
++          kBetterWrightFingerprintSwitch)) {
 +    brand = "Google Chrome";
 +  }
  #endif
- 
+
    std::string brand_version =
 @@ -214,9 +229,18 @@ const blink::UserAgentBrandList GetUserAgentBrandFullVersionListInternal(
  // Internal function to handle return the full or "reduced" user agent string,
@@ -57,24 +229,24 @@ index 608bea5cb386438757146a531bbc0293b3eb9775..e06ab88d8a76fd167d8024a5587f0e55
 -  if (base::CommandLine::ForCurrentProcess()->HasSwitch(kHeadless)) {
 -    product.insert(0, "Headless");
 +
-+  // BetterChromium: force consumer-Mac UA when --fingerprint-platform=macos.
++  // BetterWright: force consumer-Mac UA when --fingerprint-platform=macos.
 +  // Never emit the Headless marker (already removed above) and never emit the
 +  // host Linux "X11; Linux ..." token while masked.
-+  if (IsBetterChromiumMacFingerprint()) {
++  if (IsBetterWrightMacFingerprint()) {
 +    return base::StrCat(
 +        {"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
 +         "AppleWebKit/537.36 (KHTML, like Gecko) ",
 +         product, " Safari/537.36"});
    }
- 
+
  #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 @@ -670,6 +694,16 @@ blink::UserAgentMetadata GetUserAgentMetadata(bool only_low_entropy_ch) {
    metadata.bitness = GetCpuBitness();
    metadata.wow64 = IsWoW64();
    metadata.platform_version = GetPlatformVersion();
 +
-+  // BetterChromium: coerce UA-CH metadata to the capture-machine Mac identity.
-+  if (IsBetterChromiumMacFingerprint()) {
++  // BetterWright: coerce UA-CH metadata to the capture-machine Mac identity.
++  if (IsBetterWrightMacFingerprint()) {
 +    metadata.platform = "macOS";
 +    metadata.platform_version = "26.6.0";
 +    metadata.architecture = "arm";
@@ -84,15 +256,15 @@ index 608bea5cb386438757146a531bbc0293b3eb9775..e06ab88d8a76fd167d8024a5587f0e55
 +  }
    return metadata;
  }
- 
+
 diff --git a/components/embedder_support/user_agent_utils_unittest.cc b/components/embedder_support/user_agent_utils_unittest.cc
-index 64b27b57c2d6e57582f080636fac1a362825e0a7..fc32d7f02b3d2240650662ff646ce50c51ff95cc 100644
+index 64b27b57c2..fc32d7f02b 100644
 --- a/components/embedder_support/user_agent_utils_unittest.cc
 +++ b/components/embedder_support/user_agent_utils_unittest.cc
 @@ -691,6 +691,23 @@ TEST_F(UserAgentUtilsTest, UserAgentMetadata) {
    EXPECT_TRUE(metadata.full_version.empty());
  }
- 
+
 +TEST_F(UserAgentUtilsTest, FingerprintSwitchAddsChromeProductBrand) {
 +  base::test::ScopedCommandLine scoped_command_line;
 +  scoped_command_line.GetProcessCommandLine()->AppendSwitchASCII(
@@ -113,8 +285,93 @@ index 64b27b57c2d6e57582f080636fac1a362825e0a7..fc32d7f02b3d2240650662ff646ce50c
  #if BUILDFLAG(IS_ANDROID)
  TEST_F(UserAgentUtilsTest, UserAgentMetadataForXrDevice) {
    if (base::android::device_info::is_automotive()) {
+diff --git a/components/services/font_data/BUILD.gn b/components/services/font_data/BUILD.gn
+index 2305b75361..6b0cf621f8 100644
+--- a/components/services/font_data/BUILD.gn
++++ b/components/services/font_data/BUILD.gn
+@@ -30,6 +30,24 @@ source_set("lib") {
+   public_deps = [ "//skia" ]
+ }
+
++test("font_data_service_unittests") {
++  sources = [ "font_data_service_impl_unittest.cc" ]
++  deps = [
++    ":lib",
++    "//base",
++    "//base/test:test_support",
++    "//components/services/font_data/public/mojom",
++    "//mojo/core/test:run_all_unittests",
++    "//mojo/public/cpp/bindings",
++    "//mojo/public/cpp/system",
++    "//skia",
++    "//testing/gtest",
++    "//ui/gfx",
++  ]
++
++  data_deps = [ "//third_party/test_fonts" ]
++}
++
+ source_set("unit_tests") {
+   testonly = true
+   sources = [ "font_data_service_impl_unittest.cc" ]
+diff --git a/components/services/font_data/font_data_service_impl.cc b/components/services/font_data/font_data_service_impl.cc
+index 4917c5780e..b8500a4334 100644
+--- a/components/services/font_data/font_data_service_impl.cc
++++ b/components/services/font_data/font_data_service_impl.cc
+@@ -121,12 +121,6 @@ std::tuple<base::File, uint64_t> FontDataServiceImpl::GetFileHandle(
+   typeface.getResourceName(&font_path);
+   base::UmaHistogramBoolean("Chrome.FontDataService.EmptyPathOnGetFileHandle",
+                             font_path.isEmpty());
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+-  // TODO(crbug.com/463411679): `getResourceName()` is not implemented for
+-  // Linux nor ChromeOS, so the returned file will always be invalid and a
+-  // memory region will be shared instead.
+-  CHECK(font_path.isEmpty());
+-#endif  // BUILDFLAG(IS_LINUX)
+   if (font_path.isEmpty()) {
+     return {};
+   }
+diff --git a/components/services/font_data/font_data_service_impl_unittest.cc b/components/services/font_data/font_data_service_impl_unittest.cc
+index 67971d6712..21f9fa97cd 100644
+--- a/components/services/font_data/font_data_service_impl_unittest.cc
++++ b/components/services/font_data/font_data_service_impl_unittest.cc
+@@ -208,18 +208,10 @@ TEST_F(FontDataServiceImplUnitTest, MatchFamilyName) {
+   font_service_->MatchFamilyName(
+       family_name, CreateTypefaceStyle(400, 5, mojom::TypefaceSlant::kRoman),
+       &out_result);
+-#if BUILDFLAG(IS_WIN)
+   EXPECT_EQ(impl_.GetCacheSizeForTesting(), 0u);
+   EXPECT_TRUE(out_result->typeface_data->is_font_file());
+   EXPECT_TRUE(
+       out_result->typeface_data->get_font_file()->file_handle.IsValid());
+-#else
+-  // For now, on Linux/ChromeOS we always hit the memory region fallback, and
+-  // therefore also adds to the cache.
+-  EXPECT_EQ(impl_.GetCacheSizeForTesting(), 1u);
+-  EXPECT_TRUE(out_result->typeface_data->is_region());
+-  EXPECT_TRUE(out_result->typeface_data->get_region().IsValid());
+-#endif
+ }
+
+ TEST_F(FontDataServiceImplUnitTest, MatchFamilyNameMemoryCacheSize) {
+@@ -339,15 +331,9 @@ TEST_F(FontDataServiceImplUnitTest, LegacyMakeTypefaceNullFamilyName) {
+   font_service_->LegacyMakeTypeface(
+       std::nullopt, CreateTypefaceStyle(400, 5, mojom::TypefaceSlant::kRoman),
+       &out_result);
+-#if BUILDFLAG(IS_WIN)
+   EXPECT_TRUE(out_result->typeface_data->is_font_file());
+   EXPECT_TRUE(
+       out_result->typeface_data->get_font_file()->file_handle.IsValid());
+-#else
+-  // For now, on Linux/ChromeOS we always hit the memory region fallback.
+-  EXPECT_TRUE(out_result->typeface_data->is_region());
+-  EXPECT_TRUE(out_result->typeface_data->get_region().IsValid());
+-#endif
+ }
+
+ #if BUILDFLAG(IS_WIN)
 diff --git a/content/app/content_main_runner_impl.cc b/content/app/content_main_runner_impl.cc
-index efb9034ceff1c98a6731c86094cc8c2c9eafe733..c4a4c5458b9cac89e20d72c736859112e35e04d0 100644
+index efb9034cef..c4a4c5458b 100644
 --- a/content/app/content_main_runner_impl.cc
 +++ b/content/app/content_main_runner_impl.cc
 @@ -30,6 +30,7 @@
@@ -140,7 +397,7 @@ index efb9034ceff1c98a6731c86094cc8c2c9eafe733..c4a4c5458b9cac89e20d72c736859112
 @@ -802,10 +806,54 @@ int ContentMainRunnerImpl::Initialize(ContentMainParams params) {
    delegate_ = std::exchange(params.delegate, nullptr);
    content_main_params_.emplace(std::move(params));
- 
+
 -  const base::CommandLine& command_line =
 -      *base::CommandLine::ForCurrentProcess();
 +  base::CommandLine* mutable_command_line =
@@ -191,13 +448,13 @@ index efb9034ceff1c98a6731c86094cc8c2c9eafe733..c4a4c5458b9cac89e20d72c736859112
 +      mutable_command_line->AppendSwitchASCII("accept-lang", accept_languages);
 +    }
 +  }
- 
+
  #if BUILDFLAG(IS_ANDROID)
    // Initialize the background threadpool field trial before creating the
 @@ -959,6 +1007,29 @@ int ContentMainRunnerImpl::Initialize(ContentMainParams params) {
      return TerminateForFatalInitializationError();
  #endif  // BUILDFLAG(IS_ANDROID) && (ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE)
- 
+
 +  // Identity time zone: applied in every process (browser and all children)
 +  // right after ICU init, before V8 or any Blink code can observe the host
 +  // zone, so Date/Intl agree with the configured identity.
@@ -225,7 +482,7 @@ index efb9034ceff1c98a6731c86094cc8c2c9eafe733..c4a4c5458b9cac89e20d72c736859112
    if (delegate_->ShouldLoadV8Snapshot(process_type)) {
      LoadV8SnapshotFile(command_line);
 diff --git a/content/browser/browser_main_loop.cc b/content/browser/browser_main_loop.cc
-index e605be3dfaade92bd90fd9a9e5fa7bd8f63b4009..13a1d3c4568191e66b6192548dc901556fc285f4 100644
+index e605be3dfa..13a1d3c456 100644
 --- a/content/browser/browser_main_loop.cc
 +++ b/content/browser/browser_main_loop.cc
 @@ -608,6 +608,15 @@ int BrowserMainLoop::EarlyInitialization() {
@@ -242,10 +499,10 @@ index e605be3dfaade92bd90fd9a9e5fa7bd8f63b4009..13a1d3c4568191e66b6192548dc90155
 +    RenderProcessHost::SetMaxRendererProcessCount(4u);
 +#endif
    }
- 
+
    if (parts_)
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
-index 2a8abef097d85d97616a60d603e98784dddfa5ed..18095f150b898327f2ab187eb11d0177404191c2 100644
+index 2a8abef097..18095f150b 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
 @@ -3826,6 +3826,11 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
@@ -261,37 +518,42 @@ index 2a8abef097d85d97616a60d603e98784dddfa5ed..18095f150b898327f2ab187eb11d0177
        sandbox::policy::switches::kDisableLandlockSandbox,
        sandbox::policy::switches::kDisableSeccompFilterSandbox,
 diff --git a/content/browser/renderer_host/render_widget_host_view_aura.cc b/content/browser/renderer_host/render_widget_host_view_aura.cc
-index 65a5a552af843455f7208d32962b32a651b0470d..333b4a1474b548a82d047d5d631527b3d852ac74 100644
+index 65a5a552af..5cb22adbd5 100644
 --- a/content/browser/renderer_host/render_widget_host_view_aura.cc
 +++ b/content/browser/renderer_host/render_widget_host_view_aura.cc
-@@ -1283,6 +1283,19 @@ gfx::Rect RenderWidgetHostViewAura::GetBoundsInRootWindow() {
- 
+@@ -1283,6 +1283,24 @@ gfx::Rect RenderWidgetHostViewAura::GetBoundsInRootWindow() {
+
  #endif
- 
-+#if BUILDFLAG(IS_WIN)
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("headless")) {
-+    // Headless windows host no browser chrome, so their frame equals the
-+    // content area. Report the frame a windowed browser would have for the
-+    // same content size, keeping window.outer* coherent with a regular
-+    // desktop window. The origin is untouched, so screen-space coordinate
-+    // transforms used by the input pipeline are unaffected.
-+    // Resize borders (8px per side) + caption/tab-strip/toolbar area.
-+    bounds.set_width(bounds.width() + 16);
-+    bounds.set_height(bounds.height() + 88);
+
++#if BUILDFLAG(IS_LINUX)
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch("headless") &&
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++          "fingerprint-platform") == "macos") {
++    // Ozone headless has no native browser frame. Once content bounds exist,
++    // preserve their width and add 86 DIPs of browser chrome. During initial
++    // synchronous reads the content bounds can still be empty, so use the
++    // captured 1800x1168 maximized macOS frame while preserving the origin.
++    const gfx::Rect content_bounds = window_->GetBoundsInScreen();
++    if (content_bounds.IsEmpty()) {
++      bounds.set_size(gfx::Size(1800, 1168));
++    } else {
++      bounds = content_bounds;
++      bounds.set_height(content_bounds.height() + 86);
++    }
 +  }
 +#endif
 +
    return bounds;
  }
- 
+
 diff --git a/content/public/common/content_switches.cc b/content/public/common/content_switches.cc
-index 7619a1bfcfdc5dd41bd38cd8aeb43ad7f8969751..6a3337bf06cd0c07e144e45f6381d14a6e9836ea 100644
+index 7619a1bfcf..6a3337bf06 100644
 --- a/content/public/common/content_switches.cc
 +++ b/content/public/common/content_switches.cc
 @@ -10,6 +10,14 @@
- 
+
  namespace switches {
- 
+
 +// Compatibility aliases for launch profiles written against patched
 +// Chromium builds that expose fingerprint switches. Accepted here so a
 +// single launch profile works against both binaries.
@@ -306,7 +568,7 @@ index 7619a1bfcfdc5dd41bd38cd8aeb43ad7f8969751..6a3337bf06cd0c07e144e45f6381d14a
 @@ -46,6 +54,11 @@ const char kBrowserStartupDialog[]          = "browser-startup-dialog";
  // Path to the exe to run for the renderer and plugin subprocesses.
  const char kBrowserSubprocessPath[]         = "browser-subprocess-path";
- 
+
 +// Sets the ICU default time zone in every process (browser and children) at
 +// startup so Date/Intl agree with the configured identity regardless of the
 +// host system zone. Value: an IANA time zone id, e.g. "Europe/Berlin".
@@ -316,7 +578,7 @@ index 7619a1bfcfdc5dd41bd38cd8aeb43ad7f8969751..6a3337bf06cd0c07e144e45f6381d14a
  // used by the content shell and also disables features that can make tests
  // flaky [like monitoring of memory pressure]).
 diff --git a/content/public/common/content_switches.h b/content/public/common/content_switches.h
-index 7118994c964315c474b43689f74185c0d11e4ebf..e23e667ce267f6f48915759671614acd093ddfb1 100644
+index 7118994c96..e23e667ce2 100644
 --- a/content/public/common/content_switches.h
 +++ b/content/public/common/content_switches.h
 @@ -27,6 +27,7 @@ CONTENT_EXPORT extern const char kBrowserCrashTest[];
@@ -339,13 +601,13 @@ index 7118994c964315c474b43689f74185c0d11e4ebf..e23e667ce267f6f48915759671614acd
  CONTENT_EXPORT extern const char kEnableCaretBrowsing[];
  CONTENT_EXPORT extern const char kEnableDisplayList2dCanvas[];
 diff --git a/content/renderer/renderer_main.cc b/content/renderer/renderer_main.cc
-index 8ab1d6631856fd23f7cda408e13a97825abd3308..4c63a83ad1b0d3e8b5ecb396317b8578d530ce70 100644
+index 8ab1d66318..4c63a83ad1 100644
 --- a/content/renderer/renderer_main.cc
 +++ b/content/renderer/renderer_main.cc
 @@ -162,12 +162,19 @@ int RendererMain(MainFunctionParams parameters) {
    base::apple::ScopedNSAutoreleasePool* pool = parameters.autorelease_pool;
  #endif  // BUILDFLAG(IS_MAC)
- 
+
 +  // The renderer command line is finalized after the Linux zygote starts, so
 +  // reapply the propagated fingerprint locale before V8 initializes Intl.
 +  if (command_line.HasSwitch(switches::kFingerprintLocale)) {
@@ -364,51 +626,51 @@ index 8ab1d6631856fd23f7cda408e13a97825abd3308..4c63a83ad1b0d3e8b5ecb396317b8578
          command_line.GetSwitchValueASCII(switches::kLang);
      base::i18n::SetICUDefaultLocale(locale);
 diff --git a/third_party/blink/renderer/core/execution_context/navigator_base.cc b/third_party/blink/renderer/core/execution_context/navigator_base.cc
-index cccfafe8f93a0228d08352c6d4f27391935848ba..62595839504e51504decd6f809cd0c32efeb9819 100644
+index cccfafe8f9..6259583950 100644
 --- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
 +++ b/third_party/blink/renderer/core/execution_context/navigator_base.cc
 @@ -4,6 +4,7 @@
- 
+
  #include "third_party/blink/renderer/core/execution_context/navigator_base.h"
- 
+
 +#include "base/command_line.h"
  #include "base/feature_list.h"
  #include "build/build_config.h"
  #include "third_party/blink/public/common/features.h"
 @@ -23,7 +24,15 @@ namespace blink {
- 
+
  namespace {
- 
-+bool IsBetterChromiumMacFingerprint() {
+
++bool IsBetterWrightMacFingerprint() {
 +  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
 +             "fingerprint-platform") == "macos";
 +}
 +
  String GetReducedNavigatorPlatform() {
-+  if (IsBetterChromiumMacFingerprint()) {
++  if (IsBetterWrightMacFingerprint()) {
 +    return "MacIntel";
 +  }
  #if BUILDFLAG(IS_ANDROID)
    return "Linux armv81";
  #elif BUILDFLAG(IS_MAC)
 @@ -71,7 +80,9 @@ void NavigatorBase::Trace(Visitor* visitor) const {
- 
+
  unsigned int NavigatorBase::hardwareConcurrency() const {
    unsigned int hardware_concurrency =
 -      NavigatorConcurrentHardware::hardwareConcurrency();
-+      IsBetterChromiumMacFingerprint()
++      IsBetterWrightMacFingerprint()
 +          ? 12u
 +          : NavigatorConcurrentHardware::hardwareConcurrency();
- 
+
    probe::ApplyHardwareConcurrencyOverride(
        probe::ToCoreProbeSink(GetExecutionContext()), hardware_concurrency);
 diff --git a/third_party/blink/renderer/core/frame/navigator.cc b/third_party/blink/renderer/core/frame/navigator.cc
-index 583f05f8dd5fb74116ad81da63ee7e43445f8060..e2dcb6ebcfada461e6f6532a7e6a17e1cd0c3e80 100644
+index 583f05f8dd..e2dcb6ebcf 100644
 --- a/third_party/blink/renderer/core/frame/navigator.cc
 +++ b/third_party/blink/renderer/core/frame/navigator.cc
 @@ -98,12 +98,9 @@ bool Navigator::cookieEnabled() const {
  }
- 
+
  bool Navigator::webdriver() const {
 -  if (RuntimeEnabledFeatures::AutomationControlledEnabled())
 -    return true;
@@ -420,23 +682,23 @@ index 583f05f8dd5fb74116ad81da63ee7e43445f8060..e2dcb6ebcfada461e6f6532a7e6a17e1
 +  // browser was launched or which DevTools overrides are active.
 +  return false;
  }
- 
+
  String Navigator::GetAcceptLanguages() {
 diff --git a/third_party/blink/renderer/core/frame/navigator_device_memory.cc b/third_party/blink/renderer/core/frame/navigator_device_memory.cc
-index 05fa33e4568e8eea926a0d97c1d83a4000fa6b3f..de36775949340c51ef2db713cc3286f9b160ee78 100644
+index 05fa33e456..de36775949 100644
 --- a/third_party/blink/renderer/core/frame/navigator_device_memory.cc
 +++ b/third_party/blink/renderer/core/frame/navigator_device_memory.cc
 @@ -4,6 +4,7 @@
- 
+
  #include "third_party/blink/renderer/core/frame/navigator_device_memory.h"
- 
+
 +#include "base/command_line.h"
  #include "third_party/blink/public/common/device_memory/approximated_device_memory.h"
  #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
  #include "third_party/blink/renderer/core/dom/document.h"
 @@ -12,6 +13,11 @@
  namespace blink {
- 
+
  float NavigatorDeviceMemory::deviceMemory() const {
 +  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
 +          "fingerprint-platform") == "macos") {
@@ -445,22 +707,22 @@ index 05fa33e4568e8eea926a0d97c1d83a4000fa6b3f..de36775949340c51ef2db713cc3286f9
 +  }
    return ApproximatedDeviceMemory::GetApproximatedDeviceMemory();
  }
- 
+
 diff --git a/third_party/blink/renderer/core/frame/navigator_id.cc b/third_party/blink/renderer/core/frame/navigator_id.cc
-index 22243ebf5e26fc7224ef53694a1cd9dccf777196..804cbdbfee9c160e3fcdf92faf4d93cc2ec52d42 100644
+index 22243ebf5e..804cbdbfee 100644
 --- a/third_party/blink/renderer/core/frame/navigator_id.cc
 +++ b/third_party/blink/renderer/core/frame/navigator_id.cc
 @@ -31,6 +31,7 @@
- 
+
  #include "third_party/blink/renderer/core/frame/navigator_id.h"
- 
+
 +#include "base/command_line.h"
  #include "base/feature_list.h"
  #include "build/build_config.h"
  #include "third_party/blink/public/common/features.h"
 @@ -59,6 +60,11 @@ String NavigatorID::appVersion() {
  }
- 
+
  String NavigatorID::platform() const {
 +  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
 +          "fingerprint-platform") == "macos") {
@@ -471,7 +733,7 @@ index 22243ebf5e26fc7224ef53694a1cd9dccf777196..804cbdbfee9c160e3fcdf92faf4d93cc
    // Match Safari and Mozilla on Mac x86.
    return "MacIntel";
 diff --git a/third_party/blink/renderer/core/inspector/inspector_page_agent.cc b/third_party/blink/renderer/core/inspector/inspector_page_agent.cc
-index 073ecf84331d60cf4626594a035d7776f2f6e951..ff641557886f20c3d18cc825bd2598aeea75bbde 100644
+index 073ecf8433..ff64155788 100644
 --- a/third_party/blink/renderer/core/inspector/inspector_page_agent.cc
 +++ b/third_party/blink/renderer/core/inspector/inspector_page_agent.cc
 @@ -88,6 +88,7 @@
@@ -484,7 +746,7 @@ index 073ecf84331d60cf4626594a035d7776f2f6e951..ff641557886f20c3d18cc825bd2598ae
  #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 @@ -1064,6 +1065,10 @@ void InspectorPageAgent::DidCreateMainWorldContext(LocalFrame* frame) {
  }
- 
+
  void InspectorPageAgent::DomContentLoadedEventFired(LocalFrame* frame) {
 +  if (ThreadDebugger* debugger =
 +          ThreadDebugger::From(frame->GetDocument()->GetAgent().isolate())) {
@@ -495,7 +757,7 @@ index 073ecf84331d60cf4626594a035d7776f2f6e951..ff641557886f20c3d18cc825bd2598ae
      GetFrontend()->domContentEventFired(timestamp);
 @@ -1073,6 +1078,10 @@ void InspectorPageAgent::DomContentLoadedEventFired(LocalFrame* frame) {
  }
- 
+
  void InspectorPageAgent::LoadEventFired(LocalFrame* frame) {
 +  if (ThreadDebugger* debugger =
 +          ThreadDebugger::From(frame->GetDocument()->GetAgent().isolate())) {
@@ -505,12 +767,12 @@ index 073ecf84331d60cf4626594a035d7776f2f6e951..ff641557886f20c3d18cc825bd2598ae
    if (frame == inspected_frames_->Root()) {
      GetFrontend()->loadEventFired(timestamp);
 diff --git a/third_party/blink/renderer/core/inspector/thread_debugger_common_impl.cc b/third_party/blink/renderer/core/inspector/thread_debugger_common_impl.cc
-index e7a57b712b4765a639939e76c5a780b22610257c..eff64db1ddb56cbf3e6ef89492d92aa4bd63b6fd 100644
+index e7a57b712b..eff64db1dd 100644
 --- a/third_party/blink/renderer/core/inspector/thread_debugger_common_impl.cc
 +++ b/third_party/blink/renderer/core/inspector/thread_debugger_common_impl.cc
 @@ -7,6 +7,7 @@
  #include <memory>
- 
+
  #include "base/check.h"
 +#include "base/functional/bind.h"
  #include "base/rand_util.h"
@@ -519,7 +781,7 @@ index e7a57b712b4765a639939e76c5a780b22610257c..eff64db1ddb56cbf3e6ef89492d92aa4
 @@ -1045,6 +1046,36 @@ void ThreadDebuggerCommonImpl::consoleTimeStampWithArgs(
    probe::ConsoleTimeStamp(isolate_, label);
  }
- 
+
 +void ThreadDebuggerCommonImpl::scheduleInspectorWork(
 +    std::function<void()> task) {
 +  // Console reporting is routed here so the page-observed cost of console.*
@@ -554,17 +816,17 @@ index e7a57b712b4765a639939e76c5a780b22610257c..eff64db1ddb56cbf3e6ef89492d92aa4
      double interval,
      V8InspectorClient::TimerCallback callback,
 diff --git a/third_party/blink/renderer/core/inspector/thread_debugger_common_impl.h b/third_party/blink/renderer/core/inspector/thread_debugger_common_impl.h
-index d24d61e57a9c159f613a03a18c6be553261f8eff..967d269194b0c42d7687d940c8904e5da9648119 100644
+index d24d61e57a..967d269194 100644
 --- a/third_party/blink/renderer/core/inspector/thread_debugger_common_impl.h
 +++ b/third_party/blink/renderer/core/inspector/thread_debugger_common_impl.h
 @@ -5,8 +5,11 @@
  #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_THREAD_DEBUGGER_COMMON_IMPL_H_
  #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_THREAD_DEBUGGER_COMMON_IMPL_H_
- 
+
 +#include <functional>
  #include <memory>
 +#include <vector>
- 
+
 +#include "base/memory/weak_ptr.h"
  #include "third_party/blink/renderer/platform/bindings/thread_debugger.h"
  #include "third_party/blink/renderer/platform/timer.h"
@@ -575,9 +837,9 @@ index d24d61e57a9c159f613a03a18c6be553261f8eff..967d269194b0c42d7687d940c8904e5d
    int64_t generateUniqueId() override;
 +  void scheduleInspectorWork(std::function<void()> task) override;
 +  void flushPendingInspectorWork() override;
- 
+
    void OnTimer(TimerBase*);
- 
+
 @@ -122,6 +127,10 @@ class ThreadDebuggerCommonImpl : public ThreadDebugger {
    Vector<std::unique_ptr<TaskRunnerTimer<ThreadDebuggerCommonImpl>>> timers_;
    Vector<v8_inspector::V8InspectorClient::TimerCallback> timer_callbacks_;
@@ -587,10 +849,39 @@ index d24d61e57a9c159f613a03a18c6be553261f8eff..967d269194b0c42d7687d940c8904e5d
 +  bool inspector_work_task_scheduled_ = false;
 +  base::WeakPtrFactory<ThreadDebuggerCommonImpl> weak_factory_{this};
  };
- 
+
  }  // namespace blink
+diff --git a/third_party/blink/renderer/core/layout/layout_theme.cc b/third_party/blink/renderer/core/layout/layout_theme.cc
+index 0a21b54050..9374f280fe 100644
+--- a/third_party/blink/renderer/core/layout/layout_theme.cc
++++ b/third_party/blink/renderer/core/layout/layout_theme.cc
+@@ -21,6 +21,7 @@
+
+ #include "third_party/blink/renderer/core/layout/layout_theme.h"
+
++#include "base/command_line.h"
+ #include "build/build_config.h"
+ #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
+ #include "third_party/blink/public/resources/grit/blink_resources.h"
+@@ -785,6 +786,16 @@ Color LayoutTheme::SystemColorFromColorProvider(
+   SkColor system_theme_color;
+   switch (css_value_id) {
+     case CSSValueID::kActivetext:
++#if BUILDFLAG(IS_LINUX)
++      if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++              "fingerprint-platform") == "macos") {
++        // Match macOS system blue instead of exposing Linux's red active-link
++        // system color. Use the platform's brighter blue in dark appearance.
++        return color_scheme == mojom::blink::ColorScheme::kDark
++                   ? Color::FromRGBA32(0xFF0A84FF)
++                   : Color::FromRGBA32(0xFF007AFF);
++      }
++#endif
+       system_theme_color =
+           color_provider->GetColor(ui::kColorCssSystemActiveText);
+       break;
 diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
-index fd13b9751061e301acba8b07fb329ed9e003fd11..ffcf1ff3d8248ca3ba8b71fb9de0ad108a2a7655 100644
+index fd13b97510..ffcf1ff3d8 100644
 --- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
 +++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
 @@ -82,6 +82,7 @@
@@ -606,7 +897,7 @@ index fd13b9751061e301acba8b07fb329ed9e003fd11..ffcf1ff3d8248ca3ba8b71fb9de0ad10
              image_data_pixmap.info(), image_data_pixmap.writable_addr(),
              image_data_pixmap.rowBytes(), sx, sy);
 +    if (read_pixels_successful && FingerprintFarblingEnabled()) {
-+      // BetterChromium fork: same deterministic noise as the encode paths, so
++      // BetterWright fork: same deterministic noise as the encode paths, so
 +      // getImageData and toDataURL tell the same per-profile story.
 +      const SkImageInfo& noise_info = image_data_pixmap.info();
 +      if (noise_info.bytesPerPixel() == 4) {
@@ -620,7 +911,7 @@ index fd13b9751061e301acba8b07fb329ed9e003fd11..ffcf1ff3d8248ca3ba8b71fb9de0ad10
        SkIRect bounds =
            snapshot->PaintImageForCurrentFrame().GetSkImageInfo().bounds();
 diff --git a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
-index aed92e0ec46ada61b10cc7d7afaa1e20b08b7e36..0bc09607d39789bcf7ccd68d16d26dd158fdec22 100644
+index aed92e0ec4..0bc09607d3 100644
 --- a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
 +++ b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
 @@ -35,6 +35,7 @@
@@ -634,8 +925,8 @@ index aed92e0ec46ada61b10cc7d7afaa1e20b08b7e36..0bc09607d39789bcf7ccd68d16d26dd1
 @@ -432,6 +433,20 @@ void OfflineAudioContext::FireCompletionEvent() {
        return;
      }
- 
-+    // BetterChromium fork: deterministic per-profile dither on the rendered
+
++    // BetterWright fork: deterministic per-profile dither on the rendered
 +    // buffer so OfflineAudioContext fingerprints are unique per seed and
 +    // stable across restarts.
 +    if (FingerprintFarblingEnabled()) {
@@ -653,7 +944,7 @@ index aed92e0ec46ada61b10cc7d7afaa1e20b08b7e36..0bc09607d39789bcf7ccd68d16d26dd1
      // promise too.
      DispatchEvent(*OfflineAudioCompletionEvent::Create(rendered_buffer));
 diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
-index 319e17ecde751471006f7c910e68081c551c5dd1..c6d394c86919cd70dc0bceb81ea63a0e6997c78d 100644
+index 319e17ecde..c6d394c869 100644
 --- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
 +++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
 @@ -34,6 +34,8 @@
@@ -694,7 +985,7 @@ index 319e17ecde751471006f7c910e68081c551c5dd1..c6d394c86919cd70dc0bceb81ea63a0e
        return;
      }
      ContextGL()->ReadPixels(x, y, width, height, format, type, data);
-+    // BetterChromium fork: deterministic per-profile noise on WebGL readbacks
++    // BetterWright fork: deterministic per-profile noise on WebGL readbacks
 +    // (the common RGBA/UNSIGNED_BYTE fingerprint path only).
 +    if (FingerprintFarblingEnabled() && format == GL_RGBA &&
 +        type == GL_UNSIGNED_BYTE && width > 0 && height > 0) {
@@ -703,15 +994,15 @@ index 319e17ecde751471006f7c910e68081c551c5dd1..c6d394c86919cd70dc0bceb81ea63a0e
 +    }
    }
  }
- 
+
 diff --git a/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc b/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
-index 44527d0a7b264441eac9c25fa8b9347aeeb5c7d1..797bd80dcddeec8ff1cdab5b51cff0bb58cd27a2 100644
+index 44527d0a7b..797bd80dcd 100644
 --- a/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
 +++ b/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
 @@ -4,6 +4,7 @@
- 
+
  #include "third_party/blink/renderer/modules/webgpu/gpu_adapter.h"
- 
+
 +#include "base/command_line.h"
  #include "services/metrics/public/cpp/ukm_builders.h"
  #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -720,7 +1011,7 @@ index 44527d0a7b264441eac9c25fa8b9347aeeb5c7d1..797bd80dcddeec8ff1cdab5b51cff0bb
    }
    description_ = String::FromUtf8(info.device);
    driver_ = String::FromUtf8(info.description);
-+  // BetterChromium's macOS profile reports the captured Chrome 151 adapter
++  // BetterWright's macOS profile reports the captured Chrome 151 adapter
 +  // identity while preserving the real backend's feature and limit set. Never
 +  // advertise Metal-only capabilities on a Linux Vulkan/SwiftShader backend.
 +  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -736,7 +1027,7 @@ index 44527d0a7b264441eac9c25fa8b9347aeeb5c7d1..797bd80dcddeec8ff1cdab5b51cff0bb
      d3d_shader_model_ = d3dProperties.shaderModel;
    }
 diff --git a/third_party/blink/renderer/platform/BUILD.gn b/third_party/blink/renderer/platform/BUILD.gn
-index 85d03eee373c5f2a962eaba1324e0be80996ced7..47a96f353f5e0c4ed1bbf1f6b36f81db02e68ec1 100644
+index 85d03eee37..47a96f353f 100644
 --- a/third_party/blink/renderer/platform/BUILD.gn
 +++ b/third_party/blink/renderer/platform/BUILD.gn
 @@ -1087,6 +1087,8 @@ component("platform") {
@@ -750,7 +1041,7 @@ index 85d03eee373c5f2a962eaba1324e0be80996ced7..47a96f353f5e0c4ed1bbf1f6b36f81db
      "graphics/image_decoder_wrapper.cc",
 diff --git a/third_party/blink/renderer/platform/graphics/fingerprint_noise.cc b/third_party/blink/renderer/platform/graphics/fingerprint_noise.cc
 new file mode 100644
-index 0000000000000000000000000000000000000000..17d58652352171dd69395232d6cce2f0c37ce406
+index 0000000000..17d5865235
 --- /dev/null
 +++ b/third_party/blink/renderer/platform/graphics/fingerprint_noise.cc
 @@ -0,0 +1,92 @@
@@ -848,7 +1139,7 @@ index 0000000000000000000000000000000000000000..17d58652352171dd69395232d6cce2f0
 +}  // namespace blink
 diff --git a/third_party/blink/renderer/platform/graphics/fingerprint_noise.h b/third_party/blink/renderer/platform/graphics/fingerprint_noise.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..834367c419a1e4575113d4111093aa014e5971fb
+index 0000000000..834367c419
 --- /dev/null
 +++ b/third_party/blink/renderer/platform/graphics/fingerprint_noise.h
 @@ -0,0 +1,43 @@
@@ -866,7 +1157,7 @@ index 0000000000000000000000000000000000000000..834367c419a1e4575113d4111093aa01
 +
 +namespace blink {
 +
-+// BetterChromium fork: deterministic fingerprint farbling.
++// BetterWright fork: deterministic fingerprint farbling.
 +//
 +// Enabled when the browser is launched with --fingerprint-platform=<mask>
 +// (the same switch that gates the UA/platform/WebGL identity patches) and a
@@ -896,11 +1187,11 @@ index 0000000000000000000000000000000000000000..834367c419a1e4575113d4111093aa01
 +
 +#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_FINGERPRINT_NOISE_H_
 diff --git a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
-index c76f6553e1cec3e66ee4f4435bdda02fb044e57f..3edd606d0a6ed4ae1adc10a3e415ea7ff0c96559 100644
+index c76f6553e1..3edd606d0a 100644
 --- a/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
 +++ b/third_party/blink/renderer/platform/graphics/image_data_buffer.cc
 @@ -34,6 +34,7 @@
- 
+
  #include "base/compiler_specific.h"
  #include "base/memory/ptr_util.h"
 +#include "third_party/blink/renderer/platform/graphics/fingerprint_noise.h"
@@ -910,11 +1201,11 @@ index c76f6553e1cec3e66ee4f4435bdda02fb044e57f..3edd606d0a6ed4ae1adc10a3e415ea7f
 @@ -41,6 +42,8 @@
  #include "third_party/skia/include/core/SkSurface.h"
  #include "ui/gfx/skia_span_util.h"
- 
+
 +#include <cstring>
 +
  namespace blink {
- 
+
  ImageDataBuffer::ImageDataBuffer(scoped_refptr<StaticBitmapImage> image) {
 @@ -97,12 +100,43 @@ ImageDataBuffer::ImageDataBuffer(scoped_refptr<StaticBitmapImage> image) {
      MSAN_CHECK_MEM_IS_INITIALIZED(pixmap_.addr(), pixmap_.computeByteSize());
@@ -922,7 +1213,7 @@ index c76f6553e1cec3e66ee4f4435bdda02fb044e57f..3edd606d0a6ed4ae1adc10a3e415ea7f
    is_valid_ = true;
 +  FarbleIfEnabled();
  }
- 
+
  ImageDataBuffer::ImageDataBuffer(const SkPixmap& pixmap)
      : pixmap_(pixmap),
        is_valid_(pixmap_.addr() &&
@@ -931,7 +1222,7 @@ index c76f6553e1cec3e66ee4f4435bdda02fb044e57f..3edd606d0a6ed4ae1adc10a3e415ea7f
 +  FarbleIfEnabled();
 +}
 +
-+// BetterChromium fork: route every canvas readback (toDataURL, toBlob,
++// BetterWright fork: route every canvas readback (toDataURL, toBlob,
 +// OffscreenCanvas.convertToBlob, audits) through a private copy carrying
 +// deterministic per-profile noise. peekPixels memory belongs to the source
 +// image, so noise is never written in place; RasterFromData keeps the noisy
@@ -958,18 +1249,18 @@ index c76f6553e1cec3e66ee4f4435bdda02fb044e57f..3edd606d0a6ed4ae1adc10a3e415ea7f
 +    is_valid_ = false;
 +  }
 +}
- 
+
  std::unique_ptr<ImageDataBuffer> ImageDataBuffer::Create(
      scoped_refptr<StaticBitmapImage> image) {
 diff --git a/third_party/blink/renderer/platform/graphics/image_data_buffer.h b/third_party/blink/renderer/platform/graphics/image_data_buffer.h
-index 7788473df7e915a0f5d53b7c134cf1ad8177582e..7266c25c6808ec4182354f1e3562faf4c73f5000 100644
+index 7788473df7..7266c25c68 100644
 --- a/third_party/blink/renderer/platform/graphics/image_data_buffer.h
 +++ b/third_party/blink/renderer/platform/graphics/image_data_buffer.h
 @@ -65,6 +65,10 @@ class PLATFORM_EXPORT ImageDataBuffer {
- 
+
    bool IsValid() { return is_valid_; }  // Only used by Create()
- 
-+  // Deterministic per-profile canvas farbling (BetterChromium fork); copies
+
++  // Deterministic per-profile canvas farbling (BetterWright fork); copies
 +  // the pixels, applies seed-keyed noise, and repoints pixmap_.
 +  void FarbleIfEnabled();
 +
@@ -977,10 +1268,10 @@ index 7788473df7e915a0f5d53b7c134cf1ad8177582e..7266c25c6808ec4182354f1e3562faf4
    SkPixmap pixmap_;
    bool is_valid_ = false;
 diff --git a/ui/display/mac/screen_mac_headless.mm b/ui/display/mac/screen_mac_headless.mm
-index 07adf400a5d2e3dfc5212bd381a3f5b8c021e393..6c03b41c30b6653ee83f87cbc52e5846bae64a56 100644
+index 07adf400a5..6c03b41c30 100644
 --- a/ui/display/mac/screen_mac_headless.mm
 +++ b/ui/display/mac/screen_mac_headless.mm
-@@ -38,7 +38,31 @@
+@@ -38,7 +38,31 @@ std::vector<headless::HeadlessScreenInfo> GetHeadlessScreenInfos() {
      CHECK(screen_infos_or_error.has_value()) << screen_infos_or_error.error();
      screen_infos = screen_infos_or_error.value();
    } else {
@@ -1011,10 +1302,10 @@ index 07adf400a5d2e3dfc5212bd381a3f5b8c021e393..6c03b41c30b6653ee83f87cbc52e5846
 +    }
 +    screen_infos.push_back(info);
    }
- 
+
    return screen_infos;
 diff --git a/ui/ozone/platform/headless/headless_screen.cc b/ui/ozone/platform/headless/headless_screen.cc
-index 8d7bd2782bdae1e92fdcf59b32559d4710fb4044..bdba3a423755b0afc6cbb8d5767f6cecdec553d0 100644
+index 8d7bd2782b..bdba3a4237 100644
 --- a/ui/ozone/platform/headless/headless_screen.cc
 +++ b/ui/ozone/platform/headless/headless_screen.cc
 @@ -89,9 +89,29 @@ std::vector<HeadlessScreenInfo> GetScreenInfo() {
@@ -1025,7 +1316,7 @@ index 8d7bd2782bdae1e92fdcf59b32559d4710fb4044..bdba3a423755b0afc6cbb8d5767f6cec
 -        HeadlessScreenInfo({.bounds = GetHeadlessDisplayBounds(),
 -                            .device_pixel_ratio = kHeadlessDisplayScale}));
 +    // Canonical desktop profile when nothing overrides the geometry.
-+    // BetterChromium --fingerprint-platform=macos uses the capture-machine
++    // BetterWright --fingerprint-platform=macos uses the capture-machine
 +    // MacBook Pro 14" "More Space" display (1800x1169 @2x, availHeight 1049),
 +    // and wins over --ozone-override-screen-size so Playwright/headless
 +    // defaults cannot leave a 1920x1080 Linux tell.
@@ -1051,7 +1342,7 @@ index 8d7bd2782bdae1e92fdcf59b32559d4710fb4044..bdba3a423755b0afc6cbb8d5767f6cec
    return screen_info;
  }
 diff --git a/ui/views/widget/desktop_aura/desktop_screen_win_headless.cc b/ui/views/widget/desktop_aura/desktop_screen_win_headless.cc
-index 01053984134daae675611ae1f449de166444b7db..d66c2762fa807c119e58a176119767e35dc41dae 100644
+index 0105398413..d66c2762fa 100644
 --- a/ui/views/widget/desktop_aura/desktop_screen_win_headless.cc
 +++ b/ui/views/widget/desktop_aura/desktop_screen_win_headless.cc
 @@ -38,7 +38,16 @@ std::vector<headless::HeadlessScreenInfo> GetScreenInfo() {
@@ -1070,41 +1361,5 @@ index 01053984134daae675611ae1f449de166444b7db..d66c2762fa807c119e58a176119767e3
 +    info.is_internal = true;
 +    screen_info.push_back(info);
    }
- 
-   return screen_info;
 
-diff --git a/build/config/chrome_build.gni b/build/config/chrome_build.gni
---- a/build/config/chrome_build.gni
-+++ b/build/config/chrome_build.gni
-@@ -100,7 +100,7 @@ declare_args() {
- declare_args() {
-   # The path to the BRANDING file in chrome/app/theme.
--  branding_file_path = "//chrome/app/theme/$branding_path_component/BRANDING"
-+  branding_file_path = "//chrome/app/theme/betterchromium/BRANDING"
- }
- 
- # Whether to enable built-in branding assets (logos & marketing snippets) for
- # search providers in choice UIs.
-diff --git a/chrome/app/theme/betterchromium/BRANDING b/chrome/app/theme/betterchromium/BRANDING
-new file mode 100644
---- /dev/null
-+++ b/chrome/app/theme/betterchromium/BRANDING
-@@ -0,0 +1,10 @@
-+COMPANY_FULLNAME=BetterWright
-+COMPANY_SHORTNAME=BetterWright
-+PRODUCT_FULLNAME=BetterChromium
-+PRODUCT_SHORTNAME=BetterChromium
-+PRODUCT_INSTALLER_FULLNAME=BetterChromium Installer
-+PRODUCT_INSTALLER_SHORTNAME=BetterChromium Installer
-+COPYRIGHT=Copyright @LASTCHANGE_YEAR@ BetterWright. All rights reserved.
-+MAC_BUNDLE_ID=com.betterwright.BetterChromium
-+MAC_CREATOR_CODE=BtCr
-+MAC_TEAM_ID=
-diff --git a/chrome/app/chrome_exe.ver b/chrome/app/chrome_exe.ver
---- a/chrome/app/chrome_exe.ver
-+++ b/chrome/app/chrome_exe.ver
-@@ -1,2 +1,2 @@
--INTERNAL_NAME=chrome_exe
--ORIGINAL_FILENAME=chrome.exe
-+INTERNAL_NAME=BetterChromium
-+ORIGINAL_FILENAME=betterchromium.exe
+   return screen_info;

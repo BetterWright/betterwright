@@ -99,7 +99,11 @@ export function forkIdentityContextOptions(identity) {
   if (!identity || typeof identity.userAgent !== "string" || !identity.locale) {
     throw new TypeError("A validated fork identity is required.");
   }
-  return Object.freeze({ userAgent: identity.userAgent, locale: identity.locale });
+  return Object.freeze({
+    userAgent: identity.userAgent,
+    locale: identity.locale,
+    colorScheme: "dark",
+  });
 }
 
 /** Native launch geometry for the versioned identity capture. */

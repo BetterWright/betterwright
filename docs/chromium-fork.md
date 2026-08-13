@@ -18,7 +18,7 @@ betterwright setup --cloak-only  # explicit CloakBrowser compatibility mode
 ```
 
 Artifacts come from a revisioned GitHub Release tag such as
-`betterchromium-<version>-r1` (see `CHROMIUM_FORK_RELEASE_TAG` /
+`betterchromium-<version>-rN` (see `CHROMIUM_FORK_RELEASE_TAG` /
 `CHROMIUM_FORK_ASSETS` in `src/chromium-fork.ts`). Revisioning keeps older
 published BetterWright packages bound to their original immutable assets.
 Each zip is SHA-256 pinned in the manifest before extract. Apple-licensed
@@ -168,13 +168,17 @@ The identity is not invented — every value was captured from genuine Google
 Chrome 151.0.7922.108 (the fork's exact pinned version) on an Apple M4 Pro
 MacBook Pro running macOS 26.6: UA and UA-CH (brands, `macOS` 26.6.0,
 `arm`), `navigator.platform = MacIntel`, 1800×1169 @2x screen geometry with
-real menu-bar/Dock `availHeight`, 12 cores, `deviceMemory` 16. See
-`src/fork-identity.ts`.
+real menu-bar/Dock `availHeight`, dark appearance, 12 cores, and
+`deviceMemory` 16. The native web-preference override makes
+`prefers-color-scheme: dark` part of that captured identity without enabling
+force-dark page transformations; the Playwright launch context reinforces it
+with native `colorScheme: "dark"` media emulation. See `src/fork-identity.ts`.
 
 Two layers apply it without any page-world JavaScript shims:
 
-1. **Launch layer** — `--fingerprint-platform`, window-size/DPR flags, and a
-   context-level `userAgent` baseline (correct from the first navigation).
+1. **Launch layer** — `--fingerprint-platform`, window-size/DPR flags, and
+   context-level `userAgent` and `colorScheme: "dark"` baselines (correct from
+   the first navigation).
 2. **CDP emulation layer** — per-page `Emulation.setUserAgentOverride` with
    full `UserAgentMetadata` (the DevTools protocol path, invisible to
    getter/toString probes), plus hardware-concurrency override where the
@@ -183,9 +187,10 @@ Two layers apply it without any page-world JavaScript shims:
 The binary patch set in
 [chromium-fork-patches.md](chromium-fork-patches.md) is implemented and
 verified: UA/UA-CH at the source, `navigator.platform`, WebGL
-renderer/vendor, deterministic per-profile canvas/audio farbling, screen
-geometry, and a bundled macOS-metric font set loaded through a launch-time
-`FONTCONFIG_FILE`. With timezone/locale matched to egress geography the
+renderer/vendor, deterministic per-profile canvas/audio farbling, screen and
+window geometry (including a nonzero synchronous outer-window fallback), and a
+bundled macOS-metric font set loaded through a launch-time `FONTCONFIG_FILE`.
+With timezone/locale matched to egress geography the
 headless Linux fork returns real Google SERPs instead of `/sorry`.
 
 Cloaking V2 identity coherence still applies; see [cloaking-v2.md](cloaking-v2.md).
