@@ -258,6 +258,49 @@ test(
 );
 
 test(
+  "numbered picks are discarded when the grid changes before they are applied",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/grid`)}, { waitUntil: "domcontentloaded" });
+          const first = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          const picks = first.tiles
+            .filter((entry) => entry.label === "traffic light")
+            .map((entry) => entry.index);
+          // The challenge swaps in a different grid before the picks land.
+          await page.goto(${JSON.stringify(`${server.base}/grid-chrome`)}, { waitUntil: "domcontentloaded" });
+          const second = await captcha.solve({ tiles: picks, timeout: 15_000, maxStages: 2 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          let clickTilesError = null;
+          try {
+            await captcha.clickTiles(picks);
+          } catch (error) {
+            clickTilesError = String(error && error.message ? error.message : error);
+          }
+          return { picks, second, token, clickTilesError };
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.deepEqual(result.result.picks, [0, 4, 8]);
+        // Stale coordinates must not be replayed: no token can be minted, and
+        // the caller is handed a fresh crop instead of a blind click.
+        assert.equal(result.result.second.status, "processing");
+        assert.equal(result.result.token, "");
+        assert.equal(
+          result.result.second.attempts.some((entry) => entry.action === "recapture_tiles"),
+          true,
+        );
+        assert.ok(result.result.second.tiles?.length);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
   "image-grid capture ignores EN/Skip/Refresh chrome and numbers the 3x3",
   opts,
   async () => {

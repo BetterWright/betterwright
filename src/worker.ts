@@ -16,6 +16,7 @@ import { types as utilTypes } from "node:util";
 import vm from "node:vm";
 
 import {
+  blobToPageBounds,
   buildSolveResult,
   CAPTCHA_SOLVE_STATUSES,
   CAPTCHA_STAGES,
@@ -24,18 +25,17 @@ import {
   CHECKBOX_SELECTORS,
   classifyChallengeStage,
   clusterSimilarBoxes,
+  extractDarkBlobs,
+  findGrowingShape,
   gridFromTiles,
   IMAGE_TILE_SELECTORS,
   isCaptchaChromeLabel,
-  maxAutoStages,
   MOTION_CONFIRM_SELECTORS,
+  maxAutoStages,
   nextSolveAction,
   parseTileIndexes,
   pickBestTileSet,
   pickDragFitPair,
-  findGrowingShape,
-  extractDarkBlobs,
-  blobToPageBounds,
   SLIDER_SELECTORS,
   solveTimeoutMs,
   unionClip,
@@ -660,6 +660,9 @@ function sessionFor(id) {
       awaitingAnswerSince: null,
       cursor: { x: 0, y: 0, initialized: false },
       captchaTargets: new Map(),
+      // Identity of the grid captchaTargets was captured from, so stale
+      // coordinates are never replayed against a replaced challenge.
+      captchaGrid: null,
       // Providers whose challenge was still unsolved at the end of the last
       // execute. Non-empty forces the full frame scan on the next one; only a
       // full scan writes this set, so it always drains once the page clears.
@@ -4255,6 +4258,14 @@ function buildSandbox(session, consoleMessages, execution) {
     }
     if (!session.captchaTargets.size) {
       await captureTiles(page, session, null);
+    } else if (await captchaTilesStale(page, session, null)) {
+      // The stored coordinates belong to a grid that is no longer on screen.
+      // Recapture so the caller re-reads the crop rather than clicking blind.
+      await captureTiles(page, session, null);
+      throw new Error(
+        "The captcha grid changed since the numbered crop was captured. " +
+          "Call captcha.solve() to get a fresh crop, then pick tiles again.",
+      );
     }
     const outcome = await clickStoredTiles(page, session, picked);
     if (!outcome.ok) {
@@ -5225,7 +5236,24 @@ async function collectChallengeTiles(page, provider) {
   return pickBestTileSet(sets);
 }
 
-function rememberCaptchaTiles(session, tiles) {
+// Identifies the grid a numbered crop was taken from. Tile indexes only mean
+// something relative to the image the model looked at, so coordinates captured
+// for one challenge must never be replayed against another.
+function captchaGridSignature(tiles) {
+  return tiles
+    .map((tile) => {
+      const box = tile.bounds || {};
+      return [
+        Math.round(box.x || 0),
+        Math.round(box.y || 0),
+        Math.round(box.width || 0),
+        Math.round(box.height || 0),
+      ].join(",");
+    })
+    .join("|");
+}
+
+function rememberCaptchaTiles(page, session, tiles) {
   session.captchaTargets.clear();
   for (const tile of tiles) {
     session.captchaTargets.set(tile.index, {
@@ -5233,6 +5261,24 @@ function rememberCaptchaTiles(session, tiles) {
       label: tile.label || null,
     });
   }
+  session.captchaGrid = tiles.length
+    ? { url: page.url(), signature: captchaGridSignature(tiles) }
+    : null;
+}
+
+/**
+ * True when the stored tile coordinates no longer describe what is on screen —
+ * the page navigated, or the challenge swapped in a new grid. Clicking cached
+ * boxes in that state hits the wrong tiles or unrelated controls, so callers
+ * must recapture and let the model pick again rather than submit stale picks.
+ */
+async function captchaTilesStale(page, session, provider) {
+  const stored = session.captchaGrid;
+  if (!stored) return true;
+  if (stored.url !== page.url()) return true;
+  const live = await collectChallengeTiles(page, provider).catch(() => []);
+  if (!live.length) return true;
+  return captchaGridSignature(live) !== stored.signature;
 }
 
 function clipForPuzzle(tileBoxes, widgetBox, viewport) {
@@ -5266,7 +5312,7 @@ async function capturePuzzleScreenshot(page, session, name, clip, extra: any = {
 
 async function captureTiles(page, session, provider) {
   const tiles = await collectChallengeTiles(page, provider);
-  rememberCaptchaTiles(session, tiles);
+  rememberCaptchaTiles(page, session, tiles);
   const widgetBox = await challengeWidgetBox(page, provider);
   const viewport = page.viewportSize();
   const clip = tiles.length
@@ -5871,12 +5917,43 @@ async function solveCaptchaOnPage(page, session, options: any = {}) {
     }
 
     if (pendingTiles.length && lastClassification.stage === CAPTCHA_STAGES.IMAGE_GRID) {
-      if (!session.captchaTargets.size) {
+      // Tile indexes describe the numbered crop the caller looked at. If that
+      // grid is gone, recapture and ask for fresh picks: replaying the old
+      // coordinates would click the wrong tiles and then submit Verify.
+      const stale =
+        !session.captchaTargets.size ||
+        (await captchaTilesStale(page, session, lastClassification.provider));
+      if (stale) {
         const captured = await captureTiles(page, session, lastClassification.provider);
         lastArtifact = captured.artifact;
         lastTiles = captured.tiles;
         lastGrid = captured.grid;
         lastInstruction = captured.instruction;
+        pendingTiles = [];
+        attempts.push({
+          stageIndex,
+          stage: lastClassification.stage,
+          provider: lastClassification.provider,
+          action: "recapture_tiles",
+          description: "The numbered grid changed; captured a fresh crop for new picks",
+          ok: true,
+          reason: "grid_changed",
+          atMs: Date.now() - started,
+        });
+        return buildSolveResult({
+          status: CAPTCHA_SOLVE_STATUSES.PROCESSING,
+          requestId,
+          provider: lastClassification.provider,
+          stage: lastClassification.stage,
+          attempts,
+          artifact: lastArtifact,
+          tiles: lastTiles,
+          grid: lastGrid,
+          instruction:
+            lastInstruction ||
+            "The captcha grid changed. Open the attached numbered crop, pick matching tile indexes, then call captcha.solve({ tiles: [indexes] }).",
+          challenge: lastChallenge,
+        });
       }
       const outcome = await clickStoredTiles(page, session, pendingTiles);
       const applied = pendingTiles;

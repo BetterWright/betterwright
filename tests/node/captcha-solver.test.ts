@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  blobToPageBounds,
   buildSolveResult,
   CAPTCHA_SOLVE_STATUSES,
   CAPTCHA_STAGES,
   classifyChallengeStage,
   clusterSimilarBoxes,
+  extractDarkBlobs,
+  findGrowingShape,
   gridFromTiles,
   inferGridTiles,
   isCaptchaChromeLabel,
@@ -17,9 +20,6 @@ import {
   pickBestTileSet,
   pickDragFitPair,
   pickGrowingBlob,
-  extractDarkBlobs,
-  findGrowingShape,
-  blobToPageBounds,
   publicCaptchaTiles,
   solveTimeoutMs,
   unionClip,
@@ -246,8 +246,12 @@ test("buildSolveResult is 2Captcha-shaped and local-only", () => {
 });
 
 test("timeout and stage bounds are clamped", () => {
-  assert.equal(maxAutoStages({ maxStages: 99 }), 8);
+  // Handoff is required after at most three stages, so three is both the
+  // default and the ceiling a caller can ask for.
+  assert.equal(maxAutoStages({}), 3);
+  assert.equal(maxAutoStages({ maxStages: 99 }), 3);
   assert.equal(maxAutoStages({ maxStages: 0 }), 1);
+  assert.equal(maxAutoStages({ maxStages: 2 }), 2);
   assert.equal(solveTimeoutMs({ timeout: 100 }), 3_000);
   assert.equal(solveTimeoutMs({ timeoutMs: 500_000 }), 180_000);
 });

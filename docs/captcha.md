@@ -33,6 +33,10 @@ return await captcha.solve({ timeoutMs: 45_000, maxStages: 3 });
 `run()` timeout, which is in seconds. `timeout` is accepted as an alias with
 the same millisecond unit; prefer `timeoutMs` so the unit stays visible.
 
+`maxStages` defaults to `3` and is clamped to `1`–`3`: handoff is required after
+at most three distinct stages, so a caller cannot ask the solver to keep working
+a challenge that has already rejected it three times.
+
 | Field | Meaning |
 | --- | --- |
 | `status` | `ready` (cleared), `processing` (needs vision / another stage), or `error` |
@@ -77,6 +81,14 @@ if (first.status === "processing" && first.tiles?.length) {
 }
 return first;
 ```
+
+Tile indexes only mean something relative to the crop they came from. If the
+page navigates or the challenge swaps in a new grid between the capture and the
+picks, the stored coordinates are discarded rather than replayed: `solve()`
+returns `processing` again with a fresh numbered crop (the attempt log records
+`recapture_tiles`), and `captcha.clickTiles` throws and asks for a new
+`captcha.solve()`. That keeps clicks off the wrong tiles and stops a stale
+selection from being submitted to Verify.
 
 ### Detection only
 

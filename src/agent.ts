@@ -32,8 +32,8 @@ import {
 } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
 import { importOptionalPeer } from "./optional-peer.js";
-import { agentSystemPrompt } from "./prompt.js";
 import { piImageArtifacts, piImageContent } from "./pi.js";
+import { agentSystemPrompt } from "./prompt.js";
 import { matchSkillsForText, readSkill } from "./skills.js";
 import { agentBrowserToolParameters, agentLoginToolParameters } from "./tool-schemas.js";
 

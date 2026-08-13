@@ -960,10 +960,16 @@ export function nextSolveAction(classification, attemptIndex = 0) {
   }
 }
 
+/**
+ * Automatic challenge stages allowed in one solve. The public guidance is to
+ * hand off after at most three distinct stages, so that is both the default and
+ * the ceiling: a caller cannot ask the solver to keep grinding a challenge that
+ * has already rejected it three times.
+ */
 export function maxAutoStages(options: any = {}) {
-  const raw = Number(options?.maxStages ?? options?.maxAttempts ?? 5);
-  if (!Number.isFinite(raw)) return 5;
-  return Math.max(1, Math.min(8, Math.floor(raw)));
+  const raw = Number(options?.maxStages ?? options?.maxAttempts ?? 3);
+  if (!Number.isFinite(raw)) return 3;
+  return Math.max(1, Math.min(3, Math.floor(raw)));
 }
 
 export function solveTimeoutMs(options: any = {}) {

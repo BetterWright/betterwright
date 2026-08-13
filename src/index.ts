@@ -25,6 +25,8 @@ export {
   CAPTCHA_STAGES,
   classifyChallengeStage,
   clusterSimilarBoxes,
+  extractDarkBlobs,
+  findGrowingShape,
   gridFromTiles,
   inferGridTiles,
   isCaptchaChromeLabel,
@@ -34,8 +36,6 @@ export {
   parseTileIndexes,
   pickBestTileSet,
   pickDragFitPair,
-  findGrowingShape,
-  extractDarkBlobs,
   solveTimeoutMs,
   unionClip,
 } from "./captcha-solver.js";
