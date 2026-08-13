@@ -18,14 +18,14 @@
 <body>
   <h1>Verify you are human</h1>
   <!--
-    The real widget exposes no selector the solver knows, while the page has its
-    own submit button. A solver that falls through to `button[type=submit]`
-    posts this form unsolved instead of clicking the widget.
+    The challenge has a specific checkbox control and the host page has its own
+    submit button. The solver must prefer the challenge control; falling through
+    to `button[type=submit]` posts this form without a token.
   -->
   <form id="form" onsubmit="return false;">
     <div class="bw-captcha" data-bw-captcha="checkbox" id="bw-captcha">
       <div class="widget" id="widget">
-        <div class="box" id="box"></div>
+        <div class="box" id="box" role="checkbox" aria-checked="false"></div>
         <span>I am not a robot</span>
       </div>
     </div>
@@ -34,8 +34,9 @@
   <p id="posted"></p>
   <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
   <script>
-    document.getElementById("widget").addEventListener("click", () => {
+    document.getElementById("box").addEventListener("click", () => {
       document.getElementById("box").classList.add("checked");
+      document.getElementById("box").setAttribute("aria-checked", "true");
       document.getElementById("bw-captcha-response").value =
         "bw_decoy_token_" + Date.now().toString(36);
       document.title = "Verified";
