@@ -46,7 +46,11 @@ async function startFixtureServer() {
     let file = "checkbox.html";
     if (url.pathname === "/slider") file = "slider.html";
     else if (url.pathname === "/grid") file = "grid.html";
+    else if (url.pathname === "/grid-chrome") file = "grid-chrome.html";
+    else if (url.pathname === "/motion") file = "motion.html";
+    else if (url.pathname === "/drag") file = "drag.html";
     else if (url.pathname === "/managed") file = "managed.html";
+    else if (url.pathname === "/submit-decoy") file = "submit-decoy.html";
     else if (url.pathname === "/checkbox") file = "checkbox.html";
     else if (url.pathname !== "/" && url.pathname !== "/index.html") {
       res.writeHead(404);
@@ -152,7 +156,19 @@ test(
         assert.ok(Array.isArray(result.result.tiles));
         assert.ok(result.result.tiles.length >= 3);
         assert.ok(result.result.artifact?.path);
+        assert.equal(result.result.grid?.rows, 3);
+        assert.equal(result.result.grid?.cols, 3);
+        assert.match(String(result.result.instruction || ""), /tiles:/);
         assert.equal(result.result.local, true);
+        for (const tile of result.result.tiles) {
+          assert.equal(typeof tile.index, "number");
+          assert.equal(typeof tile.x, "number");
+          assert.equal(typeof tile.y, "number");
+          assert.equal(typeof tile.width, "number");
+          assert.equal(typeof tile.height, "number");
+          assert.equal(tile.x, tile.bounds.x);
+          assert.ok(tile.width >= 48);
+        }
       });
     } finally {
       await server.close();
@@ -178,6 +194,221 @@ test(
         `);
         assert.equal(result.ok, true, result.error);
         assert.match(result.result, /^bw_grid_token_/);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "captcha.solve applies numbered vision picks and clears a local grid",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/grid`)}, { waitUntil: "domcontentloaded" });
+          const first = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          const picks = first.tiles
+            .filter((entry) => entry.label === "traffic light")
+            .map((entry) => entry.index);
+          const second = await captcha.solve({ tiles: picks, timeout: 15_000, maxStages: 2 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          return { first, second, picks, token };
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.equal(result.result.first.status, "processing");
+        assert.deepEqual(result.result.picks, [0, 4, 8]);
+        assert.equal(result.result.second.status, "ready");
+        assert.equal(result.result.second.cleared, true);
+        assert.match(result.result.token, /^bw_grid_token_/);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "captcha.clickTiles clears a local grid after a numbered capture",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/grid`)}, { waitUntil: "domcontentloaded" });
+          const first = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          const picks = first.tiles
+            .filter((entry) => entry.label === "traffic light")
+            .map((entry) => entry.index);
+          await captcha.clickTiles(picks);
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          return { picks, token, tileCount: first.tiles.length };
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.deepEqual(result.result.picks, [0, 4, 8]);
+        assert.match(result.result.token, /^bw_grid_token_/);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "the widget is clicked before the host page's own submit button",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/submit-decoy`)}, { waitUntil: "domcontentloaded" });
+          const solved = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          const posted = await page.locator("#posted").innerText();
+          return { solved, token, posted };
+        `);
+        assert.equal(result.ok, true, result.error);
+        // The widget must be what gets clicked. Falling through to the page's
+        // own submit button would post the form with no token.
+        assert.match(result.result.token, /^bw_decoy_token_/);
+        assert.equal(result.result.posted, "");
+        assert.equal(result.result.solved.status, "ready");
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "numbered picks are discarded when the grid changes before they are applied",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/grid`)}, { waitUntil: "domcontentloaded" });
+          const first = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          const picks = first.tiles
+            .filter((entry) => entry.label === "traffic light")
+            .map((entry) => entry.index);
+          // The challenge swaps in a different grid before the picks land.
+          await page.goto(${JSON.stringify(`${server.base}/grid-chrome`)}, { waitUntil: "domcontentloaded" });
+          const second = await captcha.solve({ tiles: picks, timeout: 15_000, maxStages: 2 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          let clickTilesError = null;
+          try {
+            await captcha.clickTiles(picks);
+          } catch (error) {
+            clickTilesError = String(error && error.message ? error.message : error);
+          }
+          return { picks, second, token, clickTilesError };
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.deepEqual(result.result.picks, [0, 4, 8]);
+        // Stale coordinates must not be replayed: no token can be minted, and
+        // the caller is handed a fresh crop instead of a blind click.
+        assert.equal(result.result.second.status, "processing");
+        assert.equal(result.result.token, "");
+        assert.equal(
+          result.result.second.attempts.some((entry) => entry.action === "recapture_tiles"),
+          true,
+        );
+        assert.ok(result.result.second.tiles?.length);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "image-grid capture ignores EN/Skip/Refresh chrome and numbers the 3x3",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/grid-chrome`)}, { waitUntil: "domcontentloaded" });
+          const first = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          const picks = first.tiles
+            .filter((entry) => entry.label === "traffic light")
+            .map((entry) => entry.index);
+          const second = await captcha.solve({ tiles: picks, timeout: 15_000, maxStages: 2 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          return { first, second, picks, token };
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.equal(result.result.first.status, "processing");
+        assert.equal(result.result.first.tiles.length, 9);
+        assert.equal(result.result.first.grid?.rows, 3);
+        assert.equal(result.result.first.grid?.cols, 3);
+        assert.equal(
+          result.result.first.tiles.some((tile) => /skip|english|refresh/i.test(tile.label || "")),
+          false,
+        );
+        assert.deepEqual(result.result.picks, [0, 4, 8]);
+        assert.equal(result.result.second.status, "ready");
+        assert.match(result.result.token, /^bw_grid_token_/);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "captcha.solve auto-clicks the growing shape on a local motion challenge",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/motion`)}, { waitUntil: "domcontentloaded" });
+          const solved = await captcha.solve({ timeout: 25_000, maxStages: 3 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          return { solved, token };
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.equal(result.result.solved.status, "ready");
+        assert.equal(result.result.solved.stage, "motion");
+        assert.equal(result.result.solved.cleared, true);
+        assert.ok(
+          result.result.solved.attempts.some((attempt) => attempt.action === "click_growing"),
+        );
+        assert.match(result.result.token, /^bw_motion_token_/);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "captcha.solve drags a local drag-to-fit piece onto its slot",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/drag`)}, { waitUntil: "domcontentloaded" });
+          const solved = await captcha.solve({ timeout: 25_000, maxStages: 3 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          return { solved, token };
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.equal(result.result.solved.status, "ready");
+        assert.equal(result.result.solved.cleared, true);
+        assert.match(result.result.token, /^bw_drag_token_/);
       });
     } finally {
       await server.close();

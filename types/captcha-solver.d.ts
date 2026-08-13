@@ -10,6 +10,7 @@ export const CAPTCHA_STAGES: Readonly<{
   TURNSTILE: "turnstile";
   MANAGED: "managed_challenge";
   IMAGE_GRID: "image_grid";
+  MOTION: "motion";
   SLIDER: "slider";
   TEXT: "text";
   INVISIBLE: "invisible";
@@ -44,6 +45,7 @@ export interface CaptchaSolveResult {
   attempts: unknown[];
   artifact: unknown;
   tiles: unknown;
+  grid: unknown;
   instruction: string | null;
   challenge: unknown;
   local: true;
@@ -72,4 +74,114 @@ export const WIDGET_FRAME_PATTERNS: Readonly<Record<string, RegExp>>;
 export const CHECKBOX_SELECTORS: readonly string[];
 export const VERIFY_BUTTON_SELECTORS: readonly string[];
 export const SLIDER_SELECTORS: readonly string[];
+export const MOTION_CONFIRM_SELECTORS: readonly string[];
 export const IMAGE_TILE_SELECTORS: readonly string[];
+export const CHALLENGE_WIDGET_SELECTORS: readonly string[];
+export const CHALLENGE_INSTRUCTION_SELECTORS: readonly string[];
+
+export function parseTileIndexes(value?: unknown): number[];
+export function dedupeBoxes(
+  boxes?: Array<{ x?: number; y?: number; width?: number; height?: number }>,
+  quantum?: number,
+): Array<{ x: number; y: number; width: number; height: number }>;
+export function sortTilesReadingOrder(
+  boxes?: Array<{ x: number; y: number; width: number; height: number }>,
+  yTolerance?: number,
+): Array<{ x: number; y: number; width: number; height: number }>;
+export function clusterSimilarBoxes(
+  boxes?: Array<{ x?: number; y?: number; width?: number; height?: number }>,
+  options?: { minCount?: number; sizeSlack?: number },
+): Array<{ x: number; y: number; width: number; height: number }>;
+export function isCaptchaChromeLabel(label?: unknown): boolean;
+export function isPlausibleImageGrid(
+  boxes?: unknown,
+  options?: { minTiles?: number; minSide?: number },
+): boolean;
+export function pickBestTileSet(sets?: unknown): Array<{
+  index: number;
+  bounds: { x: number; y: number; width: number; height: number };
+  label: string | null;
+}>;
+export function publicCaptchaTiles(tiles?: unknown): Array<{
+  index: number;
+  bounds: { x: number; y: number; width: number; height: number };
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string | null;
+}> | null;
+export function gridFromTiles(tiles?: unknown): { rows: number; cols: number };
+export function inferGridTiles(
+  box: { x?: number; y?: number; width?: number; height?: number },
+  cols?: number,
+  rows?: number,
+): Array<{ index: number; bounds: { x: number; y: number; width: number; height: number }; label: null }>;
+export function unionClip(
+  boxes?: Array<{ x?: number; y?: number; width?: number; height?: number }>,
+  options?: {
+    pad?: number;
+    promptPad?: number;
+    viewport?: { width?: number; height?: number } | null;
+  },
+): { x: number; y: number; width: number; height: number } | null;
+export function visionGridInstruction(options?: {
+  prompt?: string;
+  grid?: { rows?: number; cols?: number };
+  tileCount?: number;
+}): string;
+export function extractDarkBlobs(
+  image?: { width?: number; height?: number; data?: ArrayLike<number> },
+  options?: {
+    maxLuma?: number;
+    minCount?: number;
+    maxCount?: number;
+    topInset?: number;
+    bottomInset?: number;
+  },
+): Array<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  count: number;
+  cx: number;
+  cy: number;
+}>;
+export function pickGrowingBlob(
+  first?: unknown,
+  second?: unknown,
+  options?: { minGrown?: number; minRatio?: number },
+): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  count: number;
+  cx: number;
+  cy: number;
+  grown: number;
+  ratio: number;
+  score: number;
+  matched: boolean;
+  confidence: number;
+} | null;
+export function findGrowingShape(
+  firstImage?: unknown,
+  secondImage?: unknown,
+  options?: unknown,
+): ReturnType<typeof pickGrowingBlob>;
+export function pickDragFitPair(
+  blobs?: unknown,
+  options?: { minSide?: number },
+): {
+  piece: { cx: number; cy: number; width: number; height: number; count: number; density: number };
+  hole: { cx: number; cy: number; width: number; height: number; count: number; density: number };
+  score: number;
+} | null;
+export function blobToPageBounds(
+  blob: { cx?: number; cy?: number; width?: number; height?: number },
+  image: { width?: number; height?: number },
+  cssBox: { x?: number; y?: number; width?: number; height?: number },
+  pad?: number,
+): { x: number; y: number; width: number; height: number; cx: number; cy: number };

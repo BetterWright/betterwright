@@ -85,7 +85,7 @@ const TOOL_DESCRIPTION =
   "Other globals: context, state, openPage, closePage, snapshot, screenshot, " +
   "artifactPath, dialogs, credentials, captcha, human, overlays, controls, media. " +
   "On challenges prefer captcha.solve() (local, no external APIs); if status is " +
-  "processing, use the vision artifact/tiles then solve again. Inspect with " +
+  "processing, open the numbered crop and call captcha.solve({tiles:[indexes]}). Inspect with " +
   "snapshot({interactive:true}); act on [ref=eN] with page.locator('aria-ref=eN'); " +
   "snapshot({ref}) scopes to a subtree, snapshot({diff:true}) verifies an action, " +
   "screenshot({annotate:true}) draws each ref's box on the image. Snapshots " +

@@ -150,8 +150,11 @@ On Linux without an accessible `/dev/dri` render device, BetterWright selects
 managed CloakBrowser automatically so standard WebGL remains available.
 `--disable-software-rasterizer` is ignored with a result warning because it
 would recreate the blocked graphics surface fixed in 1.8.1; it does not fail
-launch. `--disable-gpu` remains available as a caller-controlled compatibility
-switch, but it is not recommended for either managed backend.
+launch. `--host-resolver-rules` is ignored for the same reason: Chromium
+draws a persistent unsupported-flag infobar whenever that switch is present,
+and hostname policy is already enforced by the SOCKS guard. `--disable-gpu`
+remains available as a caller-controlled compatibility switch, but it is not
+recommended for either managed backend.
 
 Two rules keep this from undermining the managed browser:
 

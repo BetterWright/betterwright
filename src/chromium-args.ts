@@ -64,6 +64,12 @@ const RESERVED = Object.freeze({
 const DROP_WITH_WARNING = Object.freeze({
   "--disable-software-rasterizer":
     "the managed browser must retain its WebGL software fallback",
+  // Playwright injects this for SOCKS `proxy` and Chromium then paints a
+  // persistent "unsupported command-line flag" infobar in headed windows.
+  // Hostname policy lives on the guard proxy, which resolves and re-validates
+  // every IP; the Chromium-side MAP * ~NOTFOUND rule is not required.
+  "--host-resolver-rules":
+    "this switch draws Chromium's unsupported-flag infobar; the guard proxy enforces hostname policy",
 });
 
 const RESERVED_PREFIXES = Object.freeze([
@@ -166,6 +172,28 @@ export function normalizeChromiumArgs(input, source = "chromiumArgs") {
     accepted.push(arg);
   }
   return accepted;
+}
+
+/**
+ * Point Chromium at the worker's SOCKS guard without Playwright's `proxy`
+ * option. For SOCKS, Playwright prepends
+ * `--host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"`, which is on
+ * Chromium's unsupported-flag list and draws a persistent infobar. Passing the
+ * same proxy as launch switches skips that injection. `<-loopback>` removes
+ * Chromium's implicit localhost bypass so the guard still sees every connect.
+ *
+ * @param {number} port loopback SOCKS port from the worker guard proxy
+ * @returns {string[]}
+ */
+export function guardProxyLaunchArgs(port) {
+  const n = Number(port);
+  if (!Number.isInteger(n) || n <= 0 || n > 65535) {
+    throw new TypeError("guard proxy port must be a TCP port.");
+  }
+  return [
+    `--proxy-server=socks5://127.0.0.1:${n}`,
+    "--proxy-bypass-list=<-loopback>",
+  ];
 }
 
 /**

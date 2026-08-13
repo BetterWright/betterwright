@@ -32,6 +32,7 @@ import {
 } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
 import { importOptionalPeer } from "./optional-peer.js";
+import { piImageArtifacts, piImageContent } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
 import { matchSkillsForText, readSkill } from "./skills.js";
 import { agentBrowserToolParameters, agentLoginToolParameters } from "./tool-schemas.js";
@@ -308,8 +309,8 @@ function toolsForHarness({ withLogin, withAsk, withHandoff }) {
 }
 
 // Compact a run result envelope into a text observation the model reads back.
-// Screenshots are surfaced as artifact paths (with their `kind`) rather than
-// inline images, so the same text loop works across every model adapter.
+// Screenshot paths stay in that JSON; captcha/proof bytes are attached as
+// vision blocks on the latest tool turn via `withLatestCaptchaVision`.
 function observationFromResult(result) {
   const screenshots = (result.artifacts || [])
     .filter((a) => a.path && /\.(png|jpe?g)$/i.test(a.path))
@@ -336,6 +337,42 @@ function observationFromResult(result) {
     if (text.length > OBSERVATION_LIMIT) text = `${text.slice(0, OBSERVATION_LIMIT)}…`;
   }
   return text;
+}
+
+function browserToolObservation(id, result) {
+  const observation: any = {
+    id,
+    name: "browser",
+    content: observationFromResult(result),
+  };
+  const imagePaths = piImageArtifacts(result);
+  if (imagePaths.length) observation.imagePaths = imagePaths;
+  return observation;
+}
+
+/** Attach captcha/screenshot bytes only on the latest tool turn, from disk. */
+async function withLatestCaptchaVision(messages) {
+  if (!Array.isArray(messages) || !messages.length) return messages;
+  const last = messages[messages.length - 1];
+  if (last?.role !== "tool" || !Array.isArray(last.results)) return messages;
+  const results = [];
+  for (const result of last.results) {
+    if (!result?.imagePaths?.length) {
+      results.push(result);
+      continue;
+    }
+    results.push({
+      ...result,
+      images: await piImageContent({
+        artifacts: result.imagePaths.map((image) => ({
+          kind: "captcha",
+          path: image.path,
+          media: `MEDIA:${image.path}`,
+        })),
+      }),
+    });
+  }
+  return [...messages.slice(0, -1), { ...last, results }];
 }
 
 /** A stable fingerprint for a failed browser observation, used to notice a step
@@ -829,7 +866,12 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
       appendHumanGuidance(await collectHumanGuidance());
       let response;
       try {
-        response = await completeWithRetry(model, { system, messages, tools }, deadline, stopSignal);
+        response = await completeWithRetry(
+          model,
+          { system, messages: await withLatestCaptchaVision(messages), tools },
+          deadline,
+          stopSignal,
+        );
       } catch (error) {
         if (isControlSignal(error) || !isTransientModelError(error)) throw error;
         // A transient provider failure that survived the bounded retries:
@@ -1122,7 +1164,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
             reason = "done";
             finished = true;
           }
-          results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
+          results.push(browserToolObservation(call.id, result));
           continue;
         }
         results.push({ id: call.id, name: call.name, content: `Unknown tool: ${call.name}` });
@@ -1674,7 +1716,7 @@ function anthropicMessages(messages) {
         content: m.results.map((r) => ({
           type: "tool_result",
           tool_use_id: r.id,
-          content: r.content,
+          content: anthropicToolResultContent(r),
         })),
       };
     const content = [];
@@ -1694,6 +1736,21 @@ function anthropicMessages(messages) {
     else merged.push({ role: msg.role, content: [...msg.content] });
   }
   return merged;
+}
+
+function anthropicToolResultContent(result) {
+  if (!result?.images?.length) return result.content;
+  return [
+    { type: "text", text: String(result.content || "") },
+    ...result.images.map((image) => ({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: image.mimeType,
+        data: image.data,
+      },
+    })),
+  ];
 }
 
 function parseAnthropicResponse(message) {
@@ -1780,7 +1837,7 @@ function openaiMessages(system, messages) {
         out.push({
           role: "tool",
           tool_call_id: r.id,
-          content: r.content,
+          content: openaiToolResultContent(r),
         });
     } else {
       const turn: any = { role: "assistant", content: m.text || null };
@@ -1794,6 +1851,17 @@ function openaiMessages(system, messages) {
     }
   }
   return out;
+}
+
+function openaiToolResultContent(result) {
+  if (!result?.images?.length) return result.content;
+  return [
+    { type: "text", text: String(result.content || "") },
+    ...result.images.map((image) => ({
+      type: "image_url",
+      image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+    })),
+  ];
 }
 
 function openaiText(content) {
@@ -1947,7 +2015,20 @@ function responsesInput(messages) {
     }
     if (message.role === "tool") {
       for (const result of message.results) {
-        input.push({ type: "function_call_output", call_id: result.id, output: result.content });
+        input.push({
+          type: "function_call_output",
+          call_id: result.id,
+          output: result.content,
+        });
+        if (result.images?.length) {
+          input.push({
+            role: "user",
+            content: result.images.map((image) => ({
+              type: "input_image",
+              image_url: `data:${image.mimeType};base64,${image.data}`,
+            })),
+          });
+        }
       }
     }
   }

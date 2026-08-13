@@ -14,6 +14,7 @@ const NATIVE_CAPTCHA_HELPERS = Object.freeze([
   "captcha.click",
   "captcha.drag",
   "captcha.readText",
+  "captcha.clickTiles",
   "human.click",
 ]);
 
@@ -27,9 +28,9 @@ const SEARCH_CHALLENGE_ADVICE =
   "retrying the blocked action. Prefer `captcha.solve()` for local automatic " +
   "checkbox, Turnstile, managed-challenge, and slider stages (no external APIs). " +
   "If solve returns status `processing` with a vision artifact (image grid or " +
-  "text), inspect the attached image, click matching tiles or type the text, then " +
-  "call `captcha.solve()` again. Fall back to `captcha.inspect`, `captcha.click`, " +
-  "`captcha.drag`, `captcha.readText`, or `human.click` when needed. Continue " +
+  "text), open the attached numbered crop, pick matching tile indexes, then " +
+  "call `captcha.solve({ tiles: [indexes] })`. Fall back to `captcha.inspect`, `captcha.click`, " +
+  "`captcha.drag`, `captcha.readText`, `captcha.clickTiles`, or `human.click` when needed. Continue " +
   "through up to three distinct stages of the same challenge. As soon as it " +
   "clears, resume the original action and continue the task. Never repeat the " +
   "same failed action or rotate identities/search engines; after three unresolved " +

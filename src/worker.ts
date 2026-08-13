@@ -16,17 +16,31 @@ import { types as utilTypes } from "node:util";
 import vm from "node:vm";
 
 import {
+  blobToPageBounds,
   buildSolveResult,
   CAPTCHA_SOLVE_STATUSES,
   CAPTCHA_STAGES,
+  CHALLENGE_INSTRUCTION_SELECTORS,
+  CHALLENGE_WIDGET_SELECTORS,
   CHECKBOX_SELECTORS,
   classifyChallengeStage,
+  clusterSimilarBoxes,
+  extractDarkBlobs,
+  findGrowingShape,
+  gridFromTiles,
   IMAGE_TILE_SELECTORS,
+  isCaptchaChromeLabel,
+  MOTION_CONFIRM_SELECTORS,
   maxAutoStages,
   nextSolveAction,
+  parseTileIndexes,
+  pickBestTileSet,
+  pickDragFitPair,
   SLIDER_SELECTORS,
   solveTimeoutMs,
+  unionClip,
   VERIFY_BUTTON_SELECTORS,
+  visionGridInstruction,
   WIDGET_FRAME_PATTERNS,
 } from "./captcha-solver.js";
 import {
@@ -37,6 +51,7 @@ import {
 } from "./challenges.js";
 import {
   chromiumArgsWarning,
+  guardProxyLaunchArgs,
   mergeChromiumArgs,
   normalizeChromiumArgs,
 } from "./chromium-args.js";
@@ -161,6 +176,11 @@ const DEFAULT_ARTIFACT_QUOTA = 100 * 1024 * 1024;
 const DEFAULT_DOWNLOAD_LIMIT = 50 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_PIXEL_LIMIT = 40_000_000;
+// Playwright's screenshot waits for `document.fonts`. Challenge widgets often
+// load webfonts that never settle behind the guard, so the default 30s timeout
+// burns the whole solve budget. Fail over to CDP before that happens.
+const DEFAULT_SCREENSHOT_TIMEOUT_MS = 15_000;
+const CAPTCHA_SCREENSHOT_TIMEOUT_MS = 8_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const MAX_ACTIVE_SECRETS = 200;
 
@@ -640,6 +660,9 @@ function sessionFor(id) {
       awaitingAnswerSince: null,
       cursor: { x: 0, y: 0, initialized: false },
       captchaTargets: new Map(),
+      // Identity of the grid captchaTargets was captured from, so stale
+      // coordinates are never replayed against a replaced challenge.
+      captchaGrid: null,
       // Providers whose challenge was still unsolved at the end of the last
       // execute. Non-empty forces the full frame scan on the next one; only a
       // full scan writes this set, so it always drains once the page clears.
@@ -856,6 +879,7 @@ async function assertScreenshotPixelLimit(page, options) {
 // Overlay id namespaced to avoid colliding with page-owned elements. The
 // overlay is pointer-events:none and removed right after capture.
 const ANNOTATION_OVERLAY_ID = "__betterwright_annotations__";
+const CAPTCHA_TILE_OVERLAY_ID = "__betterwright_captcha_tiles__";
 
 function drawAnnotationOverlay({ boxes, fullPage, overlayId }) {
   document.getElementById(overlayId)?.remove();
@@ -888,6 +912,36 @@ function removeAnnotationOverlay(overlayId) {
   document.getElementById(overlayId)?.remove();
 }
 
+function drawCaptchaTileOverlay({ tiles, overlayId }) {
+  document.getElementById(overlayId)?.remove();
+  const root = document.createElement("div");
+  root.id = overlayId;
+  root.style.cssText =
+    "position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;";
+  for (const tile of tiles) {
+    const box = tile.bounds;
+    const frame = document.createElement("div");
+    frame.style.cssText =
+      `position:absolute;left:${box.x}px;top:${box.y}px;` +
+      `width:${box.width}px;height:${box.height}px;` +
+      "border:3px solid #facc15;box-sizing:border-box;" +
+      "background:rgba(250,204,21,0.14);";
+    const label = document.createElement("span");
+    label.textContent = String(tile.index);
+    const size = Math.max(
+      16,
+      Math.min(36, Math.floor(Math.min(box.width, box.height) * 0.34)),
+    );
+    label.style.cssText =
+      "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);" +
+      `background:#111;color:#facc15;font:${size}px/${size + 4}px ui-monospace,monospace;` +
+      "font-weight:700;padding:1px 6px;border-radius:4px;border:2px solid #facc15;";
+    frame.appendChild(label);
+    root.appendChild(frame);
+  }
+  document.body.appendChild(root);
+}
+
 // Take a fresh boxes-annotated aria snapshot, draw ref-labelled outlines over
 // the interactive elements (including those inside child iframes, offset to
 // page coordinates), and leave the overlay up for the caller's capture.
@@ -918,6 +972,86 @@ async function addScreenshotAnnotations(page, fullPage) {
   return boxes.length;
 }
 
+async function writeScreenshotBytes(session, requested, fallback, content) {
+  const perFileLimit = configuredLimit(
+    launchConfig.maxScreenshotBytes,
+    DEFAULT_SCREENSHOT_LIMIT,
+  );
+  if (content.length > perFileLimit) {
+    throw new Error(`Screenshot exceeds the ${perFileLimit}-byte limit.`);
+  }
+  const file = makeArtifactPath(session, requested, fallback, false);
+  writeBoundedArtifact(session, file, content, perFileLimit, "Screenshot");
+  return file;
+}
+
+async function cssScreenshotClip(page, options) {
+  if (options?.clip) {
+    return {
+      x: Math.max(0, Number(options.clip.x) || 0),
+      y: Math.max(0, Number(options.clip.y) || 0),
+      width: Math.max(1, Number(options.clip.width) || 1),
+      height: Math.max(1, Number(options.clip.height) || 1),
+      scale: 1,
+    };
+  }
+  if (options?.fullPage) {
+    const size = await page.evaluate(() => ({
+      width: Math.max(
+        document.documentElement.scrollWidth,
+        document.body?.scrollWidth || 0,
+      ),
+      height: Math.max(
+        document.documentElement.scrollHeight,
+        document.body?.scrollHeight || 0,
+      ),
+    }));
+    return {
+      x: 0,
+      y: 0,
+      width: Math.max(1, Number(size.width) || 1),
+      height: Math.max(1, Number(size.height) || 1),
+      scale: 1,
+    };
+  }
+  const viewport = page.viewportSize() || { width: 1440, height: 900 };
+  return {
+    x: 0,
+    y: 0,
+    width: Math.max(1, Number(viewport.width) || 1),
+    height: Math.max(1, Number(viewport.height) || 1),
+    scale: 1,
+  };
+}
+
+async function captureScreenshotViaCdp(
+  page,
+  session,
+  requested,
+  fallback,
+  options,
+) {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const format = options?.type === "jpeg" ? "jpeg" : "png";
+    const params = {
+      format,
+      fromSurface: true,
+      captureBeyondViewport: Boolean(options?.fullPage) && !options?.clip,
+      clip: await cssScreenshotClip(page, options),
+      ...(format === "jpeg"
+        ? { quality: Number(options?.quality) || 80 }
+        : {}),
+    };
+    const shot = await cdp.send("Page.captureScreenshot", params);
+    const content = Buffer.from(String(shot?.data || ""), "base64");
+    if (!content.length) throw new Error("CDP screenshot returned no bytes.");
+    return writeScreenshotBytes(session, requested, fallback, content);
+  } finally {
+    await cdp.detach().catch(() => {});
+  }
+}
+
 async function captureScreenshot(
   page,
   session,
@@ -931,19 +1065,39 @@ async function captureScreenshot(
   // output quadrupled screenshot surface area without adding useful evidence.
   // `scale: "css"` affects only the trusted artifact encoder; page APIs and
   // layout remain identical.
-  const screenshotOptions = { scale: "css", ...options };
+  const screenshotOptions = {
+    scale: "css",
+    timeout: DEFAULT_SCREENSHOT_TIMEOUT_MS,
+    ...options,
+  };
   await assertScreenshotPixelLimit(page, screenshotOptions);
-  const content = await page.screenshot(screenshotOptions);
-  const perFileLimit = configuredLimit(
-    launchConfig.maxScreenshotBytes,
-    DEFAULT_SCREENSHOT_LIMIT,
-  );
-  if (content.length > perFileLimit) {
-    throw new Error(`Screenshot exceeds the ${perFileLimit}-byte limit.`);
+  try {
+    const content = await page.screenshot(screenshotOptions);
+    return writeScreenshotBytes(session, requested, fallback, content);
+  } catch {
+    // hCaptcha and similar widgets often leave `document.fonts` pending;
+    // CDP captures the current surface without that wait.
+    try {
+      return await captureScreenshotViaCdp(
+        page,
+        session,
+        requested,
+        fallback,
+        screenshotOptions,
+      );
+    } catch {
+      if (!screenshotOptions.clip) throw new Error("Screenshot capture failed.");
+      const uncropped = { ...screenshotOptions };
+      delete uncropped.clip;
+      return captureScreenshotViaCdp(
+        page,
+        session,
+        requested,
+        fallback,
+        uncropped,
+      );
+    }
   }
-  const file = makeArtifactPath(session, requested, fallback, false);
-  writeBoundedArtifact(session, file, content, perFileLimit, "Screenshot");
-  return file;
 }
 
 async function handleDownload(page, download) {
@@ -1679,16 +1833,16 @@ async function ensureBrowser(config) {
       args,
       normalizeChromiumArgs(launchConfig.chromiumArgs, "chromiumArgs"),
     );
-    const launchArgs = mergedArgs.args;
+    // Do not pass Playwright's `proxy` option. For SOCKS it injects
+    // `--host-resolver-rules="MAP * ~NOTFOUND"`, which Chromium paints as a
+    // persistent unsupported-flag infobar. The same guard is applied as
+    // launch switches instead; the proxy still resolves hostnames and
+    // re-validates every IP.
+    const launchArgs = [
+      ...mergedArgs.args,
+      ...guardProxyLaunchArgs(transportProxyPort),
+    ];
     chromiumArgsNote = chromiumArgsWarning(mergedArgs.ignored);
-
-    const proxy = {
-      server: `socks5://127.0.0.1:${transportProxyPort}`,
-      // Chromium otherwise bypasses the proxy for localhost/link-local
-      // destinations. The guard proxy must see those requests to enforce
-      // the configured private-network policy on every connection.
-      bypass: "<-loopback>",
-    };
 
     if (activeForkBinary) {
       if (!profileLock.ephemeral) {
@@ -1705,7 +1859,6 @@ async function ensureBrowser(config) {
           executablePath: activeForkBinary,
           headless,
           ...chromiumForkContextOptions(),
-          proxy,
           args: launchArgs,
           // Context-level UA baseline: correct User-Agent from the very first
           // navigation, before per-page CDP emulation attaches.
@@ -1736,7 +1889,6 @@ async function ensureBrowser(config) {
         headless,
         humanize: false,
         ...(viewport ? { viewport } : {}),
-        proxy,
         args: launchArgs,
         contextOptions: {
           acceptDownloads: true,
@@ -4067,6 +4219,7 @@ function buildSandbox(session, consoleMessages, execution) {
       {
         type: "png",
         animations: "disabled",
+        timeout: CAPTCHA_SCREENSHOT_TIMEOUT_MS,
         ...(clip ? { clip } : {}),
       },
     );
@@ -4096,6 +4249,33 @@ function buildSandbox(session, consoleMessages, execution) {
       "captcha-text.png",
       "Read the attached CAPTCHA crop visually and return only its text.",
     );
+  });
+  captcha.clickTiles = realm.safeFunction(async (indexes) => {
+    const page = await ensureSessionPage(session);
+    const picked = parseTileIndexes(indexes);
+    if (!picked.length) {
+      throw new Error("captcha.clickTiles requires an array of tile indexes from the numbered crop.");
+    }
+    if (!session.captchaTargets.size) {
+      await captureTiles(page, session, null);
+    } else if (await captchaTilesStale(page, session, null)) {
+      // The stored coordinates belong to a grid that is no longer on screen.
+      // Recapture so the caller re-reads the crop rather than clicking blind.
+      await captureTiles(page, session, null);
+      throw new Error(
+        "The captcha grid changed since the numbered crop was captured. " +
+          "Call captcha.solve() to get a fresh crop, then pick tiles again.",
+      );
+    }
+    const outcome = await clickStoredTiles(page, session, picked);
+    if (!outcome.ok) {
+      throw new Error(
+        outcome.reason === "tiles_not_captured"
+          ? "No numbered captcha grid is stored. Call captcha.solve() first."
+          : "None of the requested captcha tile indexes were on the stored grid.",
+      );
+    }
+    return snapshotPage(page);
   });
   const human = Object.create(null);
   human.click = realm.safeFunction(async (target, options: any = {}) => {
@@ -4888,6 +5068,26 @@ function candidateFrames(page, provider) {
   return matched.length ? matched : frames.slice(0, 8);
 }
 
+/**
+ * Page-coordinate box of a provider's challenge frame, taken from the frame
+ * element itself. Turnstile mounts its iframe in a closed shadow root, where
+ * neither `document.querySelector` nor a Playwright selector can see it, so
+ * walking back from the attached frame is the only way to locate the widget.
+ */
+async function widgetFrameBox(page, provider) {
+  for (const frame of candidateFrames(page, provider)) {
+    const element = await frame.frameElement().catch(() => null);
+    if (!element) continue;
+    try {
+      const box = await element.boundingBox().catch(() => null);
+      if (box && box.width > 0 && box.height > 0) return box;
+    } finally {
+      await element.dispose().catch(() => {});
+    }
+  }
+  return null;
+}
+
 async function elementBoxInPage(_page, _frame, locator) {
   const handle = await locator.elementHandle({ timeout: 1_500 }).catch(() => null);
   if (!handle) return null;
@@ -4908,7 +5108,7 @@ async function findClickableInScopes(page, scopes, selectors) {
       const visible = await locator.isVisible({ timeout: 400 }).catch(() => false);
       if (!visible) continue;
       const box = await elementBoxInPage(page, scope, locator);
-      if (box) return { locator, box, scope };
+      if (box) return { locator, box, scope, selector };
     }
   }
   return null;
@@ -4936,49 +5136,292 @@ async function challengeStillPresent(page, provider) {
   return { present: Boolean(challenge), metadata, challenge };
 }
 
-async function captureTiles(page, session, provider) {
+/**
+ * Widget container box for clicking. `challengeWidgetBox` exists to crop
+ * screenshots and so demands a puzzle-sized box; a checkbox widget is a wide,
+ * short strip that the size gate rejects. Clicking only needs a real target.
+ */
+async function challengeWidgetClickBox(page, provider) {
   const scopes = [page, ...candidateFrames(page, provider)];
-  const tiles = [];
-  session.captchaTargets.clear();
+  for (const scope of scopes) {
+    const widget = scope.locator(CHALLENGE_WIDGET_SELECTORS.join(", ")).first();
+    const visible = await widget.isVisible({ timeout: 400 }).catch(() => false);
+    if (!visible) continue;
+    const box = await elementBoxInPage(page, scope, widget);
+    if (box && box.width >= 24 && box.height >= 16) return box;
+  }
+  return null;
+}
+
+async function challengeWidgetBox(page, provider) {
+  // Prefer the puzzle iframe. `.first()` on the combined selector is the
+  // hCaptcha checkbox (too short), so a size-gated first() skipped the crop
+  // and inspect fell back to a full-page screenshot.
+  const preferred = page.locator(
+    'iframe[src*="frame=challenge" i], iframe[src*="bframe" i]',
+  ).first();
+  const preferredBox = await preferred.boundingBox({ timeout: 800 }).catch(() => null);
+  if (preferredBox && preferredBox.width >= 80 && preferredBox.height >= 80) {
+    return preferredBox;
+  }
+  const loc = page.locator(CHALLENGE_WIDGET_SELECTORS.join(", "));
+  const n = await loc.count().catch(() => 0);
+  let best = null;
+  for (let i = 0; i < Math.min(n, 8); i += 1) {
+    const box = await loc.nth(i).boundingBox({ timeout: 400 }).catch(() => null);
+    if (!box || box.width < 80 || box.height < 80) continue;
+    if (!best || box.width * box.height > best.width * best.height) best = box;
+  }
+  if (best) return best;
+  const scopes = [page, ...candidateFrames(page, provider)];
+  for (const scope of scopes) {
+    const local = scope.locator("[data-bw-captcha], #bw-captcha, .bw-captcha").first();
+    const localBox = await elementBoxInPage(page, scope, local);
+    if (localBox && localBox.width >= 80 && localBox.height >= 80) return localBox;
+  }
+  return null;
+}
+
+async function readChallengeInstruction(page, provider) {
+  const scopes = [page, ...candidateFrames(page, provider)];
+  for (const scope of scopes) {
+    for (const selector of CHALLENGE_INSTRUCTION_SELECTORS) {
+      const locator = scope.locator(selector).first();
+      const visible = await locator.isVisible({ timeout: 250 }).catch(() => false);
+      if (!visible) continue;
+      const text = String(await locator.innerText().catch(() => ""))
+        .replace(/\s+/g, " ")
+        .trim();
+      if (text.length >= 8 && text.length < 240) return text;
+    }
+  }
+  return null;
+}
+
+async function collectTilesFromSelector(page, scope, selector) {
+  const locators = scope.locator(selector);
+  const count = await locators.count().catch(() => 0);
+  if (count < 3) return [];
+  const found = [];
+  const limit = Math.min(count, 16);
+  for (let index = 0; index < limit; index += 1) {
+    const tile = locators.nth(index);
+    const visible = await tile.isVisible().catch(() => false);
+    if (!visible) continue;
+    const box = await elementBoxInPage(page, scope, tile);
+    if (!box) continue;
+    const label = await tile.getAttribute("aria-label").catch(() => null);
+    if (isCaptchaChromeLabel(label)) continue;
+    found.push({ box, label: label || null });
+  }
+  const clustered = clusterSimilarBoxes(found.map((entry) => entry.box));
+  if (clustered.length < 3) return [];
+  return clustered.map((bounds, index) => {
+    const match = found.find(
+      (entry) =>
+        Math.abs(entry.box.x - bounds.x) < 3 && Math.abs(entry.box.y - bounds.y) < 3,
+    );
+    return { index, bounds, label: match?.label || null };
+  });
+}
+
+async function collectClickableCluster(page, scope) {
+  const locators = scope.locator(
+    "button, [role='button'], [role='checkbox'], img, [class*='task']",
+  );
+  const count = Math.min(await locators.count().catch(() => 0), 40);
+  const found = [];
+  for (let index = 0; index < count; index += 1) {
+    const locator = locators.nth(index);
+    const visible = await locator.isVisible().catch(() => false);
+    if (!visible) continue;
+    const tag = await locator.evaluate((el) => el.tagName).catch(() => "");
+    if (String(tag).toUpperCase() === "CANVAS") continue;
+    const label = [
+      await locator.getAttribute("aria-label").catch(() => ""),
+      await locator.getAttribute("title").catch(() => ""),
+      await locator.innerText().catch(() => ""),
+    ]
+      .map((value) => String(value || "").trim())
+      .find(Boolean);
+    if (isCaptchaChromeLabel(label)) continue;
+    const box = await elementBoxInPage(page, scope, locator);
+    if (box) found.push({ box, label: label || null });
+  }
+  const clustered = clusterSimilarBoxes(found.map((entry) => entry.box));
+  return clustered.map((bounds, index) => {
+    const match = found.find(
+      (entry) =>
+        Math.abs(entry.box.x - bounds.x) < 3 && Math.abs(entry.box.y - bounds.y) < 3,
+    );
+    return { index, bounds, label: match?.label || null };
+  });
+}
+
+async function collectChallengeTiles(page, provider) {
+  const frames = candidateFrames(page, provider);
+  const scopes = frames.length ? [...frames, page] : [page];
+  const sets = [];
   for (const scope of scopes) {
     for (const selector of IMAGE_TILE_SELECTORS) {
-      const locators = scope.locator(selector);
-      const count = await locators.count().catch(() => 0);
-      if (count < 3) continue;
-      const limit = Math.min(count, 16);
-      for (let index = 0; index < limit; index += 1) {
-        const tile = locators.nth(index);
-        const visible = await tile.isVisible().catch(() => false);
-        if (!visible) continue;
-        const box = await elementBoxInPage(page, scope, tile);
-        if (!box) continue;
-        const label = await tile.getAttribute("aria-label").catch(() => null);
-        const bounds = {
-          x: Math.round(box.x),
-          y: Math.round(box.y),
-          width: Math.round(box.width),
-          height: Math.round(box.height),
-        };
-        tiles.push({
-          index: tiles.length,
-          bounds,
-          label: label || null,
-        });
-      }
-      if (tiles.length >= 3) break;
+      const tiles = await collectTilesFromSelector(page, scope, selector);
+      if (tiles.length) sets.push(tiles);
     }
-    if (tiles.length >= 3) break;
+    const clickable = await collectClickableCluster(page, scope);
+    if (clickable.length) sets.push(clickable);
   }
-  const file = await captureScreenshot(
-    page,
-    session,
-    "captcha-grid.png",
-    "captcha-grid.png",
-    { type: "png", animations: "disabled" },
-  );
+  return pickBestTileSet(sets);
+}
+
+// Identifies the grid a numbered crop was taken from. Tile indexes only mean
+// something relative to the image the model looked at, so coordinates captured
+// for one challenge must never be replayed against another.
+function captchaGridSignature(tiles) {
+  return tiles
+    .map((tile) => {
+      const box = tile.bounds || {};
+      return [
+        Math.round(box.x || 0),
+        Math.round(box.y || 0),
+        Math.round(box.width || 0),
+        Math.round(box.height || 0),
+      ].join(",");
+    })
+    .join("|");
+}
+
+function rememberCaptchaTiles(page, session, tiles) {
+  session.captchaTargets.clear();
+  for (const tile of tiles) {
+    session.captchaTargets.set(tile.index, {
+      bounds: tile.bounds,
+      label: tile.label || null,
+    });
+  }
+  session.captchaGrid = tiles.length
+    ? { url: page.url(), signature: captchaGridSignature(tiles) }
+    : null;
+}
+
+/**
+ * True when the stored tile coordinates no longer describe what is on screen —
+ * the page navigated, or the challenge swapped in a new grid. Clicking cached
+ * boxes in that state hits the wrong tiles or unrelated controls, so callers
+ * must recapture and let the model pick again rather than submit stale picks.
+ */
+async function captchaTilesStale(page, session, provider) {
+  const stored = session.captchaGrid;
+  if (!stored) return true;
+  if (stored.url !== page.url()) return true;
+  const live = await collectChallengeTiles(page, provider).catch(() => []);
+  if (!live.length) return true;
+  return captchaGridSignature(live) !== stored.signature;
+}
+
+function clipForPuzzle(tileBoxes, widgetBox, viewport) {
+  if (
+    widgetBox &&
+    widgetBox.width >= 80 &&
+    widgetBox.height >= 80 &&
+    widgetBox.width <= 760 &&
+    widgetBox.height <= 900
+  ) {
+    return unionClip([widgetBox], { pad: 8, promptPad: 0, viewport });
+  }
+  return unionClip(tileBoxes, { pad: 10, promptPad: 80, viewport });
+}
+
+async function capturePuzzleScreenshot(page, session, name, clip, extra: any = {}) {
+  const options = {
+    type: "png",
+    animations: extra.animations ?? "disabled",
+    timeout: CAPTCHA_SCREENSHOT_TIMEOUT_MS,
+  };
+  try {
+    return await captureScreenshot(page, session, name, name, {
+      ...options,
+      ...(clip ? { clip } : {}),
+    });
+  } catch {
+    return captureScreenshot(page, session, name, name, options);
+  }
+}
+
+async function captureTiles(page, session, provider) {
+  const tiles = await collectChallengeTiles(page, provider);
+  rememberCaptchaTiles(page, session, tiles);
+  const widgetBox = await challengeWidgetBox(page, provider);
+  const viewport = page.viewportSize();
+  const clip = tiles.length
+    ? clipForPuzzle(
+        tiles.map((tile) => tile.bounds),
+        widgetBox,
+        viewport,
+      )
+    : widgetBox
+      ? unionClip([widgetBox], { pad: 8, promptPad: 0, viewport })
+      : null;
+  let overlayDrawn = false;
+  if (tiles.length) {
+    try {
+      await page.evaluate(drawCaptchaTileOverlay, {
+        tiles,
+        overlayId: CAPTCHA_TILE_OVERLAY_ID,
+      });
+      overlayDrawn = true;
+    } catch {
+      overlayDrawn = false;
+    }
+  }
+  let file;
+  try {
+    file = await capturePuzzleScreenshot(page, session, "captcha-grid.png", clip);
+  } finally {
+    if (overlayDrawn) {
+      await page
+        .evaluate(removeAnnotationOverlay, CAPTCHA_TILE_OVERLAY_ID)
+        .catch(() => {});
+    }
+  }
   const artifact = { kind: "captcha", path: file, media: `MEDIA:${file}` };
   session.artifacts.push(artifact);
-  return { tiles, artifact };
+  const prompt = await readChallengeInstruction(page, provider);
+  const grid = gridFromTiles(tiles);
+  return {
+    tiles,
+    artifact,
+    grid,
+    prompt,
+    instruction: visionGridInstruction({
+      prompt,
+      grid,
+      tileCount: tiles.length,
+    }),
+  };
+}
+
+async function clickStoredTiles(page, session, indexes) {
+  if (!session.captchaTargets.size) return { ok: false, reason: "tiles_not_captured" };
+  const clicked = [];
+  for (const index of indexes) {
+    const tile = session.captchaTargets.get(index);
+    if (!tile?.bounds) continue;
+    await humanClickBox(page, session, tile.bounds, { leftBias: false });
+    clicked.push(index);
+    await hostDelay(70 + Math.random() * 140);
+  }
+  if (!clicked.length) return { ok: false, reason: "tiles_not_found" };
+  const scopes = [page, ...page.frames().filter((frame) => frame !== page.mainFrame()).slice(0, 8)];
+  const verify = await findClickableInScopes(
+    page,
+    scopes,
+    VERIFY_BUTTON_SELECTORS.filter((selector) => selector !== "body"),
+  );
+  if (verify) {
+    await hostDelay(80 + Math.random() * 120);
+    await humanClickBox(page, session, verify.box, { leftBias: false });
+  }
+  return { ok: true, clicked, verified: Boolean(verify) };
 }
 
 async function dragSliderOnPage(page, session, provider) {
@@ -5008,6 +5451,191 @@ async function dragSliderOnPage(page, session, provider) {
   return { ok: true, from: start, to: end };
 }
 
+function sampleCanvasRgbaInPage(canvas, maxWidth) {
+  if (!canvas || canvas.width < 16 || canvas.height < 16) return null;
+  const scale = Math.min(1, maxWidth / canvas.width);
+  const width = Math.max(8, Math.round(canvas.width * scale));
+  const height = Math.max(8, Math.round(canvas.height * scale));
+  const copy = document.createElement("canvas");
+  copy.width = width;
+  copy.height = height;
+  const ctx = copy.getContext("2d");
+  if (!ctx) return null;
+  try {
+    ctx.drawImage(canvas, 0, 0, width, height);
+  } catch {
+    return null;
+  }
+  const img = ctx.getImageData(0, 0, width, height);
+  let dark = 0;
+  for (let i = 0; i < img.data.length; i += 16) {
+    if (0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2] < 110) {
+      dark += 1;
+    }
+  }
+  if (dark < 3) return null;
+  return { width, height, data: Array.from(img.data) };
+}
+
+async function sampleCanvasRgba(scope) {
+  const locator = scope.locator("canvas").first();
+  const handle = await locator.elementHandle({ timeout: 800 }).catch(() => null);
+  if (!handle) return null;
+  try {
+    const box = await handle.boundingBox();
+    const image = await handle
+      .evaluate(sampleCanvasRgbaInPage, 200)
+      .catch(() => null);
+    if (!image || !box || box.width < 16 || box.height < 16) return null;
+    return { image, box };
+  } finally {
+    await handle.dispose().catch(() => {});
+  }
+}
+
+async function decodePngRgba(page, buffer, maxWidth = 220) {
+  const b64 = Buffer.from(buffer).toString("base64");
+  return page.evaluate(
+    async ({ b64, maxWidth }) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const scale = Math.min(1, maxWidth / img.naturalWidth);
+      const width = Math.max(8, Math.round(img.naturalWidth * scale));
+      const height = Math.max(8, Math.round(img.naturalHeight * scale));
+      const copy = document.createElement("canvas");
+      copy.width = width;
+      copy.height = height;
+      const ctx = copy.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0, width, height);
+      const pixels = ctx.getImageData(0, 0, width, height);
+      return { width, height, data: Array.from(pixels.data) };
+    },
+    { b64, maxWidth },
+  );
+}
+
+async function screenshotRgba(page, session, clip) {
+  const file = await capturePuzzleScreenshot(
+    page,
+    session,
+    "captcha-motion-frame.png",
+    clip,
+    { animations: "allow" },
+  );
+  const buffer = fs.readFileSync(file);
+  const image = await decodePngRgba(page, buffer);
+  return { image, box: clip, file };
+}
+
+function bestGrownFromSamples(samples, options) {
+  let best = null;
+  for (let i = 0; i < samples.length; i += 1) {
+    for (let j = i + 1; j < samples.length; j += 1) {
+      const grown = findGrowingShape(samples[i].image, samples[j].image, options);
+      if (!grown) continue;
+      if (!best || grown.score > best.grown.score) {
+        best = { grown, sample: samples[j] };
+      }
+    }
+  }
+  return best;
+}
+
+async function locateGrowingShape(page, session, provider) {
+  const scopes = [...candidateFrames(page, provider), page];
+  for (const scope of scopes) {
+    const samples = [];
+    for (let i = 0; i < 3; i += 1) {
+      if (i > 0) await hostDelay(420);
+      const sample = await sampleCanvasRgba(scope);
+      if (sample) samples.push(sample);
+    }
+    const picked = bestGrownFromSamples(samples, { topInset: 0, bottomInset: 0 });
+    if (picked?.grown) {
+      return {
+        bounds: blobToPageBounds(picked.grown, picked.sample.image, picked.sample.box),
+        score: picked.grown.score,
+        confidence: picked.grown.confidence,
+        source: "canvas",
+      };
+    }
+  }
+  const widgetBox = await challengeWidgetBox(page, provider);
+  const clip = widgetBox
+    ? unionClip([widgetBox], {
+        pad: 8,
+        promptPad: 0,
+        viewport: page.viewportSize(),
+      })
+    : null;
+  if (!clip) return null;
+  const shots = [];
+  for (let i = 0; i < 3; i += 1) {
+    if (i > 0) await hostDelay(420);
+    const shot = await screenshotRgba(page, session, clip);
+    if (shot?.image) shots.push(shot);
+  }
+  const picked = bestGrownFromSamples(shots, { topInset: 0.12, bottomInset: 0.18 });
+  if (!picked?.grown) return null;
+  return {
+    bounds: blobToPageBounds(picked.grown, picked.sample.image, picked.sample.box),
+    score: picked.grown.score,
+    confidence: picked.grown.confidence,
+    source: "screenshot",
+    artifact: picked.sample.file,
+  };
+}
+
+async function confirmMotionSelection(page, session, provider) {
+  const frames = candidateFrames(page, provider);
+  const found = await findClickableInScopes(
+    page,
+    frames,
+    MOTION_CONFIRM_SELECTORS,
+  );
+  if (!found) return false;
+  await humanClickBox(page, session, found.box, { leftBias: false });
+  return true;
+}
+
+async function dragFitOnPage(page, session, provider) {
+  const scopes = [...candidateFrames(page, provider), page];
+  for (const scope of scopes) {
+    const sample = await sampleCanvasRgba(scope);
+    if (!sample) continue;
+    const pair = pickDragFitPair(extractDarkBlobs(sample.image));
+    if (!pair) continue;
+    const from = blobToPageBounds(pair.piece, sample.image, sample.box, 4);
+    const to = blobToPageBounds(pair.hole, sample.image, sample.box, 4);
+    await movePointer(
+      page.mouse,
+      session.cursor,
+      { x: from.cx, y: from.cy },
+      { stepDivisor: 8 },
+    );
+    await hostDelay(90 + Math.random() * 120);
+    await page.mouse.down();
+    await hostDelay(70 + Math.random() * 90);
+    await movePointer(
+      page.mouse,
+      session.cursor,
+      { x: to.cx, y: to.cy },
+      {
+        stepDivisor: Math.max(
+          3,
+          Math.hypot(to.cx - from.cx, to.cy - from.cy) / 22,
+        ),
+      },
+    );
+    await hostDelay(80 + Math.random() * 100);
+    await page.mouse.up();
+    return { ok: true, from, to, source: "canvas" };
+  }
+  return { ok: false, reason: "drag_fit_not_found" };
+}
+
 async function runCaptchaSolveAction(
   page,
   session,
@@ -5020,30 +5648,68 @@ async function runCaptchaSolveAction(
     case "click_checkbox": {
       // Prefer real checkbox/controls; never fall through to a bare `body` hit
       // when a verify button is available (managed / generic widgets).
+      // The widget's own control first, then the widget itself, and only then
+      // generic page buttons. Order matters: VERIFY_BUTTON_SELECTORS ends in
+      // `button[type='submit']`, which on a demo or login page is the host
+      // form's own button. Reaching that before the widget submits the form
+      // unsolved while the attempt log still claims a successful click.
       const preferred = CHECKBOX_SELECTORS.filter((selector) => selector !== "body");
       let found = await findClickableInScopes(page, scopes, preferred);
       if (!found) {
-        found = await findClickableInScopes(page, scopes, VERIFY_BUTTON_SELECTORS);
-      }
-      if (!found) {
-        // Fall back: click the first matching widget iframe itself (left side).
+        // Turnstile mounts its iframe in a CLOSED shadow root, so neither the
+        // DOM nor a Playwright selector can see it. The frame stays attached
+        // and its frame element still reports real page geometry, which is the
+        // only remaining way to reach the checkbox.
+        const frameBox = await widgetFrameBox(page, provider);
+        if (frameBox) {
+          const point = await humanClickBox(page, session, frameBox, { leftBias: true });
+          return { ok: true, point, target: "frame_element" };
+        }
+        // Widget iframes that are visible in the DOM. Every pattern has to name
+        // a challenge: a bare `title*="widget"` also matches ordinary site
+        // furniture such as chat launchers, and clicking one of those reports a
+        // solve while opening a support window.
         const iframe = page
           .locator(
-            'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], iframe[src*="challenges.cloudflare" i], iframe[title*="captcha" i], iframe[title*="challenge" i], iframe[title*="widget" i]',
+            'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="turnstile" i], iframe[src*="challenges.cloudflare" i], iframe[title*="captcha" i], iframe[title*="challenge" i], iframe[title*="verification" i], iframe[title*="security check" i]',
           )
           .first();
-        const box = await iframe.boundingBox().catch(() => null);
-        if (!box) return { ok: false, reason: "checkbox_not_found" };
-        const point = await humanClickBox(page, session, box, { leftBias: true });
-        return { ok: true, point, target: "iframe" };
+        // Bounded: an unmatched locator otherwise blocks for Playwright's 30s
+        // default, which is the whole solve budget spent before the first click.
+        const box = await iframe.boundingBox({ timeout: 800 }).catch(() => null);
+        if (box) {
+          const point = await humanClickBox(page, session, box, { leftBias: true });
+          return { ok: true, point, target: "iframe" };
+        }
+        // The widget container itself, for challenges that render inline rather
+        // than in a frame. Still ahead of the generic buttons below.
+        const inlineBox = await challengeWidgetClickBox(page, provider);
+        if (inlineBox) {
+          const point = await humanClickBox(page, session, inlineBox, { leftBias: true });
+          return { ok: true, point, target: "widget" };
+        }
+        found = await findClickableInScopes(page, scopes, VERIFY_BUTTON_SELECTORS);
+        if (!found) return { ok: false, reason: "checkbox_not_found" };
+        const verifyPoint = await humanClickBox(page, session, found.box, {
+          leftBias: found.box.width > 80,
+        });
+        return {
+          ok: true,
+          point: verifyPoint,
+          target: "verify_button",
+          selector: found.selector || null,
+        };
       }
       const point = await humanClickBox(page, session, found.box, {
         leftBias: found.box.width > 80,
       });
-      return { ok: true, point, target: "checkbox" };
+      return { ok: true, point, target: "checkbox", selector: found.selector || null };
     }
     case "click_verify": {
-      const found = await findClickableInScopes(page, scopes, [
+      // Challenge-frame controls first so a host-page Submit cannot steal the
+      // click. Next is how hCaptcha confirms a motion-target selection.
+      const frames = candidateFrames(page, provider);
+      const found = await findClickableInScopes(page, [...frames, page], [
         ...VERIFY_BUTTON_SELECTORS,
         ...CHECKBOX_SELECTORS,
       ]);
@@ -5053,8 +5719,33 @@ async function runCaptchaSolveAction(
       });
       return { ok: true, point, target: "verify" };
     }
-    case "drag_slider":
-      return dragSliderOnPage(page, session, provider);
+    case "drag_slider": {
+      const slider = await dragSliderOnPage(page, session, provider);
+      if (slider.ok) return slider;
+      const fit = await dragFitOnPage(page, session, provider);
+      if (fit.ok) return fit;
+      return { ...slider, soft: true };
+    }
+    case "click_growing": {
+      const located = await locateGrowingShape(page, session, provider);
+      if (!located?.bounds) {
+        return runCaptchaSolveAction(page, session, classification, {
+          action: "inspect",
+          waitMs: 0,
+          description: "Motion target was ambiguous; capture frames for host vision",
+        });
+      }
+      await humanClickBox(page, session, located.bounds, { leftBias: false });
+      await hostDelay(700 + Math.random() * 400);
+      const confirmed = await confirmMotionSelection(page, session, provider);
+      return {
+        ok: true,
+        auto: true,
+        confirmed,
+        target: located,
+        source: located.source,
+      };
+    }
     case "capture_tiles": {
       const captured = await captureTiles(page, session, provider);
       return {
@@ -5062,15 +5753,23 @@ async function runCaptchaSolveAction(
         needsVision: true,
         tiles: captured.tiles,
         artifact: captured.artifact,
+        grid: captured.grid,
+        instruction: captured.instruction,
       };
     }
     case "capture_text": {
-      const file = await captureScreenshot(
+      const widgetBox = await challengeWidgetBox(page, provider);
+      const file = await capturePuzzleScreenshot(
         page,
         session,
         "captcha-text.png",
-        "captcha-text.png",
-        { type: "png", animations: "disabled" },
+        widgetBox
+          ? unionClip([widgetBox], {
+              pad: 8,
+              promptPad: 0,
+              viewport: page.viewportSize(),
+            })
+          : null,
       );
       const artifact = { kind: "captcha", path: file, media: `MEDIA:${file}` };
       session.artifacts.push(artifact);
@@ -5085,21 +5784,45 @@ async function runCaptchaSolveAction(
     case "wait_clear":
       return { ok: true, waited: true };
     case "inspect": {
-      const file = await captureScreenshot(
+      const widgetBox = await challengeWidgetBox(page, provider);
+      const clip = widgetBox
+        ? unionClip([widgetBox], {
+            pad: 8,
+            promptPad: 0,
+            viewport: page.viewportSize(),
+          })
+        : null;
+      const file = await capturePuzzleScreenshot(
         page,
         session,
         "captcha-challenge.png",
-        "captcha-challenge.png",
-        { type: "png", animations: "disabled" },
+        clip,
+        { animations: "allow" },
       );
       const artifact = { kind: "captcha", path: file, media: `MEDIA:${file}` };
       session.artifacts.push(artifact);
+      await hostDelay(450);
+      let artifact2 = null;
+      try {
+        const file2 = await capturePuzzleScreenshot(
+          page,
+          session,
+          "captcha-challenge-b.png",
+          clip,
+          { animations: "allow" },
+        );
+        artifact2 = { kind: "captcha", path: file2, media: `MEDIA:${file2}` };
+        session.artifacts.push(artifact2);
+      } catch {
+        artifact2 = null;
+      }
       return {
         ok: true,
         needsVision: true,
         artifact,
+        artifact2,
         instruction:
-          "Inspect the attached challenge and use captcha.click / captcha.drag / human.click as needed.",
+          "Compare the two attached frames and click the shape that grew, then call captcha.solve() again so Next can confirm. This is not a numbered image grid.",
       };
     }
     default:
@@ -5159,6 +5882,8 @@ async function solveCaptchaOnPage(page, session, options: any = {}) {
   let lastArtifact = null;
   let lastTiles = null;
   let lastInstruction = null;
+  let lastGrid = null;
+  let pendingTiles = parseTileIndexes(options?.tiles ?? options?.indexes);
 
   for (let stageIndex = 0; stageIndex < maxStages; stageIndex += 1) {
     if (Date.now() - started > timeoutMs) {
@@ -5172,6 +5897,7 @@ async function solveCaptchaOnPage(page, session, options: any = {}) {
         attempts,
         artifact: lastArtifact,
         tiles: lastTiles,
+        grid: lastGrid,
         instruction: lastInstruction,
         challenge: lastChallenge,
       });
@@ -5226,9 +5952,145 @@ async function solveCaptchaOnPage(page, session, options: any = {}) {
         autoSolvable: true,
         needsVision: false,
       };
+      const kind = await page
+        .locator("[data-bw-captcha], #bw-captcha, .bw-captcha")
+        .first()
+        .getAttribute("data-bw-captcha")
+        .catch(() => "");
+      if (kind === "grid") {
+        lastClassification = {
+          stage: CAPTCHA_STAGES.IMAGE_GRID,
+          provider: "generic",
+          autoSolvable: false,
+          needsVision: true,
+        };
+      } else if (kind === "slider") {
+        lastClassification = {
+          stage: CAPTCHA_STAGES.SLIDER,
+          provider: "generic",
+          autoSolvable: true,
+          needsVision: false,
+        };
+      } else if (kind === "motion") {
+        lastClassification = {
+          stage: CAPTCHA_STAGES.MOTION,
+          provider: "generic",
+          autoSolvable: true,
+          needsVision: false,
+        };
+      } else if (kind === "drag") {
+        lastClassification = {
+          stage: CAPTCHA_STAGES.SLIDER,
+          provider: "generic",
+          autoSolvable: true,
+          needsVision: false,
+        };
+      }
     }
 
-    const action = nextSolveAction(lastClassification, stageIndex);
+    if (pendingTiles.length && lastClassification.stage === CAPTCHA_STAGES.IMAGE_GRID) {
+      // Tile indexes describe the numbered crop the caller looked at. If that
+      // grid is gone, recapture and ask for fresh picks: replaying the old
+      // coordinates would click the wrong tiles and then submit Verify.
+      const stale =
+        !session.captchaTargets.size ||
+        (await captchaTilesStale(page, session, lastClassification.provider));
+      if (stale) {
+        const captured = await captureTiles(page, session, lastClassification.provider);
+        lastArtifact = captured.artifact;
+        lastTiles = captured.tiles;
+        lastGrid = captured.grid;
+        lastInstruction = captured.instruction;
+        pendingTiles = [];
+        attempts.push({
+          stageIndex,
+          stage: lastClassification.stage,
+          provider: lastClassification.provider,
+          action: "recapture_tiles",
+          description: "The numbered grid changed; captured a fresh crop for new picks",
+          ok: true,
+          reason: "grid_changed",
+          atMs: Date.now() - started,
+        });
+        return buildSolveResult({
+          status: CAPTCHA_SOLVE_STATUSES.PROCESSING,
+          requestId,
+          provider: lastClassification.provider,
+          stage: lastClassification.stage,
+          attempts,
+          artifact: lastArtifact,
+          tiles: lastTiles,
+          grid: lastGrid,
+          instruction:
+            lastInstruction ||
+            "The captcha grid changed. Open the attached numbered crop, pick matching tile indexes, then call captcha.solve({ tiles: [indexes] }).",
+          challenge: lastChallenge,
+        });
+      }
+      const outcome = await clickStoredTiles(page, session, pendingTiles);
+      const applied = pendingTiles;
+      pendingTiles = [];
+      attempts.push({
+        stageIndex,
+        stage: lastClassification.stage,
+        provider: lastClassification.provider,
+        action: "click_tiles",
+        description: `Click numbered tiles ${applied.join(", ")} and verify`,
+        ok: Boolean(outcome.ok),
+        reason: outcome.reason || null,
+        atMs: Date.now() - started,
+      });
+      if (!outcome.ok) {
+        return buildSolveResult({
+          status: CAPTCHA_SOLVE_STATUSES.ERROR,
+          requestId,
+          provider: lastClassification.provider,
+          stage: lastClassification.stage,
+          errorCode: "ERROR_ACTION_FAILED",
+          errorText: outcome.reason || "CAPTCHA tile click failed",
+          attempts,
+          artifact: lastArtifact,
+          tiles: lastTiles,
+          grid: lastGrid,
+          instruction: lastInstruction,
+          challenge: lastChallenge,
+        });
+      }
+      await hostDelay(1_600 + Math.random() * 900);
+      const afterTiles = await challengeStillPresent(page, lastClassification.provider);
+      if (!afterTiles.present) {
+        const provider =
+          Object.keys(afterTiles.metadata.tokens || {})[0] || lastClassification.provider;
+        return buildSolveResult({
+          status: CAPTCHA_SOLVE_STATUSES.READY,
+          requestId,
+          provider,
+          stage: lastClassification.stage,
+          token: afterTiles.metadata.tokens?.[provider] || null,
+          attempts,
+          cleared: true,
+          challenge: lastChallenge,
+        });
+      }
+      continue;
+    }
+
+    let action = nextSolveAction(lastClassification, stageIndex);
+    if (lastClassification.stage === CAPTCHA_STAGES.MOTION) {
+      const frames = candidateFrames(page, lastClassification.provider);
+      const confirm = await findClickableInScopes(page, frames, [
+        ":text-is('Next')",
+        "button:has-text('Next')",
+        "[role='button']:has-text('Next')",
+      ]);
+      if (confirm) {
+        action = {
+          action: "click_verify",
+          waitMs: 2_000,
+          description: "Confirm the selected motion target",
+        };
+      }
+    }
     const outcome = await runCaptchaSolveAction(
       page,
       session,
@@ -5243,12 +6105,17 @@ async function solveCaptchaOnPage(page, session, options: any = {}) {
       description: action.description,
       ok: Boolean(outcome.ok),
       reason: outcome.reason || null,
+      // Which control the action actually hit. Without this a click on the
+      // wrong element is indistinguishable from a click on the widget.
+      target: outcome.target || null,
+      selector: outcome.selector || null,
       atMs: Date.now() - started,
     });
 
     if (outcome.artifact) lastArtifact = outcome.artifact;
     if (outcome.tiles) lastTiles = outcome.tiles;
     if (outcome.instruction) lastInstruction = outcome.instruction;
+    if (outcome.grid) lastGrid = outcome.grid;
 
     if (outcome.needsVision) {
       return buildSolveResult({
@@ -5259,9 +6126,10 @@ async function solveCaptchaOnPage(page, session, options: any = {}) {
         attempts,
         artifact: lastArtifact,
         tiles: lastTiles,
+        grid: lastGrid,
         instruction:
           lastInstruction ||
-          "Use host vision on the attached captcha artifact, act on the page, then call captcha.solve() again.",
+          "Open the attached numbered captcha crop, pick matching tile indexes, then call captcha.solve({ tiles: [indexes] }).",
         challenge: lastChallenge,
       });
     }
@@ -5312,6 +6180,7 @@ async function solveCaptchaOnPage(page, session, options: any = {}) {
     attempts,
     artifact: lastArtifact,
     tiles: lastTiles,
+    grid: lastGrid,
     instruction:
       lastInstruction ||
       "Auto-solve stages exhausted. Inspect the page with captcha.inspect or hand off to a human.",
