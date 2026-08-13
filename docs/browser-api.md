@@ -214,8 +214,10 @@ The `captcha` global provides:
 
 - `captcha.inspect(bounds?)` for a challenge image the host model can inspect.
 - `captcha.click(bounds)` for a checkbox-style widget.
+- `captcha.clickTiles(indexes)` to apply numbered image-grid picks.
 - `captcha.drag(from, to, {steps})` for a slider or puzzle handle.
 - `captcha.readText(bounds?)` for a cropped image that the host model can read.
+- `captcha.solve({ tiles: [indexes] })` to click those tiles, verify, and re-check.
 
 Click and drag use shaped pointer movement and return a post-action
 accessibility snapshot. Always check the result envelope's `challenges` list

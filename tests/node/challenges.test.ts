@@ -199,6 +199,7 @@ test("returns bounded solve, verify, and resume advice", () => {
     "captcha.click",
     "captcha.drag",
     "captcha.readText",
+    "captcha.clickTiles",
     "human.click",
   ]);
   assert.match(challenge?.advice || "", /three distinct stages/i);

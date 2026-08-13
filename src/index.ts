@@ -24,9 +24,20 @@ export {
   CAPTCHA_SOLVE_STATUSES,
   CAPTCHA_STAGES,
   classifyChallengeStage,
+  clusterSimilarBoxes,
+  extractDarkBlobs,
+  findGrowingShape,
+  gridFromTiles,
+  inferGridTiles,
+  isCaptchaChromeLabel,
+  isPlausibleImageGrid,
   maxAutoStages,
   nextSolveAction,
+  parseTileIndexes,
+  pickBestTileSet,
+  pickDragFitPair,
   solveTimeoutMs,
+  unionClip,
 } from "./captcha-solver.js";
 export { detectBotChallenge } from "./challenges.js";
 export { BetterWright, BrowserError } from "./client.js";

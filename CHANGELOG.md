@@ -11,10 +11,18 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [1.8.3] - 2026-08-13
 
-A Linux BetterChromium identity-coherence release. BetterChromium now derives
+A browser-coherence and local challenge-solving release. BetterChromium derives
 its default timezone from the browser's actual egress IP before web content
-starts, while preserving explicit operator configuration and the existing
-native anti-detection profile.
+starts, and BetterWright adds bounded local motion, drag-fit, and numbered
+image-grid CAPTCHA handling.
+
+### Added
+
+- Image-grid CAPTCHAs now return a tight numbered crop for a local
+  `captcha.solve({ tiles: [indexes] })` or `captcha.clickTiles(indexes)` handoff.
+  Stale picks are rejected when a challenge replaces its grid.
+- `captcha.solve()` distinguishes hCaptcha motion and drag-to-fit puzzles from
+  image grids. Automatic work remains bounded to at most three stages.
 
 ### Changed
 
@@ -31,16 +39,25 @@ native anti-detection profile.
   These are Chromium-source changes gated by the managed identity, not
   detector-specific page scripts.
 
+### Fixed
+
+- Headed Chromium no longer shows Playwright's unsupported
+  `--host-resolver-rules` infobar when using the SOCKS guard. The guard still
+  resolves hostnames and re-validates every IP.
+- CAPTCHA screenshots no longer wait 30 seconds for unsettled webfonts, and
+  challenge crops prefer the puzzle iframe over the checkbox iframe.
+- Widget clicks now prefer specific challenge controls, including closed-shadow
+  iframe geometry, before host-page submit buttons.
+
 ### Verification
 
 - Extracted Linux r2 reports the egress-derived timezone (`Asia/Singapore` in
-  the release validation), `navigator.webdriver = false`, no headless UA marker,
-  and the captured macOS UA/platform/client-hints identity. An explicit
-  `--bw-timezone=Europe/Berlin` override reports `Europe/Berlin`.
-- Live CreepJS reports 0% headless, 19% like-headless, and 0% stealth. The 19%
-  consists of three APIs that current CreepJS itself expects to be absent from
-  macOS Chrome (`ContentIndex`, `ContactsManager`, and `downlinkMax`), so they
-  are intentionally not exposed merely to optimize the benchmark.
+  release validation), `navigator.webdriver = false`, no headless UA marker,
+  and the captured macOS identity. `--bw-timezone=Europe/Berlin` overrides it.
+- Live CreepJS reports 0% headless, 19% like-headless, and 0% stealth. The three
+  remaining heuristics conflict with genuine macOS Chrome API availability and
+  were intentionally not enabled merely to optimize the benchmark.
+
 
 ## [1.8.2] - 2026-08-12
 

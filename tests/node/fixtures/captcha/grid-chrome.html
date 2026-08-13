@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Image-grid CAPTCHA with widget chrome</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; background: #f6f7f9; }
+    .widget {
+      width: 340px; background: #fff; border: 1px solid #d3d3d3; padding: 8px;
+    }
+    .grid {
+      display: grid; grid-template-columns: repeat(3, 100px); gap: 4px;
+      width: max-content;
+    }
+    .rc-imageselect-tile {
+      width: 100px; height: 100px; border: 0; cursor: pointer;
+      font-size: 12px; color: #fff;
+    }
+    .rc-imageselect-tile.selected { outline: 3px solid #1a73e8; }
+    .chrome {
+      display: flex; gap: 8px; margin-top: 12px; align-items: center;
+    }
+    .chrome button {
+      width: 32px; height: 32px; border: 1px solid #ccc; background: #fafafa;
+      cursor: pointer; font-size: 11px;
+    }
+    #verify { margin-left: auto; padding: 6px 12px; width: auto; height: 32px; }
+  </style>
+</head>
+<body>
+  <h1>Select all images with traffic lights</h1>
+  <p>Please select all images containing a traffic light to continue.</p>
+  <div class="bw-captcha widget" data-bw-captcha="grid" id="bw-captcha">
+    <div class="grid" id="grid"></div>
+    <div class="chrome">
+      <button type="button" role="button" aria-label="EN - English, Select a language">EN</button>
+      <button type="button" role="button" aria-label="About hCaptcha &amp; Accessibility Options">⋮</button>
+      <button type="button" role="button" aria-label="Refresh Challenge.">↻</button>
+      <button type="button" role="button" aria-label="Skip Challenge">Skip</button>
+      <button type="button" id="verify">Verify</button>
+    </div>
+  </div>
+  <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
+  <script>
+    const answers = new Set([0, 4, 8]);
+    const selected = new Set();
+    const colors = ["#e74c3c","#3498db","#2ecc71","#9b59b6","#f39c12","#1abc9c","#34495e","#e67e22","#16a085"];
+    const grid = document.getElementById("grid");
+    for (let i = 0; i < 9; i += 1) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "rc-imageselect-tile";
+      btn.setAttribute("aria-label", answers.has(i) ? "traffic light" : "other");
+      btn.style.background = colors[i];
+      btn.textContent = String(i + 1);
+      btn.addEventListener("click", () => {
+        if (selected.has(i)) { selected.delete(i); btn.classList.remove("selected"); }
+        else { selected.add(i); btn.classList.add("selected"); }
+      });
+      grid.appendChild(btn);
+    }
+    document.getElementById("verify").addEventListener("click", () => {
+      const ok = answers.size === selected.size && [...answers].every((i) => selected.has(i));
+      if (ok) {
+        document.getElementById("bw-captcha-response").value = "bw_grid_token_" + Date.now().toString(36);
+        document.title = "Verified";
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Checkbox widget beside the page's own submit button</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; background: #f6f7f9; }
+    .widget {
+      width: 300px; height: 65px; background: #fafafa; border: 1px solid #d3d3d3;
+      display: flex; align-items: center; gap: 12px; padding: 0 12px; box-sizing: border-box;
+    }
+    .box { width: 24px; height: 24px; border: 2px solid #888; background: #fff; cursor: pointer; }
+    .box.checked { background: #2ecc71; border-color: #2ecc71; }
+    #submit { margin-top: 16px; padding: 8px 16px; }
+    #posted { color: #c0392b; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Verify you are human</h1>
+  <!--
+    The challenge has a specific checkbox control and the host page has its own
+    submit button. The solver must prefer the challenge control; falling through
+    to `button[type=submit]` posts this form without a token.
+  -->
+  <form id="form" onsubmit="return false;">
+    <div class="bw-captcha" data-bw-captcha="checkbox" id="bw-captcha">
+      <div class="widget" id="widget">
+        <div class="box" id="box" role="checkbox" aria-checked="false"></div>
+        <span>I am not a robot</span>
+      </div>
+    </div>
+    <button type="submit" id="submit">Check</button>
+  </form>
+  <p id="posted"></p>
+  <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
+  <script>
+    document.getElementById("box").addEventListener("click", () => {
+      document.getElementById("box").classList.add("checked");
+      document.getElementById("box").setAttribute("aria-checked", "true");
+      document.getElementById("bw-captcha-response").value =
+        "bw_decoy_token_" + Date.now().toString(36);
+      document.title = "Verified";
+    });
+    document.getElementById("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      // Records that the host form was submitted, solved or not.
+      document.getElementById("posted").textContent = "submitted";
+    });
+  </script>
+</body>
+</html>

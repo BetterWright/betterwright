@@ -133,8 +133,10 @@ return {
 ### Native CAPTCHA helpers
 
 Browser snippets receive `captcha.inspect(bounds?)`, `captcha.click(bounds)`,
-`captcha.drag(from, to)`, and `captcha.readText(bounds)`. Detected challenges
-also attach a `captcha` image automatically. Treat a challenge as resumable:
+`captcha.clickTiles(indexes)`, `captcha.drag(from, to)`, `captcha.readText(bounds)`,
+and `captcha.solve({ tiles })`. Detected challenges also attach a `captcha` image
+automatically. For an image grid, open the numbered crop and call
+`captcha.solve({ tiles: [indexes] })`. Treat a challenge as resumable:
 inspect the fresh result after each action. A rejection at the same stage
 requires an immediate alternate first-party source or human handoff; otherwise,
 continue through at most three distinct stages before taking that handoff. When
