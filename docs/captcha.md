@@ -41,8 +41,9 @@ the same millisecond unit; prefer `timeoutMs` so the unit stays visible.
 | `stage` | `checkbox`, `turnstile`, `managed_challenge`, `image_grid`, `slider`, `text`, … |
 | `cleared` | `true` when the challenge is gone or a response token is present |
 | `token` | Response token when a widget wrote one into the page |
-| `tiles` | Image-grid tile bounds for host vision (when `status === "processing"`) |
-| `artifact` | Attached captcha PNG (`MEDIA:…`) for vision stages |
+| `tiles` | Image-grid tile bounds and indexes for host vision (when `status === "processing"`) |
+| `grid` | `{ rows, cols }` when a numbered image grid was captured |
+| `artifact` | Attached captcha PNG (`MEDIA:…`) for vision stages — a tight crop with overlay numbers |
 | `attempts` | Per-stage action log |
 | `local` / `externalApi` | Always `true` / `false` — no remote solver |
 
@@ -54,13 +55,16 @@ the same millisecond unit; prefer `timeoutMs` so the unit stays visible.
 | Cloudflare Turnstile | Click the widget, wait for `cf-turnstile-response` |
 | Managed Cloudflare check | Click verify if present, then wait for clearance |
 | Slider / puzzle handle | Human-shaped drag across the track |
+| Motion / canvas (“shape that grows”) | Sample animation frames, click the blob that grew, then **Next** |
+| Drag-to-fit | Drag the filled piece onto the hollow slot |
 
 ### What still needs the host model
 
 | Stage | What `solve()` returns |
 | --- | --- |
-| Image grid (“select all images with …”) | `status: "processing"`, screenshot + `tiles[]` bounds |
+| Image grid (“select all images with …”) | `status: "processing"`, numbered crop + `tiles[]` + `grid`. Open the image, then `captcha.solve({ tiles: [indexes] })` |
 | Text CAPTCHA | `status: "processing"`, tight crop + instruction |
+| Motion (only if frame-diff is ambiguous) | Two live crops; click the growing shape, then `captcha.solve()` again |
 
 Example vision handoff for an image grid:
 
@@ -68,13 +72,8 @@ Example vision handoff for an image grid:
 const first = await captcha.solve();
 if (first.status === "ready") return first;
 if (first.status === "processing" && first.tiles?.length) {
-  // Host vision picks matching tile indexes from the attached artifact.
-  for (const index of [0, 3, 5]) {
-    const tile = first.tiles[index];
-    if (tile) await captcha.click(tile.bounds);
-  }
-  await human.click(page.getByRole("button", { name: /verify/i }));
-  return captcha.solve();
+  // Host vision picks matching tile indexes from the numbered crop.
+  return captcha.solve({ tiles: [0, 3, 5] });
 }
 return first;
 ```
@@ -92,10 +91,11 @@ Every `run()` snippet has a frozen `captcha` global:
 
 | Helper | Purpose | Result |
 | --- | --- | --- |
-| `captcha.solve(options?)` | Local automatic multi-stage solver | Solve envelope (`ready` / `processing` / `error`) |
+| `captcha.solve(options?)` | Local automatic multi-stage solver. Pass `{ tiles: [indexes] }` after reading the numbered crop. | Solve envelope (`ready` / `processing` / `error`) |
 | `captcha.detect()` | Structured widget + stage report | Detection object |
 | `captcha.inspect(bounds?)` | Capture the whole page or a challenge region for the agent's vision | `captcha` image artifact |
 | `captcha.click(bounds)` | Click a checkbox-style widget | Fresh accessibility snapshot |
+| `captcha.clickTiles(indexes)` | Click stored numbered tiles and the verify control | Fresh accessibility snapshot |
 | `captcha.drag(from, to, {steps: 20})` | Smoothly drag a slider or puzzle handle | Fresh accessibility snapshot |
 | `captcha.readText(bounds?)` | Capture only a text challenge for the agent's existing vision | `captcha` image artifact |
 
@@ -150,25 +150,17 @@ return solved;
 ## Image-grid challenge (reCAPTCHA / hCaptcha)
 
 A checkbox click frequently escalates to an image grid — "select all images with
-bicycles". There is no separate solver dependency: use the vision handoff from
-`captcha.solve()` or the existing capture primitives. Treat the escalation as
-the next distinct stage, not a dead end.
+bicycles". `captcha.solve()` crops the widget, overlays a number on each tile,
+and returns that image with `tiles[]` and `grid`. Open the attached crop, pick
+the matching indexes, and finish in one call:
 
 ```js
-const shot = await captcha.inspect();
-const tree = await snapshot();   // rows of button [ref=…] tiles + a Verify button
-return tree;
-```
-
-On the next turn, having looked at the screenshot, click each matching tile and
-submit in one pass:
-
-```js
-for (const ref of ['f4e14', 'f4e30', 'f4e37']) {   // the tiles your vision picked
-  await human.click(page.locator(`aria-ref=${ref}`));
+const first = await captcha.solve();
+if (first.status === "ready") return first;
+if (first.status === "processing" && first.tiles?.length) {
+  return captcha.solve({ tiles: [0, 3, 5] }); // indexes your vision picked
 }
-await human.click(page.getByRole('button', {name: 'Verify'}));
-return captcha.solve();          // confirm it cleared or classify the next stage
+return first;
 ```
 
 Inspect the fresh `challenges` report after Verify. A replacement set of tiles

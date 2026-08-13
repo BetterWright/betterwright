@@ -9,6 +9,32 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- Image-grid CAPTCHAs (hCaptcha / reCAPTCHA puzzles) now return a tight numbered
+  crop instead of a full-page screenshot. After looking at that image, finish
+  with `captcha.solve({ tiles: [indexes] })` or `captcha.clickTiles(indexes)` —
+  the same look-then-click loop Aside uses, without a third-party solver.
+- `captcha.solve()` distinguishes hCaptcha motion (“shape that grows”) and
+  drag-to-fit puzzles from image grids, and ignores widget chrome (EN / Skip /
+  Refresh) when numbering tiles. Motion stages sample animation frames, click
+  the shape that grew, and confirm **Next**. Drag-to-fit drags the filled piece
+  onto the hollow slot. Image grids still hand a numbered crop to host vision.
+
+### Fixed
+
+- Headed Chromium no longer shows the unsupported `--host-resolver-rules`
+  infobar. Playwright injects `MAP * ~NOTFOUND` whenever a SOCKS `proxy` option
+  is set; BetterWright now points Chromium at the guard with `--proxy-server`
+  and `--proxy-bypass-list` instead, so that switch never reaches the command
+  line. The SOCKS guard still resolves hostnames and re-validates every IP.
+- Captcha (and other) screenshots no longer stall for 30s on `document.fonts`.
+  Playwright's encoder times out sooner and falls back to CDP, which captures
+  the current surface without waiting for webfonts that never settle.
+- Challenge-widget crops prefer the puzzle iframe (`frame=challenge` / bframe)
+  over the checkbox iframe, so motion/grid inspect shots are the widget rather
+  than the full page.
+
 ## [1.8.2] - 2026-08-12
 
 A compatibility patch for the two regressions reported in

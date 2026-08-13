@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Drag-to-fit CAPTCHA fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; background: #f6f7f9; }
+    h2 { margin: 0 0 12px; font-size: 1rem; }
+    .board {
+      position: relative; width: 420px; height: 220px;
+      background: #d7e0e8; border: 1px solid #c5c9d0;
+    }
+    .piece, .slot {
+      position: absolute; width: 56px; height: 56px; border-radius: 50%;
+    }
+    .piece {
+      left: 36px; top: 82px; background: #2c3e50; cursor: grab; z-index: 2;
+    }
+    .slot {
+      left: 300px; top: 82px;
+      background: transparent;
+      border: 6px solid #2c3e50;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <div class="bw-captcha" data-bw-captcha="drag" id="bw-captcha">
+    <h2 class="prompt-text">Please drag the element to the place where it fits</h2>
+    <canvas id="scene" width="420" height="220"></canvas>
+  </div>
+  <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
+  <script>
+    const canvas = document.getElementById("scene");
+    const ctx = canvas.getContext("2d");
+    const piece = { x: 64, y: 110, r: 28 };
+    const hole = { x: 330, y: 110, r: 28 };
+    let dragging = false;
+
+    function draw() {
+      ctx.fillStyle = "#d7e0e8";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.beginPath();
+      ctx.arc(hole.x, hole.y, hole.r, 0, Math.PI * 2);
+      ctx.strokeStyle = "#2c3e50";
+      ctx.lineWidth = 6;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(piece.x, piece.y, piece.r, 0, Math.PI * 2);
+      ctx.fillStyle = "#2c3e50";
+      ctx.fill();
+    }
+    draw();
+
+    function at(event) {
+      const box = canvas.getBoundingClientRect();
+      return { x: event.clientX - box.left, y: event.clientY - box.top };
+    }
+    canvas.addEventListener("mousedown", (event) => {
+      const p = at(event);
+      if (Math.hypot(p.x - piece.x, p.y - piece.y) <= piece.r + 4) dragging = true;
+    });
+    window.addEventListener("mousemove", (event) => {
+      if (!dragging) return;
+      const p = at(event);
+      piece.x = p.x;
+      piece.y = p.y;
+      draw();
+    });
+    window.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      if (Math.hypot(piece.x - hole.x, piece.y - hole.y) <= 22) {
+        document.getElementById("bw-captcha-response").value =
+          "bw_drag_token_" + Date.now().toString(36);
+        document.title = "Verified";
+        piece.x = hole.x;
+        piece.y = hole.y;
+      }
+      draw();
+    });
+  </script>
+</body>
+</html>

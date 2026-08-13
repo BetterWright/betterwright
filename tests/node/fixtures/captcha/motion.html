@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Motion CAPTCHA fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; background: #f6f7f9; }
+    .widget { width: 420px; background: #fff; border: 1px solid #d3d3d3; padding: 8px; }
+    h2 { margin: 0 0 8px; font-size: 1rem; background: #1a9e93; color: #fff; padding: 8px; }
+    canvas { display: block; background: #d7e0e8; cursor: pointer; }
+    .chrome { display: flex; gap: 8px; margin-top: 8px; }
+    .chrome button {
+      width: 32px; height: 32px; border: 1px solid #ccc; background: #fafafa;
+      cursor: pointer; font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="bw-captcha widget" data-bw-captcha="motion" id="bw-captcha">
+    <h2 class="prompt-text">Please click on the shape that grows</h2>
+    <canvas id="scene" width="400" height="280"></canvas>
+    <div class="chrome">
+      <button type="button" role="button" aria-label="EN - English, Select a language">EN</button>
+      <button type="button" role="button" aria-label="About hCaptcha &amp; Accessibility Options">⋮</button>
+      <button type="button" role="button" aria-label="Skip Challenge">Skip</button>
+    </div>
+  </div>
+  <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
+  <script>
+    const canvas = document.getElementById("scene");
+    const ctx = canvas.getContext("2d");
+    const target = { x: 280, y: 90, r: 14 };
+    const decoys = [
+      { x: 90, y: 140, r: 14 },
+      { x: 200, y: 200, r: 12 },
+      { x: 330, y: 210, r: 11 },
+    ];
+    function star(x, y, r) {
+      ctx.beginPath();
+      for (let i = 0; i < 5; i += 1) {
+        const a = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+        const px = x + Math.cos(a) * r;
+        const py = y + Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+    function draw() {
+      target.r = Math.min(30, target.r + 0.18);
+      ctx.fillStyle = "#d7e0e8";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#2c3e50";
+      for (const decoy of decoys) star(decoy.x, decoy.y, decoy.r);
+      star(target.x, target.y, target.r);
+      requestAnimationFrame(draw);
+    }
+    draw();
+    canvas.addEventListener("click", (event) => {
+      const box = canvas.getBoundingClientRect();
+      const x = event.clientX - box.left;
+      const y = event.clientY - box.top;
+      const growing = target.r + 10;
+      if (Math.hypot(x - target.x, y - target.y) <= growing + 8) {
+        document.getElementById("bw-captcha-response").value =
+          "bw_motion_token_" + Date.now().toString(36);
+        document.title = "Verified";
+      }
+    });
+  </script>
+</body>
+</html>

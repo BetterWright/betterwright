@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   chromiumArgsWarning,
+  guardProxyLaunchArgs,
   mergeChromiumArgs,
   normalizeChromiumArgs,
   parseChromiumArgs,
@@ -207,6 +208,29 @@ test("software rasterizer boilerplate is dropped with a warning instead of faili
     chromiumArgsWarning(ignored),
     /managed browser must retain its WebGL software fallback/,
   );
+});
+
+test("host-resolver-rules is dropped so Chromium does not paint an infobar", () => {
+  const extra = normalizeChromiumArgs([
+    '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1',
+  ]);
+  const { args, ignored } = mergeChromiumArgs([], extra);
+  assert.deepEqual(args, []);
+  assert.deepEqual(ignored, ["--host-resolver-rules"]);
+  assert.match(chromiumArgsWarning(ignored), /unsupported-flag infobar/);
+});
+
+test("guard proxy launch args point Chromium at the SOCKS port without resolver rules", () => {
+  assert.deepEqual(guardProxyLaunchArgs(1080), [
+    "--proxy-server=socks5://127.0.0.1:1080",
+    "--proxy-bypass-list=<-loopback>",
+  ]);
+  assert.equal(
+    guardProxyLaunchArgs(9050).some((arg) => arg.startsWith("--host-resolver-rules")),
+    false,
+  );
+  assert.throws(() => guardProxyLaunchArgs(0), { name: "TypeError" });
+  assert.throws(() => guardProxyLaunchArgs(70_000), { name: "TypeError" });
 });
 
 test("the WebRTC proxy boundary cannot be displaced on either browser backend", () => {

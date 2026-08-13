@@ -32,7 +32,7 @@ whole path works by loading a real page.
 | --- | --- |
 | [Credential vault](credentials.md) | Encrypted storage, site matching, selector-free login, generated-password commits, and `betterwright vault` for reading your own saved passwords back |
 | [Live view & handoff](live-view.md) | Watch/coach/take over in a browser tab; hosting presets, password gate, security model |
-| [CAPTCHA helpers](captcha.md) | Local checkbox/Turnstile/slider solving; vision handoff for image grids |
+| [CAPTCHA helpers](captcha.md) | Local checkbox/Turnstile/slider/motion/drag-fit solving; numbered-crop vision loop for image grids |
 | [Network policy](network-policy.md) | What the browser may reach; the unliftable metadata floor |
 | [Skill packs](skills.md) | Per-site / per-password-manager guidance the driving agent reads on demand — your own or the built-in loop |
 | [Agent guidance](agent-prompt.md) | The operator prompt and its guardrail options |
