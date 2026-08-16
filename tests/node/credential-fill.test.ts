@@ -1067,7 +1067,13 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
         "custom-vault-update-note",
       ]) {
         assert.ok(!text.includes(secret), `result must redact ${secret}`);
-        assert.ok(!envelope.includes(secret), `envelope must redact ${secret}`);
+        if (envelope.includes(secret)) {
+          const at = envelope.indexOf(secret);
+          assert.fail(
+            `envelope must redact ${secret} — leaked at ${at}: ` +
+              JSON.stringify(envelope.slice(Math.max(0, at - 60), at + 60)),
+          );
+        }
       }
       assert.match(text, /REDACTED_PASSWORD/);
     });
