@@ -294,7 +294,7 @@ export async function connectSessionDaemon({
   if (ignoreMismatch || (hello.version === version && hello.configSig === configSig)) {
     return { ok: true, channel, hello };
   }
-  // Mismatched daemon (older package, or different policy/cloaking flags).
+  // Mismatched daemon (older package, or different policy/browser flags).
   // Idle: replace it. Holding live sessions: leave it alone and let the
   // caller fall back to a private one-shot browser.
   const sessions = Array.isArray(hello.sessions) ? hello.sessions : [];

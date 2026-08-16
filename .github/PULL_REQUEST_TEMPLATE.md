@@ -19,7 +19,7 @@ line only if it is genuinely unrelated to your change, and say so.
       result envelopes, log lines, and MCP/agent tool results go through
       redaction; the vault still fills without returning values to snippet code.
 - [ ] **Dependency pins are still mirrored everywhere.** playwright-core,
-      cloakbrowser, tldts, and patchright-core are exact-pinned in
+      tldts, and patchright-core are exact-pinned in
       `package.json`, restated in `src/doctor.ts`, and referenced in
       `.github/workflows/publish-npm.yml`. `npm run check:versions` is green.
 - [ ] **Public API changes update `types/*.d.ts` in this same commit.** The

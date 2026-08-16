@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Cloaking V2 stealth report.
+// Launch-identity stealth report.
 //
 // Serves tests/fixtures/stealth-probe.html on loopback, launches the managed
 // browser in headless and (when a display exists) headed mode, collects the
@@ -25,7 +25,7 @@ const LIVE = args.includes("--live");
 const AS_JSON = args.includes("--json");
 const HEADED_ONLY = args.includes("--headed-only");
 const HEADLESS_ONLY = args.includes("--headless-only");
-const NO_CLOAK_V2 = args.includes("--no-cloak-v2");
+const NO_LAUNCH_IDENTITY = args.includes("--no-launch-identity");
 function flagValue(flag) {
   const index = args.indexOf(flag);
   return index !== -1 && index + 1 < args.length ? args[index + 1] : null;
@@ -156,7 +156,7 @@ async function launchAndProbe({ headless, label }) {
   const browser = new BetterWright({
     home,
     headless,
-    cloakV2: !NO_CLOAK_V2,
+    launchIdentity: !NO_LAUNCH_IDENTITY,
     defaultTimeout: 60,
     ...(UPSTREAM ? { upstreamProxy: UPSTREAM, geoip: GEOIP } : {}),
   });

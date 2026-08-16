@@ -66,9 +66,9 @@ client it does not know), or when you want to do it deliberately.
    ```
 
    On macOS arm64, Linux x64, and Windows x64, setup fetches checksum-pinned
-   BetterChromium into `~/.betterwright/chromium/`. Other platforms, plus Linux
-   without an accessible `/dev/dri` render device, automatically install
-   managed CloakBrowser compatibility mode. npm
+   BetterChromium into `~/.betterwright/chromium/`. Linux hosts without an
+   accessible `/dev/dri` render device run the same fork with the SwiftShader
+   software renderer. npm
    installation itself has no hidden browser-download lifecycle script.
 4. **Verify** with `betterwright doctor` — it must end with
    `BetterWright is ready.` Every line it flags with `✗` names its own fix; if
@@ -251,11 +251,12 @@ The server keeps one browser alive for its lifetime, so pages and logins persist
 across tool calls.
 
 BetterChromium (`~/.betterwright/chromium/`) is the default backend on
-supported macOS arm64, GPU-capable Linux x64, and Windows x64 hosts. Platforms
-without a published artifact and Linux hosts without an accessible `/dev/dri`
-render device automatically use managed CloakBrowser; `--cloak-only` and
-`BETTERWRIGHT_BACKEND=cloak` force the same compatibility backend on a
-supported host. In a sandbox that hides `/dev/dri`, explicitly require the
+supported macOS arm64, Linux x64, and Windows x64 hosts. Linux hosts without
+an accessible `/dev/dri` render device run the same fork with the SwiftShader
+software renderer. A different browser — a local Chromium binary, a CDP
+endpoint, or a named cloud browser — is attached through the provider option;
+see [docs/browser-providers.md](docs/browser-providers.md). In a sandbox that
+hides `/dev/dri`, explicitly require the
 native backend with `BETTERWRIGHT_BACKEND=chromium-fork`; doctor reports the
 routing reason and warns that WebGL must be verified inside that namespace.
 See [docs/chromium-fork.md](docs/chromium-fork.md). This is not a guarantee of

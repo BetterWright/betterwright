@@ -1,6 +1,6 @@
 import type { VaultMatchMode } from "./vault.js";
 
-export type BrowserFlavor = "cloak";
+export type BrowserFlavor = "chromium-fork";
 export type HeadlessMode = boolean | "auto";
 export type PublicSearchPolicy = "block" | "allow";
 export type DownloadPolicy = "ask" | "allow" | "deny";

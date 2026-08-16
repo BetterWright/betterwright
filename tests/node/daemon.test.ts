@@ -373,19 +373,25 @@ test("config mismatch on a busy daemon falls back; ignoreMismatch connects anywa
 test("normalizeDaemonConfig is order-insensitive and default-stable", () => {
   const a = daemonConfigSignature({
     policy: { allowHosts: ["B.com", "a.com"], blockHosts: [] },
-    cloak: { cloakV2: true },
+    browser: { launchIdentity: true },
     headless: true,
   });
   const b = daemonConfigSignature({
     headless: true,
-    cloak: {},
+    browser: {},
     policy: { allowHosts: ["a.com", "b.com", "a.com"] },
   });
   assert.equal(a, b);
   assert.notEqual(a, daemonConfigSignature({ headless: false }));
   assert.equal(
-    normalizeDaemonConfig({}).cloak.stealthRuntimeFix,
+    normalizeDaemonConfig({}).browser.stealthRuntimeFix,
     false,
+  );
+  assert.equal(normalizeDaemonConfig({}).browser.provider, null);
+  // Two different provider browsers must not share a daemon.
+  assert.notEqual(
+    daemonConfigSignature({ browser: { provider: { provider: "kernel", apiKey: "a" } } }),
+    daemonConfigSignature({ browser: { provider: { provider: "kernel", apiKey: "b" } } }),
   );
 });
 

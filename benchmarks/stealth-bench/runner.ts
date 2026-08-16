@@ -105,6 +105,8 @@ export async function benchmarkBinaryMetadata(
 export function configureForkEnvironment(binary, env = process.env) {
   env.BETTERWRIGHT_CHROMIUM_PATH = binary;
   delete env.BETTERWRIGHT_CHROMIUM_ROOT;
+  // A removed toggle: scrub it so a stale deployment environment cannot
+  // change which browser the benchmark launches.
   delete env.CLOAKBROWSER_BINARY_PATH;
 }
 

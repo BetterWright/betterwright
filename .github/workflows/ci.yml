@@ -64,22 +64,19 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
-      # BetterChromium is the release default. CloakBrowser is
-      # tested separately as the explicit compatibility opt-out.
-      - name: Read the managed browser versions
+      # BetterChromium is the only bundled browser backend.
+      - name: Read the managed browser version
         id: browser_pins
         shell: bash
         run: |
-          echo "cloak=$(node -p 'require("./package.json").dependencies.cloakbrowser')" >> "$GITHUB_OUTPUT"
           echo "chromium=$(node -e 'import("./dist/src/chromium-fork.js").then(m => console.log(m.BETTERWRIGHT_CHROMIUM_VERSION))')" >> "$GITHUB_OUTPUT"
-      - name: Cache the managed browser downloads
+      - name: Cache the managed browser download
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cloakbrowser
             ~/.betterwright/chromium
-          key: managed-browsers-${{ runner.os }}-cloak-${{ steps.browser_pins.outputs.cloak }}-chromium-${{ steps.browser_pins.outputs.chromium }}
-      - name: Install managed browsers
+          key: managed-browsers-${{ runner.os }}-chromium-${{ steps.browser_pins.outputs.chromium }}
+      - name: Install managed browser
         run: node dist/bin/betterwright.js setup
       - name: Enable Chromium sandbox user namespaces
         shell: bash
@@ -94,8 +91,6 @@ jobs:
       - run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
-      - name: Test managed CloakBrowser headed mode
-        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js
 
   cross-platform:
     # A NEW job, deliberately not a matrix over the two jobs above. Branch
@@ -163,10 +158,9 @@ jobs:
       # apart.
       #
       # Runtime dependencies are exact-pinned and Dependabot is configured to
-      # leave them alone (.github/dependabot.yml): playwright-core and
-      # cloakbrowser each couple to a specific browser build, and tldts carries
-      # the Public Suffix List snapshot that decides credential base-domain
-      # scope. An advisory against one of those cannot be applied by bumping a
+      # leave them alone (.github/dependabot.yml): playwright-core couples to
+      # a specific browser build, and tldts carries the Public Suffix List
+      # snapshot that decides credential base-domain scope. An advisory against one of those cannot be applied by bumping a
       # caret — it needs a deliberate, browser-coupled release — so gating on it
       # would block every unrelated pull request on work nobody can do that day.
       # That same policy is why the audit exists at all: with Dependabot silent

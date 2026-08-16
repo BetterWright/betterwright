@@ -6,7 +6,7 @@ import { BetterWright } from "../../dist/src/index.js";
 import { resolve } from "../../dist/src/stealth-hooks.js";
 
 // The resolve hook is the load-bearing piece: it swaps the driver for the whole
-// worker process (including the Cloak wrapper's own bare import) by rewriting
+// worker process (its own bare import) by rewriting
 // the `playwright-core` specifier to `patchright-core` before Node resolves it.
 test("stealth hook redirects playwright-core to patchright-core", async () => {
   const calls = [];

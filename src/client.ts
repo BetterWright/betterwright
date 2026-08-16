@@ -79,30 +79,30 @@ function resolveHeadless(headless) {
   return headless !== false;
 }
 
-function assertManagedCloakOnly(options) {
-  const browser = String(
-    options.browser ?? process.env.BETTERWRIGHT_BROWSER ?? "cloak",
-  )
-    .trim()
-    .toLowerCase();
-  if (browser !== "cloak") {
+function resolveProviderOption(options) {
+  // Explicit option wins; BETTERWRIGHT_CDP_URL is the host-level shorthand
+  // for "attach to this CDP endpoint" (validated in the worker).
+  if (Object.hasOwn(options, "provider")) return options.provider ?? null;
+  const env = String(process.env.BETTERWRIGHT_CDP_URL || "").trim();
+  return env ? { cdpUrl: env } : null;
+}
+
+/** The managed-browser legacy toggles are gone; reject them with the fix. */
+function assertNoLegacyBrowserOptions() {
+  const legacyBrowser = String(process.env.BETTERWRIGHT_BROWSER || "").trim();
+  if (legacyBrowser && legacyBrowser.toLowerCase() !== "chromium-fork") {
     throw new TypeError(
-      'BetterWright only supports the managed BetterWright browser backend; browser must be "cloak".',
+      "BETTERWRIGHT_BROWSER selected a bundled fallback that no longer " +
+        "exists. The managed BetterChromium fork is the default; for another " +
+        "browser use the provider option ({ executablePath }, { cdpUrl }, or " +
+        "{ provider: <cloud name> }) — docs/browser-providers.md.",
     );
   }
-  if (String(options.executablePath || "").trim()) {
+  if (String(process.env.CLOAKBROWSER_BINARY_PATH || "").trim()) {
     throw new TypeError(
-      "executablePath is not supported. Use BETTERWRIGHT_CHROMIUM_PATH / " +
-        "BETTERWRIGHT_CHROMIUM_ROOT for the native fork, or " +
-        "CLOAKBROWSER_BINARY_PATH for an official CloakBrowser binary.",
-    );
-  }
-  const cdp = String(
-    options.connectOverCdp ?? process.env.BETTERWRIGHT_CONNECT_OVER_CDP ?? "",
-  ).trim();
-  if (cdp) {
-    throw new TypeError(
-      "connectOverCdp is not supported because BetterWright only launches its managed CloakBrowser.",
+      "CloakBrowser support was removed. CLOAKBROWSER_BINARY_PATH has no " +
+        "effect; use provider: { executablePath } to launch a specific " +
+        "Chromium binary.",
     );
   }
 }
@@ -173,11 +173,10 @@ const STEALTH_REGISTER_URL = new URL("./stealth-register.js", import.meta.url).h
  * When on, the worker process is spawned with a module-resolution hook that
  * redirects `playwright-core` to the pre-patched `patchright-core` drop-in, so
  * every `page.evaluate` runs in an isolated world (defeating main-world
- * automation detection) instead of the page's main world. It applies to the
- * managed Cloak browser too, because the hook intercepts the wrapper's own
- * `import("playwright-core")`. Cost: model snippets can no longer read
- * page-defined main-world globals (e.g. `window.__NEXT_DATA__`); DOM access is
- * unaffected. Off by default so normal runs keep full main-world access.
+ * automation detection) instead of the page's main world. Cost: model
+ * snippets can no longer read page-defined main-world globals (e.g.
+ * `window.__NEXT_DATA__`); DOM access is unaffected. Off by default so normal
+ * runs keep full main-world access.
  */
 function resolveStealthRuntimeFix(value) {
   const raw = value ?? process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
@@ -204,13 +203,14 @@ export class BetterWright {
   declare policy: NetworkPolicy;
   declare vault: any;
   declare credentialCapture: boolean;
-  declare browserFlavor: "cloak";
+  declare browserFlavor: "chromium-fork";
+  declare provider: any;
   declare headless: boolean;
   declare searchMinIntervalMs: number;
   declare publicSearchPolicy: "block" | "allow";
   declare downloadPolicy: "ask" | "allow" | "deny";
   declare stealthRuntimeFix: boolean;
-  declare cloakV2: boolean;
+  declare launchIdentity: boolean;
   declare upstreamProxy: string | null;
   declare geoip: boolean;
   declare locale: string | null;
@@ -260,7 +260,8 @@ export class BetterWright {
    *   in the browser: logins the model types save silently; logins the user
    *   types manually prompt in headed sessions ("Save / Not now / Never for
    *   this site"). Requires a vault; forced off when `vault` is false/null.
-   * @param {"cloak"} [options.browser="cloak"] managed CloakBrowser backend
+   * @param {"chromium-fork"} [options.browser="chromium-fork"] managed
+   *   BetterChromium backend (the only bundled browser; see `provider`)
    * @param {boolean|"auto"} [options.headless="auto"] "auto" shows a window when
    *   a display is available and runs headless otherwise; true/false force it
    * @param {number} [options.defaultTimeout=30] per-snippet timeout, seconds
@@ -274,14 +275,24 @@ export class BetterWright {
    *   deny downloads entirely
    * @param {boolean} [options.stealthRuntimeFix=false] run model snippets in an
    *   isolated world (via the pre-patched `patchright-core` driver) so
-   *   `page.evaluate` no longer trips main-world automation detection. Applies
-   *   to the managed Cloak browser. Off by default. Trade-off: snippets can no
-   *   longer read page-defined main-world globals (e.g. `window.__NEXT_DATA__`);
-   *   DOM access and clicks are unaffected. Requires the optional
-   *   `patchright-core` dependency to be installed.
-   * @param {boolean} [options.cloakV2=true] Cloaking V2: coherent desktop
-   *   identity for the managed browser using native CloakBrowser flags and
-   *   binary-specific viewport handling. No page-world API shims are installed.
+   *   `page.evaluate` no longer trips main-world automation detection. Off by
+   *   default. Trade-off: snippets can no longer read page-defined main-world
+   *   globals (e.g. `window.__NEXT_DATA__`); DOM access and clicks are
+   *   unaffected. Requires the optional `patchright-core` dependency, and the
+   *   managed BetterChromium backend (not a provider browser).
+   * @param {boolean} [options.launchIdentity=true] coherent launch identity:
+   *   locale/timezone flags for the managed browser, resolved to match the
+   *   egress IP when `geoip` is on. No page-world API shims are installed and
+   *   no operating system is masked as another — the fork presents the host.
+   * @param {object|null} [options.provider] non-managed browser, opt-in:
+   *   `{ executablePath }` launches a caller-supplied local Chromium binary
+   *   (guard proxy still applies); `{ cdpUrl, headers? }` attaches to any CDP
+   *   WebSocket endpoint; `{ provider: "browser-use"|"kernel"|"browserbase"|
+   *   "steel"|"anchor"|"hyperbrowser"|"browserless"|"brightdata"|"oxylabs",
+   *   apiKey?, sessionOptions? }` mints a cloud browser over that provider's
+   *   API. Remote browsers run outside the guard proxy — the launch warning
+   *   says so. BETTERWRIGHT_CDP_URL is the host-level shorthand for
+   *   `{ cdpUrl }`. See docs/browser-providers.md.
    * @param {string} [options.upstreamProxy] http:// or socks5:// egress proxy
    *   chained through the local policy guard (the IP layer): targets observe
    *   the upstream IP while policy and DNS-rebinding checks stay local.
@@ -297,9 +308,9 @@ export class BetterWright {
    *   parked off-screen, retaining headed compositing without occupying the
    *   visible desktop.
    * @param {"macos"|"windows"|"linux"} [options.platform] identity platform
-   *   presented to sites. The BetterChromium fork defaults to "macos" (a
-   *   realistic consumer-Mac fingerprint captured from real Chrome on Apple
-   *   Silicon); the managed CloakBrowser path defaults to the host platform.
+   *   presented to sites. Defaults to the host platform — the fork presents
+   *   the OS it actually runs on (a Linux host is a Linux browser); set this
+   *   only to pin a specific identity explicitly.
    * @param {string[]} [options.chromiumArgs] extra Chromium switches appended
    *   to the managed launch arguments, for host-level tuning the managed list
    *   has no opinion on. GPU-less Linux hosts automatically use the packaged
@@ -345,14 +356,15 @@ export class BetterWright {
     this.credentialCapture = this.vault
       ? options.credentialCapture !== false
       : false;
-    assertManagedCloakOnly(options);
-    this.browserFlavor = "cloak";
+    assertNoLegacyBrowserOptions();
+    this.provider = resolveProviderOption(options);
+    this.browserFlavor = "chromium-fork";
     this.headless = resolveHeadless(options.headless);
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
     this.publicSearchPolicy = resolvePublicSearchPolicy(options.publicSearchPolicy);
     this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
     this.stealthRuntimeFix = resolveStealthRuntimeFix(options.stealthRuntimeFix);
-    this.cloakV2 = options.cloakV2 !== false;
+    this.launchIdentity = options.launchIdentity !== false;
     this.upstreamProxy = options.upstreamProxy || null;
     this.geoip = options.geoip === true;
     this.locale = options.locale || null;
@@ -446,8 +458,9 @@ export class BetterWright {
       artifactsDir: artifacts,
       downloadsDir: downloads,
       browserFlavor: this.browserFlavor,
+      provider: this.provider,
       stealthRuntimeFix: this.stealthRuntimeFix,
-      cloakV2: this.cloakV2,
+      launchIdentity: this.launchIdentity,
       upstreamProxy: this.upstreamProxy,
       geoip: this.geoip,
       locale: this.locale,
@@ -493,20 +506,17 @@ export class BetterWright {
     const core = resolvePlaywrightCore();
     if (core) env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = core;
 
-    // Stealth: redirect the worker's (and the Cloak wrapper's) playwright-core
-    // to patchright-core by registering a resolve hook at process start, before
-    // any driver import runs. `--import` must precede the worker script.
+    // Stealth: redirect the worker's playwright-core to patchright-core by
+    // registering a resolve hook at process start, before any driver import
+    // runs. `--import` must precede the worker script. The stealth driver only
+    // applies to the managed BetterChromium launch; a provider browser (local
+    // or remote) gets the pinned stock driver.
     const execArgv = [];
     if (this.stealthRuntimeFix) {
-      const pathHint = String(process.env.BETTERWRIGHT_CHROMIUM_PATH || "").trim();
-      const rootHint = String(process.env.BETTERWRIGHT_CHROMIUM_ROOT || "").trim();
-      const nativeForkConfigured =
-        (pathHint && pathHint.toLowerCase() !== "off") ||
-        (rootHint && rootHint.toLowerCase() !== "off");
-      if (nativeForkConfigured) {
+      if (this.provider) {
         throw new BrowserError(
-          "stealthRuntimeFix cannot be combined with BetterChromium; " +
-            "the native fork requires the pinned stock playwright-core driver.",
+          "stealthRuntimeFix applies only to the managed BetterChromium " +
+            "backend; it cannot be combined with a provider browser.",
         );
       }
       if (!stealthDriverAvailable()) {

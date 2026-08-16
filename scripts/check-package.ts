@@ -195,7 +195,7 @@ try {
       "import { runMcpServer } from 'betterwright/mcp-server';",
       "import { createLocalCredentialVault, type VaultRevealedRecord } from 'betterwright/vault';",
       "const policy = new NetworkPolicy();",
-      "const browser = new BetterWright({ policy, browser: 'cloak' });",
+      "const browser = new BetterWright({ policy, provider: { cdpUrl: 'wss://browser.example.com' } });",
       "const vault = new LocalCredentialVault({ home: '/tmp/betterwright-package-types' });",
       "const owned = createLocalCredentialVault({ home: '/tmp/betterwright-package-types' });",
       "const revealed: Promise<VaultRevealedRecord> = owned.ownerReveal('cred_1');",
@@ -251,7 +251,7 @@ try {
   } catch {
     throw new Error(`doctor --json did not emit JSON:\n${doctor.stdout}${doctor.stderr}`);
   }
-  for (const field of ["cloakbrowser_binary_version", "cloakbrowser_binary_tier"]) {
+  for (const field of ["chromium_fork", "browser_selection_reason", "provider"]) {
     if (!(field in report)) throw new Error(`doctor did not report ${field}`);
   }
   if (!Array.isArray(report.checks) || !report.checks.length) {

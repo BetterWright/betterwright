@@ -60,42 +60,38 @@ pinned BetterChromium release matches that package. Package updates are intentio
 rather than automatic, so application lockfiles continue to control when a
 new BetterWright version is adopted.
 
-### BetterChromium and cross-platform fallback
+### BetterChromium, and bringing your own browser
 
 On supported macOS arm64, Linux x64, and Windows x64 hosts, native
-BetterChromium is the default backend for every session, including screenshots,
-credentials, CAPTCHA handling, and live view. `betterwright setup` installs it
-under `~/.betterwright/chromium/`; `betterwright update` refreshes the pinned
-release. There is no silent fallback when it is missing or fails to launch.
+BetterChromium is the only bundled backend for every session, including
+screenshots, credentials, CAPTCHA handling, and live view. `betterwright
+setup` installs it under `~/.betterwright/chromium/`; `betterwright update`
+refreshes the pinned release. There is no silent fallback when it is missing
+or fails to launch.
 
 When BetterWright does not publish a BetterChromium artifact for the current
-OS/architecture (for example Linux arm64 on Raspberry Pi), `setup` and `update`
-install managed CloakBrowser and the runtime selects it automatically. This is
-platform routing, not error recovery: a missing artifact on a supported host
-still fails closed.
-
-### Explicit CloakBrowser compatibility mode
-
-CloakBrowser is also retained for operators who deliberately opt out of the
-native backend on a supported host. Run `betterwright setup --cloak-only`, then set
-`BETTERWRIGHT_CHROMIUM_ROOT=off` (or `BETTERWRIGHT_CHROMIUM_PATH=off`) when
-launching. The wrapper verifies its signed browser release before extraction;
-`CLOAKBROWSER_BINARY_PATH` may point at an official existing binary.
+OS/architecture (for example Linux arm64), or you want a different browser
+entirely, the **provider option** swaps in a browser you supply: a local
+Chromium binary (`provider: { executablePath }`, still on the guard proxy),
+any CDP endpoint (`provider: { cdpUrl }` / `BETTERWRIGHT_CDP_URL`), or a
+cloud browser from Browser Use, Kernel, Browserbase, Steel, Anchor,
+Hyperbrowser, Browserless, Bright Data, or Oxylabs. See
+[browser-providers.md](browser-providers.md).
 
 ### BetterChromium backend (macOS arm64 / Linux x64 / Windows x64)
 
 `betterwright setup` downloads BetterWright's own
 Chromium build into `~/.betterwright/chromium/` (SHA-256 verified from the
 pinned GitHub Release). The runtime uses the fork for all browser work —
-per-profile-stable canvas/audio farbling, platform masking (a Linux server
-presents as a consumer Mac), and bundled macOS-metric fonts. The npm package
-is only the JS/runtime; the ~200 MB zip is fetched on demand, never as an
-install lifecycle side effect. Details: [chromium-fork.md](chromium-fork.md).
+per-profile-stable canvas/audio farbling and a coherent fingerprint identity
+that presents the host's real platform (a Linux server is a Linux browser;
+no OS is masked as another). The npm package is only the JS/runtime; the
+~200 MB zip is fetched on demand, never as an install lifecycle side effect.
+Details: [chromium-fork.md](chromium-fork.md).
 
 ```bash
 npx betterwright setup           # install native BetterChromium
 npx betterwright setup --force   # re-download BetterChromium
-npx betterwright setup --cloak-only  # explicit CloakBrowser opt-out
 ```
 
 Resolution order:
@@ -106,30 +102,19 @@ Resolution order:
 2. Zero-config discovery at `~/.betterwright/chromium/<platform>/`: if the
    artifact for this platform exists there, it is used automatically
    (this is what default `setup` populates).
-3. If this platform has no published artifact, use managed CloakBrowser
-   automatically. If the platform is supported but its artifact is missing,
-   launch fails with setup guidance. Either variable set to `off` explicitly
-   selects CloakBrowser on any platform.
+3. Otherwise launch fails with setup guidance — or names the provider option
+   when no artifact exists for this platform.
 
 Backend policy can also be stated directly:
 
 ```bash
 export BETTERWRIGHT_BACKEND=auto            # default policy
 export BETTERWRIGHT_BACKEND=chromium-fork   # require BetterChromium
-export BETTERWRIGHT_BACKEND=cloak           # require CloakBrowser
 ```
 
-`chromium-fork` is the escape hatch for containers and OS sandboxes where
-`/dev/dri` is hidden by the mount namespace even though the operator has
-verified the native backend. It fails closed when the native artifact cannot be
-resolved. `betterwright doctor --json` reports `browser_selection_reason` so a
-routing decision is never silent.
-
-Force the managed path even with an artifact installed:
-
-```bash
-export BETTERWRIGHT_CHROMIUM_ROOT=off
-```
+`chromium-fork` fails closed when the native artifact cannot be resolved.
+`betterwright doctor --json` reports `browser_selection_reason` so a routing
+decision is never silent.
 
 ### Extra Chromium switches
 
@@ -146,15 +131,15 @@ Whitespace-separated; quote a value that contains spaces
 `chromiumArgs: ["--disk-cache-size=104857600"]`, and both sources apply
 together.
 
-On Linux without an accessible `/dev/dri` render device, BetterWright selects
-managed CloakBrowser automatically so standard WebGL remains available.
-`--disable-software-rasterizer` is ignored with a result warning because it
-would recreate the blocked graphics surface fixed in 1.8.1; it does not fail
-launch. `--host-resolver-rules` is ignored for the same reason: Chromium
-draws a persistent unsupported-flag infobar whenever that switch is present,
-and hostname policy is already enforced by the SOCKS guard. `--disable-gpu`
-remains available as a caller-controlled compatibility switch, but it is not
-recommended for either managed backend.
+On Linux without an accessible `/dev/dri` render device, the fork's
+SwiftShader fallback keeps WebGL available on the CPU; `doctor` reports the
+fallback as a warning. `--disable-software-rasterizer` is ignored with a
+result warning because it would recreate the blocked graphics surface fixed
+in 1.8.1; it does not fail launch. `--host-resolver-rules` is ignored for the
+same reason: Chromium draws a persistent unsupported-flag infobar whenever
+that switch is present, and hostname policy is already enforced by the SOCKS
+guard. `--disable-gpu` remains available as a caller-controlled compatibility
+switch.
 
 Two rules keep this from undermining the managed browser:
 
@@ -176,16 +161,13 @@ country. Pin `timezone` and `locale` to the geography of the IP sites see
 geo-sensitive gates (e.g. Google `/sorry`); the same binary with
 `Asia/Singapore` + `en-US` does not.
 
-**Profiles are versioned by backend.** Cloak (~146) cannot open a profile that
-BetterChromium 151 already upgraded. BetterWright 1.8.1 detects that boundary,
-preserves the newer profile, and gives Cloak a stable nested compatibility
-profile. Its sign-ins persist independently; existing BetterChromium cookies
-are intentionally not copied into the older format. A separate
-`BETTERWRIGHT_HOME` remains useful when operators want visibly separate homes.
-
-macOS arm64, Linux x64, and Windows x64 hosts all get the fork artifact. Linux
-without an accessible render device also gets Cloak for automatic WebGL-safe
-selection.
+**Profiles are versioned by the browser that wrote them.** A Chromium profile
+cannot be opened by an older Chromium than the one that last touched it;
+BetterWright detects that boundary, preserves the newer profile, and gives
+the older browser a stable nested compatibility profile. This matters when
+you point `provider: { executablePath }` at an older Chromium than the fork.
+A separate `BETTERWRIGHT_HOME` remains useful when operators want visibly
+separate homes.
 
 ### Idle CPU and page parking
 
@@ -276,7 +258,7 @@ await bw.run("await page.goto('https://example.com')");
   and take the controls for MFA or consequential clicks.
 - [Agent guidance](agent-prompt.md) — make a model drive the browser decisively,
   with configurable guardrails.
-- [Headed and headless browsing](attach-mode.md) — run the same managed Cloak
+- [Headed and headless browsing](attach-mode.md) — run the same managed fork
   profile with or without a visible window.
 - [Network policy](network-policy.md) — controlling what the browser can reach.
 - [Credentials](credentials.md) — built-in encrypted storage, site matching,

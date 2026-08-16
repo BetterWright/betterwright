@@ -24,22 +24,21 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const EXT_BUILD = path.join(ROOT, "dist", "src", "cdpfree", "extension");
 
 function managedBrowserPath() {
-  const root = path.join(os.homedir(), ".cloakbrowser");
-  let versions;
-  try {
-    versions = fs.readdirSync(root);
-  } catch {
-    return null;
-  }
-  return (
-    versions
-      .map((version) =>
-        path.join(root, version, "Chromium.app", "Contents", "MacOS", "Chromium"),
-      )
-      .filter((candidate) => fs.existsSync(candidate))
-      .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
-      .at(-1) || null
-  );
+  // The managed BetterChromium fork installed by `betterwright setup`.
+  const root = path.join(os.homedir(), ".betterwright", "chromium");
+  const candidates = [
+    path.join(
+      root,
+      "mac-arm64",
+      "BetterChromium.app",
+      "Contents",
+      "MacOS",
+      "BetterChromium",
+    ),
+    path.join(root, "linux-x64", "betterchromium"),
+    path.join(root, "win-x64", "betterchromium.exe"),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
 const args = process.argv.slice(2);

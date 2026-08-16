@@ -59,11 +59,10 @@ inherits the same base implementation, so one interception covers both.
 
 Chromium 151 no longer guarantees an automatic software WebGL fallback. The
 r1 Linux BetterChromium binary cannot initialize its bundled SwANGLE renderer
-when no accessible `/dev/dri` render device exists, leaving WebGL blocked. The
-BetterWright launcher therefore keeps native BetterChromium on GPU-capable
-hosts and automatically selects managed CloakBrowser on GPU-less Linux. That
-backend supplies a working software-rendered WebGL context without opting into
-Chromium's lower-security `--enable-unsafe-swiftshader` switch.
+when no accessible `/dev/dri` render device exists, leaving WebGL blocked. On
+GPU-less Linux the fork therefore launches with its software fallback
+(SwiftShader) so WebGL keeps working on the CPU, and `doctor` reports the
+fallback as a warning.
 
 ## 3. Canvas noise
 
@@ -124,22 +123,37 @@ are unchanged.
 
 ## 7. Native platform-exposure surfaces
 
-Two renderer features also follow the macOS identity on Linux, without page
-scripts or prototype overrides:
+On an honest Linux identity these patches make the browser present as a real
+desktop Linux machine rather than a headless server, without page scripts or
+prototype overrides:
 
-- `chrome_content_browser_client.cc` sets Blink's preferred content and root
-  scrollbar color schemes to dark. This makes `prefers-color-scheme: dark` part
-  of the captured identity without enabling force-dark page transformations.
-  The Playwright launch context reinforces the native source preference through
-  its native `colorScheme: "dark"` media-emulation option, not a page shim.
-- `layout_theme.cc` maps the `ActiveText` CSS system color to macOS system blue
-  (`#007aff` in light appearance, `#0a84ff` in the captured dark appearance),
-  instead of exposing Linux's red active-link color.
-- `chrome_content_renderer_client.cc` enables Blink Web Share when
-  `--fingerprint-platform=macos`; stock Linux remains disabled, while upstream
-  Android, ChromeOS, Windows, and macOS behavior is unchanged. This exposes the
-  native Blink API surface, but Linux still has no macOS share-sheet backend,
-  so availability does not guarantee a successful platform share operation.
+- The Playwright launch context sets its native `colorScheme: "dark"`
+  media-emulation option, so `prefers-color-scheme: dark` resolves without a
+  page shim. A light-scheme default is CreepJS's `prefersLightColor`
+  like-headless tell.
+- `layout_theme.cc` maps the `ActiveText` CSS system color to system blue
+  (`#007aff` light, `#0a84ff` dark) on every Linux identity, not only the
+  macOS mask. Stock Linux surfaces the color provider's active-link red
+  (`rgb(255,0,0)`), which is CreepJS's `hasKnownBgColor` tell.
+- `chrome_content_renderer_client.cc` enables Blink Web Share on Linux
+  unconditionally (no longer gated behind `--fingerprint-platform=macos`).
+  There is still no Linux share-sheet backend, so `navigator.share()` rejects
+  at call time — the API surface is present, the platform operation is not,
+  matching desktop Chrome's contract. Absence of `share`/`canShare` is
+  CreepJS's `noWebShare` tell.
+- `runtime_enabled_features.json5` marks `ContentIndex`, `ContactsManager`,
+  and `NetInfoDownlinkMax` stable on Linux so `window.ContentIndex`,
+  `window.ContactsManager`, and `NetworkInformation.prototype.downlinkMax`
+  exist (CreepJS's `noContentIndex` / `noContactsManager` / `noDownlinkMax`
+  presence checks). These are presence-only; there is no desktop indexing or
+  contacts backend behind them.
+- `network_information.cc` reports a 10 Gbps `downlinkMax` ceiling on Linux
+  instead of the invalid sentinel, since a desktop has no modem to measure a
+  link speed.
+
+A real display stack completes the picture: under a window manager and panel
+that publish `_NET_WORKAREA`, `screen.availHeight < screen.height`, so
+`noTaskbar` reads false as it would on a physical desktop.
 
 ## 8. Fonts
 
@@ -231,7 +245,7 @@ whatever the rest of the surfaces report.
 
 `research/stealth-report.js` inspects a built artifact — roughly 30 local surface
 checks against stock-Chrome behavior, plus the live score endpoints described in
-[cloaking-v2.md](cloaking-v2.md#verification):
+[launch-identity.md](launch-identity.md#verification):
 
 ```bash
 npm run build:harness

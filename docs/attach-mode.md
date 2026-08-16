@@ -1,11 +1,11 @@
 # Headed and headless browsing
 
 BetterWright launches its managed browser — the [Chromium
-fork](chromium-fork.md) when its artifact is installed (macOS arm64 / Linux
-x64 / Windows x64), CloakBrowser otherwise. Headed and headless runs use the same persistent
+fork](chromium-fork.md) installed by `betterwright setup` (macOS arm64 /
+Linux x64 / Windows x64). Headed and headless runs use the same persistent
 profile, fingerprint identity, network floor, download controls, and browser
-worker. There is no stock-Chromium fallback and no ordinary-Chrome CDP attach
-mode.
+worker. To run against a different browser — your own Chromium binary or a
+cloud provider's — use the [provider option](browser-providers.md).
 
 ## Choosing the display mode
 
@@ -72,30 +72,30 @@ for MCP, set `BETTERWRIGHT_PROFILE`. See
 These legacy settings are rejected instead of silently choosing a normal
 browser:
 
-- `browser: "chromium"` or `BETTERWRIGHT_BROWSER=chromium`
-- `executablePath`
-- `connectOverCdp` or `BETTERWRIGHT_CONNECT_OVER_CDP`
-- `betterwright setup --chromium`
+- `BETTERWRIGHT_BROWSER=chromium` (or `cloak`) — the bundled-fallback
+  selector is gone; use `provider` for a non-managed browser
+- `CLOAKBROWSER_BINARY_PATH` — CloakBrowser support was removed; use
+  `provider: { executablePath }` for a specific local binary
+- `betterwright setup --chromium` / `--cloak-only`
 
-To select an already installed official CloakBrowser build, use
-`CLOAKBROWSER_BINARY_PATH`. `betterwright doctor` reports the binary version,
-tier, and path that will launch on the CloakBrowser line (and the full wrapper
-directory under `doctor --json`).
+To run a browser you supply — a local Chromium binary, a CDP endpoint, or a
+cloud provider such as Browser Use, Kernel, or Browserbase — see
+[browser-providers.md](browser-providers.md). `betterwright doctor` reports
+the backend in use and, for a provider browser, which provider and endpoint
+it attached to.
 
 ## Troubleshooting headed launch
 
 1. Run `betterwright doctor` and confirm it ends with `BetterWright is ready.`,
    and note which backend the Browser group's **In use** line reports
-   (`chromium-fork` or `cloak`) — either is a correct install. `doctor --json`
-   gives the same facts as the raw `ready` / `browser` fields.
+   (`chromium-fork`, or `provider:<name>`). `doctor --json` gives the same
+   facts as the raw `ready` / `browser` fields.
 2. Run `betterwright setup` if the managed binary is missing.
 3. On Linux, confirm a display is present or use `xvfb-run`.
-4. If BetterWright reports that a compatibility profile was upgraded by a
-   newer browser, move only the path named in that error and sign in again.
-   BetterWright automatically isolates the normal BetterChromium-151-to-Cloak
-   fallback in 1.8.1; the guard remains for an already-upgraded compatibility
-   profile. Vault credentials live outside browser profiles and survive a
-   reset; browser-saved logins do not.
+4. If BetterWright reports that a profile was upgraded by a newer browser,
+   move only the path named in that error and sign in again. Vault
+   credentials live outside browser profiles and survive a reset;
+   browser-saved logins do not.
 
 The managed browser reduces common automation false positives; it cannot
 guarantee that a site will accept a session or never present a challenge.

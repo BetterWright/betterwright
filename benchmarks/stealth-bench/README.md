@@ -23,9 +23,9 @@ node benchmarks/stealth-bench/runner.js \
 
 `--binary` is required, must be an existing executable absolute path, and must
 report the pinned BetterChromium version. The runner sets only
-`BETTERWRIGHT_CHROMIUM_PATH`; it removes any conflicting Chromium root and CloakBrowser
-binary override so a missing or invalid fork fails closed instead of silently
-benchmarking another backend.
+`BETTERWRIGHT_CHROMIUM_PATH`; it removes any conflicting Chromium root override
+so a missing or invalid fork fails closed instead of silently benchmarking
+another backend.
 
 Use `--upstream-proxy socks5://user:pass@host:port` for an IP-matched proxy run.
 Results retain only the proxy protocol, host, port, and whether authentication

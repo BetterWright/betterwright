@@ -230,8 +230,9 @@ step from what it sees, in a browser that must still be there next turn:
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
 | [**Human-shaped input**](docs/browser-api.md#human-shaped-interactions) | Curved pointer movement, paced typing, eased wheel — no extra dependency |
-| [**Cloaking V2**](docs/cloaking-v2.md) | Coherent native fingerprint: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; the two public reCAPTCHA v3 score-detector demos in the stealth report return a server-verified 0.9 headed and headless |
-| [**BetterChromium**](docs/chromium-fork.md) | Default browser on supported macOS arm64, GPU-capable Linux x64, and Windows x64 hosts: per-profile-stable canvas/audio farbling, platform masking, macOS-metric fonts. Other platforms and GPU-less Linux automatically use managed CloakBrowser compatibility mode |
+| [**Launch identity**](docs/launch-identity.md) | Coherent native identity: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; the two public reCAPTCHA v3 score-detector demos in the stealth report return a server-verified 0.9 headed and headless |
+| [**BetterChromium**](docs/chromium-fork.md) | Default browser on supported macOS arm64, Linux x64, and Windows x64 hosts: per-profile-stable canvas/audio farbling, no OS masquerade (Linux runs as Linux). Bring your own executable, CDP endpoint, or cloud browser via the [provider option](docs/browser-providers.md) |
+| [**Browser providers**](docs/browser-providers.md) | Managed fork by default; attach a local executable, a raw CDP endpoint, or a named cloud browser (Kernel, Browserbase, Steel, Anchor, Bright Data, Hyperbrowser, Browserless, Oxylabs, Browser Use) |
 | [**Skill packs**](docs/skills.md) | Per-site and per-password-manager guidance the driving agent reads on demand — your own or the built-in loop — surfaced automatically when an open page matches |
 | [**Download approval**](docs/browser-api.md) | Denied by default; a trusted host approves one download run at a time |
 | [**Operator guidance**](docs/agent-prompt.md) | `betterwright skill` / `agentSystemPrompt()` — decisive action on authorized tasks, with optional confirmation/spending guardrails |
@@ -239,8 +240,8 @@ step from what it sees, in a browser that must still be there next turn:
 ## Install
 
 Requires **Node.js 22+**. Setup downloads the pinned native BetterChromium
-browser on supported hosts and managed CloakBrowser on other platforms or
-GPU-less Linux.
+browser for this host; GPU-less Linux runs it with the SwiftShader software
+renderer.
 Nothing is downloaded as an npm lifecycle side effect, so installs stay
 predictable with `--ignore-scripts`.
 
@@ -315,10 +316,10 @@ server reads too. See
 | Start here | Capabilities | Under the hood |
 | --- | --- | --- |
 | [Getting started](docs/getting-started.md) | [Credential vault](docs/credentials.md) | [Architecture & security model](docs/architecture.md) |
-| [Integration guide (SETUP.md)](SETUP.md) | [Live view & handoff](docs/live-view.md) | [Cloaking V2](docs/cloaking-v2.md) |
+| [Integration guide (SETUP.md)](SETUP.md) | [Live view & handoff](docs/live-view.md) | [Launch identity](docs/launch-identity.md) |
 | [The built-in agent](docs/agent.md) | [CAPTCHA helpers](docs/captcha.md) | [Chromium fork](docs/chromium-fork.md) |
 | [JavaScript API](docs/javascript.md) | [Network policy](docs/network-policy.md) | [Headed / headless](docs/attach-mode.md) |
-| [Browser API (snippet globals)](docs/browser-api.md) | [BetterChromium](docs/chromium-fork.md) | [Operator guidance](docs/agent-prompt.md) |
+| [Browser API (snippet globals)](docs/browser-api.md) | [BetterChromium](docs/chromium-fork.md) | [Browser providers](docs/browser-providers.md) |
 | [CAPTCHA recipes](docs/browser-recipes.md) | | Benchmarks: [Online-Mind2Web, 92.7% self-judged](benchmarks/online-mind2web/REPORT.md) · [agent head-to-head](benchmarks/exec-headtohead/REPORT.md) |
 
 The Online-Mind2Web figure is 278/300 on the pinned 2025-11-23 snapshot, scored

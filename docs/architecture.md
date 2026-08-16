@@ -6,7 +6,7 @@
 ┌─────────────────────────────┐       JSON lines over stdio       ┌──────────────────────────┐
 │ Client (compiled ESM)       │  ──────────  execute  ─────────▶  │ Compiled Node worker     │
 │                             │                                   │                          │
-│ • owns the worker           │  ◀─────  guard / vault RPC  ────  │ • fork or Cloak browser  │
+│ • owns the worker           │  ◀─────  guard / vault RPC  ────  │ • BetterChromium fork    │
 │ • NetworkPolicy             │  ───────  rpc_response  ───────▶  │ • sandbox (node:vm)      │
 │ • vault (local or custom)   │                                   │ • per-session pages      │
 │ • result envelope           │  ◀──────────  result  ──────────  │ • transport SOCKS proxy  │
@@ -187,7 +187,7 @@ Omitting `profile` leaves `browser/profile`, its lock, `daemon.sock`, and
 **Scoped per profile:** the profile directory, its lock, the session daemon
 (socket, info file, log), and saved `exec` transcripts.
 **Shared across profiles:** the vault, `artifacts/`, `browser/runtime/`, and
-the CloakBrowser binary cache — so a credential saved once is reachable from
+the BetterChromium binary cache — so a credential saved once is reachable from
 every profile, and a second copy of Chromium is never downloaded.
 
 Names are validated as a strict allowlist (letters, digits, `.`, `-`, `_`,
@@ -196,11 +196,6 @@ trailing dots, or Windows reserved device names), and the marker
 `.betterwright-lock` is reserved, so a name can neither escape
 `browser/profiles/` nor land on another profile's lock directory. An invalid
 name fails at construction. Names are as case-sensitive as the filesystem.
-
-The separately licensed CloakBrowser binary is cached by its official wrapper,
-not copied into BetterWright's package or home directory. `betterwright setup`
-downloads it directly from CloakHQ's release source and verifies the wrapper's
-pinned Ed25519 signature before extraction.
 
 Delete the directory to reset everything; delete `browser/profile/` (or one
 `browser/profiles/<name>/`) to sign out everywhere in that profile, or `vault/` to remove saved credential items — `vault.key` and
@@ -218,30 +213,30 @@ collide with another profile's.
 
 ## Pinned browser integration
 
-The worker, the JS facades it builds, Playwright, and the CloakBrowser wrapper
-have to agree, so both wrapper versions are pinned in the package.
-`betterwright setup` installs those exact integrations and asks the
-official CloakBrowser wrapper for its signed browser build. Bumping either
-wrapper is a deliberate, tested BetterWright change.
+The worker, the JS facades it builds, Playwright, and the managed
+BetterChromium fork have to agree, so the driver version is pinned in the
+package and the fork artifact is pinned by version and SHA-256 in
+`src/chromium-fork.ts`. `betterwright setup` downloads the fork from the
+pinned, revisioned GitHub Release and verifies the archive before extraction.
+Bumping either is a deliberate, tested BetterWright change.
 
-The external browser binary has a separate lifecycle: by default it follows the
-pinned wrapper's signed stable channel and can advance without a BetterWright
-package release. `betterwright doctor` reports the resolved binary version and
-tier. Reproducible deployments can set a full `CLOAKBROWSER_VERSION`, while
-`CLOAKBROWSER_AUTO_UPDATE=false` freezes update checks for an installed build.
-
-Managed CloakBrowser reduces common browser-fingerprint false positives but
-does not guarantee undetectability. It is the only browser backend in both
-headed and headless modes.
-
-CloakBrowser's forked Chromium already neutralizes the `Runtime.enable` CDP leak
-and the `navigator.webdriver` flag, but Playwright still runs `page.evaluate` in
-the page's main world, so a main-world trap can observe the agent the moment it
-inspects a page. The opt-in `stealthRuntimeFix` (constructor option, `--stealth`,
-or `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`) closes that vector by swapping the driver
+The fork binary has a separate lifecycle: a given BetterWright package pins
+one fork version, and `betterwright update` re-fetches that pin. The
+BetterChromium fork's source patches already neutralize the
+`navigator.webdriver` flag and the canvas/audio fingerprint surface, but
+Playwright still runs `page.evaluate` in the page's main world, so a
+main-world trap can observe the agent the moment it inspects a page. The
+opt-in `stealthRuntimeFix` (constructor option, `--stealth`, or
+`BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`) closes that vector by swapping the driver
 for the pre-patched `patchright-core`, which executes snippets in an isolated
 world. It is applied by registering a module-resolution hook on the worker
-process (`src/stealth-register.ts` → `src/stealth-hooks.ts`) so the redirect
-also covers the Cloak wrapper's own bare `import("playwright-core")`. The cost is
+process (`src/stealth-register.ts` → `src/stealth-hooks.ts`). The cost is
 that model snippets can no longer read page-defined main-world globals; it is off
-by default for that reason.
+by default for that reason. It applies only to the managed fork, not a
+provider browser.
+
+For a browser that is not the managed fork — a caller-supplied local Chromium
+binary, any CDP endpoint, or a cloud provider — the worker resolves a provider
+plan (`src/browser-providers.ts`), redacts its credentials, and either
+launches the binary on the guard proxy or attaches over CDP with the network
+floor documented as not applying. See docs/browser-providers.md.

@@ -1,33 +1,18 @@
-// Cloaking V2 — launch profile builder.
+// Launch identity — coherent locale/timezone for the managed browser.
 //
-// Implements the two-layer doctrine for the managed browser:
+// Two layers tell the same story:
 //
-//   1. Chromium layer: the CloakBrowser fork carries the source-level patches
-//      and this module feeds it a coherent identity (fingerprint seed, locale,
-//      timezone) without monkey-patching browser APIs in JavaScript.
+//   1. Chromium layer: the BetterChromium fork carries the source-level
+//      patches and this module feeds it a coherent identity (fingerprint seed,
+//      locale, timezone) without monkey-patching browser APIs in JavaScript.
 //   2. IP layer: an optional upstream proxy chained through the local guard
 //      proxy (policy still enforced per connection), with timezone/locale
 //      resolved to match the egress IP so the network layer and the JS layer
-//      tell the same story.
+//      agree.
 //
-// Headless parity comes from the patched binary plus BetterWright's existing
-// binary-specific viewport compatibility layer.
-// Page-world APIs remain native; V2 only configures browser launch and context data.
-
-import { acceptLanguageForLocale } from "./fork-identity.js";
-import { CHROMIUM_151_MACOS_M4_PRO_PROFILE } from "./fork-identity-profile-151.js";
-
-/** Window sizes used only when parking a headed browser off-screen. */
-const HEADED_WINDOW_SIZES = Object.freeze({
-  macos: Object.freeze({
-    width: CHROMIUM_151_MACOS_M4_PRO_PROFILE.screen.width,
-    height: CHROMIUM_151_MACOS_M4_PRO_PROFILE.screen.height,
-  }),
-  windows: Object.freeze({
-    width: 1920,
-    height: 1040,
-  }),
-});
+// The fork presents its real host identity: no platform is masked as another
+// operating system — a Linux host is a Linux browser. Page-world APIs remain
+// native; this module only configures browser launch and context data.
 
 const SUPPORTED_PLATFORMS = new Set(["macos", "windows", "linux"]);
 
@@ -39,6 +24,28 @@ const COUNTRY_LOCALE = Object.freeze({
   KR: "ko-KR", SG: "en-SG", HK: "zh-HK", TW: "zh-TW", IN: "en-IN", IL: "he-IL",
   ZA: "en-ZA", AE: "ar-AE", TR: "tr-TR", RU: "ru-RU", UA: "uk-UA", CZ: "cs-CZ",
 });
+
+function canonicalLocale(locale) {
+  const configured = String(locale || "").trim();
+  if (!configured) throw new TypeError("Browser identity locale must be a non-empty BCP 47 tag.");
+  let parsed;
+  try {
+    parsed = new Intl.Locale(configured);
+  } catch {
+    throw new TypeError(`Invalid browser identity locale: ${configured}`);
+  }
+  const canonical = parsed.toString();
+  if (canonical.includes("-u-") || canonical.includes("-x-")) {
+    throw new TypeError("Browser identity locale must not contain Unicode or private-use extensions.");
+  }
+  return { canonical, language: parsed.language };
+}
+
+/** Derive Chromium's Accept-Language preference from one configured locale. */
+export function acceptLanguageForLocale(locale) {
+  const { canonical, language } = canonicalLocale(locale);
+  return canonical === language ? canonical : `${canonical},${language};q=0.9`;
+}
 
 function validatePlatform(platform) {
   if (!SUPPORTED_PLATFORMS.has(platform)) {
@@ -59,16 +66,31 @@ function validateTimezone(timezone) {
   return configured;
 }
 
-/** Chromium args V2 adds on top of the base managed set. */
-export function v2LaunchArgs({
+/** The host's own platform as an identity value. */
+export function hostPlatform(processPlatform = process.platform) {
+  return processPlatform === "darwin"
+    ? "macos"
+    : processPlatform === "win32"
+      ? "windows"
+      : "linux";
+}
+
+/** Window sizes used only when parking a headed browser off-screen. */
+const HEADED_WINDOW_SIZES = Object.freeze({
+  macos: Object.freeze({ width: 1512, height: 982 }),
+  windows: Object.freeze({ width: 1920, height: 1040 }),
+  linux: Object.freeze({ width: 1920, height: 1040 }),
+});
+
+/** Chromium args the identity layer adds on top of the base managed set. */
+export function identityLaunchArgs({
   locale,
   timezone,
-  platform = "macos",
+  platform = null,
   headedInvisible = false,
-  nativeFork = false,
 }: any = {}) {
   const args = [];
-  validatePlatform(platform);
+  const resolvedPlatform = platform ? validatePlatform(platform) : hostPlatform();
   const configuredLocale = locale
     ? acceptLanguageForLocale(locale).split(",", 1)[0]
     : null;
@@ -80,22 +102,17 @@ export function v2LaunchArgs({
     );
   }
   if (configuredTimezone) {
-    args.push(
-      nativeFork
-        ? `--bw-timezone=${configuredTimezone}`
-        : `--fingerprint-timezone=${configuredTimezone}`,
-    );
+    // The fork's source-level timezone patch (docs/chromium-fork-patches.md).
+    args.push(`--bw-timezone=${configuredTimezone}`);
   }
-  if (platform) {
-    // The fork shares the --fingerprint-* flag namespace: platform masking is
-    // honored by fork builds carrying the platform patch set
-    // (docs/chromium-fork-patches.md) and is harmless on builds without it.
-    args.push(`--fingerprint-platform=${platform}`);
-  }
+  // The --fingerprint-platform flag stays available as an explicit override
+  // for builds carrying the platform patch set; it is no longer defaulted
+  // away from the host, because the fork presents its real host identity.
+  args.push(`--fingerprint-platform=${resolvedPlatform}`);
   if (headedInvisible) {
     // Headed-but-invisible: a real window with headed compositing parked off
     // the visible desktop.
-    const size = HEADED_WINDOW_SIZES[platform] || HEADED_WINDOW_SIZES.macos;
+    const size = HEADED_WINDOW_SIZES[resolvedPlatform];
     args.push(
       `--window-size=${size.width},${size.height}`,
       "--window-position=32000,32000",
@@ -140,39 +157,28 @@ export async function resolveGeoIdentity({
 }
 
 /**
- * Full V2 launch plan for the worker. Viewport selection remains in cloak.js,
- * where it can be gated to the exact managed binary build.
+ * Full launch plan for the worker: args plus the identity record the caller
+ * may consult for context options.
  */
-export function buildV2LaunchPlan({
+export function buildLaunchIdentityPlan({
   platform,
   locale = "en-US",
   timezone,
   headedInvisible = false,
-  nativeFork = false,
 }: any = {}) {
-  // The native fork masks the host platform as a consumer Mac by default: a
-  // headless-Linux identity is a strong automation signal. The managed
-  // CloakBrowser path keeps its host-derived coherent identity.
-  const resolvedPlatform = validatePlatform(
-    platform ||
-    (nativeFork
-      ? "macos"
-      : process.platform === "darwin"
-        ? "macos"
-        : process.platform === "win32"
-          ? "windows"
-          : "linux"),
-  );
+  // Default is the host's own platform: the fork's source patches keep a
+  // headless Linux browser coherent as a Linux desktop browser, which beats
+  // claiming hardware the process is not running on.
+  const resolvedPlatform = platform ? validatePlatform(platform) : hostPlatform();
   const acceptLanguage = acceptLanguageForLocale(locale);
   const configuredLocale = acceptLanguage.split(",", 1)[0];
   const configuredTimezone = validateTimezone(timezone);
   return {
-    args: v2LaunchArgs({
+    args: identityLaunchArgs({
       locale: configuredLocale,
       timezone: configuredTimezone,
       platform: resolvedPlatform,
       headedInvisible,
-      nativeFork,
     }),
     identity: Object.freeze({
       locale: configuredLocale,

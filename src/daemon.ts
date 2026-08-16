@@ -289,7 +289,7 @@ function identityPlatform(value): "macos" | "windows" | "linux" | null {
 
 export function normalizeDaemonConfig(config: any = {}) {
   const policy = config.policy && typeof config.policy === "object" ? config.policy : {};
-  const cloak = config.cloak && typeof config.cloak === "object" ? config.cloak : {};
+  const browser = config.browser && typeof config.browser === "object" ? config.browser : {};
   const hosts = (list) =>
     [...new Set((Array.isArray(list) ? list : []).map((h) => String(h).trim().toLowerCase()).filter(Boolean))].sort();
   const profile = resolveProfileName(config.profile);
@@ -314,17 +314,43 @@ export function normalizeDaemonConfig(config: any = {}) {
       allowHosts: hosts(policy.allowHosts),
       blockHosts: hosts(policy.blockHosts),
     },
-    cloak: {
-      cloakV2: cloak.cloakV2 !== false,
-      upstreamProxy: cloak.upstreamProxy ? String(cloak.upstreamProxy) : null,
-      geoip: cloak.geoip === true,
-      locale: cloak.locale ? String(cloak.locale) : null,
-      timezone: cloak.timezone ? String(cloak.timezone) : null,
-      headedInvisible: cloak.headedInvisible === true,
-      platform: identityPlatform(cloak.platform),
-      stealthRuntimeFix: cloak.stealthRuntimeFix === true,
+    browser: {
+      launchIdentity: browser.launchIdentity !== false,
+      upstreamProxy: browser.upstreamProxy ? String(browser.upstreamProxy) : null,
+      geoip: browser.geoip === true,
+      locale: browser.locale ? String(browser.locale) : null,
+      timezone: browser.timezone ? String(browser.timezone) : null,
+      headedInvisible: browser.headedInvisible === true,
+      platform: identityPlatform(browser.platform),
+      stealthRuntimeFix: browser.stealthRuntimeFix === true,
+      provider: normalizeDaemonProvider(browser.provider),
     },
   };
+}
+
+// A provider config enters the daemon signature so a client asking for a
+// different browser never silently reuses a daemon on the old one. Provider
+// secrets (apiKey, cdpUrl userinfo) are part of the match: two different keys
+// must not share a browser, and the signature file is written 0600 under the
+// private daemon home, matching the transcripts it already guards.
+function normalizeDaemonProvider(provider) {
+  if (provider == null || provider === false) return null;
+  if (typeof provider === "string") provider = { provider };
+  if (typeof provider !== "object") return null;
+  const normalized = {};
+  for (const key of [
+    "provider",
+    "apiKey",
+    "cdpUrl",
+    "executablePath",
+    "headers",
+    "sessionOptions",
+  ]) {
+    if (provider[key] !== undefined && provider[key] !== null) {
+      normalized[key] = provider[key];
+    }
+  }
+  return normalized;
 }
 
 export function daemonConfigSignature(config) {
@@ -338,14 +364,17 @@ export async function createBrowserFromDaemonConfig(config) {
     policy: new NetworkPolicy(normalized.policy),
     headless: normalized.headless,
     ...(normalized.profile ? { profile: normalized.profile } : {}),
-    cloakV2: normalized.cloak.cloakV2,
-    upstreamProxy: normalized.cloak.upstreamProxy || undefined,
-    geoip: normalized.cloak.geoip,
-    locale: normalized.cloak.locale || undefined,
-    timezone: normalized.cloak.timezone || undefined,
-    headedInvisible: normalized.cloak.headedInvisible,
-    platform: normalized.cloak.platform || undefined,
-    stealthRuntimeFix: normalized.cloak.stealthRuntimeFix || undefined,
+    launchIdentity: normalized.browser.launchIdentity,
+    upstreamProxy: normalized.browser.upstreamProxy || undefined,
+    geoip: normalized.browser.geoip,
+    locale: normalized.browser.locale || undefined,
+    timezone: normalized.browser.timezone || undefined,
+    headedInvisible: normalized.browser.headedInvisible,
+    platform: normalized.browser.platform || undefined,
+    stealthRuntimeFix: normalized.browser.stealthRuntimeFix || undefined,
+    ...(normalized.browser.provider
+      ? { provider: normalized.browser.provider as any }
+      : {}),
   });
 }
 

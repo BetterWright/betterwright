@@ -14,7 +14,15 @@ import path from "node:path";
 import readline from "node:readline";
 import { types as utilTypes } from "node:util";
 import vm from "node:vm";
-
+import {
+  redactProviderSecrets,
+  resolveBrowserProvider,
+} from "./browser-providers.js";
+import {
+  assertProfileNotNewer,
+  chromiumNeedsSoftwareGpu,
+  managedForkArgs,
+} from "./browser-runtime.js";
 import {
   blobToPageBounds,
   buildSolveResult,
@@ -62,17 +70,6 @@ import {
   resolveChromiumForkBinary,
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
-import {
-  assertProfileNotNewer,
-  chromiumForkNeedsSoftwareGpu,
-  cloakBinaryInfo,
-  compatibleBrowserProfile,
-  launchCloakPersistentContext,
-  managedChromiumForkArgs,
-  managedCloakArgs,
-  managedCloakViewport,
-} from "./cloak.js";
-import { buildV2LaunchPlan, resolveGeoIdentity } from "./cloak-v2.js";
 import { compileCode } from "./compile-code.js";
 import {
   assertRotationPreservesMatchMode,
@@ -93,12 +90,6 @@ import {
   downloadBehaviorParams,
   normalizeDownloadPolicy,
 } from "./downloads.js";
-import {
-  forkIdentityContextOptions,
-  forkIdentityGeometryArgs,
-  forkMacIdentity,
-  prepareForkFontsConfig,
-} from "./fork-identity.js";
 import { mkdirPrivate, writePrivate, writePrivateBytes } from "./fs-private.js";
 import {
   createGuardProxy,
@@ -113,6 +104,7 @@ import {
   scrollWheel,
   typeText,
 } from "./human.js";
+import { buildLaunchIdentityPlan, resolveGeoIdentity } from "./launch-identity.js";
 import { createLiveViewServer } from "./live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.js";
 import {
@@ -205,6 +197,12 @@ const STEALTH_WARNING =
   "world, so page-defined main-world globals (e.g. window.__NEXT_DATA__) read " +
   "as undefined. DOM access, clicks, and typing are unaffected.";
 let useSetContentCompatibility = false;
+// Remote-CDP provider state: the provider's stop call, if it has one, so a
+// close can release the metered session.
+let endRemoteSession = null;
+// Launch warnings attached to every result envelope (provider notices, the
+// profile-compat isolation note).
+let providerWarnings = [];
 let shutdownPromise = null;
 // Which sessions are running model-driven code right now. A ref-count rather
 // than a plain set, so overlapping entry points on one session (an execute
@@ -453,8 +451,22 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function fingerprintSeedForProfile(profileDir) {
-  const seedFile = path.join(profileDir, ".betterwright-fingerprint-seed");
+/**
+ * The browser driver import, centralised so a host override
+ * (BETTERWRIGHT_PLAYWRIGHT_CORE_PATH, used by the stealth driver and by tests)
+ * redirects the one place the worker touches playwright-core.
+ */
+async function loadPlaywrightDriver() {
+  const override = String(process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH || "").trim();
+  if (override) {
+    const { pathToFileURL } = await import("node:url");
+    const pathMod = await import("node:path");
+    return import(pathToFileURL(pathMod.join(override, "lib", "index.js")).href);
+  }
+  return import("playwright-core");
+}
+
+function fingerprintSeedForProfile(profileDir) {  const seedFile = path.join(profileDir, ".betterwright-fingerprint-seed");
   try {
     const stored = fs.readFileSync(seedFile, "utf8").trim();
     if (/^[1-9][0-9]{4}$/.test(stored)) return stored;
@@ -1664,31 +1676,17 @@ async function installContextGuard(context) {
 }
 
 async function ensureBrowser(config) {
-  const browserFlavor = String(config.browserFlavor || "cloak")
-    .trim()
-    .toLowerCase();
-  if (browserFlavor !== "cloak") {
-    throw new Error('BetterWright only supports its managed browser backend.');
-  }
-  if (String(config.cdpEndpoint || "").trim()) {
-    throw new Error(
-      "CDP attach is disabled; BetterWright only launches managed browsers.",
-    );
-  }
-  if (String(config.executablePath || "").trim()) {
-    throw new Error(
-      "Custom executables are disabled; use BETTERWRIGHT_CHROMIUM_PATH / " +
-        "BETTERWRIGHT_CHROMIUM_ROOT for the native fork, or " +
-        "CLOAKBROWSER_BINARY_PATH for an official CloakBrowser binary.",
-    );
-  }
+  // BetterChromium is the only bundled browser; everything else is an
+  // explicit provider (a caller-supplied local Chromium binary, or a remote
+  // CDP endpoint minted by a cloud-browser service).
+  const providerResolution = resolveBrowserProvider(config.provider);
   const publicSearchPolicy = String(config.publicSearchPolicy || "block")
     .trim()
     .toLowerCase();
   if (!["block", "allow"].includes(publicSearchPolicy)) {
     throw new Error('publicSearchPolicy must be "block" or "allow".');
   }
-  config = { ...config, browserFlavor, publicSearchPolicy };
+  config = { ...config, publicSearchPolicy };
   if (browserContext) {
     launchConfig = { ...launchConfig, ...config };
     return browserContext;
@@ -1698,28 +1696,46 @@ async function ensureBrowser(config) {
   launchPromise = (async () => {
     mkdirPrivate(launchConfig.artifactsDir);
 
-    const forkBinary = resolveChromiumForkBinary();
-    const softwareGpu = chromiumForkNeedsSoftwareGpu();
-    const browserSelection = selectManagedBrowserBackend({
-      chromiumFork: forkBinary,
-      softwareGpu,
-    });
-    backendSelectionNote = browserSelectionWarning(browserSelection, {
-      softwareGpu,
-    });
-    if (browserSelection.browser === "unavailable") {
-      throw new Error(
-        "BetterChromium is required but not installed. Run `betterwright setup`, " +
-          "or explicitly select CloakBrowser with `betterwright setup --cloak-only` " +
-          "and BETTERWRIGHT_BACKEND=cloak. Hosts without a published " +
-          "BetterChromium artifact, and GPU-less Linux hosts, use CloakBrowser automatically.",
-      );
+    // Session-minting providers make their REST call here, at launch, so a
+    // client that is constructed but never starts never bills a session.
+    let providerPlan = providerResolution?.plan || null;
+    if (providerPlan?.create) {
+      providerPlan = await providerPlan.create();
     }
-    const activeForkBinary =
-      browserSelection.browser === "chromium-fork" ? forkBinary : null;
-    let binaryInfo = null;
-    if (!activeForkBinary) {
-      binaryInfo = await cloakBinaryInfo();
+    redactProviderSecrets(trackSecret, providerPlan);
+    providerWarnings = providerPlan?.warnings || [];
+
+    const remoteCdp = providerPlan?.kind === "remote";
+    let forkBinary = null;
+    let launchExecutable = null;
+    if (remoteCdp) {
+      backendSelectionNote = providerPlan.warnings[0];
+    } else if (providerPlan?.kind === "local") {
+      launchExecutable = providerPlan.executablePath;
+      backendSelectionNote = providerPlan.warnings[0];
+    } else {
+      forkBinary = resolveChromiumForkBinary();
+      const softwareGpu = chromiumNeedsSoftwareGpu();
+      const browserSelection = selectManagedBrowserBackend({
+        chromiumFork: forkBinary,
+        softwareGpu,
+      });
+      backendSelectionNote = browserSelectionWarning(browserSelection, {
+        softwareGpu,
+      });
+      if (browserSelection.browser !== "chromium-fork") {
+        const reason = browserSelection.selectionReason;
+        throw new Error(
+          (reason === "unsupported-platform"
+            ? "No BetterChromium artifact is published for this host. "
+            : "BetterChromium is required but not installed. Run `betterwright setup`. ") +
+            "To use another browser instead, pass the provider option — " +
+            "{ executablePath } for a local Chromium binary, { cdpUrl } for a " +
+            "CDP endpoint, or { provider: \"browserbase\" | \"browser-use\" | " +
+            "\"kernel\" | … } for a cloud browser (docs/browser-providers.md).",
+        );
+      }
+      launchExecutable = forkBinary;
     }
 
     mkdirPrivate(launchConfig.runtimeDir);
@@ -1729,23 +1745,23 @@ async function ensureBrowser(config) {
     );
     startProfileLockHeartbeat();
     profileMode = profileLock.ephemeral ? "ephemeral" : "persistent";
-    const compatible = activeForkBinary
-      ? { profileDir: profileLock.profileDir, warning: null }
-      : compatibleBrowserProfile(profileLock.profileDir, binaryInfo?.version);
-    const browserProfileDir = compatible.profileDir;
+    const browserProfileDir = profileLock.profileDir;
     mkdirPrivate(browserProfileDir);
-    profileWarning = [compatible.warning, profileLock.warning]
-      .filter(Boolean)
-      .join(" ");
-    transportProxyPort = await guardProxy.ensure();
+    profileWarning = profileLock.warning || "";
+    // The guard proxy only bounds locally launched browsers. A remote CDP
+    // browser runs on the provider's side of the WebSocket; its traffic never
+    // touches this listener, so it is not even started (see the warnings).
+    if (!remoteCdp) {
+      transportProxyPort = await guardProxy.ensure();
+    }
 
     const headless = launchConfig.headless !== false;
     // Upstream egress proxy (the IP layer). Every connection still passes
     // policy + DNS-rebinding validation here; the upstream only changes which
-    // IP the target observes. Applies independently of cloakV2 — a configured
-    // proxy is never silently ignored.
+    // IP the target observes. Only meaningful for a local launch — a remote
+    // browser's egress belongs to the provider, so chaining one would mislead.
     let upstream = null;
-    if (launchConfig.upstreamProxy) {
+    if (launchConfig.upstreamProxy && !remoteCdp) {
       upstream = parseUpstreamProxy(launchConfig.upstreamProxy);
       if (!upstream) {
         throw new Error(
@@ -1755,17 +1771,20 @@ async function ensureBrowser(config) {
     }
     guardProxy.setUpstream(upstream);
 
-    const args = activeForkBinary
-      ? managedChromiumForkArgs(
-          fingerprintSeedForProfile(browserProfileDir),
-        )
-      : managedCloakArgs(fingerprintSeedForProfile(browserProfileDir));
+    // The fingerprint seed belongs to the managed fork; a caller-supplied
+    // binary does not carry the fork's --fingerprint patches, and a remote
+    // browser never receives launch args at all.
+    const args =
+      !remoteCdp && forkBinary
+        ? managedForkArgs(fingerprintSeedForProfile(browserProfileDir))
+        : [];
 
-    // Cloaking V2: one coherent identity across the Chromium and network
+    // Coherent launch identity: one story across the Chromium and network
     // layers. geoip resolves the locale/timezone to match the egress
-    // geography so the JS layer and the network layer tell the same story.
-    let v2Plan = null;
-    if (launchConfig.cloakV2 !== false) {
+    // geography so the JS layer and the network layer agree. The identity is
+    // the host's real platform — no OS is masked as another.
+    let identityPlan = null;
+    if (launchConfig.launchIdentity !== false) {
       const identity = await resolveGeoIdentity({
         geoip: launchConfig.geoip === true && Boolean(upstream),
         locale: launchConfig.locale,
@@ -1781,45 +1800,15 @@ async function ensureBrowser(config) {
             }
           : undefined,
       });
-      v2Plan = buildV2LaunchPlan({
+      identityPlan = buildLaunchIdentityPlan({
         locale: identity.locale || "en-US",
         timezone: identity.timezone || undefined,
         platform: launchConfig.platform || undefined,
         headedInvisible: launchConfig.headedInvisible === true,
-        nativeFork: Boolean(activeForkBinary),
       });
-      args.push(...v2Plan.args);
+      if (!remoteCdp) args.push(...identityPlan.args);
     }
 
-    // Native fork platform masking: present a real consumer-Mac identity
-    // (captured from genuine Chrome on an M4 Pro MacBook; see
-    // src/fork-identity.ts) instead of the host Linux identity. Window
-    // geometry + DPR flags make screen.* coherent in headless; UA, UA-CH and navigator.platform are owned by the native startup profile in every process.
-    let forkIdentity = null;
-    if (
-      activeForkBinary &&
-      v2Plan &&
-      v2Plan.identity.platform === "macos" &&
-      launchConfig.platform !== "linux" &&
-      launchConfig.platform !== "windows"
-    ) {
-      forkIdentity = forkMacIdentity(BETTERWRIGHT_CHROMIUM_VERSION);
-      args.push(...forkIdentityGeometryArgs(forkIdentity, {
-        headedInvisible: launchConfig.headedInvisible === true,
-      }));
-    }
-
-    // Bundled macOS-metric fonts (research/assemble-mac-fonts.sh) ride the
-    // artifact next to the binary; generated conf keeps paths absolute to
-    // the deployment location. Absent bundle: host fontconfig, a known tell.
-    let forkEnv = null;
-    if (forkIdentity) {
-      const fonts = prepareForkFontsConfig({
-        forkBinary: activeForkBinary,
-        runtimeDir: launchConfig.runtimeDir,
-      });
-      if (fonts) forkEnv = { ...process.env, FONTCONFIG_FILE: fonts.confPath };
-    }
     // Caller-supplied switches go last, after every argument BetterWright
     // derives, so a host can tune things the managed list has no opinion on.
     // Switches that collide with a managed one are dropped rather than
@@ -1838,70 +1827,56 @@ async function ensureBrowser(config) {
     // persistent unsupported-flag infobar. The same guard is applied as
     // launch switches instead; the proxy still resolves hostnames and
     // re-validates every IP.
-    const launchArgs = [
-      ...mergedArgs.args,
-      ...guardProxyLaunchArgs(transportProxyPort),
-    ];
-    chromiumArgsNote = chromiumArgsWarning(mergedArgs.ignored);
+    const launchArgs = remoteCdp
+      ? []
+      : [
+          ...mergedArgs.args,
+          ...guardProxyLaunchArgs(transportProxyPort),
+        ];
+    chromiumArgsNote = remoteCdp
+      ? ""
+      : chromiumArgsWarning(mergedArgs.ignored);
 
-    if (activeForkBinary) {
+    if (remoteCdp) {
+      const { chromium } = await loadPlaywrightDriver();
+      const browser = await chromium.connectOverCDP(providerPlan.cdpUrl, {
+        ...(Object.keys(providerPlan.headers || {}).length
+          ? { headers: providerPlan.headers }
+          : {}),
+      });
+      endRemoteSession = providerPlan.end || null;
+      const existing = browser.contexts()[0];
+      browserContext =
+        existing ||
+        (await browser.newContext({
+          acceptDownloads: true,
+          serviceWorkers: "allow",
+        }));
+      useSetContentCompatibility = true;
+    } else {
+      // The managed fork (or an explicit provider binary) launches under
+      // BetterWright's own flags: WebRTC pinned to the proxy path, the
+      // profile-pinned fingerprint seed, and the coherent launch identity.
       if (!profileLock.ephemeral) {
         assertProfileNotNewer(
           browserProfileDir,
-          BETTERWRIGHT_CHROMIUM_VERSION,
+          forkBinary ? BETTERWRIGHT_CHROMIUM_VERSION : undefined,
         );
       }
       useSetContentCompatibility = true;
-      const { chromium } = await import("playwright-core");
+      const { chromium } = await loadPlaywrightDriver();
       browserContext = await chromium.launchPersistentContext(
         browserProfileDir,
         {
-          executablePath: activeForkBinary,
+          executablePath: launchExecutable,
           headless,
           ...chromiumForkContextOptions(),
           args: launchArgs,
-          // Context-level UA baseline: correct User-Agent from the very first
-          // navigation, before per-page CDP emulation attaches.
-          ...(forkIdentity ? forkIdentityContextOptions(forkIdentity) : {}),
-          ...(forkEnv ? { env: forkEnv } : {}),
           acceptDownloads: true,
           serviceWorkers: "allow",
           downloadsPath: launchConfig.downloadsDir,
         },
       );
-    } else {
-      // Cloak's wrapper supplies its source-level fingerprint flags, coherent
-      // viewport defaults, and automation-safe Chromium arguments. BetterWright
-      // pins one random seed to the persistent profile so the same identity does
-      // not appear to change hardware on every restart. Its blanket humanizer is
-      // intentionally disabled; BetterWright's frame-safe human helpers remain
-      // the only model-facing interaction layer.
-      if (!profileLock.ephemeral) {
-        assertProfileNotNewer(browserProfileDir, binaryInfo?.version);
-      }
-      // Patched Cloak builds can report stale lifecycle events to Playwright's
-      // protocol-level setContent implementation. The document-write fallback
-      // below preserves Page/Frame setContent semantics across Cloak versions.
-      useSetContentCompatibility = true;
-      const viewport = managedCloakViewport(binaryInfo, headless);
-      browserContext = await launchCloakPersistentContext({
-        userDataDir: browserProfileDir,
-        headless,
-        humanize: false,
-        ...(viewport ? { viewport } : {}),
-        args: launchArgs,
-        contextOptions: {
-          acceptDownloads: true,
-          // Service workers are normal browser behavior and many modern apps
-          // (including authentication flows) depend on registration succeeding.
-          // The SOCKS guard remains the network security boundary for worker
-          // traffic, so allowing them does not bypass policy enforcement.
-          serviceWorkers: "allow",
-        },
-        launchOptions: {
-          downloadsPath: launchConfig.downloadsDir,
-        },
-      });
     }
     const launchedContext = browserContext;
     launchedContext.on("close", () => {
@@ -1909,6 +1884,13 @@ async function ensureBrowser(config) {
       downloadGuardReady = false;
       disposeVaultCapture();
       releaseProfileLock();
+      // A remote provider session is metered: disconnecting the WebSocket
+      // does not necessarily end it, so a provider with a stop call is
+      // released explicitly. Best-effort — a failed release is surfaced on
+      // the provider's own console, never as a launch/close error here.
+      const end = endRemoteSession;
+      endRemoteSession = null;
+      if (end) void end().catch(() => {});
       // The stream has nothing left to show once the browser is gone; stop the
       // server so viewers see a clean "ended" screen instead of a dead canvas.
       const closingLiveView = liveView;
@@ -3557,6 +3539,7 @@ async function buildEnvelope(
       ...(chromiumArgsNote ? [chromiumArgsNote] : []),
       ...(stealthActive ? [STEALTH_WARNING] : []),
       ...(challenges.length ? [challenges[0].advice] : []),
+      ...providerWarnings,
       ...(drainSessionWarnings ? session.warnings.splice(0) : []),
     ],
     challenges: redactDeep(challenges),

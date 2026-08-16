@@ -63,11 +63,15 @@ const policy = new NetworkPolicy({
 });
 const options: BetterWrightOptions = {
   policy,
-  browser: "cloak",
+  browser: "chromium-fork",
   headless: "auto",
   downloadPolicy: "ask",
   profile: "social",
+  provider: { provider: "browserbase", apiKey: "k" },
 };
+const cdpBrowser = new BetterWright({
+  provider: { cdpUrl: "wss://browser.example.com" },
+});
 const browser = new BetterWright(options);
 const vaultOptions: LocalCredentialVaultOptions = { home: "/tmp/betterwright-types" };
 const localVault = new LocalCredentialVault(vaultOptions);
@@ -153,17 +157,20 @@ const discoveryBudget: number = discoveryTimeoutMs(endpointSourceName("open-rout
 const login: Promise<LoginResult> = loginProvider({ provider: "codex", open: false });
 const codexAuth: CodexAuth | null = loadCodexAuth();
 
-// @ts-expect-error BetterWright supports only managed CloakBrowser.
+// @ts-expect-error BetterWright ships only the managed BetterChromium fork.
 new BetterWright({ browser: "firefox" });
 // @ts-expect-error The stock Chromium fallback was removed.
 new BetterWright({ browser: "chromium" });
-// @ts-expect-error External browser binaries are not accepted.
+// @ts-expect-error Custom binaries go through the provider option.
 new BetterWright({ executablePath: "/opt/chromium" });
-// @ts-expect-error CDP attach mode was removed.
+// @ts-expect-error CDP attach goes through the provider option.
 new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" });
+// @ts-expect-error Unknown cloud providers are rejected at the type level.
+new BetterWright({ provider: { provider: "nope" } });
 
 void [
   run,
+  cdpBrowser,
   generatedMatchMode,
   generatedOptions,
   pendingCredentials,

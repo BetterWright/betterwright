@@ -1,5 +1,5 @@
-// End-to-end Node tests. Skipped unless doctor reports a ready managed browser, so
-// the policy suite still runs on machines without BetterChromium or the Cloak fallback.
+// End-to-end Node tests. Skipped unless doctor reports a ready managed browser,
+// so the policy suite still runs on machines without BetterChromium installed.
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -175,7 +175,7 @@ test("the selected managed browser keeps WebGL available with a coherent identit
   }
 });
 
-test("managed Cloak sessions preserve native service-worker behavior", opts, async () => {
+test("managed sessions preserve native service-worker behavior", opts, async () => {
   const site = await listen((request, response) => {
     if (request.url === "/sw.js") {
       response.writeHead(200, {
@@ -473,7 +473,7 @@ test("model-authored credentials.fill types the secret without returning it", op
   }
 });
 
-test("browser capture saves an accepted model login through real Cloak", opts, async () => {
+test("browser capture saves an accepted model login through the managed browser", opts, async () => {
   const secret = "captured-model-secret";
   const calls = [];
   const loginPage = `<!doctype html><html><body>
