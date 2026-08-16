@@ -117,9 +117,13 @@ test("managed fork args pin WebRTC to the proxy and the profile seed", () => {
   assert.ok(args.includes("--webrtc-ip-handling-policy=disable_non_proxied_udp"));
   assert.ok(args.includes("--fingerprint=12345"));
   assert.ok(args.includes("--renderer-process-limit=2"));
+  // A null/empty seed withholds the --fingerprint switch entirely, which is how
+  // the fingerprintNoise:false path turns the fork's farbling off.
   assert.deepEqual(managedForkArgs(""), [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--renderer-process-limit=2",
+    "--use-gl=angle",
+    "--use-angle=gl",
   ]);
 });
 
@@ -132,6 +136,9 @@ test("GPU-less Linux binds the SwiftShader software rasterizer", () => {
     "--enable-unsafe-swiftshader",
     "--fingerprint=seed",
   ]);
-  // A GPU host (or non-Linux) gets no software-rasterizer switches.
-  assert.ok(!managedForkArgs("seed").includes("--use-angle=swiftshader"));
+  // A GPU host binds the hardware GL backend instead, so a headless launch's
+  // implicit --use-angle=swiftshader-webgl never wins and forces software GL.
+  const gpuArgs = managedForkArgs("seed");
+  assert.ok(!gpuArgs.includes("--use-angle=swiftshader"));
+  assert.ok(gpuArgs.includes("--use-angle=gl"));
 });

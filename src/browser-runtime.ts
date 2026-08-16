@@ -131,7 +131,19 @@ export function managedForkArgs(fingerprintSeed, { softwareGpu = false } = {}) {
           "--use-angle=swiftshader",
           "--enable-unsafe-swiftshader",
         ]
-      : []),
+      : // On a host WITH a GPU, the opposite risk applies: a headless launch
+        // (Playwright's default for the browser worker) appends
+        // --use-angle=swiftshader-webgl on its own, which forces software GL
+        // even when hardware is present. That trips the fork's integrated-GPU
+        // spoof, and the resulting "Intel UHD 620" string contradicts the
+        // UA's desktop hardware — exactly the cross-signal inconsistency
+        // PixelScan flags as "Masking detected". Bind the real GL backend so
+        // the software default never wins and the genuine GPU is reported.
+        // mergeChromiumArgs drops a same-name caller switch rather than
+        // letting it override, so a host that passes its own --use-angle gets
+        // this managed value and a chromiumArgs warning naming the dropped
+        // switch.
+        ["--use-gl=angle", "--use-angle=gl"]),
     ...(fingerprintSeed ? [`--fingerprint=${fingerprintSeed}`] : []),
   ];
 }

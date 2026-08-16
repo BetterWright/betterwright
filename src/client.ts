@@ -211,6 +211,7 @@ export class BetterWright {
   declare downloadPolicy: "ask" | "allow" | "deny";
   declare stealthRuntimeFix: boolean;
   declare launchIdentity: boolean;
+  declare fingerprintNoise: boolean;
   declare upstreamProxy: string | null;
   declare geoip: boolean;
   declare locale: string | null;
@@ -284,6 +285,13 @@ export class BetterWright {
    *   locale/timezone flags for the managed browser, resolved to match the
    *   egress IP when `geoip` is on. No page-world API shims are installed and
    *   no operating system is masked as another — the fork presents the host.
+   * @param {boolean} [options.fingerprintNoise=true] per-profile canvas/audio/
+   *   WebGL-readPixels farbling keyed to the profile seed. Keep it on for
+   *   multi-account isolation (each profile gets a distinct, stable rendering
+   *   fingerprint). Turn it off when a single identity must present the host's
+   *   genuine GPU rendering — consistency checkers (PixelScan's "Masking
+   *   detected") flag farbled output because it no longer matches a stock
+   *   hardware signature. Only affects the managed fork.
    * @param {object|null} [options.provider] non-managed browser, opt-in:
    *   `{ executablePath }` launches a caller-supplied local Chromium binary
    *   (guard proxy still applies); `{ cdpUrl, headers? }` attaches to any CDP
@@ -360,6 +368,7 @@ export class BetterWright {
     this.provider = resolveProviderOption(options);
     this.browserFlavor = "chromium-fork";
     this.headless = resolveHeadless(options.headless);
+    this.fingerprintNoise = options.fingerprintNoise !== false;
     this.searchMinIntervalMs = Math.max(Number(options.searchMinIntervalMs) || 0, 0);
     this.publicSearchPolicy = resolvePublicSearchPolicy(options.publicSearchPolicy);
     this.downloadPolicy = normalizeDownloadPolicy(options.downloadPolicy);
@@ -461,6 +470,7 @@ export class BetterWright {
       provider: this.provider,
       stealthRuntimeFix: this.stealthRuntimeFix,
       launchIdentity: this.launchIdentity,
+      fingerprintNoise: this.fingerprintNoise,
       upstreamProxy: this.upstreamProxy,
       geoip: this.geoip,
       locale: this.locale,

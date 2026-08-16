@@ -42,6 +42,7 @@ export class BetterWright {
   downloadPolicy: "ask" | "allow" | "deny";
   stealthRuntimeFix: boolean;
   launchIdentity: boolean;
+  fingerprintNoise: boolean;
   upstreamProxy: string | null;
   geoip: boolean;
   locale: string | null;
