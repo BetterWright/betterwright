@@ -14,8 +14,16 @@ import { BetterWright, NetworkPolicy } from "../../dist/src/index.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 // Integration suite: gates on the managed BetterChromium fork being
-// installed on this host (`betterwright setup`).
-const ready = Boolean(resolveChromiumForkBinary());
+// installed on this host (`betterwright setup`). `resolveChromiumForkBinary`
+// is fail-closed: it throws when BETTERWRIGHT_CHROMIUM_PATH/ROOT=off (a
+// leftover bundled-fallback toggle) rather than returning null, so guard the
+// gate and treat that misconfiguration as "not installed" to skip cleanly.
+let ready = false;
+try {
+  ready = Boolean(resolveChromiumForkBinary());
+} catch {
+  ready = false;
+}
 const opts = { skip: ready ? false : "browser runtime not installed" };
 
 function tempHome() {
