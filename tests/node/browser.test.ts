@@ -131,7 +131,13 @@ test("the selected managed browser keeps WebGL available with a coherent identit
       canvas.width = 2;
       canvas.height = 2;
       const gl = canvas.getContext("webgl");
-      if (!gl) return { available: false };
+      if (!gl) {
+        // Diagnostic detail for a GPU-less runner: report every GL surface so a
+        // null context says why rather than just "false".
+        let webgl2 = "null";
+        try { webgl2 = canvas.getContext("webgl2") ? "ok" : "null"; } catch (e) { webgl2 = "err:" + e.message; }
+        return { available: false, webgl2, userAgent: navigator.userAgent, platform: navigator.platform };
+      }
       gl.clearColor(0.25, 0.5, 0.75, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
       const pixels = new Uint8Array(4);
@@ -148,7 +154,7 @@ test("the selected managed browser keeps WebGL available with a coherent identit
       };
     });`);
     assert.equal(result.ok, true, result.error);
-    assert.equal(result.result.available, true);
+    assert.equal(result.result.available, true, JSON.stringify(result.result));
     assert.equal(typeof result.result.vendor, "string");
     assert.ok(result.result.vendor.length > 0);
     assert.equal(typeof result.result.renderer, "string");
@@ -161,11 +167,11 @@ test("the selected managed browser keeps WebGL available with a coherent identit
       // Honest-Linux fork: no Mac masquerade. The WebGL identity is a common
       // GPU (never "SwiftShader"/"llvmpipe", even on a GPU-less host), the
       // platform is Linux, and the UA says Linux.
-      assert.equal(result.result.platform, "Linux x86_64");
-      assert.match(result.result.userAgent, /Linux/);
-      assert.doesNotMatch(result.result.userAgent, /Macintosh/);
-      assert.doesNotMatch(result.result.renderer, /SwiftShader|llvmpipe|softpipe/i);
-      assert.match(result.result.renderer, /ANGLE/);
+      assert.equal(result.result.platform, "Linux x86_64", JSON.stringify(result.result));
+      assert.match(result.result.userAgent, /Linux/, result.result.userAgent);
+      assert.doesNotMatch(result.result.userAgent, /Macintosh/, result.result.userAgent);
+      assert.doesNotMatch(result.result.renderer, /SwiftShader|llvmpipe|softpipe/i, result.result.renderer);
+      assert.match(result.result.renderer, /ANGLE/, result.result.renderer);
     } else if (/Macintosh/.test(result.result.userAgent)) {
       assert.equal(result.result.platform, "MacIntel");
     } else if (/Windows/.test(result.result.userAgent)) {
