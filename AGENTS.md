@@ -51,7 +51,7 @@ because they are enforced by code, not convention.
   are redacted from every result envelope. Any new output channel must go
   through redaction.
 - **Runtime dependencies are pinned exactly, in several places at once.**
-  playwright-core, cloakbrowser, and tldts are exact-pinned (tldts's Public
+  playwright-core and tldts are exact-pinned (tldts's Public
   Suffix List snapshot decides credential base-domain scope), patchright-core
   must equal playwright-core, and the pins are mirrored in `src/doctor.ts`
   and the publish workflow. `scripts/check-versions.ts` fails the release on

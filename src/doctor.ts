@@ -8,16 +8,16 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { loadCodexAuth, loadGrokAuth } from "./auth.js";
+import { browserProviderInfo, resolveBrowserProvider } from "./browser-providers.js";
+import { chromiumNeedsSoftwareGpu } from "./browser-runtime.js";
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   resolveChromiumForkBinary,
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
-import { chromiumForkNeedsSoftwareGpu } from "./cloak.js";
-import { forkFontsDir } from "./fork-identity.js";
 import { defaultHome } from "./home.js";
 import { optionalPeerAvailable } from "./optional-peer.js";
 import { staleAgentSkillReport } from "./skill-install.js";
@@ -25,7 +25,6 @@ import { staleAgentSkillReport } from "./skill-install.js";
 const require = createRequire(import.meta.url);
 
 export const PINNED_PLAYWRIGHT_VERSION = "1.61.1";
-export const PINNED_CLOAKBROWSER_VERSION = "0.4.10";
 
 /** Version of the optional patchright-core stealth driver, or null if absent. */
 export function stealthDriverVersion() {
@@ -46,59 +45,9 @@ export function resolveCoreDir() {
   }
 }
 
-export function resolveCloakDir() {
-  const override = (process.env.BETTERWRIGHT_CLOAKBROWSER_PATH || "").trim();
-  if (override && fs.existsSync(path.join(override, "package.json"))) return override;
-  try {
-    return path.resolve(
-      path.dirname(fileURLToPath(import.meta.resolve("cloakbrowser"))),
-      "..",
-    );
-  } catch {
-    return null;
-  }
-}
-
-export async function cloakRuntime() {
-  const dir = resolveCloakDir();
-  const noBinary = { binaryVersion: null, tier: null, binary: null, installed: false };
-  if (!dir) return { dir: null, version: null, ...noBinary };
-  let version = null;
-  try {
-    version = require(path.join(dir, "package.json")).version;
-  } catch {
-    /* reported below */
-  }
-  try {
-    const cloak = await import(pathToFileURL(path.join(dir, "dist", "index.js")).href);
-    const info = cloak.binaryInfo();
-    return {
-      dir,
-      version,
-      binaryVersion: info.version || null,
-      tier: info.tier || null,
-      binary: info.binaryPath,
-      installed: Boolean(info.installed),
-    };
-  } catch {
-    return { dir, version, ...noBinary };
-  }
-}
-
-/** Missing adjacent fonts only expose host fontconfig on Linux. */
-export function missingForkFontsWarning({
-  chromiumFork,
-  chromiumForkFonts,
-  platform = process.platform,
-}) {
-  if (platform !== "linux" || !chromiumFork || chromiumForkFonts) return null;
-  return "fork binary has no fonts/ttf beside it; host fontconfig will leak (Linux tell). Deploy the macOS-metric font bundle next to chrome.";
-}
-
 /** Build the readiness report `betterwright doctor` prints. */
 export async function doctorReport() {
   const core = resolveCoreDir();
-  const cloak = await cloakRuntime();
   let version = null;
   if (core) {
     try {
@@ -109,7 +58,6 @@ export async function doctorReport() {
   }
   const worker = fileURLToPath(new URL("./worker.js", import.meta.url));
   const workerOk = fs.existsSync(worker);
-  const cloakOk = cloak.version === PINNED_CLOAKBROWSER_VERSION && cloak.installed;
   const stealth = stealthDriverVersion();
   let chromiumFork = null;
   let chromiumForkError = null;
@@ -118,25 +66,34 @@ export async function doctorReport() {
   } catch (error) {
     chromiumForkError = error instanceof Error ? error.message : String(error);
   }
+  const softwareGpu = chromiumNeedsSoftwareGpu();
   const browserSelection = selectManagedBrowserBackend({
     chromiumFork,
-    softwareGpu: chromiumForkNeedsSoftwareGpu(),
+    softwareGpu,
   });
   const browser = chromiumForkError ? "unavailable" : browserSelection.browser;
-  const chromiumForkFonts = chromiumFork ? forkFontsDir(chromiumFork) : null;
-  const chromiumForkFontsWarning = missingForkFontsWarning({
-    chromiumFork,
-    chromiumForkFonts,
-  });
+  let provider = null;
+  let providerError = null;
+  try {
+    const resolved = resolveBrowserProvider(undefined);
+    if (resolved?.plan) {
+      const plan = resolved.plan;
+      provider = plan.provider
+        ? {
+            kind: plan.kind,
+            provider: plan.provider,
+            endpoint: plan.endpointLabel || null,
+            ...(browserProviderInfo(plan.provider) || {}),
+          }
+        : { kind: plan.kind, executablePath: plan.executablePath || null };
+    }
+  } catch (error) {
+    providerError = error instanceof Error ? error.message : String(error);
+  }
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    Boolean(
-      browser === "chromium-fork"
-        ? chromiumFork
-        : browser === "cloak" && cloakOk,
-    ) &&
-    !chromiumForkError;
+    (provider ? !providerError : browser === "chromium-fork" && !chromiumForkError);
   return {
     node: process.execPath,
     worker,
@@ -144,20 +101,13 @@ export async function doctorReport() {
     playwright_core: core,
     playwright_version: version,
     playwright_pinned: PINNED_PLAYWRIGHT_VERSION,
-    cloakbrowser: cloak.dir,
-    cloakbrowser_version: cloak.version,
-    cloakbrowser_pinned: PINNED_CLOAKBROWSER_VERSION,
-    cloakbrowser_binary_version: cloak.binaryVersion,
-    cloakbrowser_binary_tier: cloak.tier,
-    cloakbrowser_binary: cloak.binary,
-    cloakbrowser_ok: cloakOk,
     chromium_fork: chromiumFork,
     chromium_fork_version: chromiumFork ? BETTERWRIGHT_CHROMIUM_VERSION : null,
     chromium_fork_error: chromiumForkError,
-    cloak_fallback: browserSelection.cloakFallback,
+    software_gpu: softwareGpu,
     browser_selection_reason: browserSelection.selectionReason,
-    chromium_fork_fonts: chromiumForkFonts,
-    chromium_fork_fonts_warning: chromiumForkFontsWarning,
+    provider,
+    provider_error: providerError,
     stealth_driver: stealth,
     stealth_available: Boolean(stealth),
     browser,
@@ -170,7 +120,7 @@ export async function doctorReport() {
 // doctorReport() above is the machine shape: a flat dictionary of resolved
 // paths and versions, which `--json` still prints verbatim and the MCP
 // browser_doctor tool returns. It is a poor thing to hand a person, though —
-// it says `cloakbrowser_ok false` where what they need to know is "run
+// it says `chromium_fork null` where what they need to know is "run
 // betterwright setup". The checks below translate the same facts, plus the
 // integration state doctorReport() has no reason to carry, into a grouped
 // report where every failure names its fix.
@@ -319,32 +269,36 @@ export function doctorChecks(
   );
   add("Runtime", "Worker", report.worker_ok ? "ok" : "fail", report.worker, report.worker_ok ? null : "The package looks incomplete — reinstall betterwright.");
 
-  if (report.browser_selection_reason === "forced-chromium-fork") {
+  if (report.provider) {
+    const provider = report.provider;
+    add(
+      "Browser",
+      "Provider",
+      provider.kind === "remote" ? "warn" : "ok",
+      provider.kind === "remote"
+        ? `${provider.name || provider.provider} (remote CDP${provider.endpoint ? ` — ${provider.endpoint}` : ""}) — outside the guard proxy`
+        : `custom local Chromium — ${provider.executablePath}`,
+      provider.kind === "remote"
+        ? "Remote page traffic cannot be network-policy enforced; see docs/browser-providers.md."
+        : null,
+    );
+  } else if (report.provider_error) {
+    add("Browser", "Provider", "fail", report.provider_error);
+  }
+
+  if (report.chromium_fork) {
     add(
       "Browser",
       "BetterChromium",
-      "warn",
-      `BetterChromium ${report.chromium_fork_version} — ${report.chromium_fork} — forced by BETTERWRIGHT_BACKEND=chromium-fork`,
-      "Verify WebGL inside this container or OS sandbox when /dev/dri is not visible.",
+      report.software_gpu ? "warn" : "ok",
+      `BetterChromium ${report.chromium_fork_version} — ${report.chromium_fork}` +
+        (report.software_gpu
+          ? " (no accessible Linux render device; WebGL falls back to SwiftShader)"
+          : ""),
+      report.software_gpu
+        ? "Expose a read/write /dev/dri render device for hardware WebGL."
+        : null,
     );
-  } else if (report.browser === "cloak" && report.cloak_fallback === "gpu-unavailable") {
-    add(
-      "Browser",
-      "BetterChromium",
-      "warn",
-      "installed, but no accessible Linux render device was found — using CloakBrowser compatibility mode so WebGL remains available",
-      "Expose a read/write /dev/dri render device, or set BETTERWRIGHT_BACKEND=chromium-fork to override this mount-based probe.",
-    );
-  } else if (report.chromium_fork) {
-    add(
-      "Browser",
-      "BetterChromium",
-      "ok",
-      `BetterChromium ${report.chromium_fork_version} — ${report.chromium_fork}`,
-    );
-    if (report.chromium_fork_fonts_warning) {
-      add("Browser", "Fork fonts", "warn", report.chromium_fork_fonts_warning);
-    }
   } else if (report.chromium_fork_error) {
     add(
       "Browser",
@@ -353,61 +307,28 @@ export function doctorChecks(
       report.chromium_fork_error,
       "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
     );
-  } else if (report.browser === "cloak") {
-    const automatic = report.cloak_fallback === "unsupported-platform";
-    const forced = report.browser_selection_reason === "forced-cloak";
+  } else if (report.browser_selection_reason === "unsupported-platform") {
     add(
       "Browser",
       "BetterChromium",
-      "warn",
-      automatic
-        ? "no artifact is published for this platform — using CloakBrowser compatibility mode"
-        : forced
-          ? "forced by BETTERWRIGHT_BACKEND=cloak — using CloakBrowser compatibility mode"
-          : "explicitly disabled — using CloakBrowser compatibility mode",
-      automatic
-        ? null
-        : forced
-          ? "Unset BETTERWRIGHT_BACKEND (or set it to auto) to restore automatic selection."
-          : "Run `betterwright setup` and unset BETTERWRIGHT_CHROMIUM_PATH/ROOT to restore the default backend.",
+      "fail",
+      "no artifact is published for this platform",
+      "Use the provider option to bring your own or a cloud browser — docs/browser-providers.md.",
     );
-  } else {
+  } else if (!report.provider) {
     add(
       "Browser",
       "BetterChromium",
       "fail",
       "not installed",
-      "Run `betterwright setup`. Use `--cloak-only` only for explicit compatibility mode.",
+      "Run `betterwright setup`.",
     );
   }
-  add(
-    "Browser",
-    "CloakBrowser",
-    report.cloakbrowser_ok
-      ? "ok"
-      : report.browser === "cloak"
-        ? "fail"
-        : report.chromium_fork
-          ? "warn"
-          : "fail",
-    report.cloakbrowser_ok
-      ? `${report.cloakbrowser_binary_version} (${report.cloakbrowser_binary_tier})` +
-        (report.cloakbrowser_binary ? ` — ${report.cloakbrowser_binary}` : "") +
-        (report.browser === "cloak"
-          ? ["unsupported-platform", "gpu-unavailable"].includes(report.cloak_fallback)
-            ? " — automatic compatibility backend"
-            : " — explicit compatibility backend"
-          : " — compatibility backend available")
-      : report.browser === "cloak"
-        ? "binary not installed (required compatibility backend on this platform)"
-        : "binary not installed (optional compatibility backend)",
-    report.cloakbrowser_ok
-      ? null
-      : report.browser === "cloak"
-        ? "Run `betterwright setup` to download the compatibility backend."
-        : "Optional: run `betterwright setup --cloak-only` to download it.",
-  );
-  add("Browser", "In use", report.ready ? "ok" : "fail", report.browser, report.ready ? null : "Run `betterwright setup`.");
+  add("Browser", "In use", report.ready ? "ok" : "fail",
+    report.provider
+      ? `provider:${report.provider.provider || report.provider.kind}`
+      : report.browser,
+    report.ready ? null : "Run `betterwright setup`, or configure a provider (docs/browser-providers.md).");
   // Optional isolated-world stealth driver. Reported here (not only in --json)
   // because the docs point users at `doctor` to check it before turning on
   // `stealthRuntimeFix`.

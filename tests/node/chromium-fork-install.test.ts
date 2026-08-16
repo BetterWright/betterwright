@@ -19,7 +19,7 @@ import { makeTempDir } from "./helpers/temp-dir.js";
 test("Chromium 151 release is pinned to verified public assets", () => {
   assert.equal(
     CHROMIUM_FORK_RELEASE_TAG,
-    `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`,
+    `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r3`,
   );
   assert.deepEqual(
     chromiumForkAssetForHost({ platform: "darwin", arch: "arm64" }),
@@ -42,7 +42,7 @@ test("Chromium 151 release is pinned to verified public assets", () => {
     "linux-x64": {
       name: "betterchromium-linux-x64.zip",
       sha256:
-        "f80a335667e950469fe2744a9cf1e85baf20b3a8f99b5cd031052a2bdaca9fb9",
+        "3eabe54aae9d8bde34170a6930df21932325be4570baf9d45431baad6cd03d98",
     },
     "win32-x64": {
       name: "betterchromium-win-x64.zip",

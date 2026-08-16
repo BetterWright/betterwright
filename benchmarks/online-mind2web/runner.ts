@@ -476,7 +476,6 @@ async function runPi(task, runtimeDir, options) {
   ];
   const env = {
     ...process.env,
-    BETTERWRIGHT_BROWSER: "cloak",
     BETTERWRIGHT_DISPLAY: "0",
     BETTERWRIGHT_HOME: homeDir,
     BETTERWRIGHT_PI_AUTO_SCREENSHOT: "1",

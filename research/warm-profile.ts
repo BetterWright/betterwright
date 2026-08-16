@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Organic profile warmer for BetterWright's persistent Cloak profile.
+// Organic profile warmer for BetterWright's persistent browser profile.
 //
 // Tools that attach to a real user's daily-driver Chrome get anti-bot strength
 // for free, from an aged, signed-in profile. BetterWright deliberately cannot

@@ -2,12 +2,8 @@
 // pre-patched `patchright-core` drop-in. Registered off-thread via
 // `stealth-register.ts` (see there for why this is a separate file).
 //
-// This is what makes the optional Runtime.enable stealth fix reach the managed
-// Cloak path: `cloakbrowser` resolves its driver with a bare
-// `import("playwright-core")` and exposes no injection hook, so the only way to
-// swap the driver it uses is to intercept that specifier before Node resolves
-// it. The same redirect also covers BetterWright's own worker import and the
-// managed Cloak launch, so the whole process uses one driver.
+// The redirect covers BetterWright's own worker import, so the whole process
+// drives the managed BetterChromium fork through one driver.
 //
 // patchright-core is an exact-version drop-in for playwright-core@1.61.x, so the
 // redirect is API-compatible; it just changes the CDP behaviour (no blanket

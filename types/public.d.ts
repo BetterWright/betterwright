@@ -23,9 +23,44 @@ export type {
   PiImageContentOptions,
 } from "./pi.js";
 
+/** A caller-supplied local Chromium binary. */
+export interface LocalExecutableProvider {
+  executablePath: string;
+}
+
+/** Any CDP WebSocket endpoint, with optional connect headers. */
+export interface CdpEndpointProvider {
+  cdpUrl: string;
+  headers?: Record<string, string>;
+}
+
+export type CloudBrowserProviderName =
+  | "browser-use"
+  | "kernel"
+  | "browserbase"
+  | "steel"
+  | "anchor"
+  | "hyperbrowser"
+  | "browserless"
+  | "brightdata"
+  | "oxylabs";
+
+/** A cloud browser minted over a named provider's API. */
+export interface CloudBrowserProvider {
+  provider: CloudBrowserProviderName;
+  /** Falls back to the provider's env var (e.g. BROWSERBASE_API_KEY). */
+  apiKey?: string;
+  /** Provider-native create-session fields, passed through verbatim. */
+  sessionOptions?: Record<string, unknown>;
+}
+
+export type BrowserProviderOptions =
+  | LocalExecutableProvider
+  | CdpEndpointProvider
+  | CloudBrowserProvider;
+
 export interface BetterWrightOptions {
-  home?: string;
-  /**
+  home?: string;  /**
    * Named persistent browser profile inside the home: a separate identity,
    * with its own cookie jar, its own profile lock, and its own session daemon,
    * at `browser/profiles/<name>`. Omit it (the default) to use the single
@@ -55,6 +90,22 @@ export interface BetterWrightOptions {
    */
   credentialCapture?: boolean;
   browser?: BrowserFlavor;
+  /**
+   * Non-managed browser, opt-in. Exactly one of:
+   * - `{ executablePath }` — launch a caller-supplied local Chromium binary
+   *   (the guard proxy still applies);
+   * - `{ cdpUrl, headers? }` — attach to any CDP WebSocket endpoint
+   *   (BETTERWRIGHT_CDP_URL is the env shorthand);
+   * - `{ provider, apiKey?, sessionOptions? }` — mint a cloud browser over a
+   *   named provider's API: "browser-use", "kernel", "browserbase", "steel",
+   *   "anchor", "hyperbrowser", "browserless", "brightdata", "oxylabs".
+   *
+   * Remote browsers run outside the guard proxy — page traffic cannot be
+   * network-policy enforced there; the launch warning says so. Provider
+   * credentials are redacted from result envelopes. See
+   * docs/browser-providers.md.
+   */
+  provider?: BrowserProviderOptions | null;
   headless?: HeadlessMode;
   defaultTimeout?: number;
   searchMinIntervalMs?: number;
@@ -67,18 +118,22 @@ export interface BetterWrightOptions {
    * default. Also settable with `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`.
    */
   stealthRuntimeFix?: boolean;
-  cloakV2?: boolean;
+  /**
+   * Coherent launch identity: locale/timezone flags for the managed browser,
+   * resolved to match the egress IP when `geoip` is on. Defaults to true. No
+   * page-world API shims are installed and no operating system is masked as
+   * another — the fork presents the host it runs on.
+   */
+  launchIdentity?: boolean;
   upstreamProxy?: string;
   geoip?: boolean;
   locale?: string;
   timezone?: string;
   headedInvisible?: boolean;
   /**
-   * Identity platform presented to sites. The BetterChromium fork defaults
-   * to "macos" — a realistic consumer-Mac fingerprint (UA, UA-CH,
-   * navigator.platform, screen geometry) captured from genuine Chrome 150 on
-   * an Apple-Silicon MacBook Pro. The managed CloakBrowser path defaults to
-   * the host platform.
+   * Identity platform presented to sites. Defaults to the host platform — the
+   * fork presents the OS it actually runs on (a Linux host is a Linux
+   * browser); set this only to pin a specific identity explicitly.
    */
   platform?: "macos" | "windows" | "linux";
   /**

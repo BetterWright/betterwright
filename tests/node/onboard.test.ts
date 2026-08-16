@@ -9,7 +9,6 @@ import test from "node:test";
 import {
   doctorChecks,
   formatDoctorChecks,
-  missingForkFontsWarning,
   modelReadiness,
   modelSetupHint,
   preferredModelId,
@@ -34,20 +33,13 @@ const READY_REPORT = {
   playwright_core: "/x/playwright-core",
   playwright_version: "1.61.1",
   playwright_pinned: "1.61.1",
-  cloakbrowser: "/x/cloakbrowser",
-  cloakbrowser_version: "0.4.10",
-  cloakbrowser_pinned: "0.4.10",
-  cloakbrowser_binary_version: "145.0.0.0",
-  cloakbrowser_binary_tier: "free",
-  cloakbrowser_binary: "/x/chrome",
-  cloakbrowser_ok: true,
   chromium_fork: "/x/fork/chrome",
-  chromium_fork_version: "150.0.0.0",
+  chromium_fork_version: "151.0.7922.108",
   chromium_fork_error: null,
-  cloak_fallback: null,
+  software_gpu: false,
   browser_selection_reason: "native-available",
-  chromium_fork_fonts: "/x/fork/fonts",
-  chromium_fork_fonts_warning: null,
+  provider: null,
+  provider_error: null,
   stealth_driver: "1.61.1",
   stealth_available: true,
   browser: "chromium-fork",
@@ -285,103 +277,52 @@ test("doctor checks translate a raw report into fixable lines", () => {
     playwright_version: "1.50.0",
     chromium_fork: null,
     chromium_fork_version: null,
-    cloakbrowser_ok: false,
-    browser: "cloak",
+    browser: "unavailable",
+    browser_selection_reason: "native-missing",
   });
   const failures = broken.filter((check) => check.status === "fail");
   assert.ok(failures.length >= 2);
   assert.ok(failures.every((check) => check.fix));
 });
 
-test("doctor only warns about missing fork font bundles on Linux", () => {
-  const chromiumFork = "/x/fork/chrome";
-  assert.match(
-    missingForkFontsWarning({
-      chromiumFork,
-      chromiumForkFonts: null,
-      platform: "linux",
-    }),
-    /fontconfig/,
-  );
-  assert.equal(
-    missingForkFontsWarning({
-      chromiumFork,
-      chromiumForkFonts: null,
-      platform: "win32",
-    }),
-    null,
-  );
-  assert.equal(
-    missingForkFontsWarning({
-      chromiumFork,
-      chromiumForkFonts: null,
-      platform: "darwin",
-    }),
-    null,
-  );
-  assert.equal(
-    missingForkFontsWarning({
-      chromiumFork,
-      chromiumForkFonts: "/x/fork/fonts",
-      platform: "linux",
-    }),
-    null,
-  );
+test("doctor surfaces the SwiftShader fallback on GPU-less Linux", () => {
+  const checks = doctorChecks({
+    ...READY_REPORT,
+    software_gpu: true,
+    browser_selection_reason: "software-gpu",
+  });
+  const native = checks.find((check) => check.label === "BetterChromium");
+  assert.equal(native.status, "warn");
+  assert.match(native.detail, /SwiftShader/);
+  assert.match(native.fix, /render device/);
 });
 
-test("doctor explains the automatic compatibility backend on unsupported hosts", () => {
+test("doctor explains provider browsers and the missing artifact", () => {
   const checks = doctorChecks({
+    ...READY_REPORT,
+    provider: {
+      kind: "remote",
+      provider: "browserbase",
+      name: "Browserbase",
+      endpoint: "wss://connect.browserbase.com/***",
+    },
+  });
+  const provider = checks.find((check) => check.label === "Provider");
+  assert.equal(provider.status, "warn");
+  assert.match(provider.detail, /Browserbase/);
+  assert.match(provider.detail, /outside the guard proxy/);
+
+  const unsupported = doctorChecks({
     ...READY_REPORT,
     chromium_fork: null,
     chromium_fork_version: null,
-    cloak_fallback: "unsupported-platform",
+    browser: "unavailable",
     browser_selection_reason: "unsupported-platform",
-    browser: "cloak",
   });
-  const native = checks.find((check) => check.label === "BetterChromium");
-  const cloak = checks.find((check) => check.label === "CloakBrowser");
-  assert.equal(native.status, "warn");
+  const native = unsupported.find((check) => check.label === "BetterChromium");
+  assert.equal(native.status, "fail");
   assert.match(native.detail, /no artifact is published/);
-  assert.match(cloak.detail, /automatic compatibility backend/);
-});
-
-test("doctor explains the WebGL-compatible fallback on GPU-less Linux", () => {
-  const checks = doctorChecks({
-    ...READY_REPORT,
-    cloak_fallback: "gpu-unavailable",
-    browser_selection_reason: "render-device-unavailable",
-    browser: "cloak",
-  });
-  const native = checks.find((check) => check.label === "BetterChromium");
-  const cloak = checks.find((check) => check.label === "CloakBrowser");
-  assert.equal(native.status, "warn");
-  assert.match(native.detail, /no accessible Linux render device/);
-  assert.match(native.detail, /WebGL remains available/);
-  assert.match(cloak.detail, /automatic compatibility backend/);
-});
-
-test("doctor makes forced backend selection and its tradeoff explicit", () => {
-  const nativeChecks = doctorChecks({
-    ...READY_REPORT,
-    browser_selection_reason: "forced-chromium-fork",
-  });
-  const native = nativeChecks.find((check) => check.label === "BetterChromium");
-  assert.equal(native.status, "warn");
-  assert.match(native.detail, /BETTERWRIGHT_BACKEND=chromium-fork/);
-  assert.match(native.fix, /Verify WebGL/);
-
-  const cloakChecks = doctorChecks({
-    ...READY_REPORT,
-    chromium_fork: null,
-    chromium_fork_version: null,
-    browser: "cloak",
-    cloak_fallback: "explicit",
-    browser_selection_reason: "forced-cloak",
-  });
-  const cloak = cloakChecks.find((check) => check.label === "BetterChromium");
-  assert.equal(cloak.status, "warn");
-  assert.match(cloak.detail, /BETTERWRIGHT_BACKEND=cloak/);
-  assert.match(cloak.fix, /Unset BETTERWRIGHT_BACKEND/);
+  assert.match(native.fix, /provider option/);
 });
 
 test("doctor output groups checks and marks each status", () => {

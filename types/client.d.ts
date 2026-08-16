@@ -33,13 +33,15 @@ export class BetterWright {
   policy: NetworkPolicy;
   vault: CredentialVault | null;
   credentialCapture: boolean;
-  browserFlavor: "cloak";
+  browserFlavor: "chromium-fork";
+  /** The configured provider, or null for the managed BetterChromium fork. */
+  provider: import("./public.js").BrowserProviderOptions | null;
   headless: boolean;
   searchMinIntervalMs: number;
   publicSearchPolicy: "block" | "allow";
   downloadPolicy: "ask" | "allow" | "deny";
   stealthRuntimeFix: boolean;
-  cloakV2: boolean;
+  launchIdentity: boolean;
   upstreamProxy: string | null;
   geoip: boolean;
   locale: string | null;

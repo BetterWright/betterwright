@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-
+import {
+  chromiumNeedsSoftwareGpu,
+  managedForkArgs,
+} from "../../dist/src/browser-runtime.js";
 import {
   chromiumArgsWarning,
   guardProxyLaunchArgs,
@@ -9,11 +12,6 @@ import {
   parseChromiumArgs,
   resolveChromiumArgs,
 } from "../../dist/src/chromium-args.js";
-import {
-  chromiumForkNeedsSoftwareGpu,
-  managedChromiumForkArgs,
-  managedCloakArgs,
-} from "../../dist/src/cloak.js";
 
 test("empty and whitespace-only argument strings parse to nothing", () => {
   for (const raw of ["", "   ", "\t\n", null, undefined]) {
@@ -176,7 +174,7 @@ test("resolving with neither source set yields nothing", () => {
 });
 
 test("caller switches are appended after the managed ones", () => {
-  const managed = managedCloakArgs("seed-1");
+  const managed = managedForkArgs("seed-1");
   const { args, ignored } = mergeChromiumArgs(managed, ["--disable-gpu"]);
   assert.deepEqual(args.slice(0, managed.length), managed);
   assert.equal(args.at(-1), "--disable-gpu");
@@ -186,15 +184,15 @@ test("caller switches are appended after the managed ones", () => {
 test("a collision keeps BetterWright's value and reports the dropped switch", () => {
   // Chromium resolves duplicate switches last-wins, so appending a colliding
   // switch would override the managed value. It must be dropped instead.
-  const managed = managedCloakArgs("seed-2");
-  assert.ok(managed.includes("--test-type"));
+  const managed = managedForkArgs("seed-2");
+  assert.ok(managed.includes("--renderer-process-limit=2"));
   const { args, ignored } = mergeChromiumArgs(managed, [
-    "--test-type=other",
+    "--renderer-process-limit=8",
     "--disable-gpu",
   ]);
-  assert.deepEqual(ignored, ["--test-type"]);
-  assert.ok(args.includes("--test-type"));
-  assert.ok(!args.some((arg) => arg.startsWith("--test-type=")));
+  assert.deepEqual(ignored, ["--renderer-process-limit"]);
+  assert.ok(args.includes("--renderer-process-limit=2"));
+  assert.ok(!args.some((arg) => arg.startsWith("--renderer-process-limit=8")));
   assert.ok(args.includes("--disable-gpu"));
 });
 
@@ -233,9 +231,9 @@ test("guard proxy launch args point Chromium at the SOCKS port without resolver 
   assert.throws(() => guardProxyLaunchArgs(70_000), { name: "TypeError" });
 });
 
-test("the WebRTC proxy boundary cannot be displaced on either browser backend", () => {
+test("the WebRTC proxy boundary cannot be displaced", () => {
   const boundary = "--webrtc-ip-handling-policy";
-  for (const managed of [managedCloakArgs("seed-3"), managedChromiumForkArgs("seed-3")]) {
+  for (const managed of [managedForkArgs("seed-3")]) {
     const { args, ignored } = mergeChromiumArgs(managed, [`${boundary}=default`]);
     assert.deepEqual(ignored, [boundary]);
     assert.ok(args.includes(`${boundary}=disable_non_proxied_udp`));
@@ -245,7 +243,7 @@ test("the WebRTC proxy boundary cannot be displaced on either browser backend", 
 
 test("GPU capability detection distinguishes accessible DRI devices", () => {
   assert.equal(
-    chromiumForkNeedsSoftwareGpu({
+    chromiumNeedsSoftwareGpu({
       platform: "linux",
       readdirSync: () => ["renderD128", "card0"],
       accessSync: (device) => {
@@ -256,7 +254,7 @@ test("GPU capability detection distinguishes accessible DRI devices", () => {
     false,
   );
   assert.equal(
-    chromiumForkNeedsSoftwareGpu({
+    chromiumNeedsSoftwareGpu({
       platform: "linux",
       readdirSync: () => ["renderD128"],
       accessSync: () => {
@@ -266,7 +264,7 @@ test("GPU capability detection distinguishes accessible DRI devices", () => {
     true,
   );
   assert.equal(
-    chromiumForkNeedsSoftwareGpu({
+    chromiumNeedsSoftwareGpu({
       platform: "darwin",
       readdirSync: () => {
         throw new Error("must not inspect DRI on macOS");
@@ -275,7 +273,7 @@ test("GPU capability detection distinguishes accessible DRI devices", () => {
     false,
   );
 
-  const native = managedChromiumForkArgs("seed");
+  const native = managedForkArgs("seed");
   assert.ok(!native.some((arg) => arg.startsWith("--use-gl=")));
   assert.ok(!native.some((arg) => arg.startsWith("--use-angle=")));
   assert.ok(!native.includes("--enable-unsafe-swiftshader"));
@@ -288,7 +286,7 @@ test("a switch repeated by the caller is applied once", () => {
 });
 
 test("merging without caller switches leaves the managed list untouched", () => {
-  const managed = managedCloakArgs("seed-4");
+  const managed = managedForkArgs("seed-4");
   const { args, ignored } = mergeChromiumArgs(managed, []);
   assert.deepEqual(args, managed);
   assert.deepEqual(ignored, []);

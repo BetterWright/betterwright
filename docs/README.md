@@ -42,7 +42,8 @@ whole path works by loading a real page.
 | Page | What it covers |
 | --- | --- |
 | [Architecture & security model](architecture.md) | The worker process, the RPC loop, what is and isn't a security boundary |
-| [Cloaking V2](cloaking-v2.md) | The coherent-fingerprint approach; launch modes and egress matching |
-| [Chromium fork](chromium-fork.md) | BetterWright's own Chromium build: farbling, platform masking, discovery |
+| [Launch identity](launch-identity.md) | The coherent locale/timezone/geo identity layer; launch modes and egress matching |
+| [Browser providers](browser-providers.md) | Managed fork, local executables, CDP endpoints, and named cloud browsers |
+| [Chromium fork](chromium-fork.md) | BetterWright's own Chromium build: farbling, discovery |
 | [Chromium fork patches](chromium-fork-patches.md) | What each source patch in the pinned Chromium 151 build changes, and why |
 | [Headed / headless](attach-mode.md) | Display modes over one persistent profile |

@@ -9,6 +9,47 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.5] - 2026-08-16
+
+A browser-platform release. The managed BetterChromium fork no longer
+masquerades a Linux host as macOS — it presents its real host identity while
+staying coherent as a desktop Linux browser, and adds a provider model for
+bringing your own local binary or a cloud CDP browser.
+
+### Changed
+
+- BetterChromium presents the real host platform (a Linux host is a Linux
+  browser) instead of masking as macOS. The platform/UA/WebGL macOS mask is
+  now opt-in via `--fingerprint-platform=macos`, not the default.
+- On an honest Linux identity the fork patches the like-headless tells
+  CreepJS measures: Web Share, ContentIndex, ContactsManager, and
+  NetInfoDownlinkMax are exposed as present (no desktop backends, matching
+  real desktop Chrome); `ActiveText` maps to a system link color; and the
+  launch context defaults to a dark color scheme. A GPU-less host no longer
+  leaks "SwiftShader" as the WebGL renderer — it reports a common integrated
+  GPU instead. CreepJS reports 0% like-headless / headless / stealth across
+  GPU and GPU-less, headed and headless.
+- CloakBrowser is removed. The managed fork is the default and only bundled
+  browser.
+
+### Added
+
+- A `provider` option to connect your own browser: `{ executablePath }` for a
+  local Chromium binary, `{ cdpUrl }` for a CDP endpoint, or
+  `{ provider: "browserbase" | "browser-use" | "kernel" | ... }` for a cloud
+  browser. See docs/browser-providers.md.
+- Published BetterChromium `151.0.7922.108-r3` with the rebuilt Linux archive
+  (the honest-identity fork above) and pinned setup/update to it. The macOS and
+  Windows artifacts are unchanged from r2.
+
+### Security
+
+- A remote CDP provider must connect over `wss://`; plaintext `ws://` is now
+  accepted only on loopback (`localhost`, `127.0.0.1`, `::1`), where the
+  traffic never leaves the host.
+- A session-minting cloud provider is released if the browser fails to connect
+  or open a context, so a failed launch never leaves a metered session running.
+
 ## [1.8.3] - 2026-08-13
 
 A browser-coherence and local challenge-solving release. BetterChromium derives

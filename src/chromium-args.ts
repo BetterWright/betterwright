@@ -1,12 +1,11 @@
 // Caller-supplied Chromium switches.
 //
 // BetterWright builds its own launch argument list (fingerprint seed, WebRTC
-// proxy boundary, locale/timezone/platform masking) and that list is
-// load-bearing: it is what keeps the managed browser's identity coherent and
-// every connection on the guard proxy. But it left no room for the
-// host-specific switches that have nothing to do with identity. GPU-less Linux
-// hosts use the managed CloakBrowser compatibility backend so WebGL stays
-// available.
+// proxy boundary, locale/timezone identity) and that list is load-bearing: it
+// is what keeps the managed browser's identity coherent and every connection
+// on the guard proxy. But it left no room for the host-specific switches that
+// have nothing to do with identity. On GPU-less Linux hosts the fork's
+// SwiftShader fallback keeps WebGL available.
 //
 // PRECEDENCE. Chromium's base::CommandLine parses argv left to right into a
 // map, so a repeated switch is won by the LAST occurrence. Appending caller
@@ -31,7 +30,7 @@
  * fail loudly instead of being quietly dropped.
  *
  * Matching is by switch name, plus the `--fingerprint*` family by prefix
- * because CloakBrowser and the native fork share that flag namespace.
+ * because the native fork owns that flag namespace.
  */
 const RESERVED = Object.freeze({
   // Every connection must stay on the local guard proxy: that is where network

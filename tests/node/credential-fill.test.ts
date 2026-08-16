@@ -4,30 +4,19 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
+import { resolveChromiumForkBinary } from "../../dist/src/chromium-fork.js";
 import {
   collectCredentialFrameDetections,
   disposeCredentialFrameDetections,
   probePinnedCredentialOrigin,
 } from "../../dist/src/credential-target-scan.js";
-import { cloakRuntime } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy } from "../../dist/src/index.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
-const ready = (await cloakRuntime()).installed;
+// Integration suite: gates on the managed BetterChromium fork being
+// installed on this host (`betterwright setup`).
+const ready = Boolean(resolveChromiumForkBinary());
 const opts = { skip: ready ? false : "browser runtime not installed" };
-// This integration suite gates on the CloakBrowser binary specifically, so
-// select the same backend for the workers it launches. Otherwise a supported
-// host with no BetterChromium artifact would run instead of skipping, then
-// fail before reaching the credential behavior under test.
-const previousChromiumRoot = process.env.BETTERWRIGHT_CHROMIUM_ROOT;
-if (ready) process.env.BETTERWRIGHT_CHROMIUM_ROOT = "off";
-test.after(() => {
-  if (previousChromiumRoot === undefined) {
-    delete process.env.BETTERWRIGHT_CHROMIUM_ROOT;
-  } else {
-    process.env.BETTERWRIGHT_CHROMIUM_ROOT = previousChromiumRoot;
-  }
-});
 
 function tempHome() {
   return makeTempDir("betterwright-credential-test-");
@@ -1078,7 +1067,13 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
         "custom-vault-update-note",
       ]) {
         assert.ok(!text.includes(secret), `result must redact ${secret}`);
-        assert.ok(!envelope.includes(secret), `envelope must redact ${secret}`);
+        if (envelope.includes(secret)) {
+          const at = envelope.indexOf(secret);
+          assert.fail(
+            `envelope must redact ${secret} — leaked at ${at}: ` +
+              JSON.stringify(envelope.slice(Math.max(0, at - 60), at + 60)),
+          );
+        }
       }
       assert.match(text, /REDACTED_PASSWORD/);
     });

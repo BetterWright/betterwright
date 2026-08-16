@@ -26,7 +26,7 @@ const UPSTREAM_HANDSHAKE_TIMEOUT_MS = 15_000;
 const MAX_UPSTREAM_RESPONSE_BYTES = 65_536;
 
 /**
- * Parse an upstream proxy URL for Cloaking V2 egress chaining.
+ * Parse an upstream proxy URL for launch-identity egress chaining.
  * Supports http:// and socks5:// with optional inline credentials.
  * Returns null for anything else — the caller decides whether to fail.
  */
@@ -166,7 +166,7 @@ function completeSocks5Reply(buffer) {
 }
 
 // Upstream-proxy handshake steps shared by the two call sites that speak to an
-// upstream: the Cloaking V2 geo lookup and the guard's own egress tunnel.
+// upstream: the Launch identity geo lookup and the guard's own egress tunnel.
 //
 // Deliberately NOT shared: how the CONNECT target address is encoded. The geo
 // lookup asks the upstream to resolve a hostname, while the egress tunnel only
@@ -259,7 +259,7 @@ function httpConnectAccepted(status: string): boolean {
 
 /**
  * Minimal plain-HTTP GET tunneled through an upstream egress proxy. Used by
- * Cloaking V2 geo-identity resolution: the lookup must originate from the
+ * Launch identity geo-identity resolution: the lookup must originate from the
  * egress IP or it returns the client's own geography. HTTP only (geo lookup
  * endpoints are plain HTTP); responses must fit in memory and use
  * content-length or connection-close framing. Returns {status, body}.
@@ -390,7 +390,7 @@ export function createGuardProxy(
 ) {
   let guardProxyServer: any = null;
   let guardProxyPort = null;
-  // Cloaking V2 IP layer: when set, every policy-approved connection tunnels
+  // Launch identity IP layer: when set, every policy-approved connection tunnels
   // to its validated literal IP through this upstream egress proxy, so the
   // target sees the upstream's IP while the guard still enforces policy and
   // DNS-rebinding protection locally (the upstream never resolves names).
@@ -677,7 +677,7 @@ export function createGuardProxy(
     }
   }
 
-  // --- Cloaking V2 upstream egress tunneling ---------------------------------
+  // --- Launch identity upstream egress tunneling ---------------------------------
 
   function connectUpstreamSocket(): Promise<any> {
     return new Promise<any>((resolve, reject) => {

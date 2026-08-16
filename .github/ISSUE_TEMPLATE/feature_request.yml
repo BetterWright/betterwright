@@ -49,7 +49,7 @@ body:
         - Credential vault and trusted filling
         - CAPTCHA and challenge helpers
         - Live view and human handoff
-        - "Browser runtime (Chromium fork, CloakBrowser, stealth)"
+        - "Browser runtime (Chromium fork, providers, stealth)"
         - Profiles and session persistence
         - Setup, doctor, packaging
         - Documentation

@@ -485,7 +485,7 @@ test("the daemon config signature carries the profile", () => {
       protocol: normalizeDaemonConfig({}).protocol,
       headless: true,
       policy: { allowLoopback: true, allowPrivateNetwork: true, allowHosts: [], blockHosts: [] },
-      cloak: normalizeDaemonConfig({}).cloak,
+      browser: normalizeDaemonConfig({}).browser,
     }),
   );
   assert.equal(normalizeDaemonConfig({ profile: "social" }).profile, "social");

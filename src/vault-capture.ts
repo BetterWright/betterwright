@@ -344,7 +344,7 @@ export function installVaultCapture(context, deps: any = {}) {
       const frames = state.framesByPage.get(page);
       if (!frames) return;
       const previous = frames.get(frameId);
-      // The pinned Cloak runtime accepts executionContextName only after the
+      // The managed fork accepts executionContextName only after the
       // named world exists. Register here so the binding remains world-scoped
       // without relying on the deprecated executionContextId parameter.
       const bindingReady = cdp

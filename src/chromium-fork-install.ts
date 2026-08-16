@@ -2,7 +2,7 @@
 // discovery root (~/.betterwright/chromium). Used by `betterwright update`
 // and by default `betterwright setup` on platforms that ship an artifact.
 //
-// Pattern matches Playwright/Cloak: the npm package is the driver; the
+// Pattern matches Playwright: the npm package is the driver; the
 // browser zip is fetched from a pinned GitHub Release and verified
 // with SHA-256 before extract. Apple-licensed fonts are intentionally not
 // in the public zip (see research/assemble-mac-fonts.sh).
@@ -158,7 +158,7 @@ export async function installChromiumFork({
     return {
       binary: null,
       root: defaultChromiumForkRoot({ home }),
-      skipped: `No public BetterChromium artifact for ${key}; use managed CloakBrowser.`,
+      skipped: `No public BetterChromium artifact for ${key}; use the provider option for your own or a cloud browser.`,
     };
   }
 

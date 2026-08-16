@@ -21,12 +21,12 @@ if (lock.version !== pkg.version || lockRoot.version !== pkg.version) {
     `package-lock.json version must be ${pkg.version}; found ${lock.version}/${lockRoot.version}`,
   );
 }
-// These are pinned exactly on purpose. playwright-core and cloakbrowser each
-// ship a coupled browser binary, and tldts carries the Public Suffix List
-// snapshot that `getDomain` uses to decide a credential's base-domain scope in
-// vault.ts — so a routine bump there silently widens which origins a saved
-// credential is offered to. Drift in any of them must fail the release.
-for (const dependency of ["playwright-core", "cloakbrowser", "tldts"]) {
+// These are pinned exactly on purpose. playwright-core ships a coupled
+// browser driver, and tldts carries the Public Suffix List snapshot that
+// `getDomain` uses to decide a credential's base-domain scope in vault.ts —
+// so a routine bump there silently widens which origins a saved credential is
+// offered to. Drift in either of them must fail the release.
+for (const dependency of ["playwright-core", "tldts"]) {
   if (lockRoot.dependencies?.[dependency] !== pkg.dependencies[dependency]) {
     failures.push(`package-lock.json ${dependency} pin does not match package.json`);
   }
@@ -61,12 +61,6 @@ expectMatch(
   /PINNED_PLAYWRIGHT_VERSION = "([^"]+)"/,
   pkg.dependencies["playwright-core"],
 );
-expectMatch(
-  "Node runtime CloakBrowser pin",
-  read("src/doctor.ts"),
-  /PINNED_CLOAKBROWSER_VERSION = "([^"]+)"/,
-  pkg.dependencies.cloakbrowser,
-);
 // BetterChromium release identity and archive pins must move in lockstep.
 const chromiumSource = read("src/chromium-fork.ts");
 const chromiumVersion = chromiumSource.match(/BETTERWRIGHT_CHROMIUM_VERSION = "([^"]+)"/)?.[1];
@@ -88,7 +82,7 @@ if (declaredAssetNames.some((name) => name.includes("win-x64")) &&
 for (const workflow of [".github/workflows/ci.yml", ".github/workflows/publish-npm.yml"]) {
   const source = read(workflow);
   const managedSetup = source.match(
-    /- name: Install managed browsers\n(?:\s+if:[^\n]+\n)?\s+run:\s*([^\n]+)/,
+    /- name: Install managed browser(?:s)?\n(?:\s+if:[^\n]+\n)?\s+run:\s*([^\n]+)/,
   )?.[1]?.trim();
   if (managedSetup !== "node dist/bin/betterwright.js setup") {
     failures.push(`${workflow} must install BetterChromium with default setup`);
@@ -106,5 +100,5 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(
-  `versions aligned: betterwright ${pkg.version}, BetterChromium ${chromiumVersion}, playwright-core ${pkg.dependencies["playwright-core"]}, cloakbrowser ${pkg.dependencies.cloakbrowser}`,
+  `versions aligned: betterwright ${pkg.version}, BetterChromium ${chromiumVersion}, playwright-core ${pkg.dependencies["playwright-core"]}`,
 );

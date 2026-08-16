@@ -14,7 +14,10 @@ new BetterWright({
   home,             // state dir; default $BETTERWRIGHT_HOME or ~/.betterwright
   policy,           // a NetworkPolicy; default: safe policy
   vault,            // optional { handleRequest(action, payload, origin), redact? }
-  browser: "cloak", // backend selector; "cloak" is the only accepted value
+  browser: "chromium-fork", // the managed BetterChromium fork (the default)
+  provider: undefined, // bring your own: { executablePath } | { cdpUrl } |
+                       // { provider: "browserbase", apiKey } — see
+                       // docs/browser-providers.md
   headless: "auto", // visible with a display, headless on servers/CI
   publicSearchPolicy: "allow", // default; set "block" to force host-tool search
   searchMinIntervalMs: 0,
@@ -24,11 +27,13 @@ new BetterWright({
 });
 ```
 
-The `browser` option is not how you choose a browser: when the [Chromium
-fork](chromium-fork.md) artifact is installed (macOS arm64 / Linux x64 /
-Windows x64), it is used automatically, with managed CloakBrowser as the fallback. Headed and
-headless modes keep BetterWright's persistent profile and policy while reducing
-common stock-browser automation signals; they do not guarantee undetectability.
+The default browser is the managed [Chromium fork](chromium-fork.md)
+artifact, installed by `betterwright setup` on macOS arm64 / Linux x64 /
+Windows x64. `provider` swaps in a caller-supplied local Chromium binary
+(still on the guard proxy) or a remote CDP browser from a cloud provider
+(outside it — the launch warning says so). Headed and headless modes keep
+BetterWright's persistent profile and policy while reducing common
+stock-browser automation signals; they do not guarantee undetectability.
 
 Public Google, Bing, and DuckDuckGo result UIs are permitted by default; prefer
 routing broad discovery through the host's search tool anyway, and set
@@ -42,7 +47,7 @@ Model-authored snippets cannot access CDP, the raw browser object, or
 `stealthRuntimeFix` (off by default; also `--stealth` or
 `BETTERWRIGHT_STEALTH_RUNTIME_FIX=1`) runs every snippet in an isolated world via
 the optional `patchright-core` driver, so `page.evaluate` no longer trips
-main-world automation detection. The managed Cloak backend already hides the
+main-world automation detection. The managed fork already hides the
 `Runtime.enable` and `navigator.webdriver` signals; this closes the remaining
 main-world-execution vector. Trade-off: snippets can no longer read page-defined
 main-world globals (e.g. `window.__NEXT_DATA__`, `dataLayer`) — DOM queries,

@@ -66,12 +66,12 @@ body:
       label: Which browser was in use
       description: >-
         The `Browser → In use` line of `betterwright doctor`. `chromium-fork` is
-        the default wherever a fork artifact exists (macOS arm64, Linux x64,
-        Windows x64); `cloak` is the managed CloakBrowser fallback.
+        the default managed browser (macOS arm64, Linux x64,
+        Windows x64); anything else comes through the provider option.
       options:
         - chromium-fork (BetterWright's Chromium fork)
-        - cloak (managed CloakBrowser)
-        - A binary I supplied via BETTERWRIGHT_CHROMIUM_PATH or CLOAKBROWSER_BINARY_PATH
+        - A binary or CDP endpoint I supplied via the provider option
+        - A named cloud browser provider
         - Not sure — the doctor output below says
     validations:
       required: true

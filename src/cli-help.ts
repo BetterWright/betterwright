@@ -54,18 +54,17 @@ Options:
   --yes            accept every default; never prompt (for scripts and CI)
   --skip-browser   do not download or verify the browser
   --skip-agents    do not touch any agent configuration
-  --cloak-only     force CloakBrowser compatibility mode
 
 Safe to re-run: it reports what is already done and changes only what is not.`,
 
   setup: `Usage: betterwright setup [options]
 
-Download native BetterChromium, the default backend on supported macOS arm64,
-Linux x64, and Windows x64 hosts. On other platforms, setup automatically
-installs the managed CloakBrowser compatibility backend.
+Download native BetterChromium, the bundled browser on supported macOS arm64,
+Linux x64, and Windows x64 hosts. On platforms with no published artifact,
+setup has nothing to install — use --browser / the provider option to bring
+your own Chromium binary or a cloud browser (docs/browser-providers.md).
 
 Options:
-  --cloak-only   force CloakBrowser compatibility mode instead of BetterChromium
   --force        re-download the managed browser even when already present
 
 Also refreshes installed agent skill files. Run \`betterwright doctor\` afterwards.`,
@@ -73,7 +72,7 @@ Also refreshes installed agent skill files. Run \`betterwright doctor\` afterwar
   update: `Usage: betterwright update [options]
 
 Download or refresh the managed browser: native BetterChromium when a pinned
-artifact is published for this host, otherwise CloakBrowser compatibility mode.
+artifact is published for this host.
 
 Options:
   --force   re-download even if the pinned version is already installed`,
@@ -111,6 +110,13 @@ Options:
   --approve-downloads    allow downloads for this one run
   --no-daemon            do not use the background session daemon
   --stealth              isolated-world driver (needs patchright-core)
+  --browser <name|url>   use a cloud browser provider (browser-use, kernel,
+                         browserbase, steel, anchor, hyperbrowser, browserless,
+                         brightdata, oxylabs) or any wss:// CDP endpoint
+                         instead of the managed BetterChromium fork
+  --browser-key <key>    provider API key (or its env var, e.g.
+                         BROWSERBASE_API_KEY); BETTERWRIGHT_CDP_URL is the
+                         env shorthand for --browser <url>
 
 Network:
   --block-private-network   --block-loopback

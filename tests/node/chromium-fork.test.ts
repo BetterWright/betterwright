@@ -21,7 +21,7 @@ const ROOT = path.dirname(
 
 const NO_FORK_HOME = path.join(ROOT, "tests", "fixtures", "no-such-home");
 
-test("Chromium fork stays disabled when no runtime path is configured", () => {
+test("Chromium fork stays unresolved when no runtime path is configured", () => {
   assert.equal(
     resolveChromiumForkBinary({ env: {}, home: NO_FORK_HOME }),
     null,
@@ -62,11 +62,11 @@ test("supported platforms with a missing deployment remain unavailable", () => {
       platform: "win32",
       arch: "x64",
     }),
-    { browser: "unavailable", cloakFallback: null, selectionReason: "native-missing" },
+    { browser: "unavailable", selectionReason: "native-missing" },
   );
 });
 
-test("unsupported platforms automatically select managed CloakBrowser", () => {
+test("unsupported platforms have no bundled backend (bring your own browser)", () => {
   assert.equal(
     resolveChromiumForkBinary({
       env: {},
@@ -88,11 +88,7 @@ test("unsupported platforms automatically select managed CloakBrowser", () => {
       platform: "linux",
       arch: "arm64",
     }),
-    {
-      browser: "cloak",
-      cloakFallback: "unsupported-platform",
-      selectionReason: "unsupported-platform",
-    },
+    { browser: "unavailable", selectionReason: "unsupported-platform" },
   );
 });
 
@@ -112,51 +108,57 @@ test("all published platform layouts select native BetterChromium", () => {
       }),
       {
         browser: "chromium-fork",
-        cloakFallback: null,
         selectionReason: "native-available",
       },
     );
   }
 });
 
-test("GPU-less Linux selects Cloak even when the native artifact is explicit", () => {
-  assert.deepEqual(
-    selectManagedBrowserBackend({
-      chromiumFork: "/managed/betterchromium",
-      env: {},
-      platform: "linux",
-      arch: "x64",
-      softwareGpu: true,
-    }),
-    {
-      browser: "cloak",
-      cloakFallback: "gpu-unavailable",
-      selectionReason: "render-device-unavailable",
-    },
+test("GPU-less Linux launches the fork with the SwiftShader fallback", () => {
+  const selection = selectManagedBrowserBackend({
+    chromiumFork: "/managed/betterchromium",
+    env: {},
+    platform: "linux",
+    arch: "x64",
+    softwareGpu: true,
+  });
+  assert.deepEqual(selection, {
+    browser: "chromium-fork",
+    selectionReason: "software-gpu",
+  });
+  assert.match(
+    browserSelectionWarning(selection, { softwareGpu: true }),
+    /SwiftShader/,
   );
-  assert.deepEqual(
-    selectManagedBrowserBackend({
-      chromiumFork: "/managed/betterchromium",
-      env: { BETTERWRIGHT_CHROMIUM_PATH: "/managed/betterchromium" },
-      platform: "linux",
-      arch: "x64",
-      softwareGpu: true,
-    }),
-    {
-      browser: "cloak",
-      cloakFallback: "gpu-unavailable",
-      selectionReason: "render-device-unavailable",
-    },
+  assert.equal(
+    browserSelectionWarning(
+      selectManagedBrowserBackend({
+        chromiumFork: "/managed/betterchromium",
+        env: {},
+        platform: "linux",
+        arch: "x64",
+      }),
+    ),
+    "",
   );
 });
 
-test("explicit off forces managed CloakBrowser even with an artifact", () => {
-  assert.equal(
-    resolveChromiumForkBinary({
-      env: { BETTERWRIGHT_CHROMIUM_ROOT: "off" },
-      existsSync: present,
-    }),
-    null,
+test("the legacy explicit-off toggle is rejected instead of silently launching", () => {
+  assert.throws(
+    () =>
+      resolveChromiumForkBinary({
+        env: { BETTERWRIGHT_CHROMIUM_ROOT: "off" },
+        existsSync: present,
+      }),
+    /no longer exists/,
+  );
+  assert.throws(
+    () =>
+      resolveChromiumForkBinary({
+        env: { BETTERWRIGHT_CHROMIUM_PATH: "OFF" },
+        existsSync: present,
+      }),
+    /no longer exists/,
   );
   assert.deepEqual(
     selectManagedBrowserBackend({
@@ -164,63 +166,28 @@ test("explicit off forces managed CloakBrowser even with an artifact", () => {
       platform: "linux",
       arch: "x64",
     }),
-    {
-      browser: "cloak",
-      cloakFallback: "explicit",
-      selectionReason: "legacy-off",
-    },
-  );
-  assert.equal(
-    resolveChromiumForkBinary({
-      env: { BETTERWRIGHT_CHROMIUM_PATH: "OFF" },
-      existsSync: present,
-    }),
-    null,
+    { browser: "unavailable", selectionReason: "legacy-off" },
   );
 });
 
-test("BETTERWRIGHT_BACKEND explicitly selects either managed backend", () => {
+test("BETTERWRIGHT_BACKEND accepts only auto or chromium-fork", () => {
   assert.equal(configuredBrowserBackend({}), "auto");
   assert.equal(configuredBrowserBackend({ BETTERWRIGHT_BACKEND: "AUTO" }), "auto");
-  assert.deepEqual(
-    selectManagedBrowserBackend({
-      chromiumFork: "/managed/betterchromium",
-      env: { BETTERWRIGHT_BACKEND: "chromium-fork" },
-      platform: "linux",
-      arch: "x64",
-      softwareGpu: true,
-    }),
-    {
-      browser: "chromium-fork",
-      cloakFallback: null,
-      selectionReason: "forced-chromium-fork",
-    },
+  assert.equal(
+    configuredBrowserBackend({ BETTERWRIGHT_BACKEND: "chromium-fork" }),
+    "chromium-fork",
   );
-  assert.deepEqual(
-    selectManagedBrowserBackend({
-      chromiumFork: "/managed/betterchromium",
-      env: { BETTERWRIGHT_BACKEND: "cloak" },
-    }),
-    {
-      browser: "cloak",
-      cloakFallback: "explicit",
-      selectionReason: "forced-cloak",
-    },
+  assert.throws(
+    () => configuredBrowserBackend({ BETTERWRIGHT_BACKEND: "cloak" }),
+    /must be auto or chromium-fork/,
   );
-  assert.match(
-    browserSelectionWarning(
-      {
-        browser: "chromium-fork",
-        cloakFallback: null,
-        selectionReason: "forced-chromium-fork",
-      },
-      { softwareGpu: true },
-    ),
-    /verify WebGL in this sandbox/,
+  assert.throws(
+    () => configuredBrowserBackend({ BETTERWRIGHT_BACKEND: "chromium" }),
+    /must be auto or chromium-fork/,
   );
 });
 
-test("a forced native backend fails closed when it is missing or disabled", () => {
+test("the fork binary is the only managed launch target", () => {
   assert.deepEqual(
     selectManagedBrowserBackend({
       chromiumFork: null,
@@ -228,38 +195,7 @@ test("a forced native backend fails closed when it is missing or disabled", () =
       platform: "linux",
       arch: "x64",
     }),
-    {
-      browser: "unavailable",
-      cloakFallback: null,
-      selectionReason: "forced-chromium-fork-missing",
-    },
-  );
-  assert.throws(
-    () => resolveChromiumForkBinary({
-      env: {
-        BETTERWRIGHT_BACKEND: "chromium-fork",
-        BETTERWRIGHT_CHROMIUM_ROOT: "off",
-      },
-      existsSync: present,
-    }),
-    /conflicts/,
-  );
-  assert.throws(
-    () => configuredBrowserBackend({ BETTERWRIGHT_BACKEND: "chromium" }),
-    /must be auto, chromium-fork, or cloak/,
-  );
-});
-
-test("a forced Cloak backend ignores irrelevant native path configuration", () => {
-  assert.equal(
-    resolveChromiumForkBinary({
-      env: {
-        BETTERWRIGHT_BACKEND: "cloak",
-        BETTERWRIGHT_CHROMIUM_PATH: "relative/missing",
-      },
-      existsSync: () => false,
-    }),
-    null,
+    { browser: "unavailable", selectionReason: "native-missing" },
   );
 });
 
@@ -390,8 +326,26 @@ test("configured fork paths fail closed when missing or unsupported", () => {
     }),
     {
       browser: "unavailable",
-      cloakFallback: null,
       selectionReason: "explicit-native-unavailable",
     },
   );
+});
+
+test("no cloak sources remain in the built worker", () => {
+  for (const gone of [
+    "src/cloak.js",
+    "src/cloak-v2.js",
+    "src/fork-identity.js",
+    "src/fork-identity-profile-151.js",
+  ]) {
+    assert.equal(fs.existsSync(path.join(ROOT, "dist", gone)), false, gone);
+  }
+  const workerSource = fs.readFileSync(
+    path.join(ROOT, "dist", "src", "worker.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(workerSource, /cloakbrowser/i);
+  // The Mac-masquerade layer is gone: a Linux fork is a Linux browser.
+  assert.doesNotMatch(workerSource, /forkMacIdentity/);
+  assert.doesNotMatch(workerSource, /FONTCONFIG_FILE/);
 });

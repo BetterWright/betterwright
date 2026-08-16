@@ -74,17 +74,18 @@ test("public search result UIs are allowed by default and block is opt-in", asyn
 test("the managed browser family remains the public default", async () => {
   const browser = new BetterWright();
   try {
-    assert.equal(browser.browserFlavor, "cloak");
-    assert.equal(browser._workerConfig().browserFlavor, "cloak");
+    assert.equal(browser.browserFlavor, "chromium-fork");
+    assert.equal(browser._workerConfig().browserFlavor, "chromium-fork");
+    assert.equal(browser.provider, null);
   } finally {
     await browser.close();
   }
 });
 
-test("Cloaking V2 options reach the worker and headedInvisible forces headed mode", async () => {
+test("launch-identity options reach the worker and headedInvisible forces headed mode", async () => {
   const defaults = new BetterWright();
   const configured = new BetterWright({
-    cloakV2: false,
+    launchIdentity: false,
     upstreamProxy: "socks5://proxy.example:1080",
     geoip: true,
     locale: "de-DE",
@@ -93,12 +94,12 @@ test("Cloaking V2 options reach the worker and headedInvisible forces headed mod
     headedInvisible: true,
   });
   try {
-    assert.equal(defaults.cloakV2, true);
-    assert.equal(defaults._workerConfig().cloakV2, true);
+    assert.equal(defaults.launchIdentity, true);
+    assert.equal(defaults._workerConfig().launchIdentity, true);
     assert.equal(configured.headless, false);
     assert.deepEqual(
       {
-        cloakV2: configured._workerConfig().cloakV2,
+        launchIdentity: configured._workerConfig().launchIdentity,
         upstreamProxy: configured._workerConfig().upstreamProxy,
         geoip: configured._workerConfig().geoip,
         locale: configured._workerConfig().locale,
@@ -106,7 +107,7 @@ test("Cloaking V2 options reach the worker and headedInvisible forces headed mod
         headedInvisible: configured._workerConfig().headedInvisible,
       },
       {
-        cloakV2: false,
+        launchIdentity: false,
         upstreamProxy: "socks5://proxy.example:1080",
         geoip: true,
         locale: "de-DE",
@@ -117,6 +118,46 @@ test("Cloaking V2 options reach the worker and headedInvisible forces headed mod
   } finally {
     await defaults.close();
     await configured.close();
+  }
+});
+
+test("provider options reach the worker config verbatim", async () => {
+  const cdp = new BetterWright({ provider: { cdpUrl: "wss://browser.example.com" } });
+  const cloud = new BetterWright({
+    provider: { provider: "browserbase", apiKey: "bb_test", sessionOptions: { proxies: true } },
+  });
+  const env = new BetterWright();
+  const previous = process.env.BETTERWRIGHT_CDP_URL;
+  process.env.BETTERWRIGHT_CDP_URL = "wss://env.example.com";
+  const fromEnv = new BetterWright();
+  try {
+    assert.deepEqual(cdp.provider, { cdpUrl: "wss://browser.example.com" });
+    assert.deepEqual(cdp._workerConfig().provider, {
+      cdpUrl: "wss://browser.example.com",
+    });
+    assert.deepEqual(cloud._workerConfig().provider, {
+      provider: "browserbase",
+      apiKey: "bb_test",
+      sessionOptions: { proxies: true },
+    });
+    assert.deepEqual(fromEnv.provider, { cdpUrl: "wss://env.example.com" });
+    assert.equal(env.provider, null);
+    // The stealth/provider conflict fires when the worker starts.
+    await assert.rejects(
+      () =>
+        new BetterWright({
+          provider: { provider: "kernel" },
+          stealthRuntimeFix: true,
+        }).run("return 1;"),
+      /stealthRuntimeFix applies only/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.BETTERWRIGHT_CDP_URL;
+    else process.env.BETTERWRIGHT_CDP_URL = previous;
+    await cdp.close();
+    await cloud.close();
+    await env.close();
+    await fromEnv.close();
   }
 });
 
@@ -151,12 +192,12 @@ test("chromiumArgs reach the worker config and only security-sensitive switches 
   }
 });
 
-test("headed and headless modes use the same managed Cloak profile", async () => {
+test("headed and headless modes use the same managed profile", async () => {
   const headed = new BetterWright({ headless: false });
   const headless = new BetterWright({ headless: true });
   try {
-    assert.equal(headed.browserFlavor, "cloak");
-    assert.equal(headless.browserFlavor, "cloak");
+    assert.equal(headed.browserFlavor, "chromium-fork");
+    assert.equal(headless.browserFlavor, "chromium-fork");
     assert.equal(headed.headless, false);
     assert.equal(headless.headless, true);
     assert.match(headed._workerConfig().profileDir, /[/\\]profile$/);
@@ -170,46 +211,31 @@ test("headed and headless modes use the same managed Cloak profile", async () =>
   }
 });
 
-test("stock browsers, custom executables, and CDP attach are rejected", () => {
-  assert.throws(
-    () => new BetterWright({ browser: "chromium" }),
-    /only supports the managed BetterWright browser backend/g,
-  );
-  assert.throws(
-    () => new BetterWright({ browser: "other" }),
-    /only supports the managed BetterWright browser backend/g,
-  );
-  assert.throws(
-    () => new BetterWright({ executablePath: "/opt/chromium" }),
-    /CLOAKBROWSER_BINARY_PATH/,
-  );
-  assert.throws(
-    () => new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" }),
-    /connectOverCdp is not supported/,
-  );
-  assert.doesNotThrow(() => new BetterWright({ connectOverCdp: "" }));
-});
-
-test("legacy environment settings cannot re-enable a stock browser", () => {
-  const previousBrowser = process.env.BETTERWRIGHT_BROWSER;
-  const previousCdp = process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
+test("legacy browser toggles are rejected with the provider migration path", () => {
+  const saved = {
+    BETTERWRIGHT_BROWSER: process.env.BETTERWRIGHT_BROWSER,
+    CLOAKBROWSER_BINARY_PATH: process.env.CLOAKBROWSER_BINARY_PATH,
+  };
   try {
-    process.env.BETTERWRIGHT_BROWSER = "chromium";
-    assert.throws(
-      () => new BetterWright(),
-      /only supports the managed BetterWright browser backend/g,
-    );
     process.env.BETTERWRIGHT_BROWSER = "cloak";
-    process.env.BETTERWRIGHT_CONNECT_OVER_CDP = "http://127.0.0.1:9222";
+    assert.throws(() => new BetterWright(), /no longer exists/);
+    process.env.BETTERWRIGHT_BROWSER = "chromium";
+    assert.throws(() => new BetterWright(), /no longer exists/);
+    delete process.env.BETTERWRIGHT_BROWSER;
+    process.env.CLOAKBROWSER_BINARY_PATH = "/opt/cloak/chrome";
     assert.throws(
       () => new BetterWright(),
-      /connectOverCdp is not supported/,
+      /CLOAKBROWSER_BINARY_PATH has no effect/,
     );
+    delete process.env.CLOAKBROWSER_BINARY_PATH;
+    // The managed fork is the default once the legacy toggles are gone.
+    const browser = new BetterWright();
+    assert.equal(browser.browserFlavor, "chromium-fork");
   } finally {
-    if (previousBrowser === undefined) delete process.env.BETTERWRIGHT_BROWSER;
-    else process.env.BETTERWRIGHT_BROWSER = previousBrowser;
-    if (previousCdp === undefined) delete process.env.BETTERWRIGHT_CONNECT_OVER_CDP;
-    else process.env.BETTERWRIGHT_CONNECT_OVER_CDP = previousCdp;
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 
@@ -316,63 +342,66 @@ test("rotating an existing credential rejects a matchMode override everywhere", 
 
 // Regression: a launch step failing after the browser context was already
 // launched (here: the download guard, which requires a browser CDP session the
-// stub does not provide) must close that context — before the profile lock is
-// released — instead of orphaning the Chromium process.
+// stub driver does not provide) must close that context — before the profile
+// lock is released — instead of orphaning the Chromium process.
 test("a failed launch step closes the already-launched browser context", async (t) => {
   const home = makeTempDir("betterwright-launch-leak-");
-  const stubRoot = makeTempDir("betterwright-cloak-stub-");
-  const marker = path.join(stubRoot, "close-marker.jsonl");
-  fs.mkdirSync(path.join(stubRoot, "dist"));
+  const stubBinary = makeTempDir("betterwright-provider-stub-");
+  const marker = path.join(stubBinary, "close-marker.jsonl");
+  // The driver stub replaces playwright-core in the worker so the launch path
+  // runs without a real Chromium.
+  const driverRoot = makeTempDir("betterwright-driver-stub-");
+  fs.mkdirSync(path.join(driverRoot, "lib"), { recursive: true });
   fs.writeFileSync(
-    path.join(stubRoot, "package.json"),
-    JSON.stringify({ type: "module" }),
+    path.join(driverRoot, "package.json"),
+    JSON.stringify({
+      name: "playwright-core",
+      version: "1.61.1",
+      type: "module",
+      exports: { ".": "./lib/index.js" },
+    }),
   );
-  // A stand-in Cloak wrapper (loaded in the worker process through the
-  // BETTERWRIGHT_CLOAKBROWSER_PATH override) whose context supports the launch
-  // steps up to the download guard, then records every close() call together
-  // with whether the profile lock still existed at that moment.
   fs.writeFileSync(
-    path.join(stubRoot, "dist", "index.js"),
-    `import { EventEmitter } from "node:events";
-import fs from "node:fs";
-
-export async function launchPersistentContext(options) {
-  const emitter = new EventEmitter();
-  const lockDir = \`\${options.userDataDir}.betterwright-lock\`;
-  const marker = process.env.BETTERWRIGHT_TEST_CLOSE_MARKER;
-  return {
-    on: (...args) => emitter.on(...args),
-    once: (...args) => emitter.once(...args),
-    async route() {},
-    // No newBrowserCDPSession: installDownloadGuard must fail after launch.
-    browser: () => ({}),
-    pages: () => [],
-    async close() {
-      fs.appendFileSync(
-        marker,
-        \`\${JSON.stringify({ lockHeldAtClose: fs.existsSync(lockDir) })}\\n\`,
-      );
-      emitter.emit("close");
-    },
-  };
-}
+    path.join(driverRoot, "lib", "index.js"),
+    `export const chromium = {
+  async launchPersistentContext(userDataDir) {
+    const fs = await import("node:fs");
+    const { EventEmitter } = await import("node:events");
+    const emitter = new EventEmitter();
+    const lockDir = \`\${userDataDir}.betterwright-lock\`;
+    const marker = process.env.BETTERWRIGHT_TEST_CLOSE_MARKER;
+    return {
+      on: (...args) => emitter.on(...args),
+      once: (...args) => emitter.once(...args),
+      async route() {},
+      // No newBrowserCDPSession: installDownloadGuard must fail after launch.
+      browser: () => ({}),
+      pages: () => [],
+      async close() {
+        fs.appendFileSync(
+          marker,
+          \`\${JSON.stringify({ lockHeldAtClose: fs.existsSync(lockDir) })}\\n\`,
+        );
+        emitter.emit("close");
+      },
+    };
+  },
+};
 `,
   );
   const savedEnv: Record<string, string | undefined> = {};
   for (const key of [
-    "BETTERWRIGHT_CLOAKBROWSER_PATH",
-    "BETTERWRIGHT_CHROMIUM_PATH",
-    "BETTERWRIGHT_CHROMIUM_ROOT",
+    "BETTERWRIGHT_PLAYWRIGHT_CORE_PATH",
     "BETTERWRIGHT_TEST_CLOSE_MARKER",
   ])
     savedEnv[key] = process.env[key];
-  process.env.BETTERWRIGHT_CLOAKBROWSER_PATH = stubRoot;
-  process.env.BETTERWRIGHT_CHROMIUM_PATH = "off";
-  delete process.env.BETTERWRIGHT_CHROMIUM_ROOT;
+  process.env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = driverRoot;
   process.env.BETTERWRIGHT_TEST_CLOSE_MARKER = marker;
+  const binary = path.join(stubBinary, "chrome");
+  fs.writeFileSync(binary, "#!/bin/sh\n", { mode: 0o755 });
   const browser = new BetterWright({
     home,
-    // This regression explicitly opts into the Cloak compatibility path.
+    provider: { executablePath: binary },
     headless: false,
     vault: false,
   });
@@ -383,7 +412,8 @@ export async function launchPersistentContext(options) {
       else process.env[key] = value;
     }
     fs.rmSync(home, { recursive: true, force: true });
-    fs.rmSync(stubRoot, { recursive: true, force: true });
+    fs.rmSync(stubBinary, { recursive: true, force: true });
+    fs.rmSync(driverRoot, { recursive: true, force: true });
   });
 
   const result = await browser.run("return 1;", { timeout: 30 });
@@ -404,21 +434,6 @@ export async function launchPersistentContext(options) {
     true,
     "the context must be closed before the profile lock is released",
   );
-});
-
-test("CLOAKBROWSER_BINARY_PATH remains the only binary override", async () => {
-  const previous = process.env.CLOAKBROWSER_BINARY_PATH;
-  process.env.CLOAKBROWSER_BINARY_PATH = "/opt/cloak/chrome";
-  const browser = new BetterWright();
-  try {
-    assert.equal(browser.browserFlavor, "cloak");
-    assert.equal(browser._workerConfig().browserFlavor, "cloak");
-    assert.equal("executablePath" in browser._workerConfig(), false);
-  } finally {
-    await browser.close();
-    if (previous === undefined) delete process.env.CLOAKBROWSER_BINARY_PATH;
-    else process.env.CLOAKBROWSER_BINARY_PATH = previous;
-  }
 });
 
 test("only a stock NetworkPolicy's guard decisions are marked cacheable", async () => {

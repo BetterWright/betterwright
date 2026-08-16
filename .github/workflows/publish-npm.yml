@@ -89,9 +89,8 @@ jobs:
       - name: Build TypeScript sources
         if: steps.existing.outputs.published != 'true'
         run: npm run build
-      # The published default is BetterChromium. Cloak is tested
-      # separately as an explicit compatibility opt-out.
-      - name: Install managed browsers
+      # The published browser is BetterChromium, the only bundled backend.
+      - name: Install managed browser
         if: steps.existing.outputs.published != 'true'
         run: node dist/bin/betterwright.js setup
       - name: Enable Chromium sandbox user namespaces
@@ -119,9 +118,6 @@ jobs:
         run: npm test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
-      - name: Test managed CloakBrowser headed mode
-        if: steps.existing.outputs.published != 'true'
-        run: xvfb-run -a env BETTERWRIGHT_CLOAK_E2E=1 BETTERWRIGHT_CHROMIUM_ROOT=off node --test tests/node/cloak.test.js
       # npm publish runs prepublishOnly implicitly. Run that release gate as an
       # explicit, visible final check after every step that can rebuild dist/,
       # then suppress lifecycle scripts on the upload. The exact package smoke-
