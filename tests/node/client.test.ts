@@ -450,10 +450,9 @@ test("only a stock NetworkPolicy's guard decisions are marked cacheable", async 
   grafted.custom = null;
   grafted.check = () => shared;
   const proxied = new Proxy(new NetworkPolicy(), {
-    get: (target, prop, receiver) =>
-      prop === "check"
-        ? () => shared
-        : Reflect.get(target, prop, receiver),
+    // NetworkPolicy has no accessor properties, so plain property access
+    // forwards identically to a receiver-forwarding Reflect.get here.
+    get: (target, prop) => (prop === "check" ? () => shared : target[prop]),
   });
   const cases = [
     { name: "default policy", options: {}, cacheable: true },

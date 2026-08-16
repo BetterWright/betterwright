@@ -14,6 +14,8 @@
 // operating system — a Linux host is a Linux browser. Page-world APIs remain
 // native; this module only configures browser launch and context data.
 
+import { isCallable, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
+
 const SUPPORTED_PLATFORMS = new Set(["macos", "windows", "linux"]);
 
 const COUNTRY_LOCALE = Object.freeze({
@@ -121,6 +123,12 @@ export function identityLaunchArgs({
   return args;
 }
 
+// The injected lookup's contract; only callability is checked, and the JSON it
+// resolves with is treated as untrusted network data either way.
+function isGeoLookup(value: UntrustedValue): value is (url: string) => Promise<UntrustedValue> {
+  return isCallable(value);
+}
+
 /**
  * Resolve the egress-IP identity through the upstream proxy. The JS layer must
  * not disagree with the network layer: a Frankfurt exit paired with an
@@ -139,15 +147,17 @@ export async function resolveGeoIdentity({
 }: any = {}) {
   const result = { locale: locale || null, timezone: timezone || null, source: "explicit" };
   if (!geoip || (locale && timezone)) return result;
-  if (typeof fetchJson !== "function") return result;
+  if (!isGeoLookup(fetchJson)) return result;
   try {
     const data = await fetchJson(lookupUrl);
-    if (data?.status !== "success") return result;
-    if (!timezone && typeof data.timezone === "string" && data.timezone) {
-      result.timezone = data.timezone;
+    if (untrustedField(data, "status") !== "success") return result;
+    const geoTimezone = untrustedField(data, "timezone");
+    if (!timezone && isString(geoTimezone) && geoTimezone) {
+      result.timezone = geoTimezone;
     }
-    if (!locale && typeof data.countryCode === "string") {
-      result.locale = COUNTRY_LOCALE[data.countryCode.toUpperCase()] || "en-US";
+    const countryCode = untrustedField(data, "countryCode");
+    if (!locale && isString(countryCode)) {
+      result.locale = COUNTRY_LOCALE[countryCode.toUpperCase()] || "en-US";
     }
     result.source = "geoip";
     return result;

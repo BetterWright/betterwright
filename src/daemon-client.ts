@@ -26,6 +26,7 @@ import {
   sessionName,
 } from "./daemon.js";
 import { profileLabel, resolveProfileName } from "./profile-name.js";
+import type { UntrustedValue } from "./untrusted-value.js";
 
 const CONNECT_TIMEOUT_MS = 1_000;
 const SPAWN_WAIT_MS = 8_000;
@@ -167,7 +168,7 @@ function rotateDaemonLog(file) {
 
 function spawnDaemon({ home, cliPath, config, profile }) {
   const payload = Buffer.from(JSON.stringify(config), "utf8").toString("base64url");
-  let logFd;
+  let logFd: number | "ignore";
   try {
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     // One log per daemon, so two profiles' daemons never interleave lines in
@@ -192,7 +193,7 @@ function spawnDaemon({ home, cliPath, config, profile }) {
     },
   );
   child.unref();
-  if (typeof logFd === "number") {
+  if (logFd !== "ignore") {
     try {
       fs.closeSync(logFd);
     } catch {
@@ -259,7 +260,7 @@ export async function connectSessionDaemon({
   profile = undefined,
   _retried = false,
 }: any = {}): Promise<any> {
-  const wantProfile = resolveProfileName(profile ?? (config as any)?.profile);
+  const wantProfile = resolveProfileName(profile ?? config?.profile);
   const socketPath = daemonSocketPath(home, wantProfile);
   const version = daemonPackageVersion();
   const configSig = daemonConfigSignature({ ...config, profile: wantProfile });
@@ -406,11 +407,19 @@ export async function interruptSession(channel, session, { wait = true }: any = 
 export async function execTask(
   channel,
   payload,
-  { onStep, onNotice, reconnect }: any = {},
+  {
+    onStep,
+    onNotice,
+    reconnect,
+  }: {
+    onStep?: (step: UntrustedValue) => void;
+    onNotice?: (notice: string) => void;
+    reconnect?: () => Promise<any> | any;
+  } = {},
 ) {
   const session = sessionName(payload.session ?? "default");
-  const step = typeof onStep === "function" ? onStep : () => {};
-  const notice = typeof onNotice === "function" ? onNotice : () => {};
+  const step = onStep ?? (() => {});
+  const notice = onNotice ?? (() => {});
   let runId = null;
   let cursor = null;
 
@@ -437,7 +446,7 @@ export async function execTask(
   try {
     reply = await channel.request({ op: "exec", ...payload }, 0, onEvent);
   } catch (error) {
-    if (typeof reconnect !== "function") throw error;
+    if (!reconnect) throw error;
     reply = await reattach({ session, runId, cursor, onEvent, reconnect, notice, cause: error });
   }
   if (!reply?.ok) throw new Error(reply?.error || "the session daemon exec failed");

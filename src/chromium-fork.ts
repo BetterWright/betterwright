@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { isCallable } from "./untrusted-value.js";
+
 export const BETTERWRIGHT_CHROMIUM_VERSION = "151.0.7922.108";
 export const BETTERCHROMIUM_PRODUCT_NAME = "BetterChromium";
 
@@ -37,8 +39,7 @@ export function chromiumForkContextOptions({
   platform = process.platform,
   getuid = process.getuid,
 } = {}) {
-  const runningAsRoot =
-    typeof getuid === "function" && getuid.call(process) === 0;
+  const runningAsRoot = isCallable(getuid) && getuid.call(process) === 0;
   return {
     viewport: null,
     ignoreDefaultArgs: [...PLAYWRIGHT_BEHAVIORAL_DEFAULT_ARGS],

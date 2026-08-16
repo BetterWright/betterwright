@@ -13,11 +13,14 @@
 
 import {
   hostIs,
+  isBoolean,
   isGoogleHost,
   isRecord,
   normalizedText,
   parsedUrl,
   stringValue,
+  type UntrustedValue,
+  untrustedField,
 } from "./untrusted-value.js";
 
 export const CAPTCHA_SOLVE_STATUSES = Object.freeze({
@@ -89,37 +92,43 @@ function providerFromUrl(url) {
  */
 export function classifyChallengeStage(metadata: any = {}) {
   const input = isRecord(metadata) ? metadata : {};
-  const main = isRecord(input.main) ? input.main : input;
-  const frames = Array.isArray(input.frames)
-    ? input.frames.filter(isRecord)
-    : Array.isArray(input.childFrames)
-      ? input.childFrames.filter(isRecord)
+  const nestedMain = untrustedField(input, "main");
+  const main = isRecord(nestedMain) ? nestedMain : input;
+  const frameList = untrustedField(input, "frames");
+  const childFrameList = untrustedField(input, "childFrames");
+  const frames = Array.isArray(frameList)
+    ? frameList.filter(isRecord)
+    : Array.isArray(childFrameList)
+      ? childFrameList.filter(isRecord)
       : [];
   // Prefer child frames first so host-page marketing copy (e.g. a solver demo
   // site listing slider/image captchas) cannot override a live provider widget.
   const sources = [
-    ...frames.map((frame, index) => ({
-      kind: "frame",
-      index,
-      url: stringValue(frame.url),
-      title: stringValue(frame.title),
-      text: stringValue(frame.text),
-      visible: typeof frame.visible === "boolean" ? frame.visible : null,
-    })),
+    ...frames.map((frame, index) => {
+      const visible = untrustedField(frame, "visible");
+      return {
+        kind: "frame",
+        index,
+        url: stringValue(untrustedField(frame, "url")),
+        title: stringValue(untrustedField(frame, "title")),
+        text: stringValue(untrustedField(frame, "text")),
+        visible: isBoolean(visible) ? visible : null,
+      };
+    }),
     {
       kind: "main",
-      // The main document has no frame index; null keeps this shape union-
+      // The main document has no frame index; null keeps this entry union-
       // compatible with the frame entries above so callers can read `.index`
       // off either without narrowing.
       index: null,
-      url: stringValue(main.url ?? input.url),
-      title: stringValue(main.title ?? input.title),
-      text: stringValue(main.text ?? input.text),
+      url: stringValue(untrustedField(main, "url") ?? untrustedField(input, "url")),
+      title: stringValue(untrustedField(main, "title") ?? untrustedField(input, "title")),
+      text: stringValue(untrustedField(main, "text") ?? untrustedField(input, "text")),
       visible: true,
     },
   ];
 
-  let provider = stringValue(input.provider) || "generic";
+  let provider = stringValue(untrustedField(input, "provider")) || "generic";
   let stage: string = CAPTCHA_STAGES.NONE;
   let signal = null;
   let source = sources[sources.length - 1];
@@ -250,7 +259,10 @@ export function classifyChallengeStage(metadata: any = {}) {
     }
   }
 
-  if (stage === CAPTCHA_STAGES.NONE && (input.provider || input.type === "bot_challenge")) {
+  if (
+    stage === CAPTCHA_STAGES.NONE &&
+    (untrustedField(input, "provider") || untrustedField(input, "type") === "bot_challenge")
+  ) {
     stage = CAPTCHA_STAGES.UNKNOWN;
     signal = "unclassified";
   }
@@ -390,10 +402,7 @@ export function parseTileIndexes(value) {
   const indexes = [];
   const seen = new Set();
   for (const item of raw) {
-    const n =
-      item && typeof item === "object" && !Array.isArray(item)
-        ? Number(item.index)
-        : Number(item);
+    const n = isRecord(item) ? Number(untrustedField(item, "index")) : Number(item);
     if (!Number.isInteger(n) || n < 0 || n > TILE_INDEX_MAX || seen.has(n)) {
       continue;
     }
@@ -465,6 +474,22 @@ export function clusterSimilarBoxes(boxes, { minCount = 3, sizeSlack = 14 }: any
   return sortTilesReadingOrder(best);
 }
 
+/**
+ * Rectangle payloads (tile bounds, viewports) arrive as model tool arguments
+ * or page data. Arrays and other exotic objects pass — exactly as the sites
+ * this replaced accepted them — and are then defused by the total numeric
+ * field reads that follow; the guard only rules out primitives and null.
+ */
+function isRectangleCarrier(value: UntrustedValue): value is object {
+  return typeof value === "object" && value !== null;
+}
+
+/** A tile entry is either the bounds rectangle itself or carries one under `bounds`. */
+function tileBounds(tile: UntrustedValue): UntrustedValue {
+  const bounds = untrustedField(tile, "bounds");
+  return isRectangleCarrier(bounds) ? bounds : tile;
+}
+
 const CHROME_LABEL =
   /skip challenge|refresh challenge|select a language|accessibility|hcaptcha logo|recaptcha logo|privacy policy|terms of service|about hcaptcha|opens new window|^skip$|^en$|^english\b|^menu\b|^about\b|^refresh$|^reload$/i;
 
@@ -479,12 +504,13 @@ export function isCaptchaChromeLabel(label) {
  * for a row of tiny toolbar buttons.
  */
 export function isPlausibleImageGrid(boxes, { minTiles = 3, minSide = 48 }: any = {}) {
-  const list = (Array.isArray(boxes) ? boxes : []).map((entry) =>
-    entry?.bounds && typeof entry.bounds === "object" ? entry.bounds : entry,
-  );
+  const list = (Array.isArray(boxes) ? boxes : []).map(tileBounds);
   if (list.length < minTiles) return false;
   const sides = list.map((box) =>
-    Math.min(Number(box?.width) || 0, Number(box?.height) || 0),
+    Math.min(
+      Number(untrustedField(box, "width")) || 0,
+      Number(untrustedField(box, "height")) || 0,
+    ),
   );
   const largeEnough = sides.filter((side) => side >= minSide).length;
   if (largeEnough < minTiles) return false;
@@ -503,22 +529,21 @@ export function pickBestTileSet(sets) {
   let bestScore = 0;
   for (const set of Array.isArray(sets) ? sets : []) {
     if (!Array.isArray(set) || !set.length) continue;
-    const boxes = set.map((tile) =>
-      tile?.bounds && typeof tile.bounds === "object" ? tile.bounds : tile,
-    );
+    const boxes = set.map(tileBounds);
     if (!isPlausibleImageGrid(boxes)) continue;
     const area =
-      boxes.reduce(
-        (sum, box) => sum + (Number(box?.width) || 0) * (Number(box?.height) || 0),
+      boxes.reduce<number>(
+        (sum, box) =>
+          sum +
+          (Number(untrustedField(box, "width")) || 0) *
+            (Number(untrustedField(box, "height")) || 0),
         0,
       ) / boxes.length;
     const score = set.length * 10_000 + area;
     if (score <= bestScore) continue;
     bestScore = score;
     best = set.map((tile, index) => {
-      const bounds = roundedBox(
-        tile?.bounds && typeof tile.bounds === "object" ? tile.bounds : tile,
-      );
+      const bounds = roundedBox(tileBounds(tile));
       return {
         index: Number.isInteger(tile?.index) ? tile.index : index,
         bounds,
@@ -532,9 +557,7 @@ export function pickBestTileSet(sets) {
 export function publicCaptchaTiles(tiles) {
   if (!Array.isArray(tiles) || !tiles.length) return null;
   return tiles.map((tile, index) => {
-    const bounds = roundedBox(
-      tile?.bounds && typeof tile.bounds === "object" ? tile.bounds : tile,
-    );
+    const bounds = roundedBox(tileBounds(tile));
     return {
       index: Number.isInteger(tile?.index) ? tile.index : index,
       bounds,
@@ -555,9 +578,9 @@ export function gridFromTiles(tiles) {
   const rows = [];
   const cols = [];
   for (const tile of list) {
-    const bounds = tile?.bounds && typeof tile.bounds === "object" ? tile.bounds : tile;
-    const y = Number(bounds?.y);
-    const x = Number(bounds?.x);
+    const bounds = tileBounds(tile);
+    const y = Number(untrustedField(bounds, "y"));
+    const x = Number(untrustedField(bounds, "x"));
     if (Number.isFinite(y) && !rows.some((row) => Math.abs(row - y) <= yTol)) {
       rows.push(y);
     }
@@ -608,9 +631,9 @@ export function unionClip(boxes, { pad = 12, promptPad = 72, viewport = null }: 
   y = Math.max(0, Math.floor(y - pad - promptPad));
   right = Math.ceil(right + pad);
   bottom = Math.ceil(bottom + pad);
-  const view = viewport && typeof viewport === "object" ? viewport : null;
-  const viewWidth = Number(view?.width);
-  const viewHeight = Number(view?.height);
+  const view = isRectangleCarrier(viewport) ? viewport : null;
+  const viewWidth = Number(untrustedField(view, "width"));
+  const viewHeight = Number(untrustedField(view, "height"));
   if (Number.isFinite(viewWidth) && viewWidth > 0) {
     x = Math.min(x, Math.max(0, viewWidth - 1));
     right = Math.min(right, viewWidth);
@@ -627,13 +650,13 @@ export function unionClip(boxes, { pad = 12, promptPad = 72, viewport = null }: 
 export function visionGridInstruction({ prompt, grid, tileCount }: any = {}) {
   const rows = Number(grid?.rows) || 0;
   const cols = Number(grid?.cols) || 0;
-  const shape = rows && cols ? `${rows}×${cols}` : `${Number(tileCount) || 0}-tile`;
+  const layout = rows && cols ? `${rows}×${cols}` : `${Number(tileCount) || 0}-tile`;
   const task = String(prompt || "").replace(/\s+/g, " ").trim();
   const match = task
     ? `Pick every numbered tile that matches: ${task}`
     : "Pick every numbered tile that matches the on-screen prompt";
   return (
-    `${match}. Numbers are overlaid on the attached ${shape} crop. ` +
+    `${match}. Numbers are overlaid on the attached ${layout} crop. ` +
     "Then call captcha.solve({ tiles: [indexes] }) — do not click bounds by hand."
   );
 }
@@ -825,7 +848,7 @@ export function pickGrowingBlob(first, second, options: any = {}) {
   return { ...best, confidence };
 }
 
-export function findGrowingShape(firstImage, secondImage, options: any = {}) {
+export function findGrowingRegion(firstImage, secondImage, options: any = {}) {
   return pickGrowingBlob(
     extractDarkBlobs(firstImage, options),
     extractDarkBlobs(secondImage, options),

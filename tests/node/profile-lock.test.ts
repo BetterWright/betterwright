@@ -155,7 +155,7 @@ test("touchProfileLock refreshes the lease and detects theft", () => {
 });
 
 test("degrades to the persistent profile unlocked when the lock cannot be created", (t) => {
-  if (typeof process.geteuid === "function" && process.geteuid() === 0) {
+  if (process.geteuid?.() === 0) {
     t.skip("permission simulation is a no-op for root");
     return;
   }

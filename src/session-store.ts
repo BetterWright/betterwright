@@ -27,6 +27,7 @@ import path from "node:path";
 import { defaultDaemonHome, sessionName } from "./daemon.js";
 import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { resolveProfileName } from "./profile-name.js";
+import { isRecord, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 const STORE_VERSION = 1;
 const KEEP_RECENT_BROWSER_RESULTS = 2;
@@ -37,7 +38,7 @@ export const ELIDED_OBSERVATION =
 
 const ROLES = new Set(["user", "assistant", "tool"]);
 
-function storeDir(home, session, profile?: unknown) {
+function storeDir(home, session, profile?: UntrustedValue) {
   const name = sessionName(session);
   const safe = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)
     ? name
@@ -49,17 +50,20 @@ function storeDir(home, session, profile?: unknown) {
   return resolved === null ? path.join(root, safe) : path.join(root, `@${resolved}`, safe);
 }
 
-export function transcriptPath(home, session, profile?: unknown) {
+export function transcriptPath(home, session, profile?: UntrustedValue) {
   return path.join(storeDir(home, session, profile), "transcript.json");
 }
 
-function validMessage(message) {
-  return (
-    message &&
-    typeof message === "object" &&
-    !Array.isArray(message) &&
-    ROLES.has(message.role)
-  );
+/** A persisted transcript message, as far as this store validates it. */
+interface StoredMessage {
+  role: string;
+  results?: UntrustedValue;
+}
+
+function validMessage(message: UntrustedValue): message is StoredMessage {
+  if (!isRecord(message)) return false;
+  const role = untrustedField(message, "role");
+  return isString(role) && ROLES.has(role);
 }
 
 /**
@@ -112,30 +116,46 @@ export function elideTranscript(messages, options: any = {}) {
 }
 
 /** Load the saved transcript for a session, or [] when absent/invalid. */
-export function loadTranscript(home, session, profile?: unknown) {
+export function loadTranscript(home, session, profile?: UntrustedValue): any[] {
   try {
     const raw = fs.readFileSync(transcriptPath(home, session, profile), "utf8");
     const parsed = JSON.parse(raw);
     const messages = Array.isArray(parsed) ? parsed : parsed?.messages;
     if (!Array.isArray(messages)) return [];
+    // Only the role discriminant is validated here; the deeper message
+    // structure is the producer's (saveTranscript persists agent transcripts),
+    // so the elements stay untyped for the callers that resume them.
     return messages.filter(validMessage);
   } catch {
     return [];
   }
 }
 
+// Assembled field-by-field in saveTranscript so `profile` — present only for
+// a named profile — keeps its historical position in the serialized envelope;
+// the trailing fields are optional solely to allow that assembly order.
+interface TranscriptEnvelope {
+  version: number;
+  session: string;
+  profile?: string;
+  savedAt?: string;
+  messages?: StoredMessage[];
+}
+
 /** Elide and persist a transcript (atomic write, private permissions). */
-export function saveTranscript(home, session, messages, options: any = {}, profile?: unknown) {
+export function saveTranscript(home, session, messages, options: any = {}, profile?: UntrustedValue) {
   const dir = storeDir(home, session, profile);
   mkdirPrivate(dir);
   const file = transcriptPath(home, session, profile);
-  const payload = JSON.stringify({
+  const resolved = resolveProfileName(profile);
+  const envelope: TranscriptEnvelope = {
     version: STORE_VERSION,
     session: sessionName(session),
-    ...(resolveProfileName(profile) ? { profile: resolveProfileName(profile) } : {}),
-    savedAt: new Date().toISOString(),
-    messages: elideTranscript(messages, options),
-  });
+  };
+  if (resolved) envelope.profile = resolved;
+  envelope.savedAt = new Date().toISOString();
+  envelope.messages = elideTranscript(messages, options);
+  const payload = JSON.stringify(envelope);
   // Write private *before* the rename: the transcript is owner-only from the
   // moment it exists, with no window where it is readable under its final name.
   const tmp = `${file}.tmp-${process.pid}`;
@@ -145,7 +165,7 @@ export function saveTranscript(home, session, messages, options: any = {}, profi
 }
 
 /** Forget a session's saved transcript (used by `exec --fresh`). */
-export function clearTranscript(home, session, profile?: unknown) {
+export function clearTranscript(home, session, profile?: UntrustedValue) {
   try {
     fs.rmSync(transcriptPath(home, session, profile), { force: true });
   } catch {

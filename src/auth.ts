@@ -16,6 +16,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
+import type { UntrustedValue } from "./untrusted-value.js";
+
 function base64url(buffer) {
   return buffer.toString("base64url");
 }
@@ -114,9 +116,13 @@ function authorizeUrl(provider, { redirectUri, challenge, state, nonce }) {
     code_challenge: challenge,
     code_challenge_method: "S256",
     state,
-    ...(provider.useNonce ? { nonce } : {}),
-    ...(provider.extraAuthParams || {}),
   });
+  if (provider.useNonce) params.set("nonce", nonce);
+  // `set`, not `append`: the original init-object spread let an extra param
+  // override a base one, and a repeated key must not send two values.
+  for (const [key, value] of Object.entries(provider.extraAuthParams || {})) {
+    params.set(key, String(value));
+  }
   return `${provider.issuer}${provider.authorizePath}?${params.toString()}`;
 }
 
@@ -204,6 +210,8 @@ function startCallbackServer(provider, { state, log }): Promise<any> {
         server.removeListener("error", onError);
         server.on("error", rejectCode);
         // Use the actually-bound port (matters when port 0 = ephemeral).
+        // SAFETY: inside the listen callback of a TCP server, address() is
+        // always an AddressInfo object; only pipe/IPC servers yield a string.
         const boundPort = (server.address() as { port: number }).port;
         resolveBind({
           redirectUri: `http://${provider.redirectHost || "localhost"}:${boundPort}${provider.redirectPath}`,
@@ -223,9 +231,12 @@ async function exchangeCode(provider, { code, verifier, challenge, redirectUri, 
     redirect_uri: redirectUri,
     client_id: provider.clientId,
     code_verifier: verifier,
-    // Some providers (xAI) echo the challenge on exchange as well.
-    ...(provider.sendChallengeOnExchange ? { code_challenge: challenge, code_challenge_method: "S256" } : {}),
   });
+  // Some providers (xAI) echo the challenge on exchange as well.
+  if (provider.sendChallengeOnExchange) {
+    body.set("code_challenge", challenge);
+    body.set("code_challenge_method", "S256");
+  }
   const response = await (fetchImpl || fetch)(`${provider.issuer}${provider.tokenPath}`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -249,13 +260,39 @@ function accountIdFromIdToken(idToken) {
   );
 }
 
-// Persist codex tokens in the same shape the codex CLI writes, so the two share
-// one session and `codex login status` stays truthful.
+// The auth.json layouts this module reads back. Every field is re-guarded
+// with `?.`/`||` fallbacks on use: the file is user-editable (and shared with
+// the codex CLI), so presence is never assumed, only tolerated.
+interface StoredOAuthTokens {
+  id_token?: string | null;
+  access_token?: string | null;
+  refresh_token?: string | null;
+  account_id?: string | null;
+}
+
+interface StoredCodexAuth {
+  auth_mode?: string;
+  OPENAI_API_KEY?: string | null;
+  tokens?: StoredOAuthTokens;
+  last_refresh?: string | null;
+}
+
+interface StoredGrokAuth {
+  auth_mode?: string;
+  provider?: string;
+  tokens?: StoredOAuthTokens;
+  account_id?: string | null;
+  expires_at?: number | null;
+  last_refresh?: string | null;
+}
+
+// Persist codex tokens in the same layout the codex CLI writes, so the two
+// share one session and `codex login status` stays truthful.
 function writeCodexAuth(tokens) {
   const dir = codexHome();
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, "auth.json");
-  let existing: Record<string, any> = {};
+  let existing: StoredCodexAuth = {};
   try {
     existing = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch {
@@ -286,7 +323,7 @@ function writeGrokAuth(tokens) {
   const dir = grokHome();
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, "auth.json");
-  let existing: Record<string, any> = {};
+  let existing: StoredGrokAuth = {};
   try {
     existing = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch {
@@ -463,6 +500,12 @@ export async function codexAccessToken() {
   return { accessToken, accountId: loadCodexAuth()?.accountId ?? stored.accountId };
 }
 
+// The caller's progress sink, per LoginProviderOptions.log in types/auth.d.ts.
+// Callability is the checked invariant; the signature is the declared contract.
+function isLogSink(value: UntrustedValue): value is (line: string) => void {
+  return typeof value === "function";
+}
+
 /**
  * Run the interactive OAuth login for a provider.
  * @param {object} options
@@ -480,7 +523,7 @@ export async function loginProvider(options: any = {}) {
   // `_override` is a test seam to point the flow at a fake issuer/ports while
   // keeping the real persistence and paths.
   const provider = options._override ? { ...base, ...options._override } : base;
-  const log = typeof options.log === "function" ? options.log : () => {};
+  const log = isLogSink(options.log) ? options.log : () => {};
 
   const { verifier, challenge } = createPkce();
   const state = randomState();

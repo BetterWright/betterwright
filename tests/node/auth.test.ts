@@ -27,7 +27,7 @@ function fakeJwt(payload) {
   return `${header}.${body}.`;
 }
 
-function idToken({ email = "user@example.com", accountId = "acct-123", exp }: Record<string, any> = {}) {
+function idToken({ email = "user@example.com", accountId = "acct-123", exp }: { email?: string; accountId?: string; exp?: number } = {}) {
   return fakeJwt({
     email,
     exp: exp ?? Math.floor(Date.now() / 1000) + 3600,
@@ -94,6 +94,13 @@ function fakeIssuer(handler) {
   return server;
 }
 
+function issuerPort(issuer: http.Server): number {
+  // SAFETY: every caller awaits `listen` on a TCP port before asking for the
+  // port, so `address()` is an AddressInfo — not the null of an unbound server
+  // or the string of a pipe.
+  return (issuer.address() as AddressInfo).port;
+}
+
 test("loginProvider runs the PKCE flow and persists codex-compatible tokens", async () => {
   let seenExchange;
   const issuer = fakeIssuer((params) => {
@@ -107,7 +114,7 @@ test("loginProvider runs the PKCE flow and persists codex-compatible tokens", as
     };
   });
   await new Promise<void>((r) => issuer.listen(0, "127.0.0.1", () => r()));
-  const issuerUrl = `http://127.0.0.1:${(issuer.address() as AddressInfo).port}`;
+  const issuerUrl = `http://127.0.0.1:${issuerPort(issuer)}`;
 
   // Override just the codex issuer/ports/client for the test; keep the real
   // codex persistence and endpoint paths.
@@ -205,7 +212,7 @@ test("codexAccessToken refreshes an expired access token", async () => {
 
   // Point refresh at the fake issuer by monkeypatching global fetch for the URL.
   const realFetch = globalThis.fetch;
-  const issuerUrl = `http://127.0.0.1:${(issuer.address() as AddressInfo).port}`;
+  const issuerUrl = `http://127.0.0.1:${issuerPort(issuer)}`;
   globalThis.fetch = (url, init) =>
     realFetch(String(url).replace("https://auth.openai.com", issuerUrl), init);
   try {
@@ -234,7 +241,7 @@ test("login preserves an existing OPENAI_API_KEY in codex auth.json", async () =
     },
   }));
   await new Promise<void>((r) => issuer.listen(0, "127.0.0.1", () => r()));
-  const issuerUrl = `http://127.0.0.1:${(issuer.address() as AddressInfo).port}`;
+  const issuerUrl = `http://127.0.0.1:${issuerPort(issuer)}`;
   const onUrl = (url) => {
     const parsed = new URL(url);
     const redirectUri = new URL(parsed.searchParams.get("redirect_uri"));
@@ -293,7 +300,7 @@ test("loginProvider runs the grok PKCE flow and persists to the grok store", asy
     };
   });
   await new Promise<void>((r) => issuer.listen(0, "127.0.0.1", () => r()));
-  const issuerUrl = `http://127.0.0.1:${(issuer.address() as AddressInfo).port}`;
+  const issuerUrl = `http://127.0.0.1:${issuerPort(issuer)}`;
   const onUrl = (url) => {
     const parsed = new URL(url);
     assert.ok(parsed.searchParams.get("nonce"), "grok authorize URL carries a nonce");
@@ -341,7 +348,7 @@ test("grokAccessToken refreshes an expired grok token and rotates it", async () 
   });
   await new Promise<void>((r) => issuer.listen(0, "127.0.0.1", () => r()));
   const realFetch = globalThis.fetch;
-  const issuerUrl = `http://127.0.0.1:${(issuer.address() as AddressInfo).port}`;
+  const issuerUrl = `http://127.0.0.1:${issuerPort(issuer)}`;
   globalThis.fetch = (url, init) => realFetch(String(url).replace("https://auth.x.ai", issuerUrl), init);
   try {
     const { accessToken } = await grokAccessToken();
@@ -367,7 +374,7 @@ test("grok refresh keeps the old refresh token when the response omits one", asy
   const issuer = fakeIssuer(() => ({ body: { access_token: "new-access", expires_in: 3600 } }));
   await new Promise<void>((r) => issuer.listen(0, "127.0.0.1", () => r()));
   const realFetch = globalThis.fetch;
-  const issuerUrl = `http://127.0.0.1:${(issuer.address() as AddressInfo).port}`;
+  const issuerUrl = `http://127.0.0.1:${issuerPort(issuer)}`;
   globalThis.fetch = (url, init) => realFetch(String(url).replace("https://auth.x.ai", issuerUrl), init);
   try {
     await grokAccessToken();

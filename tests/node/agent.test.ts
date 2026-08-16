@@ -22,6 +22,7 @@ import { formatAgentUsage, uncachedInputTokens } from "../../dist/src/agent-usag
 import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
 import { PI_BROWSER_PARAMETERS, PI_LOGIN_PARAMETERS } from "../../dist/src/pi-extension.js";
 import { browserToolProperties, loginToolProperties } from "../../dist/src/tool-schemas.js";
+import { isNumber } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 function base64url(buffer) {
@@ -34,8 +35,68 @@ function futureJwt(extra = {}) {
 
 // A fake browser standing in for BetterWright — records run() calls and returns
 // canned result envelopes. `vault` toggles the login tool.
-function fakeBrowser({ vault = null, runs = [], fills = [] }: Record<string, any> = {}): Record<string, any> {
-  const calls: Record<string, any> = { run: [], fill: [], closed: false };
+interface FakeEnvelope {
+  ok: boolean;
+  result?: string | Record<string, string | number>;
+  error?: string;
+  artifacts?: Array<{ kind: string; path: string }>;
+  durationMs?: number;
+  pendingCredential?: {
+    pendingId: string;
+    origin: string;
+    matchMode: string;
+    username: string;
+    label: string | null;
+    expiresAt: string;
+  };
+}
+
+interface FakeLoginCall {
+  username?: string;
+  passwordSelector?: string;
+  currentPasswordSelector?: string;
+  submit?: boolean;
+  session?: string;
+  code?: string;
+  matchMode?: string;
+  generate?: boolean;
+}
+
+interface FakeBrowserCalls {
+  run: Array<{ code: string; options: { session?: string } }>;
+  fill: FakeLoginCall[];
+  closed: boolean;
+  liveView?: Array<{ session?: string }>;
+  handoffs?: Array<{ prompt?: string }>;
+  asks?: Array<{ question?: string }>;
+  chatPosts?: Array<{ text?: string; kind?: string }>;
+  chatDrains?: number;
+  stops?: number;
+}
+
+interface FakeBrowserOptions {
+  vault?: Record<string, never> | null;
+  runs?: FakeEnvelope[];
+  fills?: FakeEnvelope[];
+}
+
+interface FakeBrowser {
+  vault: Record<string, never> | null;
+  calls: FakeBrowserCalls;
+  run(code: string, options: { session?: string }): Promise<FakeEnvelope>;
+  fillCredential(options: FakeLoginCall): Promise<FakeEnvelope>;
+  close(): Promise<void>;
+  _inbox?: Array<{ text: string }>;
+  startLiveView?(options: { session?: string }): Promise<{ ok: boolean; url?: string; alreadyRunning?: boolean }>;
+  waitForHandoff?(options: { prompt?: string }): Promise<{ ok: boolean; action: string; note?: string }>;
+  waitForAsk?(options: { question?: string }): Promise<{ ok: boolean; action: string; answer?: string }>;
+  liveViewPostChat?(options: { text?: string; kind?: string }): Promise<{ ok: boolean }>;
+  liveViewDrainChat?(): Promise<{ ok: boolean; messages: Array<{ text: string }> }>;
+  stopLiveView?(): Promise<{ ok: boolean; running: boolean }>;
+}
+
+function fakeBrowser({ vault = null, runs = [], fills = [] }: FakeBrowserOptions = {}): FakeBrowser {
+  const calls: FakeBrowserCalls = { run: [], fill: [], closed: false };
   let i = 0;
   let fillIndex = 0;
   return {
@@ -234,7 +295,7 @@ test("runAgentTask reports uncached input, cache usage, and full final context",
   assert.equal(result.usage.cacheWriteTokens, 40);
   assert.equal(result.usage.context, 50);
   // Wall-clock is reported as a non-negative number of milliseconds.
-  assert.equal(typeof result.durationMs, "number");
+  assert.ok(isNumber(result.durationMs));
   assert.ok(result.durationMs >= 0);
 });
 
@@ -1421,7 +1482,14 @@ test("grok OAuth session calls xAI chat/completions with a bearer token", async 
 // Live view + handoff
 
 // Extend the fake browser with the live-view surface the handoff tool uses.
-function liveViewBrowser(overrides: Record<string, any> = {}) {
+interface LiveViewOverrides extends FakeBrowserOptions {
+  inbox?: Array<{ text: string }>;
+  startLiveViewResult?: { ok?: boolean; url?: string; alreadyRunning?: boolean };
+  handoffResult?: { ok: boolean; action: string; note?: string };
+  askResult?: { ok: boolean; action: string; answer?: string };
+}
+
+function liveViewBrowser(overrides: LiveViewOverrides = {}) {
   const browser = fakeBrowser(overrides);
   browser.calls.liveView = [];
   browser.calls.handoffs = [];
@@ -1436,7 +1504,7 @@ function liveViewBrowser(overrides: Record<string, any> = {}) {
       ok: true,
       url: "http://127.0.0.1:4242/?t=secret",
       alreadyRunning: browser.calls.liveView.length > 1,
-      ...(overrides.startLiveViewResult || {}),
+      ...overrides.startLiveViewResult,
     };
   };
   browser.waitForHandoff = async (options) => {

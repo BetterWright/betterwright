@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright } from "../../dist/src/index.js";
+import { isNumber } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -66,6 +67,8 @@ async function startFixtureServer() {
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  // SAFETY: the server finished `listen` on a TCP port, so `address()` returns
+  // an AddressInfo — not the null of an unbound server or a pipe-name string.
   const { port } = server.address() as AddressInfo;
   return {
     base: `http://127.0.0.1:${port}`,
@@ -161,11 +164,11 @@ test(
         assert.match(String(result.result.instruction || ""), /tiles:/);
         assert.equal(result.result.local, true);
         for (const tile of result.result.tiles) {
-          assert.equal(typeof tile.index, "number");
-          assert.equal(typeof tile.x, "number");
-          assert.equal(typeof tile.y, "number");
-          assert.equal(typeof tile.width, "number");
-          assert.equal(typeof tile.height, "number");
+          assert.ok(isNumber(tile.index));
+          assert.ok(isNumber(tile.x));
+          assert.ok(isNumber(tile.y));
+          assert.ok(isNumber(tile.width));
+          assert.ok(isNumber(tile.height));
           assert.equal(tile.x, tile.bounds.x);
           assert.ok(tile.width >= 48);
         }

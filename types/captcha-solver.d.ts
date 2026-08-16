@@ -1,3 +1,5 @@
+import type { UntrustedValue } from "./untrusted-value.js";
+
 export const CAPTCHA_SOLVE_STATUSES: Readonly<{
   READY: "ready";
   PROCESSING: "processing";
@@ -58,7 +60,7 @@ export interface SolveAction {
   description: string;
 }
 
-export function classifyChallengeStage(metadata?: unknown): ChallengeStageClassification;
+export function classifyChallengeStage(metadata?: UntrustedValue): ChallengeStageClassification;
 export function buildSolveResult(input?: Partial<CaptchaSolveResult> & {
   status?: string;
   requestId?: string | null;
@@ -79,7 +81,7 @@ export const IMAGE_TILE_SELECTORS: readonly string[];
 export const CHALLENGE_WIDGET_SELECTORS: readonly string[];
 export const CHALLENGE_INSTRUCTION_SELECTORS: readonly string[];
 
-export function parseTileIndexes(value?: unknown): number[];
+export function parseTileIndexes(value?: UntrustedValue): number[];
 export function dedupeBoxes(
   boxes?: Array<{ x?: number; y?: number; width?: number; height?: number }>,
   quantum?: number,
@@ -92,17 +94,17 @@ export function clusterSimilarBoxes(
   boxes?: Array<{ x?: number; y?: number; width?: number; height?: number }>,
   options?: { minCount?: number; sizeSlack?: number },
 ): Array<{ x: number; y: number; width: number; height: number }>;
-export function isCaptchaChromeLabel(label?: unknown): boolean;
+export function isCaptchaChromeLabel(label?: UntrustedValue): boolean;
 export function isPlausibleImageGrid(
-  boxes?: unknown,
+  boxes?: UntrustedValue,
   options?: { minTiles?: number; minSide?: number },
 ): boolean;
-export function pickBestTileSet(sets?: unknown): Array<{
+export function pickBestTileSet(sets?: UntrustedValue): Array<{
   index: number;
   bounds: { x: number; y: number; width: number; height: number };
   label: string | null;
 }>;
-export function publicCaptchaTiles(tiles?: unknown): Array<{
+export function publicCaptchaTiles(tiles?: UntrustedValue): Array<{
   index: number;
   bounds: { x: number; y: number; width: number; height: number };
   x: number;
@@ -111,7 +113,7 @@ export function publicCaptchaTiles(tiles?: unknown): Array<{
   height: number;
   label: string | null;
 }> | null;
-export function gridFromTiles(tiles?: unknown): { rows: number; cols: number };
+export function gridFromTiles(tiles?: UntrustedValue): { rows: number; cols: number };
 export function inferGridTiles(
   box: { x?: number; y?: number; width?: number; height?: number },
   cols?: number,
@@ -148,9 +150,19 @@ export function extractDarkBlobs(
   cx: number;
   cy: number;
 }>;
+type DarkBlobList = ReadonlyArray<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  count: number;
+  cx: number;
+  cy: number;
+}>;
+
 export function pickGrowingBlob(
-  first?: unknown,
-  second?: unknown,
+  first?: DarkBlobList,
+  second?: DarkBlobList,
   options?: { minGrown?: number; minRatio?: number },
 ): {
   x: number;
@@ -166,13 +178,21 @@ export function pickGrowingBlob(
   matched: boolean;
   confidence: number;
 } | null;
-export function findGrowingShape(
-  firstImage?: unknown,
-  secondImage?: unknown,
-  options?: unknown,
+export function findGrowingRegion(
+  firstImage?: { width?: number; height?: number; data?: ArrayLike<number> },
+  secondImage?: { width?: number; height?: number; data?: ArrayLike<number> },
+  options?: {
+    maxLuma?: number;
+    minCount?: number;
+    maxCount?: number;
+    topInset?: number;
+    bottomInset?: number;
+    minGrown?: number;
+    minRatio?: number;
+  },
 ): ReturnType<typeof pickGrowingBlob>;
 export function pickDragFitPair(
-  blobs?: unknown,
+  blobs?: DarkBlobList,
   options?: { minSide?: number },
 ): {
   piece: { cx: number; cy: number; width: number; height: number; count: number; density: number };

@@ -255,6 +255,8 @@ async function startFixtureServer(indexOfServer, refs, host = "127.0.0.1") {
 
   server.listen(0, host);
   await once(server, "listening");
+  // SAFETY: the server just emitted "listening" on a TCP bind, so address()
+  // returns an AddressInfo object, never null or a pipe name string.
   const { port } = server.address() as AddressInfo;
   return {
     origin: `http://${host}:${port}`,
@@ -442,6 +444,8 @@ async function measureChallengeScan(bw, origin, frameCount) {
      for (const frame of frames) urls.push(await frame.url());
      return { count: urls.length, urls };`,
   );
+  // SAFETY: `urls` is produced by the probe script above, which only ever
+  // pushes `await frame.url()` — a string per frame — into the array.
   const urls = (probe.result.result?.urls || []) as string[];
   const mainHost = new URL(url).hostname;
   const childHosts = urls
@@ -574,7 +578,7 @@ function writeResults(key, payload) {
     benchmark: "round-trip cost: per-action latency, page-load guard RPCs, challenge-scan overhead",
     fixture: "local http.createServer only — no external network",
     defined_in: "run.ts",
-    runs: { ...(existing.runs || {}), [key]: payload },
+    runs: { ...existing.runs, [key]: payload },
   };
   fs.writeFileSync(RESULTS, `${JSON.stringify(merged, null, 2)}\n`);
 }

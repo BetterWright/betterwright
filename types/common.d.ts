@@ -1,3 +1,4 @@
+import type { UntrustedValue } from "./untrusted-value.js";
 import type { VaultMatchMode } from "./vault.js";
 
 export type BrowserFlavor = "chromium-fork";
@@ -8,10 +9,10 @@ export type DownloadPolicy = "ask" | "allow" | "deny";
 export interface CredentialVault {
   handleRequest(
     action: string,
-    payload: Record<string, unknown>,
+    payload: Record<string, UntrustedValue>,
     origin: string,
-  ): unknown | Promise<unknown>;
-  redact?(value: unknown): unknown;
+  ): UntrustedValue | Promise<UntrustedValue>;
+  redact?(value: UntrustedValue): UntrustedValue;
   /** Called only after the owning worker and all of its pages are closed. */
   resetRedactionSecrets?(): void;
 }
@@ -21,7 +22,7 @@ export interface BetterWrightArtifact {
   path?: string;
   media?: string;
   size?: number;
-  [key: string]: unknown;
+  [key: string]: UntrustedValue;
 }
 
 export interface SkillHint {
@@ -136,13 +137,13 @@ export interface PendingCredentialPublicRecord {
   pendingId?: string;
   committed?: boolean;
   discarded?: boolean;
-  [key: string]: unknown;
+  [key: string]: UntrustedValue;
 }
 
 export interface CredentialPublicRecord {
   filled: Array<"username" | "currentPassword" | "password" | "confirmPassword">;
   submitted: boolean;
-  [key: string]: unknown;
+  [key: string]: UntrustedValue;
 }
 
 export type CredentialFillResult =

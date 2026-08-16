@@ -68,8 +68,13 @@ import readline from "node:readline";
 // Only the daemon *server* needs it; every client that imports this module for
 // a socket path or config signature would otherwise pay that cost too. Loaded
 // lazily in `createBrowserFromDaemonConfig`, the sole place it is used.
+// Type-only imports of the client/agent graph are erased at compile time, so
+// they do not defeat the lazy loading described above.
+import type { RunAgentTaskOptions } from "../types/agent.js";
+import type { BetterWrightOptions, BrowserProviderOptions } from "../types/public.js";
 import { defaultHome as defaultDaemonHome } from "./home.js";
 import { profileFileSuffix, profileLabel, resolveProfileName } from "./profile-name.js";
+import { isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 const require = createRequire(import.meta.url);
 
@@ -149,14 +154,15 @@ function canonicalHome(home) {
 // The profile joins the hash so two profiles in a deep home get two distinct
 // fallback sockets — a shared one would silently put both identities in one
 // browser, which is the exact confusion named profiles exist to prevent.
-function homeHash(home, profile?: unknown) {
+function homeHash(home, profile?: UntrustedValue) {
   const key = `${canonicalHome(home)}\u0000${resolveProfileName(profile) ?? ""}`;
   return crypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
 
 /** Owner-only directory holding fallback sockets for over-long homes. */
 export function fallbackSocketDir() {
-  const uid = typeof process.getuid === "function" ? process.getuid() : "shared";
+  // getuid is absent on Windows; a getuid() result is a number, never nullish.
+  const uid = process.getuid?.() ?? "shared";
   return path.join(os.tmpdir(), `betterwright-${uid}`);
 }
 
@@ -165,7 +171,7 @@ export function fallbackSocketDir() {
 // session persistence to a config mismatch. The socket, info file, and log are
 // therefore keyed by (home, profile). The default profile keeps the historical
 // bare names, so an upgraded install finds the daemon it already had.
-export function daemonSocketPath(home = defaultDaemonHome(), profile?: unknown) {
+export function daemonSocketPath(home = defaultDaemonHome(), profile?: UntrustedValue) {
   const suffix = profileFileSuffix(profile);
   if (process.platform === "win32") {
     // Named pipes live in their own namespace and have no such limit.
@@ -203,7 +209,8 @@ export function ensureSocketDirectory(socketPath) {
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
     throw new Error(`Session daemon socket directory is not a real directory: ${directory}`);
   }
-  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+  const uid = process.getuid?.();
+  if (uid !== undefined && stats.uid !== uid) {
     throw new Error(
       `Session daemon socket directory ${directory} is owned by another user; refusing to use it.`,
     );
@@ -211,11 +218,11 @@ export function ensureSocketDirectory(socketPath) {
   fs.chmodSync(directory, 0o700);
 }
 
-export function daemonInfoPath(home = defaultDaemonHome(), profile?: unknown) {
+export function daemonInfoPath(home = defaultDaemonHome(), profile?: UntrustedValue) {
   return path.join(home, `daemon${profileFileSuffix(profile)}.json`);
 }
 
-export function daemonLogPath(home = defaultDaemonHome(), profile?: unknown) {
+export function daemonLogPath(home = defaultDaemonHome(), profile?: UntrustedValue) {
   return path.join(home, `daemon${profileFileSuffix(profile)}.log`);
 }
 
@@ -280,52 +287,96 @@ export function orphanGraceMs() {
 // The identity platform reaches the daemon already validated — `BetterWright`
 // throws on anything else at construction — so an unrecognized value here means
 // a hand-written config, and null (host default) is the safe reading of it.
-function identityPlatform(value): "macos" | "windows" | "linux" | null {
+function identityPlatform(value: UntrustedValue): "macos" | "windows" | "linux" | null {
   const platform = value ? String(value) : "";
   return platform === "macos" || platform === "windows" || platform === "linux"
     ? platform
     : null;
 }
 
-export function normalizeDaemonConfig(config: any = {}) {
-  const policy = config.policy && typeof config.policy === "object" ? config.policy : {};
-  const browser = config.browser && typeof config.browser === "object" ? config.browser : {};
-  const hosts = (list) =>
+// The daemon protocol's option bags historically accept ANY non-null object —
+// arrays included, which JSON-derived payloads make behave as empty bags — so
+// this deliberately mirrors `typeof === "object"` rather than isRecord's
+// plain-object test. The value claim is trivially sound: every property of any
+// object is a valid UntrustedValue.
+function isObjectPayload(value: UntrustedValue): value is Record<string, UntrustedValue> {
+  return typeof value === "object" && value !== null;
+}
+
+interface NormalizedDaemonPolicy {
+  allowLoopback: boolean;
+  allowPrivateNetwork: boolean;
+  allowHosts: string[];
+  blockHosts: string[];
+}
+
+interface NormalizedDaemonBrowser {
+  launchIdentity: boolean;
+  upstreamProxy: string | null;
+  geoip: boolean;
+  locale: string | null;
+  timezone: string | null;
+  headedInvisible: boolean;
+  platform: "macos" | "windows" | "linux" | null;
+  stealthRuntimeFix: boolean;
+  provider: DaemonProviderConfig | null;
+}
+
+// `policy` and `browser` are always present in a finished config; they are
+// optional only so normalizeDaemonConfig can assemble the object field by
+// field, keeping `profile` — when present — in its historical position in the
+// signature JSON (the signature is compared byte-wise).
+export interface NormalizedDaemonConfig {
+  protocol: number;
+  headless: boolean;
+  profile?: string;
+  policy?: NormalizedDaemonPolicy;
+  browser?: NormalizedDaemonBrowser;
+}
+
+export function normalizeDaemonConfig(config: any = {}): NormalizedDaemonConfig {
+  const policy: UntrustedValue = config.policy;
+  const browser: UntrustedValue = config.browser;
+  const hosts = (list: UntrustedValue) =>
     [...new Set((Array.isArray(list) ? list : []).map((h) => String(h).trim().toLowerCase()).filter(Boolean))].sort();
   const profile = resolveProfileName(config.profile);
-  return {
+  const normalized: NormalizedDaemonConfig = {
     protocol: DAEMON_PROTOCOL,
     headless: config.headless !== false,
-    // A daemon serves exactly one profile (it owns one browser), and the
-    // socket is already keyed by profile — but keep it in the signature too so
-    // a client that somehow reaches a daemon on another identity's browser
-    // sees a mismatch instead of quietly acting as the wrong account.
-    //
-    // Present ONLY for a named profile: the default profile's signature then
-    // stays byte-identical to the pre-profiles one, so upgrading while a
-    // daemon holds live sessions reuses that daemon instead of falling back to
-    // a one-shot browser that finds the profile locked and comes up signed
-    // out. A named profile has its own socket, so nothing can be there but a
-    // daemon that already understands this field.
-    ...(profile ? { profile } : {}),
-    policy: {
-      allowLoopback: policy.allowLoopback !== false,
-      allowPrivateNetwork: policy.allowPrivateNetwork !== false,
-      allowHosts: hosts(policy.allowHosts),
-      blockHosts: hosts(policy.blockHosts),
-    },
-    browser: {
-      launchIdentity: browser.launchIdentity !== false,
-      upstreamProxy: browser.upstreamProxy ? String(browser.upstreamProxy) : null,
-      geoip: browser.geoip === true,
-      locale: browser.locale ? String(browser.locale) : null,
-      timezone: browser.timezone ? String(browser.timezone) : null,
-      headedInvisible: browser.headedInvisible === true,
-      platform: identityPlatform(browser.platform),
-      stealthRuntimeFix: browser.stealthRuntimeFix === true,
-      provider: normalizeDaemonProvider(browser.provider),
-    },
   };
+  // A daemon serves exactly one profile (it owns one browser), and the
+  // socket is already keyed by profile — but keep it in the signature too so
+  // a client that somehow reaches a daemon on another identity's browser
+  // sees a mismatch instead of quietly acting as the wrong account.
+  //
+  // Present ONLY for a named profile: the default profile's signature then
+  // stays byte-identical to the pre-profiles one, so upgrading while a
+  // daemon holds live sessions reuses that daemon instead of falling back to
+  // a one-shot browser that finds the profile locked and comes up signed
+  // out. A named profile has its own socket, so nothing can be there but a
+  // daemon that already understands this field.
+  if (profile) normalized.profile = profile;
+  const upstreamProxy = untrustedField(browser, "upstreamProxy");
+  const locale = untrustedField(browser, "locale");
+  const timezone = untrustedField(browser, "timezone");
+  normalized.policy = {
+    allowLoopback: untrustedField(policy, "allowLoopback") !== false,
+    allowPrivateNetwork: untrustedField(policy, "allowPrivateNetwork") !== false,
+    allowHosts: hosts(untrustedField(policy, "allowHosts")),
+    blockHosts: hosts(untrustedField(policy, "blockHosts")),
+  };
+  normalized.browser = {
+    launchIdentity: untrustedField(browser, "launchIdentity") !== false,
+    upstreamProxy: upstreamProxy ? String(upstreamProxy) : null,
+    geoip: untrustedField(browser, "geoip") === true,
+    locale: locale ? String(locale) : null,
+    timezone: timezone ? String(timezone) : null,
+    headedInvisible: untrustedField(browser, "headedInvisible") === true,
+    platform: identityPlatform(untrustedField(browser, "platform")),
+    stealthRuntimeFix: untrustedField(browser, "stealthRuntimeFix") === true,
+    provider: normalizeDaemonProvider(untrustedField(browser, "provider")),
+  };
+  return normalized;
 }
 
 // A provider config enters the daemon signature so a client asking for a
@@ -333,11 +384,18 @@ export function normalizeDaemonConfig(config: any = {}) {
 // secrets (apiKey, cdpUrl userinfo) are part of the match: two different keys
 // must not share a browser, and the signature file is written 0600 under the
 // private daemon home, matching the transcripts it already guards.
-function normalizeDaemonProvider(provider) {
+type DaemonProviderConfig = Partial<
+  Record<
+    "provider" | "apiKey" | "cdpUrl" | "executablePath" | "headers" | "sessionOptions",
+    UntrustedValue
+  >
+>;
+
+function normalizeDaemonProvider(provider: UntrustedValue): DaemonProviderConfig | null {
   if (provider == null || provider === false) return null;
-  if (typeof provider === "string") provider = { provider };
-  if (typeof provider !== "object") return null;
-  const normalized = {};
+  const record = isString(provider) ? { provider } : provider;
+  if (!isObjectPayload(record)) return null;
+  const normalized: DaemonProviderConfig = {};
   for (const key of [
     "provider",
     "apiKey",
@@ -345,9 +403,10 @@ function normalizeDaemonProvider(provider) {
     "executablePath",
     "headers",
     "sessionOptions",
-  ]) {
-    if (provider[key] !== undefined && provider[key] !== null) {
-      normalized[key] = provider[key];
+  ] as const) {
+    const value = untrustedField(record, key);
+    if (value !== undefined && value !== null) {
+      normalized[key] = value;
     }
   }
   return normalized;
@@ -360,10 +419,9 @@ export function daemonConfigSignature(config) {
 export async function createBrowserFromDaemonConfig(config) {
   const { BetterWright, NetworkPolicy } = await import("./client.js");
   const normalized = normalizeDaemonConfig(config);
-  return new BetterWright({
+  const options: BetterWrightOptions = {
     policy: new NetworkPolicy(normalized.policy),
     headless: normalized.headless,
-    ...(normalized.profile ? { profile: normalized.profile } : {}),
     launchIdentity: normalized.browser.launchIdentity,
     upstreamProxy: normalized.browser.upstreamProxy || undefined,
     geoip: normalized.browser.geoip,
@@ -372,10 +430,19 @@ export async function createBrowserFromDaemonConfig(config) {
     headedInvisible: normalized.browser.headedInvisible,
     platform: normalized.browser.platform || undefined,
     stealthRuntimeFix: normalized.browser.stealthRuntimeFix || undefined,
-    ...(normalized.browser.provider
-      ? { provider: normalized.browser.provider as any }
-      : {}),
-  });
+  };
+  if (normalized.profile) options.profile = normalized.profile;
+  if (normalized.browser.provider) {
+    // Assigned only when present: BetterWright treats a `provider` KEY on its
+    // options — even a nullish one — as an explicit choice (Object.hasOwn)
+    // that suppresses the BETTERWRIGHT_CDP_URL fallback.
+    // SAFETY: normalizeDaemonProvider guarantees a non-null object; its fields
+    // crossed the daemon boundary as parsed JSON and BetterWright forwards the
+    // record opaquely to the worker, which validates provider configs at
+    // launch — nothing on this side relies on the asserted field types.
+    options.provider = normalized.browser.provider as BrowserProviderOptions;
+  }
+  return new BetterWright(options);
 }
 
 // BetterWright methods a client may invoke, and where the session name pins
@@ -429,8 +496,8 @@ export class ReplayBuffer {
   }
 
   /** @returns {{kind: "frames", frames: object[]} | {kind: "gap", firstSeq: number}} */
-  since(cursor) {
-    if (!cursor || typeof cursor !== "object") return { kind: "frames", frames: [...this.frames] };
+  since(cursor: UntrustedValue) {
+    if (!isObjectPayload(cursor)) return { kind: "frames", frames: [...this.frames] };
     const { runId, seq } = cursor;
     // A cursor from an older run tells us nothing about this one — replay all.
     if (!runId || !this.frames.length || this.frames[0].runId !== runId)
@@ -445,13 +512,33 @@ export class ReplayBuffer {
   }
 }
 
+/** Injectable knobs for {@link startSessionDaemon}; tests use all of them. */
+export interface SessionDaemonOptions {
+  home?: string;
+  /** Raw daemon config (typically parsed JSON); normalized before use. */
+  config?: UntrustedValue;
+  socketPath?: string;
+  version?: string;
+  ttlMs?: number;
+  emptyGraceMs?: number;
+  reapIntervalMs?: number;
+  orphanGraceMs?: number;
+  finishedRunRetentionMs?: number;
+  log?: (line: string) => void;
+  onExit?: (code: number) => void;
+  /** Test seam: a BetterWright-shaped stub instead of a real browser. */
+  createBrowser?: (config: NormalizedDaemonConfig) => any;
+  /** Test seam: drive exec without a model or a browser. */
+  runTask?: (options: RunAgentTaskOptions) => Promise<any> | any;
+}
+
 /**
  * Start the session daemon. Everything is injectable for tests; production
  * callers pass only `{home, config}` (see `runSessionDaemon`).
  *
  * @returns {Promise<{socketPath: string, close: () => Promise<void>}>}
  */
-export async function startSessionDaemon(options: any = {}) {
+export async function startSessionDaemon(options: SessionDaemonOptions = {}) {
   const home = options.home || defaultDaemonHome();
   const config = normalizeDaemonConfig(options.config);
   const configSig = JSON.stringify(config);
@@ -470,14 +557,12 @@ export async function startSessionDaemon(options: any = {}) {
       ? FINISHED_RUN_RETENTION_MS
       : Math.max(0, Number(options.finishedRunRetentionMs));
   const log =
-    typeof options.log === "function"
-      ? options.log
-      : (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`);
-  const onExit = typeof options.onExit === "function" ? options.onExit : null;
+    options.log ?? ((line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`));
+  const onExit = options.onExit ?? null;
   const startedAt = Date.now();
 
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-  const browser = await (typeof options.createBrowser === "function"
+  const browser = await (options.createBrowser
     ? options.createBrowser(config)
     : createBrowserFromDaemonConfig(config));
 
@@ -699,10 +784,7 @@ export async function startSessionDaemon(options: any = {}) {
       // Lazy imports keep daemon startup light and avoid a module cycle with
       // session-store (which imports this file's path helpers). `runTask` is
       // injectable so tests can drive exec without a model or a browser.
-      const runAgentTask =
-        typeof options.runTask === "function"
-          ? options.runTask
-          : (await import("./agent.js")).runAgentTask;
+      const runAgentTask = options.runTask ?? (await import("./agent.js")).runAgentTask;
       const store = await import("./session-store.js");
       if (message.fresh) {
         execHistories.delete(key);
@@ -711,18 +793,14 @@ export async function startSessionDaemon(options: any = {}) {
       const history = message.fresh
         ? []
         : (execHistories.get(key) ?? store.loadTranscript(home, key, profile));
-      const result = await runAgentTask({
+      const taskOptions: RunAgentTaskOptions = {
         task: String(message.task || ""),
         browser,
         session: key,
         history,
         model: message.model,
-        modelOptions:
-          message.modelOptions && typeof message.modelOptions === "object"
-            ? message.modelOptions
-            : {},
+        modelOptions: isObjectPayload(message.modelOptions) ? message.modelOptions : {},
         signal: controller.signal,
-        ...(message.liveView !== undefined ? { liveView: message.liveView } : {}),
         onStep: (event) => {
           try {
             emitFrame(run, event);
@@ -730,7 +808,9 @@ export async function startSessionDaemon(options: any = {}) {
             /* a vanished viewer must never break the task */
           }
         },
-      });
+      };
+      if (message.liveView !== undefined) taskOptions.liveView = message.liveView;
+      const result = await runAgentTask(taskOptions);
       // Persist even an interrupted transcript: the whole point of stopping a
       // run is to pick it back up.
       if (result.transcript) {
@@ -787,17 +867,13 @@ export async function startSessionDaemon(options: any = {}) {
     try {
       if (method === "run") {
         const [code, runOptions] = args;
-        return await browser.run(String(code ?? ""), {
-          ...(runOptions && typeof runOptions === "object" ? runOptions : {}),
-          session: tracked.key,
-        });
+        const base = isObjectPayload(runOptions) ? runOptions : {};
+        return await browser.run(String(code ?? ""), { ...base, session: tracked.key });
       }
       if (SESSION_OPTION_METHODS.has(method)) {
         const [callOptions] = args;
-        return await browser[method]({
-          ...(callOptions && typeof callOptions === "object" ? callOptions : {}),
-          session: tracked.key,
-        });
+        const base = isObjectPayload(callOptions) ? callOptions : {};
+        return await browser[method]({ ...base, session: tracked.key });
       }
       if (PLAIN_METHODS.has(method)) {
         return await browser[method](...args.slice(0, 1));
@@ -1070,7 +1146,7 @@ export async function startSessionDaemon(options: any = {}) {
 export async function runSessionDaemon(argv = process.argv) {
   process.title = "betterwright-daemon";
   const flagIndex = argv.indexOf("--config");
-  let config: Record<string, any> = {};
+  let config: UntrustedValue = {};
   if (flagIndex !== -1 && argv[flagIndex + 1]) {
     try {
       config = JSON.parse(Buffer.from(argv[flagIndex + 1], "base64url").toString("utf8"));
@@ -1094,8 +1170,9 @@ export async function runSessionDaemon(argv = process.argv) {
   // request that caused it. Without this handler Node turns the rejection
   // into an uncaught exception and the daemon dies mid-run.
   process.on("unhandledRejection", (error) => {
+    const stack = untrustedField(error, "stack");
     process.stderr.write(
-      `${new Date().toISOString()} daemon unhandled rejection: ${(error as any)?.stack || error}\n`,
+      `${new Date().toISOString()} daemon unhandled rejection: ${stack || error}\n`,
     );
   });
   // An uncaught exception leaves the process in an unknown state, so this one

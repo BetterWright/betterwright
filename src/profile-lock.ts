@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { mkdirPrivate } from "./fs-private.js";
+import { isRecord, untrustedField } from "./untrusted-value.js";
 
 export const PROFILE_LOCK_STALE_MS = 60_000;
 export const PROFILE_LOCK_HEARTBEAT_MS = 15_000;
@@ -65,7 +66,8 @@ function inspectExistingLock(lockDir, ownerFile, staleMs) {
   } catch {
     owner = null;
   }
-  if (!owner || typeof owner !== "object" || !owner.hostname) {
+  const ownerHostname = untrustedField(owner, "hostname");
+  if (!isRecord(owner) || !ownerHostname) {
     try {
       const dirMtimeMs = fs.statSync(lockDir).mtimeMs;
       return { reclaimable: Date.now() - dirMtimeMs >= staleMs, owner: null };
@@ -73,11 +75,11 @@ function inspectExistingLock(lockDir, ownerFile, staleMs) {
       return { reclaimable: true, owner: null };
     }
   }
-  const sameHost = owner.hostname === os.hostname();
-  if (sameHost && !processAlive(Number(owner.pid))) {
+  const sameHost = ownerHostname === os.hostname();
+  if (sameHost && !processAlive(Number(untrustedField(owner, "pid")))) {
     return { reclaimable: true, owner };
   }
-  const holderHeartbeats = Number.isFinite(Number(owner.leaseMs));
+  const holderHeartbeats = Number.isFinite(Number(untrustedField(owner, "leaseMs")));
   const age = ownerMtimeMs === null ? Infinity : Date.now() - ownerMtimeMs;
   if (holderHeartbeats && age >= staleMs) return { reclaimable: true, owner };
   return { reclaimable: false, owner };

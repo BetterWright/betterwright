@@ -1,6 +1,6 @@
 {
   "name": "betterwright",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "A persistent, policy-guarded Playwright browser for AI agents with network controls, trusted credential filling, proof screenshots, and CAPTCHA helpers.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -90,7 +90,7 @@
     "test": "npm run build:harness && node --test tests/node/*.test.js",
     "test:unit": "npm run build:harness && node scripts/run-unit-tests.js",
     "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
-    "lint": "biome ci src bin scripts research tests benchmarks examples",
+    "lint": "biome ci src bin scripts research tests benchmarks examples && oxlint",
     "check:versions": "npm run build:tools && node scripts/check-versions.js",
     "check:package": "npm run build && node scripts/check-package.js",
     "release:check": "npm run check:versions && npm run lint && npm run typecheck && npm run check:build && npm run test:unit && npm run test:types && npm run check:package",
@@ -149,7 +149,9 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@oxlint/plugins": "^1.78.0",
     "@types/node": "^22.20.1",
+    "oxlint": "^1.78.0",
     "typescript": "^7.0.2"
   },
   "optionalDependencies": {

@@ -15,6 +15,7 @@ import {
   compileStatementForm,
   STATEMENT_ONLY_START,
 } from "../../dist/src/compile-code.js";
+import { isCallable } from "../../dist/src/untrusted-value.js";
 
 /** The algorithm the worker shipped before the statement-first heuristic. */
 function expressionFirstCompile(code) {
@@ -51,7 +52,7 @@ function freshContext() {
 
 function describe(value) {
   if (value === undefined) return "undefined";
-  if (typeof value === "function") return `function:${value.name}`;
+  if (isCallable(value)) return `function:${value.name}`;
   try {
     return JSON.stringify(value) ?? `nonjson:${String(value)}`;
   } catch {

@@ -778,13 +778,14 @@ test("--help still answers even with an invalid --profile", () => {
 });
 
 test("the CLI documents --profile where it applies", () => {
-  for (const [args, pattern] of [
+  const helpCases: Array<[string[], RegExp]> = [
     [["run", "--help"], /--profile <name>/],
     [["repl", "--help"], /profile/],
     [["exec", "--help"], /--profile <name>/],
     [["close", "--help"], /--profile <name>/],
     [["view", "--help"], /--profile <name>/],
-  ] as [string[], RegExp][]) {
+  ];
+  for (const [args, pattern] of helpCases) {
     const result = runCli(args);
     assert.equal(result.status, 0, `${args[0]} --help exited ${result.status}`);
     assert.match(result.stdout, pattern, `${args[0]} --help omits --profile`);

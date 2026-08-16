@@ -1,3 +1,5 @@
+import { isRecord } from "./untrusted-value.js";
+
 export const SITE_RESPONSE_LIMIT = 1_000_000;
 export const SITE_EXCERPT_LIMIT = 20_000;
 
@@ -49,7 +51,7 @@ export function pixePuzzleNavigationUrl(currentUrl, puzzleKey) {
 }
 
 export function normalizeSiteHeaders(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  if (!isRecord(value)) return {};
   const headers = {};
   for (const [rawName, rawValue] of Object.entries(value)) {
     const name = String(rawName).trim().toLowerCase();

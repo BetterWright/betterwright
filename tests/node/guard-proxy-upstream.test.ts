@@ -113,6 +113,8 @@ async function startHttpUpstream({
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  // SAFETY: `listening` was awaited on a TCP listen, so `address()` returns an
+  // AddressInfo — not the null of an unbound server or a pipe-name string.
   return { server, received, port: (server.address() as AddressInfo).port };
 }
 
@@ -178,6 +180,8 @@ async function startSocks5Upstream({
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  // SAFETY: `listening` was awaited on a TCP listen, so `address()` returns an
+  // AddressInfo — not the null of an unbound server or a pipe-name string.
   return { server, received, port: (server.address() as AddressInfo).port };
 }
 

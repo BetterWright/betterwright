@@ -2,6 +2,7 @@ import type { BetterWright } from "./client.js";
 import type { CredentialVault } from "./common.js";
 import type { NetworkPolicy } from "./policy.js";
 import type { Guardrails } from "./prompt.js";
+import type { UntrustedValue } from "./untrusted-value.js";
 
 /** Per-request auth an OAuth adapter resolves before each model call. */
 export interface ResolvedAuth {
@@ -13,7 +14,8 @@ export interface ResolvedAuth {
 export interface AgentToolCall {
   id: string;
   name: string;
-  input: Record<string, unknown>;
+  /** Model-authored arguments — untrusted until narrowed by the tool handler. */
+  input: Record<string, UntrustedValue>;
 }
 
 /** A neutral transcript turn the harness passes to a model adapter. */
@@ -26,7 +28,8 @@ export type AgentMessage =
 export interface AgentTool {
   name: string;
   description: string;
-  parameters: Record<string, unknown>;
+  /** A JSON Schema object, passed to the provider verbatim. */
+  parameters: Record<string, UntrustedValue>;
 }
 
 /** The pluggable model interface. Implement `complete` to bring your own. */
@@ -67,7 +70,7 @@ export interface AgentStepEvent {
 export interface RunAgentTaskOptions {
   task: string;
   model?: string | AgentModel;
-  modelOptions?: Record<string, unknown>;
+  modelOptions?: Record<string, UntrustedValue>;
   browser?: BetterWright;
   guardrails?: Guardrails;
   session?: string;
@@ -125,7 +128,7 @@ export interface RunAgentTaskOptions {
    * newly created viewer's URL arrives as `onStep({tool: "liveView", url})`;
    * an already-running host viewer is reused without re-announcing it.
    */
-  liveView?: boolean | Record<string, unknown>;
+  liveView?: boolean | Record<string, UntrustedValue>;
 }
 
 export interface AgentResult {
@@ -189,10 +192,10 @@ export function runAgentTask(options: RunAgentTaskOptions): Promise<AgentResult>
  */
 export function sealTranscript(messages: AgentMessage[], reason?: string): AgentMessage[];
 
-export function resolveModel(model: string | AgentModel, modelOptions?: Record<string, unknown>): AgentModel;
+export function resolveModel(model: string | AgentModel, modelOptions?: Record<string, UntrustedValue>): AgentModel;
 export function resolveModelSelection(
   model: string | AgentModel,
-  modelOptions?: Record<string, unknown>,
+  modelOptions?: Record<string, UntrustedValue>,
 ): Promise<AgentModel>;
 
 export interface ClaudeModelOptions {
@@ -212,7 +215,7 @@ export interface OpenAIModelOptions {
   maxTokens?: number;
   maxTokensField?: "max_tokens" | "max_completion_tokens";
   parallelToolCalls?: boolean | null;
-  bodyExtra?: Record<string, unknown>;
+  bodyExtra?: Record<string, UntrustedValue>;
   effort?: string;
   name?: string;
   getAuth?: () => ResolvedAuth | Promise<ResolvedAuth>;
@@ -265,7 +268,7 @@ export interface EndpointModelOptions {
   headers?: Record<string, string>;
   maxTokens?: number;
   effort?: string;
-  bodyExtra?: Record<string, unknown>;
+  bodyExtra?: Record<string, UntrustedValue>;
   fetchImpl?: typeof fetch;
   /** Optional cancellation signal for model discovery. */
   signal?: AbortSignal;

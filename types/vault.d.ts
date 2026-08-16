@@ -1,3 +1,5 @@
+import type { UntrustedValue } from "./untrusted-value.js";
+
 export type VaultCategory =
   | "login"
   | "credit-card"
@@ -7,6 +9,18 @@ export type VaultCategory =
   | "ssh-key";
 
 export type VaultMatchMode = "base-domain" | "host" | "exact-origin" | "never";
+
+/**
+ * A JSON value as accepted for credential `fields`: the vault clones and
+ * bounds every stored field, so nothing beyond plain JSON survives a save.
+ */
+export type VaultJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | VaultJsonValue[]
+  | { [key: string]: VaultJsonValue };
 
 export interface LocalCredentialVaultOptions {
   /** Exact vault directory. Takes precedence over `home`. */
@@ -83,7 +97,7 @@ export interface VaultRevealedRecord {
   pending: boolean;
   secret: string | null;
   notes?: string | null;
-  fields?: Record<string, unknown>;
+  fields?: Record<string, VaultJsonValue>;
   auditWarning?: VaultAuditWarning;
 }
 
@@ -94,6 +108,10 @@ export interface VaultAuditEntry {
   id?: string;
   category?: VaultCategory;
   count?: number;
+  /** A commit that landed after the pending TTL. */
+  recovered?: boolean;
+  /** A discard of a pending secret that had already expired. */
+  expired?: boolean;
 }
 
 export class LocalCredentialVaultError extends Error {
@@ -126,9 +144,9 @@ export class LocalCredentialVault {
       | "commit"
       | "discard",
     /** `generate` accepts an idempotency `pendingId`; finalization requires it. */
-    payload: Record<string, unknown> | undefined,
+    payload: Record<string, UntrustedValue> | undefined,
     origin: string,
-  ): Promise<unknown>;
+  ): Promise<UntrustedValue>;
 
   /** Return a cloned value with every active secret replaced. */
   redact<T>(value: T): T;

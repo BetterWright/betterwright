@@ -211,10 +211,21 @@ server.on("upgrade", (request, socket) => {
 });
 
 const port = await new Promise<number>((resolve) => {
+  // SAFETY: inside the listen callback the server is bound to a TCP port, so
+  // address() returns an AddressInfo object, never null or a pipe name string.
   server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
 });
 
-function rpc(op, payload: Record<string, any> = {}, timeoutMs = 60_000): Promise<any> {
+// The op-specific arguments the bridge extension understands, spread into the
+// wire message beside `id` and `op`.
+interface RpcPayload {
+  url?: string;
+  tabId?: number | null;
+  selector?: string;
+  timeoutMs?: number;
+}
+
+function rpc(op, payload: RpcPayload = {}, timeoutMs = 60_000): Promise<any> {
   return new Promise<any>((resolve, reject) => {
     if (!bridgeSocket) return reject(new Error("bridge not connected"));
     const id = nextId++;

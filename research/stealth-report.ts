@@ -34,7 +34,7 @@ function flagValue(flag) {
 // egress proxy with geo-matched identity (the IP layer); --geoip-off pins
 // en-US + host timezone instead of resolving from the egress IP.
 const UPSTREAM = flagValue("--upstream");
-const GEOIP = UPSTREAM && !args.includes("--geoip-off");
+const GEOIP = Boolean(UPSTREAM) && !args.includes("--geoip-off");
 const ONLY_SITE = flagValue("--site");
 
 const LIVE_SITES = [
@@ -151,17 +151,34 @@ function printProbe(mode, data) {
   }
 }
 
+// The subset of BetterWright constructor options this report exercises
+// (`dist/` ships no declarations, so the contract is written out here).
+interface StealthLaunchOptions {
+  home: string;
+  headless: boolean;
+  launchIdentity: boolean;
+  defaultTimeout: number;
+  upstreamProxy?: string;
+  geoip?: boolean;
+}
+
 async function launchAndProbe({ headless, label }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-stealth-"));
-  const browser = new BetterWright({
+  const launchOptions: StealthLaunchOptions = {
     home,
     headless,
     launchIdentity: !NO_LAUNCH_IDENTITY,
     defaultTimeout: 60,
-    ...(UPSTREAM ? { upstreamProxy: UPSTREAM, geoip: GEOIP } : {}),
-  });
+  };
+  if (UPSTREAM) {
+    launchOptions.upstreamProxy = UPSTREAM;
+    launchOptions.geoip = GEOIP;
+  }
+  const browser = new BetterWright(launchOptions);
   try {
     const server = await serveProbe();
+    // SAFETY: serveProbe resolves only after listen() succeeds on a TCP port,
+    // so address() returns an AddressInfo object, never null or a pipe name.
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
     const probe = await collectProbe(browser, url);
     // Egress identity check: which IP and timezone does the stack present?

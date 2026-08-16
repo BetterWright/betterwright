@@ -24,11 +24,13 @@ import crypto from "node:crypto";
 import http from "node:http";
 import os from "node:os";
 
+import type { LiveViewStatus } from "../types/public.js";
 import {
   encodeBinaryFrame,
   isWebSocketUpgrade,
   upgradeWebSocket,
 } from "./live-view-ws.js";
+import { isCallable, isString, type UntrustedValue } from "./untrusted-value.js";
 
 const DEFAULT_QUALITY = 60;
 const DEFAULT_MAX_DIMENSION = 1440;
@@ -41,6 +43,9 @@ const DEFAULT_MAX_DIMENSION = 1440;
 export function guessTailscaleHost(interfaces = os.networkInterfaces()) {
   for (const addrs of Object.values(interfaces)) {
     for (const entry of addrs || []) {
+      // SAFETY: Node before 18.4 reported the address family as the number 4,
+      // which the modern "IPv4" | "IPv6" declaration elides; the widening
+      // readmits the documented legacy value for the comparison.
       const v4 =
         (entry.family as string | number) === "IPv4" ||
         (entry.family as string | number) === 4;
@@ -63,6 +68,9 @@ export function guessLanHost() {
   const others = [];
   for (const addrs of Object.values(os.networkInterfaces())) {
     for (const entry of addrs || []) {
+      // SAFETY: Node before 18.4 reported the address family as the number 4,
+      // which the modern "IPv4" | "IPv6" declaration elides; the widening
+      // readmits the documented legacy value for the comparison.
       const v4 =
         (entry.family as string | number) === "IPv4" ||
         (entry.family as string | number) === 4;
@@ -184,6 +192,40 @@ const MOUSE_EVENT_TYPES = new Set([
 const KEY_EVENT_TYPES = new Set(["keyDown", "keyUp", "rawKeyDown", "char"]);
 const MOUSE_BUTTONS = new Set(["none", "left", "middle", "right", "back", "forward"]);
 
+// CDP Input.dispatchMouseEvent / Input.dispatchKeyEvent payloads, built only
+// from clamped and allowlisted viewer values.
+interface MouseEventParams {
+  type: string;
+  x: number;
+  y: number;
+  button: string;
+  buttons: number;
+  clickCount: number;
+  modifiers: number;
+  deltaX?: number;
+  deltaY?: number;
+}
+
+interface KeyEventParams {
+  type: string;
+  modifiers: number;
+  key: string;
+  code: string;
+  windowsVirtualKeyCode?: number;
+  nativeVirtualKeyCode?: number;
+  text?: string;
+}
+
+// The openPage dependency hands back the worker's Playwright Page (tests
+// inject fakes); only closability is probed here.
+interface OpenedPageLike {
+  isClosed?(): boolean;
+}
+
+function isTabOpener(value: UntrustedValue): value is () => Promise<OpenedPageLike> {
+  return isCallable(value);
+}
+
 function finiteNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -210,8 +252,8 @@ export function createLiveViewServer({
   preferredPage = () => null,
   newCDPSession,
   openPage = null,
-  onHumanActivity = (() => {}) as (page: any) => void,
-  log = (() => {}) as (message: string) => void,
+  onHumanActivity = () => {},
+  log = () => {},
 }: any) {
   let server = null;
   let running = false;
@@ -250,7 +292,7 @@ export function createLiveViewServer({
   // in the strip to inspect something in the background.
   let lastFollowedPreferredId = null;
 
-  let agentState = "idle"; // "idle" | "driving"
+  let agentState: "idle" | "driving" = "idle";
   let handoff = null; // { prompt, resolve, timer }
   let ask = null; // { question, options, resolve, timer }
   // Freeform human guidance queued for the agent harness (drained between turns).
@@ -274,14 +316,14 @@ export function createLiveViewServer({
   const thumbCache = new Map(); // pageId -> data URL
 
   function tokenOk(candidate) {
-    if (!token || typeof candidate !== "string" || !candidate) return false;
+    if (!token || !isString(candidate) || !candidate) return false;
     const a = crypto.createHash("sha256").update(candidate).digest();
     const b = crypto.createHash("sha256").update(token).digest();
     return crypto.timingSafeEqual(a, b);
   }
 
   function passwordOk(candidate) {
-    if (!passwordHash || typeof candidate !== "string" || !candidate) return false;
+    if (!passwordHash || !isString(candidate) || !candidate) return false;
     const digest = crypto.createHash("sha256").update(candidate).digest();
     return crypto.timingSafeEqual(digest, passwordHash);
   }
@@ -936,7 +978,7 @@ export function createLiveViewServer({
       const type = String(message.type || "");
       if (!MOUSE_EVENT_TYPES.has(type)) return;
       const button = MOUSE_BUTTONS.has(message.button) ? message.button : "none";
-      const params: Record<string, any> = {
+      const params: MouseEventParams = {
         type,
         x: clamp(finiteNumber(message.x), 0, 100_000),
         y: clamp(finiteNumber(message.y), 0, 100_000),
@@ -953,7 +995,7 @@ export function createLiveViewServer({
     } else if (kind === "key") {
       const type = String(message.type || "");
       if (!KEY_EVENT_TYPES.has(type)) return;
-      const params: Record<string, any> = {
+      const params: KeyEventParams = {
         type,
         modifiers,
         key: String(message.key || "").slice(0, 32),
@@ -1042,7 +1084,7 @@ export function createLiveViewServer({
   }
 
   async function dispatchNewTab(client, message) {
-    if (typeof openPage !== "function") {
+    if (!isTabOpener(openPage)) {
       client.sendText(
         JSON.stringify({ t: "toast", text: "This live view cannot open new tabs." }),
       );
@@ -1223,7 +1265,7 @@ export function createLiveViewServer({
         interactive: inputAllowed(),
         handoff: handoffState(),
         ask: askState(),
-        caps: { newTab: typeof openPage === "function" },
+        caps: { newTab: isCallable(openPage) },
       }),
     );
     if (lastNavState) {
@@ -1367,9 +1409,10 @@ export function createLiveViewServer({
     exposeMode = expose || (host === "127.0.0.1" ? "local" : "lan");
     // Password gate: either a plaintext password (library callers, env) or a
     // stored "sha256:<hex>" digest from the config file — never both needed.
-    const password = typeof startOptions.password === "string" ? startOptions.password : "";
-    const storedHash =
-      typeof startOptions.passwordHash === "string" ? startOptions.passwordHash.trim() : "";
+    const password = isString(startOptions.password) ? startOptions.password : "";
+    const storedHash = isString(startOptions.passwordHash)
+      ? startOptions.passwordHash.trim()
+      : "";
     if (password && password.length < MIN_PASSWORD_LENGTH) {
       throw new Error(
         `The live-view password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
@@ -1397,7 +1440,7 @@ export function createLiveViewServer({
     // land back on the same link. Model-reachable surfaces (MCP handoff args)
     // never pass one; a fresh start still mints a random token.
     token =
-      typeof startOptions.token === "string" && /^[A-Za-z0-9_-]{16,128}$/.test(startOptions.token)
+      isString(startOptions.token) && /^[A-Za-z0-9_-]{16,128}$/.test(startOptions.token)
         ? startOptions.token
         : crypto.randomBytes(24).toString("base64url");
     server = http.createServer(handleRequest);
@@ -1456,27 +1499,23 @@ export function createLiveViewServer({
     return status();
   }
 
-  function status() {
-    return {
-      ok: true,
-      running,
-      ...(running
-        ? {
-            url,
-            host: boundHost,
-            port: boundPort,
-            token,
-            expose: exposeMode,
-            passwordProtected: Boolean(passwordHash),
-            interactive: options.interactive,
-            viewers: clients.size,
-            agent: viewerState(),
-            handoff: handoffState(),
-            ask: askState(),
-            pendingChat: humanInbox.length,
-          }
-        : {}),
-    };
+  function status(): LiveViewStatus {
+    const state: LiveViewStatus = { ok: true, running };
+    if (running) {
+      state.url = url;
+      state.host = boundHost;
+      state.port = boundPort;
+      state.token = token;
+      state.expose = exposeMode;
+      state.passwordProtected = Boolean(passwordHash);
+      state.interactive = options.interactive;
+      state.viewers = clients.size;
+      state.agent = viewerState();
+      state.handoff = handoffState();
+      state.ask = askState();
+      state.pendingChat = humanInbox.length;
+    }
+    return state;
   }
 
   function beginHandoff(prompt, { timeoutMs }: any = {}) {

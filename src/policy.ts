@@ -9,7 +9,8 @@
 import net from "node:net";
 // Annotating the public methods with the published declaration types keeps the
 // hand-written `types/` surface (see AGENTS.md) checked against this file.
-import type { NetworkDecision } from "../types/policy.js";
+import type { NetworkDecision, NetworkPolicyCustom } from "../types/policy.js";
+import { isCallable, type UntrustedValue } from "./untrusted-value.js";
 
 export const METADATA_HOSTNAMES = new Set([
   "metadata.google.internal",
@@ -181,12 +182,18 @@ function buildHostEntry(raw) {
   return { host: entryHost, suffix: `.${entryHost}`, port: entryPort };
 }
 
+// The published contract for a custom policy callback; the runtime only ever
+// verifies callability, so the signature is a caller promise, not a check.
+function isCustomPolicyCallback(value: UntrustedValue): value is NetworkPolicyCustom {
+  return isCallable(value);
+}
+
 export class NetworkPolicy {
   declare allowPrivateNetwork: boolean;
   declare allowLoopback: boolean;
   declare allowHosts: string[];
   declare blockHosts: string[];
-  declare custom: ((url: string, details: Record<string, any>) => any) | null;
+  declare custom: NetworkPolicyCustom | null;
 
   constructor(options: any = {}) {
     // Private networks and loopback are reachable by default; agents commonly
@@ -198,7 +205,7 @@ export class NetworkPolicy {
     this.allowLoopback = options.allowLoopback !== false;
     this.allowHosts = options.allowHosts || [];
     this.blockHosts = options.blockHosts || [];
-    this.custom = typeof options.custom === "function" ? options.custom : null;
+    this.custom = isCustomPolicyCallback(options.custom) ? options.custom : null;
   }
 
   hostMatches(entry, hostname, port) {

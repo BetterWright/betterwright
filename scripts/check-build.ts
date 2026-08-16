@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { UntrustedValue } from "../types/untrusted-value.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
@@ -20,16 +21,25 @@ function relative(absolute) {
   return path.relative(root, absolute).split(path.sep).join("/");
 }
 
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
+
+// A conditional exports entry: `{ types: "...", default: "..." }` and the like.
+function isConditionMap(value: UntrustedValue): value is object {
+  return value !== null && typeof value === "object";
+}
+
 function runtimeTargets() {
   const targets = [pkg.main, ...Object.values(pkg.bin || {})];
   for (const value of Object.values(pkg.exports || {})) {
-    if (typeof value === "string") {
+    if (isString(value)) {
       if (value.endsWith(".js")) targets.push(value);
       continue;
     }
-    if (value && typeof value === "object") {
+    if (isConditionMap(value)) {
       for (const target of Object.values(value)) {
-        if (typeof target === "string" && target.endsWith(".js")) targets.push(target);
+        if (isString(target) && target.endsWith(".js")) targets.push(target);
       }
     }
   }

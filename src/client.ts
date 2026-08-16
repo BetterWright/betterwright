@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 // The published declarations are hand-written (see AGENTS.md). Typing the
 // implementation against them turns a drift between the two into a compile
 // error instead of something only a consumer would notice.
-import type { BetterWrightOptions } from "../types/public.js";
+import type { BetterWrightOptions, LiveViewOptions } from "../types/public.js";
 import { resolveChromiumArgs } from "./chromium-args.js";
 import {
   assertRotationPreservesMatchMode,
@@ -30,6 +30,14 @@ import { loadLiveViewConfig } from "./live-view-config.js";
 import { NetworkPolicy } from "./policy.js";
 import { profileDirFor, resolveProfileName } from "./profile-name.js";
 import { listSkills, skillHintsForPages } from "./skills.js";
+import {
+  isBoolean,
+  isCallable,
+  isRecord,
+  isString,
+  type UntrustedValue,
+  untrustedField,
+} from "./untrusted-value.js";
 import { createLocalCredentialVault } from "./vault.js";
 
 const WORKER_PATH = fileURLToPath(new URL("./worker.js", import.meta.url));
@@ -116,31 +124,61 @@ function resolvePublicSearchPolicy(policy): "block" | "allow" {
   if (!["block", "allow"].includes(value)) {
     throw new TypeError('publicSearchPolicy must be "block" or "allow".');
   }
+  // SAFETY: the includes() check above admits only the two literals.
   return value as "block" | "allow";
+}
+
+/** The worker `credential_pending` payload; empty for the `list` action. */
+interface PendingCredentialPayload {
+  pendingId?: string;
+  pendingOrigin?: string;
+}
+
+/** The explicit field targets a fill spec can carry to the worker. */
+interface FillSpecFields {
+  passwordSelector?: string;
+  currentPasswordSelector?: string;
+  usernameSelector?: string;
+  confirmPasswordSelector?: string;
+  submitSelector?: string;
+  submit?: boolean;
+}
+
+/**
+ * Generation options forwarded to the vault verbatim (the vault validates
+ * them); only the fields this function itself checks carry a narrower type.
+ */
+interface FillSpecGenerate {
+  id?: UntrustedValue;
+  username?: UntrustedValue;
+  label?: UntrustedValue;
+  length?: UntrustedValue;
+  includeSymbols?: boolean;
+  matchMode?: ReturnType<typeof validateCredentialMatchMode>;
 }
 
 /** Translate host-facing fillCredential options into the worker `spec`. */
 function buildFillSpec(options) {
-  const fields: Record<string, any> = {};
+  const fields: FillSpecFields = {};
   for (const key of [
     "passwordSelector",
     "currentPasswordSelector",
     "usernameSelector",
     "confirmPasswordSelector",
     "submitSelector",
-  ]) {
+  ] as const) {
     const value = String(options[key] ?? "").trim();
     if (value) fields[key] = value;
   }
   if (options.submit === true) fields.submit = true;
   if (options.generate) {
     assertRotationPreservesMatchMode(options);
-    const generate: Record<string, any> = {};
+    const generate: FillSpecGenerate = {};
     if (options.id != null) generate.id = options.id;
     if (options.username != null) generate.username = options.username;
     if (Object.hasOwn(options, "label")) generate.label = options.label;
     if (options.length != null) generate.length = options.length;
-    if (typeof options.includeSymbols === "boolean")
+    if (isBoolean(options.includeSymbols))
       generate.includeSymbols = options.includeSymbols;
     if (options.matchMode !== undefined)
       generate.matchMode = validateCredentialMatchMode(options.matchMode);
@@ -181,8 +219,37 @@ const STEALTH_REGISTER_URL = new URL("./stealth-register.js", import.meta.url).h
 function resolveStealthRuntimeFix(value) {
   const raw = value ?? process.env.BETTERWRIGHT_STEALTH_RUNTIME_FIX;
   if (raw == null) return false;
-  if (typeof raw === "boolean") return raw;
+  if (isBoolean(raw)) return raw;
   return ["1", "true", "yes", "on"].includes(String(raw).trim().toLowerCase());
+}
+
+/**
+ * The live-view defaults held on the instance: constructor built-ins, then
+ * `<home>/config.json`, then explicit options. `expose` stays a plain string
+ * because a hand-edited config file can hold anything; the worker validates
+ * the preset at live_view_start.
+ */
+interface LiveViewDefaults extends Omit<LiveViewOptions, "expose"> {
+  expose?: string;
+}
+
+/**
+ * An options bag from a caller: a plain object (not an array), whose
+ * properties carry no types until each consumer validates its own.
+ */
+function isOptionsRecord(value: UntrustedValue): value is Record<string, UntrustedValue> {
+  return isRecord(value);
+}
+
+/**
+ * A vault that can scrub secrets from a result envelope. The claimed call
+ * signature is total: any envelope may be passed, and the result is as
+ * untrusted as the vault that produced it.
+ */
+function isRedactingVault(
+  vault: UntrustedValue,
+): vault is { redact: (envelope: UntrustedValue) => UntrustedValue } {
+  return isCallable(untrustedField(vault, "redact"));
 }
 
 /** Confirm the pre-patched driver is installed before enabling stealth. */
@@ -221,7 +288,7 @@ export class BetterWright {
   declare parkBackgroundPages: boolean | undefined;
   declare platform: "macos" | "windows" | "linux" | null;
   declare defaultTimeout: number;
-  declare liveView: Record<string, any>;
+  declare liveView: LiveViewDefaults;
   declare _process: any;
   declare _pending: Map<any, any>;
   declare _pendingCredentialOrigins: Map<any, any>;
@@ -353,7 +420,7 @@ export class BetterWright {
     if (Object.hasOwn(options, "vault")) {
       const vault = options.vault;
       if (vault === false || vault == null) this.vault = null;
-      else if (typeof vault?.handleRequest === "function") this.vault = vault;
+      else if (isCallable(vault?.handleRequest)) this.vault = vault;
       else
         throw new TypeError(
           "vault must implement handleRequest(action, payload, origin), or be false/null.",
@@ -407,6 +474,7 @@ export class BetterWright {
     // settings from <home>/config.json (expose preset, password hash, …) sit
     // between the built-ins and explicit constructor options.
     const lanDefaults = defaultLiveViewListen();
+    const liveViewOverrides = isRecord(options.liveView) ? options.liveView : {};
     this.liveView = {
       host: lanDefaults.host,
       port: 0,
@@ -415,9 +483,7 @@ export class BetterWright {
       quality: 60,
       maxWidth: 1440,
       ...loadLiveViewConfig(this.home),
-      ...(options.liveView && typeof options.liveView === "object"
-        ? options.liveView
-        : {}),
+      ...liveViewOverrides,
     };
 
     this._process = null;
@@ -900,9 +966,9 @@ export class BetterWright {
         requestId,
         ok: false,
         error: String(error?.message || error),
-        ...(typeof error?.code === "string" ? { code: error.code } : {}),
-        ...(pendingCredential ? { pendingCredential } : {}),
       };
+      if (isString(error?.code)) response.code = error.code;
+      if (pendingCredential) response.pendingCredential = pendingCredential;
     }
     try {
       this._send(response, child);
@@ -1002,7 +1068,7 @@ export class BetterWright {
 
   _pendingCredential(action, options) {
     return this._enqueue(options?.session, async () => {
-      if (!options || typeof options !== "object" || Array.isArray(options))
+      if (!isOptionsRecord(options))
         return { ok: false, error: "pending credential options must be an object." };
       const pendingId = String(options.pendingId ?? "").trim();
       if (action !== "list" && !pendingId)
@@ -1016,13 +1082,11 @@ export class BetterWright {
       );
       const config = await this._prepare();
       const pendingOrigin = this._pendingCredentialOrigins.get(pendingId);
-      const payload =
-        action === "list"
-          ? {}
-          : {
-              pendingId,
-              ...(pendingOrigin ? { pendingOrigin } : {}),
-            };
+      const payload: PendingCredentialPayload = {};
+      if (action !== "list") {
+        payload.pendingId = pendingId;
+        if (pendingOrigin) payload.pendingOrigin = pendingOrigin;
+      }
       return this._dispatch(
         {
           type: "credential_pending",
@@ -1038,7 +1102,7 @@ export class BetterWright {
   }
 
   async _fillNow(options) {
-    if (!options || typeof options !== "object" || Array.isArray(options))
+    if (!isOptionsRecord(options))
       return { ok: false, error: "fillCredential options must be an object." };
     let spec;
     try {
@@ -1061,7 +1125,7 @@ export class BetterWright {
   }
 
   async _runNow(code, options) {
-    if (typeof code !== "string" || !code.trim())
+    if (!isString(code) || !code.trim())
       return { ok: false, error: "code must be a non-empty string" };
     const timeoutSeconds = Math.max(Number(options.timeout) || this.defaultTimeout, 5);
     const config = await this._prepare();
@@ -1350,9 +1414,10 @@ export class BetterWright {
     const restart = Boolean(response.restartWorker);
     delete response.restartWorker;
     let envelope = response;
-    if (this.vault && typeof this.vault.redact === "function") {
+    const vault = this.vault;
+    if (isRedactingVault(vault)) {
       try {
-        envelope = this.vault.redact(response);
+        envelope = vault.redact(response);
       } catch {
         // Fail closed: if redaction itself breaks, the raw response may still
         // carry active secrets, so the whole envelope is withheld rather than
@@ -1362,10 +1427,8 @@ export class BetterWright {
         envelope = {
           ok: false,
           error: "Result withheld: secret redaction failed.",
-          ...(response.pendingCredential
-            ? { pendingCredential: response.pendingCredential }
-            : {}),
         };
+        if (response.pendingCredential) envelope.pendingCredential = response.pendingCredential;
       }
     }
     if (Array.isArray(envelope.pages) && envelope.pages.length) {

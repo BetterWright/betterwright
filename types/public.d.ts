@@ -1,4 +1,5 @@
 import type { NetworkPolicy } from "./policy.js";
+import type { UntrustedValue } from "./untrusted-value.js";
 import type {
   BrowserFlavor,
   CredentialVault,
@@ -51,7 +52,7 @@ export interface CloudBrowserProvider {
   /** Falls back to the provider's env var (e.g. BROWSERBASE_API_KEY). */
   apiKey?: string;
   /** Provider-native create-session fields, passed through verbatim. */
-  sessionOptions?: Record<string, unknown>;
+  sessionOptions?: Record<string, UntrustedValue>;
 }
 
 export type BrowserProviderOptions =

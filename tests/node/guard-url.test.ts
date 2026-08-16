@@ -96,6 +96,12 @@ test("only the client's literal cacheable:true is ever cached", async () => {
   }
 });
 
+function hasCacheableFlag(
+  value: null | undefined | string | { cacheable: boolean },
+): value is { cacheable: boolean } {
+  return typeof value === "object" && value !== null;
+}
+
 test("a malformed or empty response is neither trusted nor cached", async () => {
   for (const response of [null, undefined, "allowed", { cacheable: true }]) {
     const { rpc, calls } = recordingRpc(() => response);
@@ -104,7 +110,7 @@ test("a malformed or empty response is neither trusted nor cached", async () => 
     assert.notEqual(first?.allowed, true, "a malformed response must not allow");
     await guardUrl("https://example.com/", {}, "e1");
     // `{cacheable: true}` is cacheable by contract, but it caches a denial.
-    if (response && (response as any).cacheable === true) {
+    if (hasCacheableFlag(response) && response.cacheable === true) {
       assert.equal(calls.length, 1);
       assert.equal((await guardUrl("https://example.com/", {}, "e1")).allowed, false);
     } else assert.equal(calls.length, 2);

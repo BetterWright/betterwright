@@ -9,7 +9,7 @@ import {
   classifyChallengeStage,
   clusterSimilarBoxes,
   extractDarkBlobs,
-  findGrowingShape,
+  findGrowingRegion,
   gridFromTiles,
   inferGridTiles,
   isCaptchaChromeLabel,
@@ -395,7 +395,7 @@ function paintRgba(width, height, fill = [230, 235, 240, 255]) {
   return { width, height, data, stamp, ring };
 }
 
-test("findGrowingShape picks the blob whose dark area increased", () => {
+test("findGrowingRegion picks the blob whose dark area increased", () => {
   const first = paintRgba(160, 120);
   first.stamp(40, 40, 8);
   first.stamp(120, 80, 7);
@@ -404,7 +404,7 @@ test("findGrowingShape picks the blob whose dark area increased", () => {
   second.stamp(40, 40, 8);
   second.stamp(120, 80, 16);
   second.stamp(80, 30, 6);
-  const grown = findGrowingShape(first, second);
+  const grown = findGrowingRegion(first, second);
   assert.ok(grown);
   assert.ok(Math.abs(grown.cx - 120) < 8);
   assert.ok(Math.abs(grown.cy - 80) < 8);

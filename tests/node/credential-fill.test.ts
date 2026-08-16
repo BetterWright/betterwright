@@ -11,6 +11,7 @@ import {
   probePinnedCredentialOrigin,
 } from "../../dist/src/credential-target-scan.js";
 import { BetterWright, NetworkPolicy } from "../../dist/src/index.js";
+import { isCallable } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 // Integration suite: gates on the managed BetterChromium fork being
@@ -189,11 +190,13 @@ async function fixtureServer() {
   const server = http.createServer((request, response) => {
     response.setHeader("content-type", "text/html; charset=utf-8");
     const route = pages.get(new URL(request.url, "http://fixture").pathname);
-    const body = typeof route === "function" ? route(request, response) : route;
+    const body = isCallable(route) ? route(request, response) : route;
     if (!response.writableEnded) response.end(body ?? "not found");
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  // SAFETY: the server finished `listen` on a TCP port, so `address()` returns
+  // an AddressInfo — not the null of an unbound server or a pipe-name string.
   const { port } = server.address() as AddressInfo;
   return {
     pages,

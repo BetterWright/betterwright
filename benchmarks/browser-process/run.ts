@@ -40,6 +40,19 @@ function summarize(values: Array<number | null>) {
   };
 }
 
+// What the probe child reports over IPC. Every message except `result` is a
+// telemetry cue the controller acknowledges with a `continue` reply.
+interface ProbeResult {
+  cold_startup_ms: number | null;
+  warm_startup_ms: number | null;
+  browser_user_agent: string | null;
+  navigation_ms: Array<number | null>;
+}
+type ProbeMessage =
+  | { type: "capture" | "monitor_start" | "monitor_stop"; name: string }
+  | { type: "cpu"; name: string; duration_ms: number }
+  | { type: "result"; result: ProbeResult };
+
 async function probe() {
   const target = path.resolve(process.env.BW_BENCH_TARGET || "");
   const origin = process.env.BW_BENCH_ORIGIN || "";
@@ -51,7 +64,7 @@ async function probe() {
     pathToFileURL(path.join(target, "dist/src/index.js")).href
   );
   let bw: any = null;
-  const send = (message: Record<string, unknown>) => process.send?.(message);
+  const send = (message: ProbeMessage) => process.send?.(message);
   async function chromiumRun(code: string, phase?: string) {
     if (phase) {
       const acknowledgement = once(process, "message");
@@ -228,6 +241,8 @@ async function startFixture() {
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  // SAFETY: the server just emitted "listening" on a TCP bind, so address()
+  // returns an AddressInfo object, never null or a pipe name string.
   const { port } = server.address() as AddressInfo;
   return { origin: `http://127.0.0.1:${port}`, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
@@ -248,6 +263,23 @@ function targetMetadata(target: string) {
   };
 }
 
+type CpuSample = {
+  cpu_percent_one_core: number | null;
+  duration_ms: number | null;
+  peak: Capture | null;
+};
+// Every phase name the probe can announce; captures and monitored peaks store
+// a Capture, `cpu` cues store the sampled interval.
+interface Telemetry {
+  cold_ready?: Capture;
+  cold_startup?: Capture;
+  warm_startup?: Capture;
+  session_start?: Capture;
+  session_end?: Capture;
+  idle_cpu?: CpuSample;
+  active_cpu?: CpuSample;
+}
+
 async function runSample(target: string, origin: string, config: { longTurns: number; idleMs: number; activeMs: number }) {
   const child = fork(new URL(import.meta.url), ["--probe"], {
     stdio: ["ignore", "ignore", "pipe", "ipc"],
@@ -262,7 +294,7 @@ async function runSample(target: string, origin: string, config: { longTurns: nu
   });
   let stderr = "";
   child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-  const metrics: Record<string, any> = {};
+  const metrics: Telemetry = {};
   const rootPid = child.pid;
   if (rootPid == null) throw new Error("probe process did not receive a PID");
   let result: any = null;
@@ -301,6 +333,12 @@ async function runSample(target: string, origin: string, config: { longTurns: nu
       renderer_count: metrics.session_end.renderer_count - metrics.session_start.renderer_count,
     },
   };
+}
+
+// One runSample() record per repeat, keyed by which checkout produced it.
+interface SamplesByTarget {
+  baseline: any[];
+  candidate: any[];
 }
 
 function targetSummary(samples: any[]) {
@@ -346,7 +384,7 @@ async function main() {
       if (!fs.existsSync(path.join(target, required))) throw new Error(`${target} is not built: missing ${required}`);
   }
   const fixture = await startFixture();
-  const samples: Record<string, any[]> = { baseline: [], candidate: [] };
+  const samples: SamplesByTarget = { baseline: [], candidate: [] };
   try {
     for (let repeat = 0; repeat < repeats; repeat += 1) {
       // Alternate order to reduce thermal/background drift bias.

@@ -124,14 +124,52 @@ async function waitFor(condition, timeoutMs = 2_000) {
   return false;
 }
 
-function makeHarness(overrides: Record<string, any> = {}) {
+// A value that crossed the dist boundary (the shipped capture code drives the
+// stubs below with values these tests never construct themselves).
+type UntrustedValue = NonNullable<unknown> | null | undefined;
+
+interface HarnessOverrides {
+  listRecords?: Array<{ username: string }>;
+  pendingFails?: boolean;
+  pendingRecords?: Array<{ pendingId: string; origin: string; username: string }>;
+  headed?: boolean;
+  modelAt?: number | (() => number);
+  prefsPath?: string;
+}
+
+function isModelClock(value: number | (() => number) | undefined): value is () => number {
+  return typeof value === "function";
+}
+
+interface HarnessDeps {
+  vaultCallAtOrigin: (
+    session: UntrustedValue,
+    origin: string,
+    action: string,
+    payload: UntrustedValue,
+  ) => Promise<{
+    credentials?: Array<{ username: string }>;
+    pendingCredentials?: Array<{ pendingId: string; origin: string; username: string }>;
+  }>;
+  sessionForPage: () => { id: string };
+  trackSecret: (value: UntrustedValue) => void;
+  isHeaded: () => boolean;
+  lastModelActivity: () => number;
+  gateMs: number;
+  confirmMs: number;
+  promptTtlMs: number;
+  modelWindowMs: number;
+  prefsPath?: string;
+}
+
+function makeHarness(overrides: HarnessOverrides = {}) {
   const page = new FakePage({
     frame: { id: "frame-1", url: LOGIN_URL },
     childFrames: [],
   });
   const context = new FakeContext([page]);
   const calls = [];
-  const deps: Record<string, any> = {
+  const deps: HarnessDeps = {
     vaultCallAtOrigin: async (_session, origin, action, payload) => {
       calls.push({ kind: "vault", origin, action, payload });
       if (action === "list") return { credentials: overrides.listRecords || [] };
@@ -147,9 +185,7 @@ function makeHarness(overrides: Record<string, any> = {}) {
     trackSecret: (value) => calls.push({ kind: "secret", value }),
     isHeaded: () => overrides.headed ?? true,
     lastModelActivity: () =>
-      typeof overrides.modelAt === "function"
-        ? overrides.modelAt()
-        : (overrides.modelAt ?? 0),
+      isModelClock(overrides.modelAt) ? overrides.modelAt() : (overrides.modelAt ?? 0),
     gateMs: 60,
     confirmMs: 50,
     promptTtlMs: 120,

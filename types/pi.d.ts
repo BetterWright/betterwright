@@ -1,13 +1,15 @@
+import type { UntrustedValue } from "./untrusted-value.js";
+
 export interface BetterWrightArtifactLike {
-  kind?: unknown;
-  media?: unknown;
-  path?: unknown;
-  [key: string]: unknown;
+  kind?: UntrustedValue;
+  media?: UntrustedValue;
+  path?: UntrustedValue;
+  [key: string]: UntrustedValue;
 }
 
 export interface BetterWrightResultLike {
   artifacts?: readonly BetterWrightArtifactLike[];
-  [key: string]: unknown;
+  [key: string]: UntrustedValue;
 }
 
 export interface PiImageContentOptions {

@@ -129,13 +129,7 @@ test("profile, identity, and headless switches are rejected with their alternati
     ["--fingerprint-locale=de-DE", /`locale`, `timezone`, and `platform`/],
   ];
   for (const [arg, message] of cases) {
-    // Node regex-matches RegExp values in the expectation object; its types
-    // only describe the string form.
-    assert.throws(
-      () => normalizeChromiumArgs([arg]),
-      { name: "TypeError", message } as any,
-      arg,
-    );
+    assert.throws(() => normalizeChromiumArgs([arg]), { name: "TypeError", message }, arg);
   }
 });
 

@@ -29,6 +29,16 @@ import {
   VAULT_MATCH_MODES,
 } from "./credential-constants.js";
 import { defaultHome } from "./home.js";
+import {
+  isBoolean,
+  isCallable,
+  isNumber,
+  isRecord,
+  isString,
+  stringValue,
+  type UntrustedValue,
+  untrustedField,
+} from "./untrusted-value.js";
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -107,9 +117,12 @@ async function pathExists(candidate) {
 }
 
 function normalizeOptions(options) {
-  if (typeof options === "string") return { dir: options };
+  if (isString(options)) return { dir: options };
   if (options == null) return {};
-  if (typeof options !== "object" || Array.isArray(options)) {
+  // Guard an alias: narrowing `options` itself would type the returned object
+  // as bare `object` and break the constructor's untyped property reads.
+  const candidate: UntrustedValue = options;
+  if (!isRecord(candidate)) {
     throw new TypeError("LocalCredentialVault options must be a path or an object.");
   }
   return options;
@@ -125,7 +138,7 @@ function boundedInteger(value, fallback, minimum, maximum, label) {
 }
 
 function requiredString(value, label, maximum = 1024) {
-  if (typeof value !== "string" || !value.trim()) {
+  if (!isString(value) || !value.trim()) {
     throw vaultError(`${label} is required.`, "BAD_INPUT");
   }
   if (value.length > maximum) {
@@ -136,7 +149,7 @@ function requiredString(value, label, maximum = 1024) {
 
 function optionalString(value, label, maximum = 1024, fallback = null) {
   if (value == null) return fallback;
-  if (typeof value !== "string") {
+  if (!isString(value)) {
     throw vaultError(`${label} must be a string.`, "BAD_INPUT");
   }
   if (value.length > maximum) {
@@ -241,7 +254,7 @@ function pendingScopeMatches(pending, target) {
  * known oracle — but a length-independent compare costs nothing here.
  */
 function secretsEqual(left, right) {
-  if (typeof left !== "string" || typeof right !== "string") return false;
+  if (!isString(left) || !isString(right)) return false;
   const a = createHash("sha256").update(left, "utf8").digest();
   const b = createHash("sha256").update(right, "utf8").digest();
   return timingSafeEqual(a, b);
@@ -296,10 +309,17 @@ function publicRecord(record) {
   };
 }
 
+// `id` is present only for a rotation, naming the record it will replace.
+interface PendingIdentity {
+  pendingId: string;
+  id?: string;
+}
+
 function publicPendingRecord(pending) {
+  const identity: PendingIdentity = { pendingId: pending.pendingId };
+  if (pending.recordId) identity.id = pending.recordId;
   return {
-    pendingId: pending.pendingId,
-    ...(pending.recordId ? { id: pending.recordId } : {}),
+    ...identity,
     origin: pending.creationOrigin,
     matchMode: pending.matchMode,
     username: pending.username,
@@ -328,13 +348,16 @@ function attachPendingCredential(error, pendingCredential) {
   }
 }
 
+/** A JSON value as accepted for credential fields and bounded by cloneJsonValue. */
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 function cloneJsonValue(value, depth = 0, seen = new WeakSet()) {
-  if (value == null || typeof value === "boolean" || typeof value === "string") return value;
-  if (typeof value === "number") {
+  if (value == null || isBoolean(value) || isString(value)) return value;
+  if (isNumber(value)) {
     if (!Number.isFinite(value)) throw vaultError("Credential fields must be JSON values.", "BAD_INPUT");
     return value;
   }
-  if (typeof value !== "object" || depth >= 12 || seen.has(value)) {
+  if ((!isRecord(value) && !Array.isArray(value)) || depth >= 12 || seen.has(value)) {
     throw vaultError("Credential fields must be bounded, acyclic JSON values.", "BAD_INPUT");
   }
   seen.add(value);
@@ -364,7 +387,7 @@ function cloneJsonValue(value, depth = 0, seen = new WeakSet()) {
 
 function normalizeFields(value) {
   if (value == null) return null;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw vaultError("Credential fields must be an object.", "BAD_INPUT");
   }
   const fields = cloneJsonValue(value);
@@ -375,11 +398,11 @@ function normalizeFields(value) {
 }
 
 function visitStrings(value, callback, seen = new WeakSet()) {
-  if (typeof value === "string") {
+  if (isString(value)) {
     callback(value);
     return;
   }
-  if (!value || typeof value !== "object" || seen.has(value)) return;
+  if ((!isRecord(value) && !Array.isArray(value)) || seen.has(value)) return;
   seen.add(value);
   if (Array.isArray(value)) {
     for (const item of value) visitStrings(item, callback, seen);
@@ -430,7 +453,7 @@ function encodeEnvelope(snapshot, key) {
 }
 
 function strictBase64url(value, label, expectedLength = null) {
-  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) {
+  if (!isString(value) || !/^[A-Za-z0-9_-]+$/.test(value)) {
     throw vaultError(`Credential vault ${label} is invalid.`, "VAULT_CORRUPT");
   }
   const decoded = Buffer.from(value, "base64url");
@@ -440,74 +463,150 @@ function strictBase64url(value, label, expectedLength = null) {
   return decoded;
 }
 
+// The decoded snapshot is plaintext this module wrote and AES-GCM
+// authenticated, but it is still re-validated field by field on every load so
+// a foreign or hand-edited plaintext can never reach the request handlers.
+// The decoders below claim only what they check; the fields they leave as
+// `UntrustedValue` (record secrets, pending timestamps) are validated — or
+// deliberately tolerated — by their consumers.
+
+interface PersistedSnapshot {
+  version: number;
+  revision: number;
+  records: UntrustedValue[];
+  pending?: UntrustedValue;
+}
+
+function isPersistedSnapshot(value: UntrustedValue): value is PersistedSnapshot {
+  if (!isRecord(value)) return false;
+  const revision = untrustedField(value, "revision");
+  const records = untrustedField(value, "records");
+  return (
+    untrustedField(value, "version") === SNAPSHOT_VERSION &&
+    isNumber(revision) &&
+    Number.isSafeInteger(revision) &&
+    revision >= 0 &&
+    Array.isArray(records) &&
+    records.length <= MAX_RECORDS
+  );
+}
+
+interface PersistedRecord {
+  id: string;
+  origin: string;
+  matchMode: string;
+  username: string;
+  label?: string | null;
+  category: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function isPersistedRecord(value: UntrustedValue): value is PersistedRecord {
+  if (!isRecord(value)) return false;
+  const category = untrustedField(value, "category");
+  const matchMode = untrustedField(value, "matchMode");
+  const label = untrustedField(value, "label");
+  return (
+    isString(untrustedField(value, "id")) &&
+    isString(category) &&
+    CATEGORY_SET.has(category) &&
+    isString(matchMode) &&
+    MATCH_MODE_SET.has(matchMode) &&
+    isString(untrustedField(value, "origin")) &&
+    isString(untrustedField(value, "username")) &&
+    (label == null || isString(label)) &&
+    isString(untrustedField(value, "createdAt")) &&
+    isString(untrustedField(value, "updatedAt"))
+  );
+}
+
+interface PersistedPendingSecret {
+  pendingId: string;
+  recordId: string | null;
+  recordVersion: string | null;
+  requestFingerprint?: string;
+  origin: string;
+  creationOrigin: string;
+  matchMode: string;
+  usernameOverride: boolean;
+  username: string;
+  labelOverride: boolean;
+  label: string | null;
+  secret: string;
+  createdAt?: UntrustedValue;
+  updatedAt?: UntrustedValue;
+  expiresAt?: UntrustedValue;
+}
+
+function isPersistedPendingSecret(value: UntrustedValue): value is PersistedPendingSecret {
+  if (!isRecord(value)) return false;
+  const pendingId = untrustedField(value, "pendingId");
+  const recordId = untrustedField(value, "recordId");
+  const recordVersion = untrustedField(value, "recordVersion");
+  const requestFingerprint = untrustedField(value, "requestFingerprint");
+  const matchMode = untrustedField(value, "matchMode");
+  const username = untrustedField(value, "username");
+  const label = untrustedField(value, "label");
+  const secret = untrustedField(value, "secret");
+  return (
+    isString(pendingId) &&
+    pendingId.length > 0 &&
+    pendingId.length <= 256 &&
+    (recordId === null ||
+      (isString(recordId) && recordId.length > 0 && recordId.length <= 256)) &&
+    (recordVersion === null || isString(recordVersion)) &&
+    (requestFingerprint === undefined ||
+      (isString(requestFingerprint) && requestFingerprint.length > 0)) &&
+    isString(untrustedField(value, "origin")) &&
+    isString(untrustedField(value, "creationOrigin")) &&
+    isString(matchMode) &&
+    MATCH_MODE_SET.has(matchMode) &&
+    isBoolean(untrustedField(value, "usernameOverride")) &&
+    isString(username) &&
+    username.length <= 1024 &&
+    isBoolean(untrustedField(value, "labelOverride")) &&
+    (label === null || (isString(label) && label.length <= 1024)) &&
+    isString(secret) &&
+    secret.length >= 12 &&
+    secret.length <= 128 &&
+    // A pending rotation must pin the exact record version it read.
+    (recordId === null) === (recordVersion === null)
+  );
+}
+
 function validateSnapshot(snapshot) {
-  if (
-    !snapshot ||
-    typeof snapshot !== "object" ||
-    snapshot.version !== SNAPSHOT_VERSION ||
-    !Number.isSafeInteger(snapshot.revision) ||
-    snapshot.revision < 0 ||
-    !Array.isArray(snapshot.records) ||
-    snapshot.records.length > MAX_RECORDS
-  ) {
+  // Guard an alias: narrowing `snapshot` itself would retype the returned
+  // object and its arrays for the untyped request handlers downstream.
+  const container: UntrustedValue = snapshot;
+  if (!isPersistedSnapshot(container)) {
     throw vaultError("Credential vault snapshot is invalid.", "VAULT_CORRUPT");
   }
-  if (snapshot.pending === undefined) snapshot.pending = [];
-  if (!Array.isArray(snapshot.pending) || snapshot.pending.length > MAX_PENDING_SECRETS) {
+  if (container.pending === undefined) container.pending = [];
+  if (!Array.isArray(container.pending) || container.pending.length > MAX_PENDING_SECRETS) {
     throw vaultError("Credential vault snapshot is invalid.", "VAULT_CORRUPT");
   }
-  for (const record of snapshot.records) {
-    if (
-      !record ||
-      typeof record !== "object" ||
-      typeof record.id !== "string" ||
-      !CATEGORY_SET.has(record.category) ||
-      !MATCH_MODE_SET.has(record.matchMode) ||
-      typeof record.origin !== "string" ||
-      typeof record.username !== "string" ||
-      (record.label != null && typeof record.label !== "string") ||
-      typeof record.createdAt !== "string" ||
-      typeof record.updatedAt !== "string"
-    ) {
+  for (const record of container.records) {
+    if (!isPersistedRecord(record)) {
       throw vaultError("Credential vault contains an invalid record.", "VAULT_CORRUPT");
     }
     normalizeHttpOrigin(record.origin);
   }
   const pendingIds = new Set();
-  for (const pending of snapshot.pending) {
-    const createdAtMs = Date.parse(pending?.createdAt || "");
-    const updatedAtMs = Date.parse(pending?.updatedAt || "");
-    const expiresAtMs = Date.parse(pending?.expiresAt || "");
+  for (const pending of container.pending) {
+    if (!isPersistedPendingSecret(pending) || pendingIds.has(pending.pendingId)) {
+      throw vaultError("Credential vault contains an invalid pending secret.", "VAULT_CORRUPT");
+    }
+    // `|| ""` before coercing mirrors Date.parse's rejection of falsy
+    // non-string timestamps: a numeric 0 must stay invalid, not become "0".
+    const createdAtMs = Date.parse(stringValue(pending.createdAt || ""));
+    const updatedAtMs = Date.parse(stringValue(pending.updatedAt || ""));
+    const expiresAtMs = Date.parse(stringValue(pending.expiresAt || ""));
     if (
-      !pending ||
-      typeof pending !== "object" ||
-      typeof pending.pendingId !== "string" ||
-      !pending.pendingId ||
-      pending.pendingId.length > 256 ||
-      pendingIds.has(pending.pendingId) ||
-      (pending.recordId !== null &&
-        (typeof pending.recordId !== "string" || !pending.recordId || pending.recordId.length > 256)) ||
-      (pending.recordVersion !== null && typeof pending.recordVersion !== "string") ||
-      (pending.requestFingerprint !== undefined &&
-        (typeof pending.requestFingerprint !== "string" ||
-          !pending.requestFingerprint)) ||
-      typeof pending.origin !== "string" ||
-      typeof pending.creationOrigin !== "string" ||
-      !MATCH_MODE_SET.has(pending.matchMode) ||
-      typeof pending.usernameOverride !== "boolean" ||
-      typeof pending.username !== "string" ||
-      pending.username.length > 1024 ||
-      typeof pending.labelOverride !== "boolean" ||
-      (pending.label !== null &&
-        (typeof pending.label !== "string" || pending.label.length > 1024)) ||
-      typeof pending.secret !== "string" ||
-      pending.secret.length < 12 ||
-      pending.secret.length > 128 ||
       !Number.isFinite(createdAtMs) ||
       !Number.isFinite(updatedAtMs) ||
       !Number.isFinite(expiresAtMs) ||
-      expiresAtMs < createdAtMs ||
-      (pending.recordId === null) !== (pending.recordVersion === null)
+      expiresAtMs < createdAtMs
     ) {
       throw vaultError("Credential vault contains an invalid pending secret.", "VAULT_CORRUPT");
     }
@@ -535,7 +634,7 @@ function decodeEnvelope(contents, key) {
     if (
       envelope?.version !== SNAPSHOT_VERSION ||
       envelope?.algorithm !== "aes-256-gcm" ||
-      typeof envelope?.ciphertext !== "string"
+      !isString(envelope?.ciphertext)
     ) {
       throw new Error("invalid envelope");
     }
@@ -641,7 +740,21 @@ async function atomicWrite(file, contents) {
   }
 }
 
-async function appendAudit(paths, entry) {
+// One metadata-only audit line. `id` names the affected record (or the record
+// a pending rotation targets); `recovered`/`expired` mark finalizations that
+// happened after the pending TTL. Secrets never appear here.
+interface AuditEntry {
+  at: string;
+  action: string;
+  origin?: string;
+  id?: string;
+  category?: string;
+  count?: number;
+  recovered?: boolean;
+  expired?: boolean;
+}
+
+async function appendAudit(paths, entry: AuditEntry) {
   const line = `${JSON.stringify(entry)}\n`;
   const existing = await regularFileStats(paths.audit, { missing: true });
   if (existing && existing.size + Buffer.byteLength(line) > MAX_AUDIT_BYTES) {
@@ -663,7 +776,7 @@ async function appendAudit(paths, entry) {
   await syncDirectory(path.dirname(paths.audit));
 }
 
-async function appendMutationAudit(paths, entry) {
+async function appendMutationAudit(paths, entry: AuditEntry) {
   try {
     await appendAudit(paths, entry);
     return null;
@@ -744,7 +857,7 @@ async function bsdProcessIdentity(pid) {
 }
 
 function windowsPowerShellPath(systemRoot) {
-  const root = typeof systemRoot === "string" ? systemRoot.trim() : "";
+  const root = isString(systemRoot) ? systemRoot.trim() : "";
   if (!/^[A-Za-z]:[\\/]/.test(root) || root.split(/[\\/]+/).includes("..")) {
     return null;
   }
@@ -862,9 +975,9 @@ async function lockIsReclaimable(observation, staleMs) {
   if (age < staleMs) return false;
 
   const storedIdentity = observation.owner?.processIdentity;
-  if (typeof storedIdentity !== "string" || !storedIdentity) return false;
+  if (!isString(storedIdentity) || !storedIdentity) return false;
   const liveIdentity = await readProcessIdentity(pid);
-  return typeof liveIdentity === "string" && liveIdentity !== storedIdentity;
+  return isString(liveIdentity) && liveIdentity !== storedIdentity;
 }
 
 async function quarantineStaleLock(lockPath, staleMs) {
@@ -1245,8 +1358,27 @@ function metadataSearch(record, query) {
   if (!query) return true;
   const metadata = publicRecord(record);
   return [metadata.id, metadata.origin, metadata.username, metadata.label, metadata.category]
-    .filter((value) => typeof value === "string")
+    .filter((value) => isString(value))
     .some((value) => value.toLocaleLowerCase().includes(query));
+}
+
+// Finalization flags echoed to the caller: `recovered` marks a commit that
+// landed after the pending TTL, `expired` the discard of one.
+interface CommitOutcome {
+  committed: true;
+  recovered?: true;
+}
+
+interface DiscardResult {
+  pendingId: string;
+  discarded: true;
+  expired?: true;
+}
+
+// Secret material a committed record may carry; a pending signup never has it.
+interface RevealedSecretMaterial {
+  notes?: string;
+  fields?: Record<string, JsonValue>;
 }
 
 /**
@@ -1311,16 +1443,16 @@ export class LocalCredentialVault {
       10 * 60_000,
       "staleLockMs",
     );
-    if (typeof resolved._lockAcquiredForTest === "function") {
+    if (isCallable(resolved._lockAcquiredForTest)) {
       this.#lockAcquiredForTest = resolved._lockAcquiredForTest;
     }
-    if (typeof resolved._afterGeneratePersistForTest === "function") {
+    if (isCallable(resolved._afterGeneratePersistForTest)) {
       this.#afterGeneratePersistForTest = resolved._afterGeneratePersistForTest;
     }
-    if (typeof resolved._beforeGeneratePersistForTest === "function") {
+    if (isCallable(resolved._beforeGeneratePersistForTest)) {
       this.#beforeGeneratePersistForTest = resolved._beforeGeneratePersistForTest;
     }
-    if (typeof resolved._afterLockPublishForTest === "function") {
+    if (isCallable(resolved._afterLockPublishForTest)) {
       this.#afterLockPublishForTest = resolved._afterLockPublishForTest;
     }
   }
@@ -1626,7 +1758,7 @@ export class LocalCredentialVault {
       );
     }
     const record = matches[0] || null;
-    if (!record || typeof record.password !== "string" || !record.password) {
+    if (!record || !isString(record.password) || !record.password) {
       throw vaultError("No matching credential is available for this site.", "NOT_FOUND");
     }
     this.#trackSecret(record.password);
@@ -1643,7 +1775,7 @@ export class LocalCredentialVault {
   async #generate(snapshot, key, payload, target) {
     const length = boundedInteger(payload?.length, 24, 12, 128, "Generated password length");
     const includeSymbols = payload?.include_symbols ?? payload?.includeSymbols ?? true;
-    if (typeof includeSymbols !== "boolean") {
+    if (!isBoolean(includeSymbols)) {
       throw vaultError("includeSymbols must be a boolean.", "BAD_INPUT");
     }
     const recordId = idFromPayload(payload);
@@ -1687,13 +1819,14 @@ export class LocalCredentialVault {
         );
       }
       this.#trackSecret(duplicate.secret);
-      const auditWarning = await appendMutationAudit(this.paths, {
+      const retriedEntry: AuditEntry = {
         at: new Date().toISOString(),
         action: "generate-pending-retried",
         origin: target.origin,
-        ...(duplicate.recordId ? { id: duplicate.recordId } : {}),
         category: "login",
-      });
+      };
+      if (duplicate.recordId) retriedEntry.id = duplicate.recordId;
+      const auditWarning = await appendMutationAudit(this.paths, retriedEntry);
       return withAuditWarning(
         { ...this.#safePublicPending(duplicate), secret: duplicate.secret },
         auditWarning,
@@ -1738,13 +1871,14 @@ export class LocalCredentialVault {
       if (error?.code === "VAULT_TOO_LARGE") throw error;
       throw attachPendingCredential(error, this.#safePublicPending(pending));
     }
-    const auditWarning = await appendMutationAudit(this.paths, {
+    const pendingEntry: AuditEntry = {
       at: pending.createdAt,
       action: existing ? "generate-rotation-pending" : "generate-pending",
       origin: target.origin,
-      ...(existing ? { id: existing.id } : {}),
       category: "login",
-    });
+    };
+    if (existing) pendingEntry.id = existing.id;
+    const auditWarning = await appendMutationAudit(this.paths, pendingEntry);
     return withAuditWarning(
       {
         ...this.#safePublicPending(pending),
@@ -1825,20 +1959,22 @@ export class LocalCredentialVault {
     this.#trackSecret(pending.secret);
     snapshot.pending.splice(snapshot.pending.indexOf(pending), 1);
     await persistSnapshot(this.paths, key, snapshot);
-    const auditWarning = await appendMutationAudit(this.paths, {
+    const committedEntry: AuditEntry = {
       at: now,
       action,
       origin: target.origin,
       id: record.id,
       category: "login",
-      ...(recovered ? { recovered: true } : {}),
-    });
+    };
+    if (recovered) committedEntry.recovered = true;
+    const auditWarning = await appendMutationAudit(this.paths, committedEntry);
+    const outcome: CommitOutcome = { committed: true };
+    if (recovered) outcome.recovered = true;
     return withAuditWarning(
       {
         ...this.#safePublicRecord(record),
         pendingId: pending.pendingId,
-        committed: true,
-        ...(recovered ? { recovered: true } : {}),
+        ...outcome,
       },
       auditWarning,
     );
@@ -1853,22 +1989,21 @@ export class LocalCredentialVault {
     snapshot.pending.splice(snapshot.pending.indexOf(pending), 1);
     const now = new Date().toISOString();
     await persistSnapshot(this.paths, key, snapshot);
-    const auditWarning = await appendMutationAudit(this.paths, {
+    const discardedEntry: AuditEntry = {
       at: now,
       action: "generate-discarded",
       origin: target.origin,
-      ...(pending.recordId ? { id: pending.recordId } : {}),
       category: "login",
-      ...(expired ? { expired: true } : {}),
-    });
-    return withAuditWarning(
-      {
-        pendingId: pending.pendingId,
-        discarded: true,
-        ...(expired ? { expired: true } : {}),
-      },
-      auditWarning,
-    );
+    };
+    if (pending.recordId) discardedEntry.id = pending.recordId;
+    if (expired) discardedEntry.expired = true;
+    const auditWarning = await appendMutationAudit(this.paths, discardedEntry);
+    const result: DiscardResult = {
+      pendingId: pending.pendingId,
+      discarded: true,
+    };
+    if (expired) result.expired = true;
+    return withAuditWarning(result, auditWarning);
   }
 
   async #dispatch(action, payload, target) {
@@ -1893,7 +2028,7 @@ export class LocalCredentialVault {
 
   async handleRequest(action, payload: any = {}, origin) {
     const name = String(action || "").trim().toLowerCase();
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    if (!isRecord(payload)) {
       throw vaultError("Credential vault payload must be an object.", "BAD_INPUT");
     }
     const target = normalizeHttpOrigin(origin);
@@ -2011,7 +2146,7 @@ export class LocalCredentialVault {
                     pending.username,
                     pending.label,
                   ]
-                    .filter((value) => typeof value === "string")
+                    .filter((value) => isString(value))
                     .some((value) => value.toLocaleLowerCase().includes(text)),
               )
               .sort((left, right) => recordTimestamp(right) - recordTimestamp(left));
@@ -2052,13 +2187,15 @@ export class LocalCredentialVault {
         id: wanted,
         category: metadata.category,
       });
+      const storedExtras: RevealedSecretMaterial = {};
+      if (record?.notes != null) storedExtras.notes = record.notes;
+      if (record?.fields != null) storedExtras.fields = record.fields;
       return withAuditWarning(
         {
           ...metadata,
           pending: Boolean(pending),
           secret: record ? (record.password ?? null) : pending.secret,
-          ...(record?.notes != null ? { notes: record.notes } : {}),
-          ...(record?.fields != null ? { fields: record.fields } : {}),
+          ...storedExtras,
         },
         auditWarning,
       );

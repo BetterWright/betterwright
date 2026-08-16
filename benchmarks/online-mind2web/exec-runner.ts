@@ -40,7 +40,7 @@ function sleep(ms) {
 // Consumers start staggered so a 50-wide campaign does not launch 50 Chromium
 // instances in the same instant.
 async function mapLimit(items, concurrency, staggerMs, worker) {
-  const results = new Array(items.length);
+  const results: any[] = Array.from({ length: items.length });
   let next = 0;
   const consume = async (consumerIndex) => {
     await sleep(consumerIndex * staggerMs);
@@ -172,10 +172,28 @@ export async function runTask(task, outputDir, options) {
   return { task_id: task.task_id, status, finalAnswer: answer, attempt };
 }
 
-function parseCli(argv) {
+// The flags this runner reads. parseCli stores every `--flag value` pair it
+// receives; a flag outside this list lands untyped and is simply never read.
+interface RunCliOptions {
+  command: string;
+  force: boolean;
+  tasks?: string;
+  manifest?: string;
+  output?: string;
+  partition?: string;
+  taskIds?: string;
+  taskId?: string;
+  timeoutMinutes?: string;
+  agentBudgetMinutes?: string;
+  model?: string;
+  effort?: string;
+  concurrency?: string;
+}
+
+function parseCli(argv): RunCliOptions {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith("-") ? args.shift() : "run";
-  const options: Record<string, any> = { command, force: false };
+  const options: RunCliOptions = { command, force: false };
   const boolean = new Set(["force"]);
   while (args.length) {
     const token = args.shift();

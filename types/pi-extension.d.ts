@@ -1,6 +1,7 @@
 import type { BetterWright } from "./client.js";
 import type { Guardrails } from "./prompt.js";
 import type { BetterWrightOptions } from "./public.js";
+import type { UntrustedValue } from "./untrusted-value.js";
 
 export interface PiExtensionOptions {
   autoScreenshot?: boolean;
@@ -26,18 +27,18 @@ export interface PiExtensionApiLike {
     parameters: object;
     execute(
       toolCallId: string,
-      params: Record<string, unknown>,
+      params: Record<string, UntrustedValue>,
       signal?: AbortSignal,
-      onUpdate?: unknown,
+      onUpdate?: UntrustedValue,
       context?: {
         hasUI?: boolean;
         ui?: {
           confirm(title: string, message: string): Promise<boolean>;
         };
       },
-    ): Promise<unknown>;
+    ): Promise<UntrustedValue>;
   }): void;
-  on(event: string, handler: (...args: any[]) => unknown): void;
+  on(event: string, handler: (...args: any[]) => UntrustedValue): void;
   getActiveTools?(): string[];
   setActiveTools?(names: string[]): void;
 }

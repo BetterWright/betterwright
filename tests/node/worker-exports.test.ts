@@ -7,10 +7,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { isString } from "../../dist/src/untrusted-value.js";
 import { METADATA_RESOLVER_RULES } from "../../dist/src/worker-constants.js";
 
 test("METADATA_RESOLVER_RULES is a comma-joined --host-resolver-rules value", () => {
-  assert.equal(typeof METADATA_RESOLVER_RULES, "string");
+  assert.ok(isString(METADATA_RESOLVER_RULES));
   const rules = METADATA_RESOLVER_RULES.split(", ");
   assert.ok(rules.length >= 4, "the metadata blocklist must not silently shrink");
   // Every entry must be a well-formed Chromium resolver rule mapping a host

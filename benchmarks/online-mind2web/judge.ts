@@ -7,6 +7,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import type { UntrustedValue } from "../../types/untrusted-value.js";
 import {
   assistantText,
   BENCHMARK_MODEL,
@@ -15,6 +16,10 @@ import {
   loadTasks,
   tasksForManifest,
 } from "./runner.js";
+
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
 
 const JUDGE_SYSTEM_PROMPT = `You are a strict multimodal evaluator of an Online-Mind2Web browser trajectory.
 
@@ -135,7 +140,7 @@ export function parseJudgeResponse(text) {
   ].some(([expectedScore, expectedStatus]) => score === expectedScore && status === expectedStatus)) {
     throw new Error("Judge score and status disagree.");
   }
-  if (typeof parsed.reasoning !== "string" || !parsed.reasoning.trim()) {
+  if (!isString(parsed.reasoning) || !parsed.reasoning.trim()) {
     throw new Error("Judge response has no reasoning.");
   }
   if (!Array.isArray(parsed.failed_key_points)) {
@@ -353,7 +358,7 @@ export async function judgeTask(task, outputDir, options) {
 }
 
 async function mapLimit(items, concurrency, worker) {
-  const results = new Array(items.length);
+  const results: any[] = Array.from({ length: items.length });
   let cursor = 0;
   async function consume() {
     while (cursor < items.length) {
@@ -365,8 +370,25 @@ async function mapLimit(items, concurrency, worker) {
   return results;
 }
 
-function parseCli(argv) {
-  const options: Record<string, any> = { force: false };
+// The flags this judge reads. parseCli stores every `--flag value` pair it
+// receives; a flag outside this list lands untyped and is simply never read.
+interface JudgeCliOptions {
+  force: boolean;
+  tasks?: string;
+  manifest?: string;
+  output?: string;
+  partition?: string;
+  taskId?: string;
+  taskIds?: string;
+  limit?: string;
+  maxImages?: string;
+  piBin?: string;
+  timeoutMinutes?: string;
+  concurrency?: string;
+}
+
+function parseCli(argv): JudgeCliOptions {
+  const options: JudgeCliOptions = { force: false };
   const args = [...argv];
   while (args.length) {
     const token = args.shift();

@@ -9,6 +9,34 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-08-16
+
+### Changed
+
+- **Codebase-wide type-hygiene overhaul.** Adopted the anti-slop Oxlint plugin
+  (vendored at `tools/oxlint/anti-slop/`, wired into `npm run lint`) and fixed
+  all 607 findings it raised across `src/`, `bin/`, `types/`, tests, and
+  benchmarks. Boundary parsing of hostile or dynamic values — page-derived
+  data, model-authored tool arguments, persisted JSON, daemon protocol
+  messages — is now centralized in `src/untrusted-value.ts` behind a named
+  `UntrustedValue` contract with shared type guards and total readers, instead
+  of ad-hoc inline `typeof` checks and `Record<string, any>` dictionaries.
+  Every remaining type assertion carries a `SAFETY:` comment stating the
+  invariant that justifies it. No intended behavior change; the full unit,
+  type, and browser suites pass unchanged.
+- **Renamed two exported CAPTCHA geometry helpers:** `findGrowingShape` is now
+  `findGrowingRegion` and `locateGrowingShape` is now `locateGrowingRegion`.
+  These are internal-leaning solver utilities; no other API changed.
+
+### Fixed
+
+- **Public type declarations now match the runtime.** `BetterWright.liveView`
+  types `expose` as the runtime-validated string it actually is,
+  `VaultAuditEntry` declares the `recovered`/`expired` fields the vault has
+  always emitted, and open payloads (`fields`, artifact extras, vault
+  request/response envelopes) are typed with the honest `UntrustedValue`
+  contract instead of blanket `unknown` dictionaries.
+
 ## [1.9.0] - 2026-08-16
 
 ### Fixed
@@ -939,7 +967,15 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/BetterWright/betterwright/compare/v1.9.0...v1.9.1
+[1.9.0]: https://github.com/BetterWright/betterwright/compare/v1.8.7...v1.9.0
+[1.8.7]: https://github.com/BetterWright/betterwright/compare/v1.8.6...v1.8.7
+[1.8.6]: https://github.com/BetterWright/betterwright/compare/v1.8.5...v1.8.6
+[1.8.5]: https://github.com/BetterWright/betterwright/compare/v1.8.3...v1.8.5
+[1.8.3]: https://github.com/BetterWright/betterwright/compare/v1.8.2...v1.8.3
+[1.8.2]: https://github.com/BetterWright/betterwright/compare/v1.8.1...v1.8.2
+[1.8.1]: https://github.com/BetterWright/betterwright/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/BetterWright/betterwright/compare/v1.7.2...v1.8.0
 [1.7.2]: https://github.com/BetterWright/betterwright/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/BetterWright/betterwright/compare/v1.7.0...v1.7.1

@@ -40,8 +40,15 @@ function startServer(onConnection) {
   });
 }
 
+function serverPort(server: http.Server): number {
+  // SAFETY: `startServer` resolves only from the callback of a TCP `listen`,
+  // so `address()` returns an AddressInfo — not the null of an unbound server
+  // or a pipe-name string.
+  return (server.address() as AddressInfo).port;
+}
+
 function wsUrl(server) {
-  return `ws://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  return `ws://127.0.0.1:${serverPort(server)}/`;
 }
 
 test("echoes text and binary frames with a real WebSocket client", async () => {
@@ -136,7 +143,7 @@ test("unmasked client frames are rejected as a protocol error", async () => {
   const crypto = await import("node:crypto");
   const server = await startServer(() => {});
   try {
-    const socket = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const socket = net.connect(serverPort(server), "127.0.0.1");
     await once(socket, "connect");
     const key = crypto.randomBytes(16).toString("base64");
     socket.write(
@@ -166,7 +173,7 @@ test("protocol pings from the client are answered with pongs", async () => {
   const crypto = await import("node:crypto");
   const server = await startServer(() => {});
   try {
-    const socket = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const socket = net.connect(serverPort(server), "127.0.0.1");
     await once(socket, "connect");
     const key = crypto.randomBytes(16).toString("base64");
     socket.write(

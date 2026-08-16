@@ -23,7 +23,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { RunAgentTaskOptions } from "../types/agent.js";
+import type { AgentModel, ResolvedAuth, RunAgentTaskOptions } from "../types/agent.js";
+import type { BetterWrightOptions } from "../types/public.js";
 import { uncachedInputTokens } from "./agent-usage.js";
 import { codexAccessToken, codexHome, grokAccessToken, loadCodexAuth, loadGrokAuth } from "./auth.js";
 import {
@@ -36,6 +37,15 @@ import { piImageArtifacts, piImageContent } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
 import { matchSkillsForText, readSkill } from "./skills.js";
 import { agentBrowserToolParameters, agentLoginToolParameters } from "./tool-schemas.js";
+import {
+  isBoolean,
+  isCallable,
+  isNumber,
+  isRecord,
+  isString,
+  type UntrustedValue,
+  untrustedField,
+} from "./untrusted-value.js";
 
 // The ChatGPT backend Responses endpoint the codex CLI drives with a ChatGPT
 // OAuth access token (overridable if the backend path moves).
@@ -66,6 +76,29 @@ const REPEATED_FAILURE_LIMIT = 5;
 /** Control-flow signals that a tool-level `catch` must never absorb. */
 function isControlSignal(error) {
   return error === AGENT_TIMEOUT || error === AGENT_INTERRUPT;
+}
+
+/** Callable is the only probe available for an injected fetch implementation. */
+function isFetchImplementation(value: UntrustedValue): value is typeof fetch {
+  return isCallable(value);
+}
+
+/** The documented `getAuth` contract: a nullary provider of per-request auth. */
+function isAuthProvider(value: UntrustedValue): value is () => ResolvedAuth | Promise<ResolvedAuth> {
+  return isCallable(value);
+}
+
+/** A bring-your-own model object: anything with an async `complete` method. */
+function isAgentModel(value: UntrustedValue): value is AgentModel {
+  return isRecord(value) && isCallable(untrustedField(value, "complete"));
+}
+
+/**
+ * The runtime probe guards untyped JS callers; the predicate keeps the
+ * declared `onStep` signature, which the void return would otherwise lose.
+ */
+function isStepCallback(value: UntrustedValue): value is NonNullable<RunAgentTaskOptions["onStep"]> {
+  return isCallable(value);
 }
 
 /**
@@ -403,15 +436,10 @@ function repeatedFailureAdvice(count) {
 function finalAnswerFromResult(result) {
   if (!result?.ok) return null;
   const value = result.result;
-  if (
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    typeof value.finalAnswer === "string" &&
-    value.finalAnswer.trim()
-  )
-    return value.finalAnswer.trim();
-  return null;
+  if (!isRecord(value)) return null;
+  const finalAnswer = untrustedField(value, "finalAnswer");
+  if (!isString(finalAnswer) || !finalAnswer.trim()) return null;
+  return finalAnswer.trim();
 }
 
 // Run one operation under the agent's wall-clock deadline and, when the caller
@@ -463,9 +491,10 @@ async function withinDeadline(operation, deadline, stopSignal) {
 // carry a numeric `status`; the fetch-based adapters embed it in their
 // "... request failed (429): ..." message.
 function statusFromModelError(error) {
-  if (!error || typeof error !== "object") return null;
-  if (typeof error.status === "number") return error.status;
-  const match = /request failed \((\d{3})\)/.exec(String(error.message || ""));
+  const status = untrustedField(error, "status");
+  if (isNumber(status)) return status;
+  const message = untrustedField(error, "message");
+  const match = /request failed \((\d{3})\)/.exec(isString(message) ? message : "");
   return match ? Number(match[1]) : null;
 }
 
@@ -488,13 +517,22 @@ function isTransientModelError(error) {
   if (status != null) return status === 408 || status === 429 || status >= 500;
   if (!(error instanceof Error)) return false;
   if (error.name === "APIConnectionError" || error.name === "APIConnectionTimeoutError") return true;
+  // Node network errors hang `code` off Error (and undici off `cause`) without
+  // declaring it; a non-string code is simply not in the set.
+  const code = untrustedField(error, "code");
+  const causeCode = untrustedField(error.cause, "code");
   if (
-    NETWORK_ERROR_CODES.has(error.code as string) ||
-    NETWORK_ERROR_CODES.has((error.cause as { code?: string } | undefined)?.code)
+    (isString(code) && NETWORK_ERROR_CODES.has(code)) ||
+    (isString(causeCode) && NETWORK_ERROR_CODES.has(causeCode))
   )
     return true;
   // Undici surfaces network failures from bare fetch() as TypeError.
   return error instanceof TypeError && /fetch/i.test(error.message);
+}
+
+// An error's `headers` may be a fetch Headers object or a plain record.
+function isHeaderGetter(value: UntrustedValue): value is Pick<Headers, "get"> {
+  return isCallable(untrustedField(value, "get"));
 }
 
 // Honor a Retry-After header when the failing client preserved response
@@ -502,10 +540,9 @@ function isTransientModelError(error) {
 function retryAfterMsFromError(error) {
   const headers = error?.headers;
   if (!headers) return null;
-  const value =
-    typeof headers.get === "function"
-      ? headers.get("retry-after")
-      : (headers["retry-after"] ?? headers["Retry-After"]);
+  const value = isHeaderGetter(headers)
+    ? headers.get("retry-after")
+    : (headers["retry-after"] ?? headers["Retry-After"]);
   if (!value) return null;
   const seconds = Number(value);
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
@@ -636,12 +673,9 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   );
   const session = String(options.session || "default");
   const stopSignal = options.signal instanceof AbortSignal ? options.signal : null;
-  const onStep = typeof options.onStep === "function" ? options.onStep : () => {};
-  const askUser = typeof options.askUser === "function" ? options.askUser : null;
-  const drainSteering =
-    typeof options.drainSteering === "function"
-      ? options.drainSteering
-      : null;
+  const onStep = isStepCallback(options.onStep) ? options.onStep : () => {};
+  const askUser = isCallable(options.askUser) ? options.askUser : null;
+  const drainSteering = isCallable(options.drainSteering) ? options.drainSteering : null;
   const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
   if (!Number.isFinite(maxDurationMs) || maxDurationMs <= 0 || maxDurationMs > MAX_TIMER_MS) {
     throw new TypeError(
@@ -654,22 +688,27 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   }
 
   const ownsBrowser = !options.browser;
-  const browser =
-    options.browser ||
-    new BetterWright({
+  let browser = options.browser;
+  if (!browser) {
+    const ownedBrowserOptions: BetterWrightOptions = {
       policy: options.policy || new NetworkPolicy(),
       headless: options.headless,
-      ...(options.profile ? { profile: options.profile } : {}),
-      ...(Object.hasOwn(options, "vault") ? { vault: options.vault } : {}),
-    });
+    };
+    if (options.profile) ownedBrowserOptions.profile = options.profile;
+    // `vault: undefined` and an absent vault mean different things to the
+    // constructor (explicit override vs built-in default), so mirror the key's
+    // presence, not just its value.
+    if (Object.hasOwn(options, "vault")) ownedBrowserOptions.vault = options.vault;
+    browser = new BetterWright(ownedBrowserOptions);
+  }
   const withLogin = Boolean(browser.vault);
   // The handoff tool needs the live-view server (started on demand when the
   // model calls it) plus somewhere to put the URL in front of the user.
   const liveViewOption = options.liveView;
   const withHandoff =
     liveViewOption !== false &&
-    typeof browser.startLiveView === "function" &&
-    (Boolean(askUser) || typeof options.onStep === "function");
+    isCallable(browser.startLiveView) &&
+    (Boolean(askUser) || isCallable(options.onStep));
   // Live view doubles as a chat + ask surface, so offer `ask` whenever the
   // host provided askUser OR a live-view chat channel can answer.
   const withAsk = Boolean(askUser) || withHandoff;
@@ -677,12 +716,12 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   let liveViewReady = false;
 
   async function ensureAgentLiveView() {
-    if (!withHandoff || typeof browser.startLiveView !== "function") return null;
+    if (!withHandoff || !isCallable(browser.startLiveView)) return null;
     try {
-      const view = await browser.startLiveView({
-        session,
-        ...(liveViewOption && typeof liveViewOption === "object" ? liveViewOption : {}),
-      });
+      // Caller-supplied options spread last so they can override `session`.
+      const view = await browser.startLiveView(
+        isRecord(liveViewOption) ? { session, ...liveViewOption } : { session },
+      );
       if (view?.ok && view.url) {
         if (!view.alreadyRunning) agentStartedLiveView = true;
         liveViewReady = true;
@@ -710,7 +749,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   }
 
   async function postLiveChat({ text, kind, role = "agent" }: any = {}) {
-    if (!withHandoff || typeof browser.liveViewPostChat !== "function") return;
+    if (!withHandoff || !isCallable(browser.liveViewPostChat)) return;
     const body = String(text || "").trim();
     if (!body) return;
     try {
@@ -729,7 +768,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   }
 
   async function collectLiveViewGuidance() {
-    if (!withHandoff || typeof browser.liveViewDrainChat !== "function") return [];
+    if (!withHandoff || !isCallable(browser.liveViewDrainChat)) return [];
     if (!liveViewReady) return [];
     try {
       const drained = await browser.liveViewDrainChat();
@@ -962,7 +1001,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
             // Prefer the live-view chat when the viewer surface is available;
             // fall back to the host's askUser (CLI) when it is not.
             const canLiveAsk =
-              withHandoff && typeof browser.waitForAsk === "function";
+              withHandoff && isCallable(browser.waitForAsk);
             if (canLiveAsk) {
               const view = await withinDeadline(() => ensureAgentLiveView(), deadline, stopSignal);
               if (view?.url) {
@@ -1012,7 +1051,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
           const action = String(call.input?.action || "start").trim().toLowerCase() || "start";
           try {
             if (action === "stop") {
-              if (typeof browser.stopLiveView === "function") await browser.stopLiveView();
+              if (isCallable(browser.stopLiveView)) await browser.stopLiveView();
               liveViewReady = false;
               agentStartedLiveView = false;
               results.push({
@@ -1024,7 +1063,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
             }
             if (action === "status") {
               const status =
-                typeof browser.liveViewStatus === "function"
+                isCallable(browser.liveViewStatus)
                   ? await browser.liveViewStatus()
                   : null;
               const running = Boolean(status?.running || liveViewReady);
@@ -1256,8 +1295,8 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
 // model shortcuts; `codex/`, `claude/`, and `grok/` only pin a collision.
 function adapterForModelId(id) {
   if (id === "claude" || id === "codex" || id === "grok") return null;
-  if (/^claude/.test(id)) return "claude";
-  if (/^grok/.test(id)) return "grok";
+  if (id.startsWith("claude")) return "claude";
+  if (id.startsWith("grok")) return "grok";
   if (/^(gpt|o[0-9]|chatgpt|codex)/.test(id)) return "codex";
   return null;
 }
@@ -1426,15 +1465,12 @@ function endpointConfig(
   if (!["chat", "responses"].includes(protocol))
     throw new Error('Model protocol must be "chat" or "responses".');
 
-  const headers = {
-    ...(source === "openrouter"
-      ? {
-          "HTTP-Referer": "https://github.com/BetterWright/betterwright",
-          "X-OpenRouter-Title": "BetterWright",
-        }
-      : {}),
-    ...(options.headers || {}),
-  };
+  const headers: Record<string, string> = {};
+  if (source === "openrouter") {
+    headers["HTTP-Referer"] = "https://github.com/BetterWright/betterwright";
+    headers["X-OpenRouter-Title"] = "BetterWright";
+  }
+  Object.assign(headers, options.headers);
   return { source, preset, baseURL, apiKey, apiKeyEnv, model, protocol, headers };
 }
 
@@ -1475,13 +1511,13 @@ export function endpointModel(options: any = {}) {
 export async function listEndpointModels(options: any = {}) {
   const config = endpointConfig(options, { requireModel: false, requireApiKey: false });
   const fetchImpl = options.fetchImpl || globalThis.fetch;
-  if (typeof fetchImpl !== "function")
+  if (!isFetchImplementation(fetchImpl))
     throw new Error("No fetch implementation available (need Node 22+ or a fetchImpl).");
+  const requestHeaders: Record<string, string> = {};
+  if (config.apiKey) requestHeaders.authorization = `Bearer ${config.apiKey}`;
+  Object.assign(requestHeaders, config.headers);
   const response = await fetchImpl(`${config.baseURL}/models`, {
-    headers: {
-      ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
-      ...config.headers,
-    },
+    headers: requestHeaders,
     redirect: "error",
     signal: options.signal || AbortSignal.timeout(10_000),
   });
@@ -1504,7 +1540,11 @@ export async function listEndpointModels(options: any = {}) {
       : [];
   const models = entries
     .map((entry) =>
-      typeof entry === "string" ? entry : entry?.id || entry?.name || entry?.model,
+      isString(entry)
+        ? entry
+        : untrustedField(entry, "id") ||
+          untrustedField(entry, "name") ||
+          untrustedField(entry, "model"),
     )
     .filter(Boolean)
     .map(String);
@@ -1607,13 +1647,7 @@ async function discoverModelCandidates(model, options: any = {}) {
  * catalogs and only auto-selected when exactly one source exposes them.
  */
 export async function resolveModelSelection(model, modelOptions: any = {}) {
-  if (
-    model &&
-    typeof model === "object" &&
-    typeof model.complete === "function"
-  ) {
-    return model;
-  }
+  if (isAgentModel(model)) return model;
   const selector = String(model || "").trim();
   const qualified = qualifiedModelSelector(selector);
   if (modelOptions.baseURL || qualified) {
@@ -1670,7 +1704,7 @@ export async function resolveModelSelection(model, modelOptions: any = {}) {
  * @returns {{name: string, complete: Function}}
  */
 export function resolveModel(model, modelOptions: any = {}) {
-  if (model && typeof model === "object" && typeof model.complete === "function") return model;
+  if (isAgentModel(model)) return model;
   const selector = String(model || "");
   const name = selector.toLowerCase();
   const qualified = qualifiedModelSelector(selector);
@@ -1865,22 +1899,21 @@ function openaiToolResultContent(result) {
 }
 
 function openaiText(content) {
-  if (typeof content === "string") return content;
+  if (isString(content)) return content;
   if (!Array.isArray(content)) return "";
   return content
     .map((part) => {
-      if (typeof part === "string") return part;
-      return typeof part?.text === "string"
-        ? part.text
-        : typeof part?.content === "string"
-          ? part.content
-          : "";
+      if (isString(part)) return part;
+      const text = untrustedField(part, "text");
+      if (isString(text)) return text;
+      const inner = untrustedField(part, "content");
+      return isString(inner) ? inner : "";
     })
     .join("");
 }
 
 function openaiToolInput(value) {
-  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (isRecord(value)) return value;
   if (!value) return {};
   try {
     return JSON.parse(String(value));
@@ -1941,7 +1974,7 @@ export function openaiModel(options: any = {}) {
   const maxTokensField = options.maxTokensField || "max_completion_tokens";
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (!modelId) throw new Error(`The ${options.name || "openai"} model needs a model id.`);
-  if (typeof fetchImpl !== "function")
+  if (!isFetchImplementation(fetchImpl))
     throw new Error("No fetch implementation available (need Node 22+ or a fetchImpl).");
 
   return {
@@ -1950,7 +1983,7 @@ export function openaiModel(options: any = {}) {
     async complete({ system, messages, tools, signal }) {
       // A dynamic auth provider (OAuth) refreshes the token per request; a
       // static apiKey is the simple case.
-      const auth = typeof options.getAuth === "function" ? await options.getAuth() : {};
+      const auth: ResolvedAuth = isAuthProvider(options.getAuth) ? await options.getAuth() : {};
       const apiKey = auth.apiKey ?? options.apiKey;
       const body: any = {
         model: modelId,
@@ -1962,19 +1995,18 @@ export function openaiModel(options: any = {}) {
         })),
         tool_choice: "auto",
       };
-      if (typeof options.parallelToolCalls === "boolean")
+      if (isBoolean(options.parallelToolCalls))
         body.parallel_tool_calls = options.parallelToolCalls;
       else if (options.parallelToolCalls === undefined) body.parallel_tool_calls = true;
       if (options.effort) body.reasoning_effort = options.effort;
       Object.assign(body, options.bodyExtra || {});
+      const requestHeaders: Record<string, string> = {};
+      requestHeaders["content-type"] = "application/json";
+      if (apiKey) requestHeaders.authorization = `Bearer ${apiKey}`;
+      Object.assign(requestHeaders, options.headers, auth.headers);
       const response = await fetchImpl(`${baseURL}/chat/completions`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-          ...(options.headers || {}),
-          ...(auth.headers || {}),
-        },
+        headers: requestHeaders,
         body: JSON.stringify(body),
         signal,
         redirect: "error",
@@ -2035,6 +2067,18 @@ function responsesInput(messages) {
   return input;
 }
 
+// A function_call's `arguments` field is a JSON-encoded string; a server that
+// sends malformed JSON still surfaces its payload under `_raw` rather than
+// losing the call.
+function responsesToolInput(rawArguments) {
+  if (!rawArguments) return {};
+  try {
+    return JSON.parse(rawArguments);
+  } catch {
+    return { _raw: rawArguments };
+  }
+}
+
 function parseResponsesOutput(output = []) {
   const text = [];
   const toolCalls = [];
@@ -2045,12 +2089,7 @@ function parseResponsesOutput(output = []) {
         if ((part.type === "output_text" || part.type === "text") && part.text) text.push(part.text);
       }
     } else if (item.type === "function_call") {
-      let input: Record<string, any> = {};
-      try {
-        input = item.arguments ? JSON.parse(item.arguments) : {};
-      } catch {
-        input = { _raw: item.arguments };
-      }
+      const input = responsesToolInput(item.arguments);
       synthetic += 1;
       toolCalls.push({ id: item.call_id || item.id || `call_${synthetic}`, name: item.name, input });
     }
@@ -2077,12 +2116,7 @@ function parseResponsesStream(raw) {
     if (event.type === "response.output_text.delta") text += event.delta || "";
     if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
       const item = event.item;
-      let input: Record<string, any> = {};
-      try {
-        input = item.arguments ? JSON.parse(item.arguments) : {};
-      } catch {
-        input = { _raw: item.arguments };
-      }
+      const input = responsesToolInput(item.arguments);
       synthetic += 1;
       const id = item.call_id || item.id || `call_${synthetic}`;
       if (!seenCalls.has(id)) {
@@ -2111,7 +2145,8 @@ function responsesModel(options: any = {}) {
   const maxTokens = Number(options.maxTokens) || DEFAULT_MAX_TOKENS;
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (!modelId) throw new Error(`The ${options.name || "responses"} model needs a model id.`);
-  if (typeof fetchImpl !== "function") throw new Error("No fetch implementation available (need Node 22+ or a fetchImpl).");
+  if (!isFetchImplementation(fetchImpl))
+    throw new Error("No fetch implementation available (need Node 22+ or a fetchImpl).");
 
   return {
     name: options.name || "responses",
@@ -2119,48 +2154,39 @@ function responsesModel(options: any = {}) {
     async complete({ system, messages, tools, signal }) {
       // A dynamic auth provider (OAuth) refreshes the token per request; a
       // static apiKey is the simple case.
-      const auth = typeof options.getAuth === "function" ? await options.getAuth() : {};
+      const auth: ResolvedAuth = isAuthProvider(options.getAuth) ? await options.getAuth() : {};
       const apiKey = auth.apiKey ?? options.apiKey;
-      const body = {
-        model: modelId,
-        instructions: system,
-        input: responsesInput(messages),
-        ...(options.includeMaxOutputTokens
-          ? { max_output_tokens: maxTokens }
-          : {}),
-        tools: tools.map((tool) => ({
-          type: "function",
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        })),
-        tool_choice: "auto",
-        ...(typeof options.parallelToolCalls === "boolean"
-          ? { parallel_tool_calls: options.parallelToolCalls }
-          : options.parallelToolCalls === undefined
-            ? { parallel_tool_calls: true }
-            : {}),
-        ...(typeof options.store === "boolean"
-          ? { store: options.store }
-          : options.store === undefined
-            ? { store: false }
-            : {}),
-        stream: options.stream === undefined ? true : Boolean(options.stream),
-        ...(options.effort ? { reasoning: { effort: options.effort } } : {}),
-        ...(options.bodyExtra || {}),
-      };
+      // Tri-state request fields: an explicit boolean is sent as-is, undefined
+      // selects the adapter default, and null omits the field entirely (for
+      // partial server implementations). bodyExtra overrides everything last.
+      const body: Record<string, UntrustedValue> = {};
+      body.model = modelId;
+      body.instructions = system;
+      body.input = responsesInput(messages);
+      if (options.includeMaxOutputTokens) body.max_output_tokens = maxTokens;
+      body.tools = tools.map((tool) => ({
+        type: "function",
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      }));
+      body.tool_choice = "auto";
+      if (isBoolean(options.parallelToolCalls)) body.parallel_tool_calls = options.parallelToolCalls;
+      else if (options.parallelToolCalls === undefined) body.parallel_tool_calls = true;
+      if (isBoolean(options.store)) body.store = options.store;
+      else if (options.store === undefined) body.store = false;
+      body.stream = options.stream === undefined ? true : Boolean(options.stream);
+      if (options.effort) body.reasoning = { effort: options.effort };
+      Object.assign(body, options.bodyExtra);
+      const requestHeaders: Record<string, string> = {};
+      requestHeaders["content-type"] = "application/json";
+      requestHeaders.accept =
+        options.stream === false ? "application/json" : "text/event-stream";
+      if (apiKey) requestHeaders.authorization = `Bearer ${apiKey}`;
+      Object.assign(requestHeaders, options.headers, auth.headers);
       const response = await fetchImpl(`${baseURL}${options.responsesPath || "/responses"}`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept:
-            options.stream === false
-              ? "application/json"
-              : "text/event-stream",
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-          ...(options.headers || {}),
-          ...(auth.headers || {}),
-        },
+        headers: requestHeaders,
         body: JSON.stringify(body),
         signal,
         redirect: "error",
@@ -2179,9 +2205,14 @@ function responsesModel(options: any = {}) {
 
 // Read codex's stored OAuth credentials (~/.codex/auth.json) and configured
 // model (~/.codex/config.toml). Best-effort — every field is overridable.
+interface StoredCodexConfig {
+  apiKey?: string;
+  model?: string;
+}
+
 function readCodexConfig() {
   const dir = codexHome();
-  const out: Record<string, any> = {};
+  const out: StoredCodexConfig = {};
   try {
     const auth = JSON.parse(fs.readFileSync(path.join(dir, "auth.json"), "utf8"));
     if (auth.OPENAI_API_KEY) out.apiKey = auth.OPENAI_API_KEY;
@@ -2249,7 +2280,7 @@ export function codexModel(options: any = {}) {
       model,
       effort,
       getAuth: codexOAuthAuth(sessionId),
-      bodyExtra: { include: [], prompt_cache_key: sessionId, ...(options.bodyExtra || {}) },
+      bodyExtra: { include: [], prompt_cache_key: sessionId, ...options.bodyExtra },
     });
   }
   // Bring-your-own Responses-compatible base URL (CODEX_BASE_URL): the endpoint

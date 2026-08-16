@@ -8,6 +8,7 @@ import {
   redactProviderSecrets,
   resolveBrowserProvider,
 } from "../../dist/src/browser-providers.js";
+import { isCallable } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 test("no provider means the managed BetterChromium fork", () => {
@@ -108,7 +109,7 @@ test("named providers need a key, from the option or their env var", () => {
   );
   assert.equal(resolved.plan.kind, "remote");
   assert.equal(resolved.plan.provider, "browserbase");
-  assert.equal(typeof resolved.plan.create, "function");
+  assert.ok(isCallable(resolved.plan.create));
   assert.equal(resolved.plan.apiKey, "bb_live_x");
   assert.throws(
     () => resolveBrowserProvider({ provider: "nope" }),
