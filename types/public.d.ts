@@ -125,6 +125,15 @@ export interface BetterWrightOptions {
    * another — the fork presents the host it runs on.
    */
   launchIdentity?: boolean;
+  /**
+   * Per-profile canvas/audio/WebGL-readPixels farbling keyed to the profile
+   * seed. Defaults to true (each profile gets a distinct, stable rendering
+   * fingerprint for multi-account isolation). Set false when a single identity
+   * must present the host's genuine GPU rendering — consistency checkers
+   * (PixelScan's "Masking detected") flag farbled output because it no longer
+   * matches a stock hardware signature. Only affects the managed fork.
+   */
+  fingerprintNoise?: boolean;
   upstreamProxy?: string;
   geoip?: boolean;
   locale?: string;

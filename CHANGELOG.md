@@ -9,6 +9,30 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-16
+
+### Fixed
+
+- **Headless launches on a GPU host now use the real GPU for WebGL.**
+  Playwright's headless default silently appends `--use-angle=swiftshader-webgl`,
+  which forced software GL even when hardware was present and tripped the fork's
+  integrated-GPU spoof — so a headless run on a GPU machine reported an "Intel
+  UHD 620" string that contradicted the desktop User-Agent, an inconsistency
+  PixelScan-style checkers flag as "Masking detected." On a host with an
+  accessible render device the managed args now bind `--use-gl=angle
+  --use-angle=gl`, so the hardware backend wins and the genuine GPU is reported.
+  GPU-less hosts keep the explicit SwiftShader binding unchanged.
+
+### Added
+
+- **`fingerprintNoise` option** (default `true`). The managed fork's
+  per-profile canvas/audio/WebGL-readPixels farbling is keyed to the profile's
+  `--fingerprint` seed. Keep it on for multi-account isolation (each profile
+  gets a distinct, stable rendering fingerprint); set
+  `new BetterWright({ fingerprintNoise: false })` when a single identity should
+  present the host's genuine GPU rendering. Only affects the managed
+  BetterChromium fork, not provider/remote browsers.
+
 ## [1.8.7] - 2026-08-16
 
 Ships the release. 1.8.6 was tagged before the `credential-fill` gate fix

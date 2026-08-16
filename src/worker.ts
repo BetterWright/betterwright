@@ -1778,12 +1778,21 @@ async function ensureBrowser(config) {
 
     // The fingerprint seed belongs to the managed fork; a caller-supplied
     // binary does not carry the fork's --fingerprint patches, and a remote
-    // browser never receives launch args at all.
+    // browser never receives launch args at all. When fingerprintNoise is off
+    // the seed is withheld entirely so the fork renders the host's genuine
+    // canvas/audio/WebGL output (the noise is a pure function of the seed, so
+    // no seed means SeedKey()===0 and FingerprintFarblingEnabled() is false) —
+    // that is what clears the "masking detected" verdict on consistency
+    // checkers that compare rendering against stock hardware.
+    const fingerprintNoise = launchConfig.fingerprintNoise !== false;
     const args =
       !remoteCdp && forkBinary
-        ? managedForkArgs(fingerprintSeedForProfile(browserProfileDir), {
-            softwareGpu,
-          })
+        ? managedForkArgs(
+            fingerprintNoise ? fingerprintSeedForProfile(browserProfileDir) : null,
+            {
+              softwareGpu,
+            },
+          )
         : [];
 
     // Coherent launch identity: one story across the Chromium and network

@@ -273,9 +273,14 @@ test("GPU capability detection distinguishes accessible DRI devices", () => {
     false,
   );
 
+  // On a GPU host (the default), the managed args bind the hardware GL backend
+  // so a headless launch's implicit --use-angle=swiftshader-webgl never wins and
+  // silently forces software rendering (which would trip the fork's integrated-
+  // GPU spoof and the resulting PixelScan "masking detected" inconsistency).
   const native = managedForkArgs("seed");
-  assert.ok(!native.some((arg) => arg.startsWith("--use-gl=")));
-  assert.ok(!native.some((arg) => arg.startsWith("--use-angle=")));
+  assert.ok(native.includes("--use-gl=angle"));
+  assert.ok(native.includes("--use-angle=gl"));
+  assert.ok(!native.includes("--use-angle=swiftshader"));
   assert.ok(!native.includes("--enable-unsafe-swiftshader"));
 });
 
