@@ -3551,7 +3551,7 @@ async function buildEnvelope(
     console: redactDeep(consoleMessages),
     events: redactDeep(session.events.slice(firstEvent)),
     artifacts: redactDeep(artifacts),
-    warnings: [
+    warnings: redactDeep([
       ...(profileWarning ? [profileWarning] : []),
       ...(backendSelectionNote ? [backendSelectionNote] : []),
       ...(chromiumArgsNote ? [chromiumArgsNote] : []),
@@ -3559,7 +3559,7 @@ async function buildEnvelope(
       ...(challenges.length ? [challenges[0].advice] : []),
       ...providerWarnings,
       ...(drainSessionWarnings ? session.warnings.splice(0) : []),
-    ],
+    ]),
     challenges: redactDeep(challenges),
     profileMode,
     pages: pages ?? (await summarizeSessionPages(session)),
