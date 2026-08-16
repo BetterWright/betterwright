@@ -139,8 +139,10 @@ export function managedForkArgs(fingerprintSeed, { softwareGpu = false } = {}) {
         // UA's desktop hardware — exactly the cross-signal inconsistency
         // PixelScan flags as "Masking detected". Bind the real GL backend so
         // the software default never wins and the genuine GPU is reported.
-        // The host may still override by passing its own --use-angle via
-        // chromiumArgs (caller switches are merged last and win).
+        // mergeChromiumArgs drops a same-name caller switch rather than
+        // letting it override, so a host that passes its own --use-angle gets
+        // this managed value and a chromiumArgs warning naming the dropped
+        // switch.
         ["--use-gl=angle", "--use-angle=gl"]),
     ...(fingerprintSeed ? [`--fingerprint=${fingerprintSeed}`] : []),
   ];
