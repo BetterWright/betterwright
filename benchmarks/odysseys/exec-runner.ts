@@ -34,7 +34,7 @@ function sleep(ms) {
 }
 
 async function mapLimit(items, concurrency, staggerMs, worker) {
-  const results = new Array(items.length);
+  const results: any[] = Array.from({ length: items.length });
   let next = 0;
   const consume = async (consumerIndex) => {
     await sleep(consumerIndex * staggerMs);
@@ -197,10 +197,32 @@ export async function runTask(task, outputDir, options) {
   return { task_id: task.task_id, level: task.level, status, finalAnswer: answer, attempt };
 }
 
-function parseCli(argv) {
+// The flags this runner reads. parseCli stores every `--flag value` pair it
+// receives; a flag outside this list lands untyped and is simply never read.
+interface RunCliOptions {
+  command: string;
+  force: boolean;
+  tasks?: string;
+  manifest?: string;
+  output?: string;
+  partition?: string;
+  level?: string;
+  levels?: string;
+  taskIds?: string;
+  taskId?: string;
+  timeoutMinutes?: string;
+  agentBudgetMinutes?: string;
+  model?: string;
+  effort?: string;
+  systemPrompt?: string;
+  concurrency?: string;
+  staggerMs?: string;
+}
+
+function parseCli(argv): RunCliOptions {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith("-") ? args.shift() : "run";
-  const options: Record<string, any> = { command, force: false };
+  const options: RunCliOptions = { command, force: false };
   const boolean = new Set(["force"]);
   while (args.length) {
     const token = args.shift();
@@ -247,7 +269,7 @@ async function main(argv = process.argv.slice(2)) {
       `agentBudget=${options.agentBudgetMinutes}m, timeout=${options.timeoutMinutes}m`,
   );
   const counts = { completed: 0, failed: 0, skipped: 0 };
-  const byLevel: Record<string, any> = {};
+  const byLevel: Record<string, { completed: number; failed: number; skipped: number }> = {};
   const results = await mapLimit(selected, concurrency, staggerMs, async (task) => {
     const result = await runTask(task, cli.output, options);
     counts[result.status] = (counts[result.status] || 0) + 1;

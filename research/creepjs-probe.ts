@@ -33,11 +33,6 @@ if (!NO_GPU) {
   process.env.__GLX_VENDOR_LIBRARY_NAME = "nvidia";
 }
 
-function flagValue(flag) {
-  const index = args.indexOf(flag);
-  return index !== -1 && index + 1 < args.length ? args[index + 1] : null;
-}
-
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-creepjs-"));
 const browser = new BetterWright({
   home,

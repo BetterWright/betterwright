@@ -19,7 +19,7 @@ import {
 } from "../../dist/src/daemon-client.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
-function stubBrowser(): Record<string, any> {
+function stubBrowser() {
   const calls = [];
   return {
     calls,
@@ -39,7 +39,39 @@ function stubBrowser(): Record<string, any> {
   };
 }
 
-async function startTestDaemon(overrides: Record<string, any> = {}) {
+interface DaemonTaskResult {
+  ok: boolean;
+  answer: string;
+  steps: number;
+  reason: string;
+  toolCalls: number;
+  usage: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    context?: number;
+  };
+  durationMs: number;
+  transcript: Array<{ role: string; text: string }>;
+  proof: string | null;
+}
+
+interface DaemonOverrides {
+  browser?: ReturnType<typeof stubBrowser>;
+  config?: { policy?: { blockHosts?: string[] } };
+  ttlMs?: number;
+  emptyGraceMs?: number;
+  reapIntervalMs?: number;
+  runTask?: (options: {
+    task: string;
+    session: string;
+    history: Array<{ role: string; text: string }>;
+    onStep: (step: { step: number; tool: string; note: string }) => void;
+  }) => Promise<DaemonTaskResult>;
+}
+
+async function startTestDaemon(overrides: DaemonOverrides = {}) {
   const home = makeTempDir("bw-d-");
   const browser = overrides.browser || stubBrowser();
   const exits = [];
@@ -305,16 +337,19 @@ test("createDaemonBrowser proxies run and survives daemon death with an envelope
 });
 
 test("createDaemonBrowser proxies startLiveView mid-session on the daemon browser", async () => {
-  const browser = stubBrowser();
-  browser.startLiveView = async (options) => {
-    browser.calls.push(["startLiveView", options]);
-    return {
-      ok: true,
-      url: "http://127.0.0.1:4242/?t=tok",
-      host: "127.0.0.1",
-      port: 4242,
-      session: options.session,
-    };
+  const stub = stubBrowser();
+  const browser = {
+    ...stub,
+    startLiveView: async (options) => {
+      stub.calls.push(["startLiveView", options]);
+      return {
+        ok: true,
+        url: "http://127.0.0.1:4242/?t=tok",
+        host: "127.0.0.1",
+        port: 4242,
+        session: options.session,
+      };
+    },
   };
   const { home, cleanup } = await startTestDaemon({ browser });
   try {

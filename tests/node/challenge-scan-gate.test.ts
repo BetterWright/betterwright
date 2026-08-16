@@ -105,7 +105,7 @@ const ORDINARY_FRAME_URLS = [
 // but whose host or path is challenge-shaped. Their text is the only thing that
 // could identify them and reading it costs a round trip, so the gate has to
 // open on the URL alone.
-const CHALLENGE_SHAPED_URLS = [
+const CHALLENGE_LIKE_URLS = [
   "https://geo.captcha-delivery.com/captcha/?initialCid=x", // DataDome
   "https://client-api.arkoselabs.com/fc/gt2/public_key/ABC", // Arkose / FunCaptcha
   "https://us-east-1.captcha.awswaf.com/captcha.html", // AWS WAF
@@ -210,7 +210,7 @@ test("benign frames and clean main text skip the full scan", () => {
 // frame served by a vendor `challengeUrlSignal` does not name, or by the site
 // itself. The old unconditional scan caught these on frame text alone.
 test("a challenge-shaped frame URL asks for the full scan", () => {
-  for (const url of CHALLENGE_SHAPED_URLS) {
+  for (const url of CHALLENGE_LIKE_URLS) {
     assert.equal(
       challengeScanNeeded({
         openProviders: new Set(),
@@ -226,7 +226,7 @@ test("a challenge-shaped frame URL asks for the full scan", () => {
   }
   // None of them is reported as a provider by the detector's URL rules: the
   // gate is allowed to be broader, and here it has to be.
-  for (const url of CHALLENGE_SHAPED_URLS) {
+  for (const url of CHALLENGE_LIKE_URLS) {
     assert.equal(frameUrlLooksLikeChallenge(url), false, url);
   }
 });
@@ -431,7 +431,7 @@ test("a same-origin frame's text asks for the full scan on its own", () => {
 test("the gate survives absent, partial, and hostile state", () => {
   assert.equal(challengeScanNeeded(), false);
   assert.equal(challengeScanNeeded(null), false);
-  assert.equal(challengeScanNeeded("nope" as any), false);
+  assert.equal(challengeScanNeeded("nope"), false);
   assert.equal(challengeScanNeeded({}), false);
   assert.equal(challengeScanNeeded({ frames: "not-an-array" }), false);
   assert.equal(challengeScanNeeded({ main: null, frames: [null, undefined, 7] }), false);
@@ -460,7 +460,7 @@ test("skipping the scan only ever loses an over-budget unread frame", () => {
   const pool = [
     ...PROVIDER_URLS,
     ...ORDINARY_FRAME_URLS,
-    ...CHALLENGE_SHAPED_URLS,
+    ...CHALLENGE_LIKE_URLS,
     "https://cdn.partner.example/w/9f3.html",
     "https://shop.example/cart-widget",
   ];

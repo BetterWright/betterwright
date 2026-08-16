@@ -4,11 +4,13 @@ import type {
   GenerateAndFillCredentialOptions,
   HeadlessMode,
 } from "./common.js";
+import type { BetterWrightResultLike } from "./pi.js";
 import type { NetworkPolicy } from "./policy.js";
+import type { UntrustedValue } from "./untrusted-value.js";
 
 export interface McpContentBlock {
   type: string;
-  [key: string]: unknown;
+  [key: string]: UntrustedValue;
 }
 
 export type BrowserLoginOptions =
@@ -19,7 +21,7 @@ export const LOGIN_INPUT_SCHEMA: Readonly<object>;
 
 /** Keep and validate the recognized `browser_login` arguments. */
 export function loginOptionsFromArgs(
-  args?: Record<string, unknown>,
+  args?: Record<string, UntrustedValue>,
 ): BrowserLoginOptions;
 
 /** Build a NetworkPolicy from BETTERWRIGHT_* environment variables. */
@@ -45,7 +47,9 @@ export function liveViewFromEnv(env?: Record<string, string | undefined>): {
 };
 
 /** Convert a run result to MCP content: a JSON text summary then image blocks. */
-export function contentForResult(result: unknown): Promise<McpContentBlock[]>;
+export function contentForResult(
+  result: BetterWrightResultLike,
+): Promise<McpContentBlock[]>;
 
 /**
  * Serve BetterWright over the MCP stdio transport until the client
@@ -57,8 +61,12 @@ export function runMcpServer(
   options?: {
     /** Custom credential vault, or false/null to disable the built-in vault. */
     vault?: false | null | {
-      handleRequest(action: string, payload: unknown, origin: string): Promise<unknown>;
-      redact?(value: unknown): unknown;
+      handleRequest(
+        action: string,
+        payload: UntrustedValue,
+        origin: string,
+      ): Promise<UntrustedValue>;
+      redact?(value: UntrustedValue): UntrustedValue;
     };
   },
 ): Promise<void>;

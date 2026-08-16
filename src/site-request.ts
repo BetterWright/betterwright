@@ -75,11 +75,13 @@ function openProxyTunnel(proxyPort: number, target: URL, timeoutMs: number) {
 function secureTunnel(socket: net.Socket, target: URL, timeoutMs: number) {
   return new Promise<tls.TLSSocket>((resolve, reject) => {
     const { hostname } = targetAuthority(target);
-    const secured = tls.connect({
+    const tlsOptions: tls.ConnectionOptions = {
       socket,
-      ...(net.isIP(hostname) ? {} : { servername: hostname }),
       ALPNProtocols: ["http/1.1"],
-    });
+    };
+    // SNI is only valid for names; RFC 6066 forbids literal IP addresses.
+    if (!net.isIP(hostname)) tlsOptions.servername = hostname;
+    const secured = tls.connect(tlsOptions);
     let settled = false;
     const finish = (error: Error | null) => {
       if (settled) return;
@@ -258,6 +260,8 @@ export function cookiesFromSetCookie(headers: string | string[], target: string 
       } else if (name === "httponly") cookie.httpOnly = true;
       else if (name === "secure") cookie.secure = true;
       else if (name === "samesite" && /^(strict|lax|none)$/i.test(value)) {
+        // SAFETY: the regex admits only strict/lax/none in any case, and
+        // first-letter-upper + rest-lower maps those onto exactly these literals.
         cookie.sameSite = `${value[0].toUpperCase()}${value.slice(1).toLowerCase()}` as
           "Strict" | "Lax" | "None";
       }

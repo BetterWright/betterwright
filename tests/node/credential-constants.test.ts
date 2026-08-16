@@ -35,7 +35,11 @@ test("redactSecretsDeep replaces longest secrets first and terminates on cycles"
     redactSecretsDeep("my password123 here", secrets),
     `my ${REDACTED_PASSWORD_PLACEHOLDER} here`,
   );
-  const cyclic: Record<string, any> = { secret: "password123" };
+  interface CyclicRecord {
+    secret: string;
+    self?: CyclicRecord;
+  }
+  const cyclic: CyclicRecord = { secret: "password123" };
   cyclic.self = cyclic;
   const output = redactSecretsDeep(cyclic, secrets);
   assert.equal(output.secret, REDACTED_PASSWORD_PLACEHOLDER);

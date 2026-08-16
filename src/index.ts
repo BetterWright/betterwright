@@ -26,7 +26,7 @@ export {
   classifyChallengeStage,
   clusterSimilarBoxes,
   extractDarkBlobs,
-  findGrowingShape,
+  findGrowingRegion,
   gridFromTiles,
   inferGridTiles,
   isCaptchaChromeLabel,

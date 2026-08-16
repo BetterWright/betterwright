@@ -91,9 +91,24 @@ import {
   resolveSkillInstallPaths,
   wrapClaudeSkillMarkdown,
 } from "../src/skill-install.js";
+import { isString, type UntrustedValue, untrustedField } from "../src/untrusted-value.js";
+import type { AgentMessage, RunAgentTaskOptions } from "../types/agent.js";
+import type { BetterWrightOptions } from "../types/public.js";
 
 const require = createRequire(import.meta.url);
 const CLI_PATH = fileURLToPath(import.meta.url);
+
+// What the CLI resolves from flags/env before the live-view layer validates
+// the expose preset and hashes the password. A type alias, so it keeps the
+// implicit index signature the agent layer's liveView option expects.
+type CliLiveViewOptions = {
+  host: string;
+  port: number;
+  publicHost: string;
+  interactive: boolean;
+  expose?: string;
+  password?: string;
+};
 
 /**
  * Live-view options for CLI `--live-view` / `view`.
@@ -134,14 +149,15 @@ function liveViewCliOptions(argv = process.argv, { required = false }: any = {})
   // The password comes from config.json (`betterwright view --set-password`)
   // or the env var — never a flag, so it stays out of shell history and ps.
   const password = String(process.env.BETTERWRIGHT_LIVE_VIEW_PASSWORD || "");
-  return {
+  const options: CliLiveViewOptions = {
     host,
     port,
     publicHost,
     interactive: !flags.has("--watch-only"),
-    ...(expose || flags.has("--host") ? { expose } : {}),
-    ...(password ? { password } : {}),
   };
+  if (expose || flags.has("--host")) options.expose = expose;
+  if (password) options.password = password;
+  return options;
 }
 
 /** Prompt on the TTY with echo suppressed (for --set-password). */
@@ -227,12 +243,14 @@ async function policyFromFlags(flags) {
 /** Construct a local (non-daemon) BetterWright, loading the stack on demand. */
 async function makeBrowser(flags, { headless }: any = {}) {
   const { BetterWright, NetworkPolicy } = await browserModule();
-  return new BetterWright({
+  const options: BetterWrightOptions = {
     policy: new NetworkPolicy(policyOptionsFromFlags(flags)),
     headless: headless ?? !flags.has("--headed"),
-    ...(cliProfile() ? { profile: cliProfile() } : {}),
     ...browserOptionsFromFlags(flags),
-  });
+  };
+  const profile = cliProfile();
+  if (profile) options.profile = profile;
+  return new BetterWright(options);
 }
 
 // The named browser profile for this invocation. `--profile <name>` selects a
@@ -286,6 +304,9 @@ function browserOptionsFromFlags(flags) {
 // managed BetterChromium fork. A flag value that parses as a URL is treated
 // as a CDP endpoint; anything else names a cloud provider whose key comes
 // from --browser-key or that provider's env var (docs/browser-providers.md).
+// The name is an arbitrary flag string here; the provider layer validates it.
+type CliCloudProviderChoice = { provider: string; apiKey?: string };
+
 function providerFromFlags(_flags) {
   const named = flagValue(process.argv, "--browser");
   if (named !== undefined && named !== null) {
@@ -293,10 +314,9 @@ function providerFromFlags(_flags) {
     if (!value) return undefined;
     if (/^wss?:\/\//i.test(value)) return { cdpUrl: value };
     const key = flagValue(process.argv, "--browser-key");
-    return {
-      provider: value,
-      ...(key ? { apiKey: String(key) } : {}),
-    };
+    const provider: CliCloudProviderChoice = { provider: value };
+    if (key) provider.apiKey = String(key);
+    return provider;
   }
   return undefined; // the client falls back to BETTERWRIGHT_CDP_URL
 }
@@ -560,16 +580,19 @@ async function acquireRunBrowser(flags) {
   };
 }
 
+type CliRunOptions = { session: string; approvedDownloads?: boolean };
+
 async function cmdRun(arg, flags) {
   const code = await readSnippet(arg);
   const acquired = await acquireRunBrowser(flags);
   try {
     // One bounded download-enabled run; the skill instructs agents to get
     // explicit user approval before passing this (MCP/Pi elicit instead).
-    const result = await acquired.browser.run(code, {
+    const runOptions: CliRunOptions = {
       session: acquired.session,
-      ...(flags.has("--approve-downloads") ? { approvedDownloads: true } : {}),
-    });
+    };
+    if (flags.has("--approve-downloads")) runOptions.approvedDownloads = true;
+    const result = await acquired.browser.run(code, runOptions);
     if (acquired.viaDaemon) result.session = acquired.session;
     if (acquired.warning)
       result.warnings = [...(result.warnings || []), acquired.warning];
@@ -691,23 +714,28 @@ async function cmdRepl(flags) {
   return 0;
 }
 
-function modelEndpointOptions(argv): Record<string, any> {
-  const baseURL =
-    flagValue(argv, "--base-url") ||
-    flagValue(argv, "--endpoint") ||
-    undefined;
-  return {
-    ...(baseURL ? { baseURL } : {}),
-    ...(flagValue(argv, "--api-key-env")
-      ? { apiKeyEnv: flagValue(argv, "--api-key-env") }
-      : {}),
-    ...(flagValue(argv, "--protocol")
-      ? { protocol: flagValue(argv, "--protocol") }
-      : {}),
-    ...(argv.includes("--allow-insecure-model-endpoint")
-      ? { allowInsecureEndpoint: true }
-      : {}),
-  };
+// A type alias (not an interface) so it carries the implicit index signature
+// that lets it flow into the agent layer's `Record<string, UntrustedValue>`.
+type CliModelOptions = {
+  baseURL?: string;
+  apiKeyEnv?: string;
+  protocol?: string;
+  allowInsecureEndpoint?: boolean;
+  effort?: string;
+};
+
+function modelEndpointOptions(argv): CliModelOptions {
+  const options: CliModelOptions = {};
+  const baseURL = flagValue(argv, "--base-url") || flagValue(argv, "--endpoint");
+  if (baseURL) options.baseURL = baseURL;
+  const apiKeyEnv = flagValue(argv, "--api-key-env");
+  if (apiKeyEnv) options.apiKeyEnv = apiKeyEnv;
+  const protocol = flagValue(argv, "--protocol");
+  if (protocol) options.protocol = protocol;
+  if (argv.includes("--allow-insecure-model-endpoint")) {
+    options.allowInsecureEndpoint = true;
+  }
+  return options;
 }
 
 function modelCliSelection(argv) {
@@ -756,17 +784,16 @@ async function loadModelCatalog(
   const settled = await Promise.all(
     sources.map(async (source) => {
       try {
-        const result = await listEndpointModels({
+        const query: CliModelOptions & { source: string; signal?: AbortSignal } = {
           source,
           ...(source === "custom" ? options.modelOptions : {
             apiKeyEnv: options.modelOptions?.apiKeyEnv,
             allowInsecureEndpoint:
               options.modelOptions?.allowInsecureEndpoint,
           }),
-          ...(options.quick
-            ? { signal: AbortSignal.timeout(discoveryTimeoutMs(source)) }
-            : {}),
-        });
+        };
+        if (options.quick) query.signal = AbortSignal.timeout(discoveryTimeoutMs(source));
+        const result = await listEndpointModels(query);
         return {
           source,
           models: result.models,
@@ -1198,6 +1225,23 @@ async function cmdInteractive(flags) {
   return 0;
 }
 
+// A transcript turn read back from disk that still has the structure the
+// model adapters were given. saveTranscript only ever writes runAgentTask's
+// own transcript, so on anything BetterWright wrote this filter is an
+// identity; it only drops turns from a hand-edited or truncated
+// transcript.json instead of replaying them at the model.
+function isReplayableTurn(message: UntrustedValue): message is AgentMessage {
+  const role = untrustedField(message, "role");
+  if (role === "user") return isString(untrustedField(message, "text"));
+  if (role === "assistant") {
+    return (
+      isString(untrustedField(message, "text")) &&
+      Array.isArray(untrustedField(message, "toolCalls"))
+    );
+  }
+  return role === "tool" && Array.isArray(untrustedField(message, "results"));
+}
+
 // `exec <task>`: BetterWright's own agent harness (the exec shape).
 // A model (Claude SDK / codex OAuth / grok OAuth) plugs into the browser-tuned
 // loop and drives the task to completion. Progress notes (ending with a cost
@@ -1340,10 +1384,12 @@ async function cmdExec(flags) {
     // the next exec resumes the conversation even without live tabs.
     const { runAgentTask } = await import("../src/agent.js");
     if (fresh) clearTranscript(home, session, cliProfile());
-    const history = fresh ? [] : loadTranscript(home, session, cliProfile());
+    const history = fresh
+      ? []
+      : loadTranscript(home, session, cliProfile()).filter(isReplayableTurn);
     const policy = await policyFromFlags(flags);
     try {
-      const full = await runAgentTask({
+      const taskOptions: RunAgentTaskOptions = {
         task,
         model,
         modelOptions,
@@ -1351,12 +1397,14 @@ async function cmdExec(flags) {
         history,
         policy,
         headless: !flags.has("--headed"),
-        // The same identity the daemon would have used, so a one-shot exec
-        // sees the same logins instead of silently acting as the default.
-        ...(cliProfile() ? { profile: cliProfile() } : {}),
         liveView: liveViewCliOptions(argv),
         onStep,
-      });
+      };
+      // The same identity the daemon would have used, so a one-shot exec
+      // sees the same logins instead of silently acting as the default.
+      const profile = cliProfile();
+      if (profile) taskOptions.profile = profile;
+      const full = await runAgentTask(taskOptions);
       saveTranscript(home, session, full.transcript, {}, cliProfile());
       const { transcript: _transcript, ...summary } = full;
       result = { ...summary, session, resumedMessages: history.length };

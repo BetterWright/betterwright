@@ -36,6 +36,8 @@
 //     serves one BetterWright and therefore one policy, so decisions made under
 //     one policy can never answer for another.
 
+import { isString } from "./untrusted-value.js";
+
 export const GUARD_CACHE_TTL_MS = 5_000;
 export const GUARD_CACHE_MAX = 2_048;
 
@@ -114,7 +116,7 @@ export function createGuardUrl({
     if (response?.cacheable === true) {
       if (key) {
         const decision: GuardDecision = { allowed: response.allowed === true };
-        if (typeof response.reason === "string") decision.reason = response.reason;
+        if (isString(response.reason)) decision.reason = response.reason;
         cacheSet(key, decision);
       }
     } else if (cache.size) {

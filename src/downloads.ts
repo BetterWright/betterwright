@@ -9,6 +9,7 @@ export function normalizeDownloadPolicy(value): "ask" | "allow" | "deny" {
       `downloadPolicy must be "ask", "allow", or "deny"; received ${JSON.stringify(value)}`,
     );
   }
+  // SAFETY: the Set membership check above admits only the three literals.
   return policy as "ask" | "allow" | "deny";
 }
 

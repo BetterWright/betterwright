@@ -24,13 +24,22 @@
   const CLEAR_WATCH_MS = 10_000;
   const DUPLICATE_CAPTURE_MS = 1_500;
 
+  // Mirrors UntrustedValue in untrusted-value.ts: this sensor compiles to a
+  // self-contained page script, so it cannot import the shared contract.
+  type UntrustedPageValue = NonNullable<unknown> | null | undefined;
+
+  // The Runtime binding the worker installs in this isolated world. It takes
+  // the JSON-encoded event; callability is the checked invariant.
+  const isEventBinding = (value: UntrustedPageValue): value is (encoded: string) => void =>
+    typeof value === "function";
+
   const emit = (payload) => {
     const encoded = JSON.stringify(payload);
     let attempts = 0;
     const deliver = () => {
       try {
         const binding = globalThis[BINDING_NAME];
-        if (typeof binding === "function") {
+        if (isEventBinding(binding)) {
           binding(encoded);
           return;
         }

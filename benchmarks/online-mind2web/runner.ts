@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import type { UntrustedValue } from "../../types/untrusted-value.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../..");
@@ -33,7 +34,20 @@ const UPDATED_AFTER_MIRROR = new Set([
   "1bc154377120ec15b18dbabdba49c741",
 ]);
 
-type Task = Record<string, any>;
+// A dataset row after normalizeTask has validated every field; `partition` is
+// attached by tasksForManifest.
+interface Task {
+  task_id: string;
+  website: string;
+  task: string;
+  reference_length: number;
+  level: string;
+  partition?: string;
+}
+
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
 
 function hash(seed, value) {
   return crypto.createHash("sha256").update(`${seed}\0${value}`).digest("hex");
@@ -239,23 +253,34 @@ export function buildTaskPrompt(task, now = new Date()) {
 
 export function assistantText(message) {
   if (message?.role !== "assistant") return "";
-  if (typeof message.content === "string") return message.content.trim();
+  if (isString(message.content)) return message.content.trim();
   if (!Array.isArray(message.content)) return "";
   return message.content
-    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .filter((block) => block?.type === "text" && isString(block.text))
     .map((block) => block.text)
     .join("\n")
     .trim();
 }
 
+// A non-primitive node of a Pi event mid-sanitization; `type`/`data` are the
+// inline-image fields the sanitizer redacts when present.
+interface EventPayloadNode {
+  type?: string;
+  data?: string;
+}
+
+function isEventPayloadNode(value: UntrustedValue): value is EventPayloadNode {
+  return Boolean(value) && typeof value === "object";
+}
+
 function sanitizedValue(value, depth = 0) {
-  if (typeof value === "string") {
+  if (isString(value)) {
     return value.length > 20_000 ? `${value.slice(0, 20_000)}\n[truncated]` : value;
   }
-  if (!value || typeof value !== "object") return value;
+  if (!isEventPayloadNode(value)) return value;
   if (depth > 8) return "[max depth]";
   if (Array.isArray(value)) return value.map((item) => sanitizedValue(item, depth + 1));
-  if (value.type === "image" && typeof value.data === "string") {
+  if (value.type === "image" && isString(value.data)) {
     return { ...value, data: `[omitted ${value.data.length} base64 chars]` };
   }
   return Object.fromEntries(
@@ -314,7 +339,7 @@ export function actionForTrace(row) {
     };
   }
   const code = String(row.arguments?.code || "");
-  const matches = ([
+  const verbPatterns: Array<[string, RegExp]> = [
     ["NAVIGATE", /\.(?:goto)\s*\(|\bopenPage\s*\(/],
     ["GO_BACK", /\.goBack\s*\(/],
     ["GO_FORWARD", /\.goForward\s*\(/],
@@ -325,7 +350,8 @@ export function actionForTrace(row) {
     ["SCROLL", /\b(?:scrollBy|scrollTo)\s*\(|\bhuman\.scroll\s*\(|\.mouse\.wheel\s*\(/],
     ["HOVER", /\.hover\s*\(/],
     ["CLICK", /\.click\s*\(|\bhuman\.click\s*\(/],
-  ] as [string, RegExp][]).filter(([, pattern]) => pattern.test(code));
+  ];
+  const matches = verbPatterns.filter(([, pattern]) => pattern.test(code));
   const verb = matches.length === 1 ? matches[0][0] : "WAIT";
   const fallback =
     matches.length > 1
@@ -410,7 +436,7 @@ export async function buildV2Submission(task, finalAnswer, traceDir, taskDir) {
 }
 
 export async function validateV2Submission(input, taskDir) {
-  const result = typeof input === "string" ? JSON.parse(await fs.readFile(input, "utf8")) : input;
+  const result = isString(input) ? JSON.parse(await fs.readFile(input, "utf8")) : input;
   if (result.schema_version !== "online-mind2web-v2") throw new Error("Wrong schema_version.");
   if (!/^[A-Za-z0-9_-]+$/.test(result.task_id)) throw new Error("Invalid task_id.");
   if (!result.task || !Number.isInteger(result.reference_length) || result.reference_length < 1) {
@@ -623,7 +649,7 @@ export async function runTask(task, outputDir, options) {
 }
 
 async function mapLimit(items, concurrency, worker) {
-  const results = new Array(items.length);
+  const results: any[] = Array.from({ length: items.length });
   let cursor = 0;
   async function consume() {
     while (cursor < items.length) {
@@ -635,10 +661,32 @@ async function mapLimit(items, concurrency, worker) {
   return results;
 }
 
-function parseCli(argv): Record<string, any> {
+// The flags this runner reads. parseCli stores every `--flag value` pair it
+// receives; a flag outside this list lands untyped and is simply never read.
+interface CliOptions {
+  command: string;
+  force: boolean;
+  tasks?: string;
+  count?: string;
+  holdoutCount?: string;
+  seed?: string;
+  manifest?: string;
+  partition?: string;
+  taskId?: string;
+  taskIds?: string;
+  limit?: string;
+  output?: string;
+  browserTimeoutSeconds?: string;
+  maxSteps?: string;
+  piBin?: string;
+  timeoutMinutes?: string;
+  concurrency?: string;
+}
+
+function parseCli(argv): CliOptions {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith("-") ? args.shift() : "run";
-  const options: Record<string, any> = { command, force: false };
+  const options: CliOptions = { command, force: false };
   const boolean = new Set(["force"]);
   while (args.length) {
     const token = args.shift();

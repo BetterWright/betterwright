@@ -8,6 +8,7 @@ import {
   createPiExtension,
   PI_LOGIN_PARAMETERS,
 } from "../../dist/src/pi-extension.js";
+import { isCallable } from "../../dist/src/untrusted-value.js";
 
 class FakePi {
   tools: Map<string, any>;
@@ -59,7 +60,13 @@ class FakeBrowser {
     startFails = false,
     vault = {},
     proofUrls = [],
-  }: Record<string, any> = {}) {
+  }: {
+    screenshot?: string;
+    downloadPolicy?: string;
+    startFails?: boolean;
+    vault?: Record<string, never> | null;
+    proofUrls?: string[];
+  } = {}) {
     this.calls = [];
     this.fills = [];
     this.closeCount = 0;
@@ -149,8 +156,8 @@ test("native Pi extension registers persistent tools and records its supplied st
       "browser_download",
     ]);
     for (const tool of pi.tools.values()) {
-      assert.equal(typeof tool.renderCall, "function");
-      assert.equal(typeof tool.renderResult, "function");
+      assert.ok(isCallable(tool.renderCall));
+      assert.ok(isCallable(tool.renderResult));
     }
     assert.match(pi.tools.get("browser").description, /usePage\(indexOrPageId\)/);
     assert.match(pi.tools.get("browser").description, /must not receive a Page object/);

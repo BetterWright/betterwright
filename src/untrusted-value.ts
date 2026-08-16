@@ -7,16 +7,90 @@
 // throwing, which is what lets the challenge and CAPTCHA classifiers read a
 // field without guarding each access at the call site.
 
-/** Narrow to a plain object, excluding arrays and null. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
+/**
+ * A value that crossed a trust boundary: page-derived data, model-authored
+ * tool arguments, persisted JSON, or dynamic protocol payloads. Structurally
+ * it admits every JavaScript value — hostile input has no structure to assume
+ * — but unlike a bare `unknown` it names the contract: narrow through the
+ * guards below (or a decoder built from them) before relying on any shape.
+ * (`NonNullable<unknown>` is `{}`, the one non-nullish type `unknown` assigns
+ * to without a cast.)
+ */
+export type UntrustedValue = NonNullable<unknown> | null | undefined;
+
+/**
+ * An untrusted value known to be callable. Parameters are `never` so nothing
+ * can be passed to it without the caller first establishing a real signature;
+ * its result is as untrusted as the function was.
+ */
+export type UntrustedFunction = (...args: never[]) => UntrustedValue;
+
+/**
+ * Narrow to a plain object, excluding arrays and null. The predicate is
+ * deliberately just `object` — properties of an untrusted object carry no
+ * types, so they are read through `untrustedField`/`untrustedEntries` below
+ * rather than by index access.
+ */
+export function isRecord(value: UntrustedValue): value is UntrustedValue & object {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Read one property of an untrusted value with ordinary lookup semantics
+ * (prototype chain included, so duck-typing probes see methods), yielding
+ * `undefined` for primitives without the property and for hostile getters
+ * that throw. `Object(value)` is what keeps this file the single point of
+ * dynamic access: the result is typed by the caller narrowing the returned
+ * `UntrustedValue`, never by an assumed object shape.
+ */
+export function untrustedField(value: UntrustedValue, key: string): UntrustedValue {
+  if (value === null || value === undefined) return undefined;
+  try {
+    return Object(value)[key];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Own enumerable entries of an untrusted value, `[]` for primitives and for
+ * exotic objects whose enumeration throws. Values are as untrusted as the
+ * object they came from.
+ */
+export function untrustedEntries(value: UntrustedValue): Array<[string, UntrustedValue]> {
+  if (value === null || value === undefined) return [];
+  try {
+    return Object.entries(Object(value));
+  } catch {
+    return [];
+  }
+}
+
+/** Narrow to a string. */
+export function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
+
+/** Narrow to a number, including NaN and the infinities. */
+export function isNumber(value: UntrustedValue): value is number {
+  return typeof value === "number";
+}
+
+/** Narrow to a boolean. */
+export function isBoolean(value: UntrustedValue): value is boolean {
+  return typeof value === "boolean";
+}
+
+/** Narrow to something callable (a duck-typing probe, e.g. for thenables). */
+export function isCallable(value: UntrustedValue): value is UntrustedFunction {
+  return typeof value === "function";
 }
 
 /**
  * Coerce to a string, yielding "" for nullish input and for objects whose
  * `toString` throws (a getter on a page-supplied object can).
  */
-export function stringValue(value: unknown): string {
+export function stringValue(value: UntrustedValue): string {
   if (value == null) return "";
   try {
     return String(value);
@@ -32,7 +106,7 @@ const MAX_NORMALIZED_TEXT_LENGTH = 100_000;
  * normalized, whitespace collapsed. Capped because the input can be a whole
  * document's text and every caller only ever matches against short patterns.
  */
-export function normalizedText(value: unknown): string {
+export function normalizedText(value: UntrustedValue): string {
   return stringValue(value)
     .toLowerCase()
     .replace(/[‘’]/g, "'")
@@ -42,7 +116,7 @@ export function normalizedText(value: unknown): string {
 }
 
 /** Parse a URL, returning null instead of throwing on anything unparseable. */
-export function parsedUrl(value: unknown): URL | null {
+export function parsedUrl(value: UntrustedValue): URL | null {
   try {
     return new URL(stringValue(value));
   } catch {

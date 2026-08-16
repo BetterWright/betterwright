@@ -7,7 +7,12 @@ import path from "node:path";
 
 import { resolveModel, runAgentTask } from "../../dist/src/agent.js";
 import { BetterWright } from "../../dist/src/client.js";
+import type { UntrustedValue } from "../../types/untrusted-value.js";
 import { AGENT_PROMPT_PATH, buildTaskPrompt } from "./runner.js";
+
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
 
 const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const {
@@ -38,7 +43,7 @@ const traceRows = [];
 
 function oneLine(value) {
   if (value == null) return "";
-  const text = typeof value === "string" ? value : JSON.stringify(value);
+  const text = isString(value) ? value : JSON.stringify(value);
   return text.replace(/\s+/g, " ").slice(0, 500);
 }
 
@@ -138,7 +143,15 @@ async function recordStep(action, code, result, note) {
   await captureStepEvidence(result);
 }
 
-browser.run = async (code, options: Record<string, any> = {}) => {
+// The run options this wrapper inspects; only `note` is read here, and the
+// whole object is forwarded to the real browser.run untouched.
+interface TracedRunOptions {
+  session?: string;
+  timeout?: number;
+  note?: string;
+}
+
+browser.run = async (code, options: TracedRunOptions = {}) => {
   const result = await rawRun(code, options);
   await recordStep("run", String(code), result, options.note);
   return result;

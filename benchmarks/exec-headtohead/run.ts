@@ -25,6 +25,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { UntrustedValue } from "../../types/untrusted-value.js";
+
+function isFiniteNumber(value: UntrustedValue): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
@@ -234,7 +239,7 @@ async function runReference(task) {
 // only. Answers, transcripts (`raw`) and local artifact paths (`proof`) stay in
 // memory for the live stderr log and go to disk only via `--raw`.
 function publicTask(task, bw, reference) {
-  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const num = (v) => (isFiniteNumber(v) ? v : null);
   return {
     id: task.id,
     scenario: task.scenario,
@@ -264,7 +269,7 @@ function publicTask(task, bw, reference) {
 }
 
 function elapsedStats(values) {
-  const v = values.filter((x) => typeof x === "number" && Number.isFinite(x)).sort((a, b) => a - b);
+  const v = values.filter(isFiniteNumber).sort((a, b) => a - b);
   if (!v.length) return null;
   const mid = v.length >> 1;
   return {

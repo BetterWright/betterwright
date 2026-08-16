@@ -1,10 +1,13 @@
 import {
   hostIs,
+  isBoolean,
   isGoogleHost,
+  isNumber,
   isRecord,
   normalizedText,
   parsedUrl,
   stringValue,
+  untrustedField,
 } from "./untrusted-value.js";
 
 const NATIVE_CAPTCHA_HELPERS = Object.freeze([
@@ -38,27 +41,36 @@ const SEARCH_CHALLENGE_ADVICE =
 
 function normalizeSource(value, kind, index = null, fallback: any = {}) {
   const source = isRecord(value) ? value : {};
+  const visible = untrustedField(source, "visible");
   return {
     kind,
     index,
-    url: stringValue(source.url ?? fallback.url),
-    title: stringValue(source.title ?? fallback.title),
-    text: stringValue(source.text ?? fallback.text),
-    completed: source.completed === true,
-    visible: typeof source.visible === "boolean" ? source.visible : null,
+    url: stringValue(untrustedField(source, "url") ?? fallback.url),
+    title: stringValue(untrustedField(source, "title") ?? fallback.title),
+    text: stringValue(untrustedField(source, "text") ?? fallback.text),
+    completed: untrustedField(source, "completed") === true,
+    visible: isBoolean(visible) ? visible : null,
   };
 }
 
 function normalizeMetadata(metadata) {
   const input = isRecord(metadata) ? metadata : {};
-  const nestedMain = [input.main, input.mainPage, input.page].find(isRecord);
+  const nestedMain = [
+    untrustedField(input, "main"),
+    untrustedField(input, "mainPage"),
+    untrustedField(input, "page"),
+  ].find(isRecord);
   const main = normalizeSource(nestedMain || input, "main", null, input);
-  const frameValues = [input.frames, input.childFrames].find(Array.isArray) || [];
+  const frameValues =
+    [untrustedField(input, "frames"), untrustedField(input, "childFrames")].find(
+      Array.isArray,
+    ) || [];
   const frames = frameValues
     .filter(isRecord)
     .map((frame, index) => normalizeSource(frame, "frame", index));
+  const solved = untrustedField(input, "solvedProviders");
   const solvedProviders = new Set(
-    (Array.isArray(input.solvedProviders) ? input.solvedProviders : [])
+    (Array.isArray(solved) ? solved : [])
       .map((provider) => normalizedText(provider))
       .filter(Boolean),
   );
@@ -396,8 +408,8 @@ export function challengeScanNeeded(state: any = {}) {
     : 0;
   if (openCount > 0) return true;
 
-  const blockedAt = typeof input.blockedAt === "number" ? input.blockedAt : 0;
-  const now = typeof input.now === "number" ? input.now : Date.now();
+  const blockedAt = isNumber(input.blockedAt) ? input.blockedAt : 0;
+  const now = isNumber(input.now) ? input.now : Date.now();
   if (blockedAt > 0 && now - blockedAt <= CHALLENGE_BLOCK_WINDOW_MS) return true;
 
   const main = isRecord(input.main) ? input.main : {};

@@ -1,6 +1,8 @@
 // Pure text transforms for aria snapshots (mode: "ai"). Kept free of
 // Playwright imports so they can be unit-tested without a browser.
 
+import { isString } from "./untrusted-value.js";
+
 // Roles an agent can act on. Mirrors the set agent-browser refs, minus
 // container roles that only matter with a name (covered by cursor=pointer).
 const INTERACTIVE_ROLE = new RegExp(
@@ -92,13 +94,13 @@ function yamlStringNeedsQuotes(str) {
   if (/^\s|\s$/.test(str)) return true;
   // biome-ignore lint/suspicious/noControlCharactersInRegex: faithful port of Playwright's rule
   if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(str)) return true;
-  if (/^-/.test(str)) return true;
+  if (str.startsWith("-")) return true;
   if (/[\n:](\s|$)/.test(str)) return true;
   if (/\s#/.test(str)) return true;
   if (/[\n\r]/.test(str)) return true;
   if (/^[&*\],?!>|@"'#%]/.test(str)) return true;
   if (/[{}`]/.test(str)) return true;
-  if (/^\[/.test(str)) return true;
+  if (str.startsWith("[")) return true;
   if (
     !Number.isNaN(Number(str)) ||
     ["y", "n", "yes", "no", "true", "false", "on", "off", "null"].includes(
@@ -229,7 +231,7 @@ function truncateName(name) {
 const stripWhitespace = (value) => value.replace(/\s+/g, "");
 const unquote = (value) => {
   try {
-    return typeof value === "string" && value.startsWith('"')
+    return isString(value) && value.startsWith('"')
       ? JSON.parse(value)
       : value;
   } catch {

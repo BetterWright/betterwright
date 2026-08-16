@@ -73,6 +73,8 @@ export async function copyToClipboard(
         child.once("close", (code) =>
           code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`)),
         );
+        // SAFETY: the child is spawned with stdio[0] = "pipe" just above, so
+        // stdin is always a writable stream, never null.
         (child.stdin as NonNullable<typeof child.stdin>).end(text);
       });
       return { ok: true, tool: command };

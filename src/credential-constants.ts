@@ -3,7 +3,21 @@
 // both sides must agree on; it stays dependency-free so either side can
 // import it without pulling in the vault or browser runtime.
 
+// Type-only, so the compiled module keeps zero runtime dependencies.
+import type { UntrustedValue } from "./untrusted-value.js";
+
 export const REDACTED_PASSWORD_PLACEHOLDER = "[REDACTED_PASSWORD]";
+
+// Local copies of the shared guards: importing their runtime implementations
+// would break this module's dependency-freedom (see the header).
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
+
+/** Anything redaction/recovery must walk into: a non-null object or array. */
+function isContainer(value: UntrustedValue): value is object {
+  return value !== null && typeof value === "object";
+}
 
 /**
  * Deep-scrub every occurrence of the given secret strings from a value,
@@ -32,12 +46,12 @@ export function redactSecretsDeep(value, secrets) {
   };
   const seen = new WeakSet();
   const redactValue = (input) => {
-    if (typeof input === "string") return redactText(input);
-    if (!input || typeof input !== "object") return input;
+    if (isString(input)) return redactText(input);
+    if (!isContainer(input)) return input;
     if (seen.has(input)) return "[Circular]";
     seen.add(input);
     if (Array.isArray(input)) return input.map(redactValue);
-    const output: Record<string, any> = {};
+    const output: Record<string, UntrustedValue> = {};
     for (const [key, item] of Object.entries(input)) {
       output[redactText(key)] = redactValue(item);
     }
@@ -58,7 +72,7 @@ export const MAX_PENDING_CREDENTIAL_ORIGINS = 100;
 const MATCH_MODE_SET = new Set(VAULT_MATCH_MODES);
 
 export function validateCredentialMatchMode(value) {
-  if (typeof value !== "string" || !MATCH_MODE_SET.has(value)) {
+  if (!isString(value) || !MATCH_MODE_SET.has(value)) {
     throw new TypeError(
       'matchMode must be "base-domain", "host", "exact-origin", or "never".',
     );
@@ -80,6 +94,17 @@ export function assertRotationPreservesMatchMode(spec) {
   }
 }
 
+// Recovery consults `username`/`label` only through Object.hasOwn, so the
+// claim is merely "an object whose fields are untrusted until coerced".
+interface RecoverySource {
+  username?: UntrustedValue;
+  label?: UntrustedValue;
+}
+
+function isRecoverySource(value: UntrustedValue): value is RecoverySource {
+  return value !== null && typeof value === "object";
+}
+
 /**
  * Build the recovery metadata for a generated-but-unfinalized credential.
  * `record` is the authoritative vault/session record and always wins;
@@ -99,9 +124,10 @@ export function pendingCredentialRecovery(record, requested, origin) {
     : MATCH_MODE_SET.has(requestedMatchMode)
       ? requestedMatchMode
       : "base-domain";
-  const recordObject = record && typeof record === "object" ? record : {};
-  const requestedObject =
-    requested && typeof requested === "object" ? requested : {};
+  const recordObject: RecoverySource = isRecoverySource(record) ? record : {};
+  const requestedObject: RecoverySource = isRecoverySource(requested)
+    ? requested
+    : {};
   const username = Object.hasOwn(recordObject, "username")
     ? recordObject.username
     : Object.hasOwn(requestedObject, "username")

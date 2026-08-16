@@ -6,6 +6,17 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { UntrustedValue } from "../../types/untrusted-value.js";
+
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
+
+// A dataset `rubrics` map: id → { requirement, verification }. The guard only
+// proves it is an object; entries are validated field by field where read.
+function isRubricsRecord(value: UntrustedValue): value is object {
+  return Boolean(value) && typeof value === "object";
+}
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const AGENT_PROMPT_PATH = path.join(HERE, "agent-prompt.md");
@@ -23,7 +34,7 @@ export function normalizeTask(input) {
   const website = String(input?.website || "https://www.google.com").trim();
   const referenceLength = Number(input?.reference_length || 1);
   const level = String(input?.level || "unknown").trim().toLowerCase();
-  const rubrics = input?.rubrics && typeof input.rubrics === "object" ? input.rubrics : {};
+  const rubrics = isRubricsRecord(input?.rubrics) ? input.rubrics : {};
   if (!/^[A-Za-z0-9_-]+$/.test(taskId)) {
     throw new TypeError(`Invalid Odysseys task_id: ${taskId || "<empty>"}`);
   }
@@ -61,6 +72,9 @@ export function normalizeTask(input) {
   };
 }
 
+/** A task row after normalizeTask has validated and defaulted every field. */
+type OdysseyTask = ReturnType<typeof normalizeTask>;
+
 export async function loadTasks(filename) {
   const parsed = JSON.parse(await fs.readFile(filename, "utf8"));
   const rows = Array.isArray(parsed) ? parsed : parsed.tasks;
@@ -96,7 +110,7 @@ export function tasksForManifest(tasks, manifest, partition = "all") {
   if (!["all", "benchmark", "development", "holdout"].includes(partition)) {
     throw new TypeError("partition must be all, benchmark, development, or holdout.");
   }
-  const byId = new Map<string, Record<string, any>>(tasks.map((task) => [task.task_id, task]));
+  const byId = new Map<string, OdysseyTask>(tasks.map((task) => [task.task_id, task]));
   const selected = [];
   for (const entry of manifest.tasks) {
     if (partition !== "all" && entry.partition !== partition) continue;
@@ -184,7 +198,7 @@ export function actionForTrace(row) {
     };
   }
   const code = String(row.arguments?.code || "");
-  const matches = ([
+  const verbPatterns: Array<[string, RegExp]> = [
     ["NAVIGATE", /\.(?:goto)\s*\(|\bopenPage\s*\(/],
     ["GO_BACK", /\.goBack\s*\(/],
     ["GO_FORWARD", /\.goForward\s*\(/],
@@ -195,7 +209,8 @@ export function actionForTrace(row) {
     ["SCROLL", /\b(?:scrollBy|scrollTo)\s*\(|\bhuman\.scroll\s*\(|\.mouse\.wheel\s*\(/],
     ["HOVER", /\.hover\s*\(/],
     ["CLICK", /\.click\s*\(|\bhuman\.click\s*\(/],
-  ] as [string, RegExp][]).filter(([, pattern]) => pattern.test(code));
+  ];
+  const matches = verbPatterns.filter(([, pattern]) => pattern.test(code));
   const verb = matches.length === 1 ? matches[0][0] : "WAIT";
   const fallback =
     matches.length > 1
@@ -221,12 +236,26 @@ async function readJsonLines(filename) {
     .map((line) => JSON.parse(line));
 }
 
+// Run metadata copied verbatim into the submission's `meta` block. It comes
+// from the local agent harness result, not from page content.
+interface SubmissionMeta {
+  model?: string;
+  effort?: string;
+  steps?: number;
+  toolCalls?: number;
+  usage?: object;
+  durationMs?: number;
+  agentOk?: boolean;
+  agentReason?: string;
+  finishAudit?: object;
+}
+
 export async function buildSubmission(
   task,
   finalAnswer,
   traceDir,
   taskDir,
-  meta: Record<string, any> = {},
+  meta: SubmissionMeta = {},
 ) {
   const trajectoryDir = path.join(taskDir, "trajectory");
   await fs.rm(trajectoryDir, { recursive: true, force: true });
@@ -303,11 +332,11 @@ export async function buildSubmission(
 }
 
 export async function validateSubmission(input, taskDir) {
-  const result = typeof input === "string" ? JSON.parse(await fs.readFile(input, "utf8")) : input;
+  const result = isString(input) ? JSON.parse(await fs.readFile(input, "utf8")) : input;
   if (result.schema_version !== SUBMISSION_SCHEMA) throw new Error("Wrong schema_version.");
   if (!/^[A-Za-z0-9_-]+$/.test(result.task_id)) throw new Error("Invalid task_id.");
   if (!result.task) throw new Error("Missing task text.");
-  if (!result.rubrics || typeof result.rubrics !== "object") throw new Error("Missing rubrics.");
+  if (!isRubricsRecord(result.rubrics)) throw new Error("Missing rubrics.");
   if (!Array.isArray(result.action_history) || !result.action_history.length) {
     throw new Error("action_history must not be empty.");
   }

@@ -19,6 +19,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { isString } from "../../dist/src/untrusted-value.js";
 import {
   _windowsProcessIdentityForTest,
   createLocalCredentialVault,
@@ -56,6 +57,12 @@ async function expectNoCredential(promise) {
 }
 
 function childSave(directory, username, { barrier = null } = {}) {
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    TEST_VAULT_DIR: directory,
+    TEST_VAULT_USER: username,
+  };
+  if (barrier) childEnv.TEST_VAULT_BARRIER = barrier;
   const moduleUrl = pathToFileURL(path.resolve("dist/src/vault.js")).href;
   const source = `
     import { existsSync } from "node:fs";
@@ -83,12 +90,7 @@ function childSave(directory, username, { barrier = null } = {}) {
   return new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
       cwd: path.resolve("."),
-      env: {
-        ...process.env,
-        TEST_VAULT_DIR: directory,
-        TEST_VAULT_USER: username,
-        ...(barrier ? { TEST_VAULT_BARRIER: barrier } : {}),
-      },
+      env: childEnv,
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
@@ -1539,7 +1541,7 @@ test("a lock is recoverable when its live PID has a different identity", async (
   const context = await fixture({ staleLockMs: 100, lockTimeoutMs: 1_000 });
   try {
     const processIdentity = await captureCurrentProcessIdentity(context);
-    if (typeof processIdentity !== "string" || !processIdentity) {
+    if (!isString(processIdentity) || !processIdentity) {
       t.skip("process identity is unavailable on this platform");
       return;
     }

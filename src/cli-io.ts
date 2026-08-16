@@ -9,6 +9,8 @@
 
 import fs from "node:fs";
 
+import { isCallable, type UntrustedValue } from "./untrusted-value.js";
+
 /**
  * Read an `exec` task from stdin without involving another shell parse.
  * Strip only the final line ending that pipes and heredocs conventionally add;
@@ -126,6 +128,12 @@ export function formatHangingText(
   return output.join("\n");
 }
 
+// The capture-handler contract documented on makeLineReader below; only
+// callability is verified.
+function isLineHandler(value: UntrustedValue): value is (line: string) => boolean | undefined {
+  return isCallable(value);
+}
+
 /**
  * Wrap a readline interface in a serial line reader.
  * @param {import("node:readline").Interface} rl
@@ -165,7 +173,7 @@ export function makeLineReader(rl) {
     return new Promise((resolve) => waiters.push(resolve));
   };
   nextLine.capture = (handler) => {
-    capture = typeof handler === "function" ? handler : null;
+    capture = isLineHandler(handler) ? handler : null;
     if (capture && buffered.length) {
       const pending = buffered.splice(0, buffered.length);
       for (const line of pending)

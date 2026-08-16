@@ -16,6 +16,13 @@ import {
   typeText,
 } from "../../dist/src/human.js";
 
+// The pointer state movePointer initializes and then tracks between moves.
+interface CursorState {
+  x?: number;
+  y?: number;
+  initialized?: boolean;
+}
+
 function fakeMouse() {
   const calls = [];
   return {
@@ -108,7 +115,7 @@ test("movePointer initializes a fresh cursor in the chrome area and lands exactl
   t.mock.timers.enable({ apis: ["setTimeout"] });
   t.mock.method(Math, "random", () => 0.5);
   const mouse = fakeMouse();
-  const cursor: Record<string, any> = {};
+  const cursor: CursorState = {};
   const target = { x: 400, y: 300 };
   await tickUntilSettled(t, movePointer(mouse, cursor, target));
 

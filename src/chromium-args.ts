@@ -24,6 +24,8 @@
 //
 // Everything else is appended last and takes effect.
 
+import { isString, type UntrustedValue } from "./untrusted-value.js";
+
 /**
  * Switches BetterWright sets or depends on. A caller who overrides one of
  * these does not get a tuned browser, they get a broken guarantee, so these
@@ -133,6 +135,12 @@ export function parseChromiumArgs(raw) {
   return args;
 }
 
+function assertSwitchString(entry: UntrustedValue, source: string): asserts entry is string {
+  if (typeof entry !== "string") {
+    throw new TypeError(`${source} entries must be strings; received ${typeof entry}.`);
+  }
+}
+
 /**
  * Validate caller-supplied switches, rejecting anything malformed or reserved.
  *
@@ -141,16 +149,14 @@ export function parseChromiumArgs(raw) {
  * @returns {string[]} the accepted switches, in caller order
  */
 export function normalizeChromiumArgs(input, source = "chromiumArgs") {
-  const list = typeof input === "string" ? parseChromiumArgs(input) : input;
+  const list = isString(input) ? parseChromiumArgs(input) : input;
   if (list == null) return [];
   if (!Array.isArray(list)) {
     throw new TypeError(`${source} must be an array of strings or a string.`);
   }
   const accepted = [];
   for (const entry of list) {
-    if (typeof entry !== "string") {
-      throw new TypeError(`${source} entries must be strings; received ${typeof entry}.`);
-    }
+    assertSwitchString(entry, source);
     const arg = entry.trim();
     if (!arg) continue;
     if (!arg.startsWith("--")) {

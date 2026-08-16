@@ -10,6 +10,7 @@ import {
 } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
 import { piBrowserToolParameters, piLoginToolParameters } from "./tool-schemas.js";
+import { isCallable, isNumber, type UntrustedValue } from "./untrusted-value.js";
 
 const BROWSER_TOOL_NAMES = new Set([
   "browser",
@@ -138,11 +139,10 @@ function resolvedBrowserOptions(options) {
   )
     .trim()
     .toLowerCase();
-  return {
-    ...(options || {}),
-    ...(timeout ? { defaultTimeout: timeout } : {}),
-    ...(downloadPolicy ? { downloadPolicy } : {}),
-  };
+  const resolved = { ...(options || {}) };
+  if (timeout) resolved.defaultTimeout = timeout;
+  if (downloadPolicy) resolved.downloadPolicy = downloadPolicy;
+  return resolved;
 }
 
 function mergeObservation(result, observation) {
@@ -161,6 +161,12 @@ function mergeObservation(result, observation) {
   };
 }
 
+// Model-authored call arguments echoed verbatim into the steps.jsonl trace.
+interface TraceCallArguments {
+  code: UntrustedValue;
+  note?: UntrustedValue;
+}
+
 async function traceStep(traceDir, step, toolName, params, result) {
   if (!traceDir) return;
   await fs.mkdir(traceDir, { recursive: true });
@@ -175,11 +181,13 @@ async function traceStep(traceDir, step, toolName, params, result) {
     );
     await fs.copyFile(source, screenshot);
   }
+  const callArguments: TraceCallArguments = { code: params.code };
+  if (params.note) callArguments.note = params.note;
   const row = {
     step_num: step,
     response: String(params.note || "").trim(),
     action: toolName,
-    arguments: { code: params.code, ...(params.note ? { note: params.note } : {}) },
+    arguments: callArguments,
     screenshot,
     url:
       result?.piObservation?.url ||
@@ -303,7 +311,7 @@ function loadTuiSupport() {
     }
     try {
       const agent = await importHostModule("@earendil-works/pi-coding-agent");
-      if (typeof agent.keyHint === "function") tuiKeyHint = agent.keyHint;
+      if (isCallable(agent.keyHint)) tuiKeyHint = agent.keyHint;
     } catch {
       tuiKeyHint = null;
     }
@@ -358,9 +366,9 @@ function summaryRenderResult(result, { expanded, isPartial }, theme, context) {
   const details = result.details || {};
   const lines = [];
   let head = details.ok === false ? theme.fg("error", "✗") : theme.fg("success", "✓");
-  if (typeof details.step === "number")
+  if (isNumber(details.step))
     head += theme.fg("muted", ` step ${details.step}`);
-  if (typeof details.durationMs === "number")
+  if (isNumber(details.durationMs))
     head += theme.fg("muted", ` ${Math.round(details.durationMs)}ms`);
   const active = (details.pages || []).find((page) => page?.active);
   if (active)
@@ -517,11 +525,11 @@ export function createPiExtension(options: any = {}) {
     }
 
     function deactivateBrowserTools() {
-      if (
-        typeof pi.getActiveTools !== "function" ||
-        typeof pi.setActiveTools !== "function"
-      )
-        return;
+      // Aliases keep the probe from narrowing the pi.* call paths to the
+      // argument-less UntrustedFunction contract.
+      const getActiveTools = pi.getActiveTools;
+      const setActiveTools = pi.setActiveTools;
+      if (!isCallable(getActiveTools) || !isCallable(setActiveTools)) return;
       pi.setActiveTools(
         pi.getActiveTools().filter((name) => !BROWSER_TOOL_NAMES.has(name)),
       );
@@ -757,7 +765,8 @@ export function createPiExtension(options: any = {}) {
         async execute(_id, params, signal) {
           if (signal?.aborted) throw new Error("Browser login cancelled.");
           const instance = await getBrowser();
-          if (typeof instance.fillCredential !== "function") {
+          const fillCredential = instance.fillCredential;
+          if (!isCallable(fillCredential)) {
             throw new Error("This BetterWright build has no credential fill available.");
           }
           const result = await instance.fillCredential(
@@ -807,7 +816,8 @@ export function createPiExtension(options: any = {}) {
           throw new Error("Browser downloads are disabled by host policy.");
         }
         if (instance.downloadPolicy === "ask") {
-          if (!ctx?.hasUI || typeof ctx.ui?.confirm !== "function") {
+          const confirm = ctx?.ui?.confirm;
+          if (!ctx?.hasUI || !isCallable(confirm)) {
             throw new Error(
               "Browser download requires user approval, but this Pi mode has no approval UI.",
             );
@@ -829,13 +839,14 @@ export function createPiExtension(options: any = {}) {
     }));
 
     pi.on("agent_end", () => {
+      const sendMessage = pi.sendMessage;
       if (
         !requireEvidence ||
         !checklistInitialized ||
         checklistState().ready ||
         stepCount >= maxSteps ||
         completionNudges >= 2 ||
-        typeof pi.sendMessage !== "function"
+        !isCallable(sendMessage)
       ) {
         return;
       }

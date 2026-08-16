@@ -83,7 +83,7 @@ export async function doctorReport() {
             kind: plan.kind,
             provider: plan.provider,
             endpoint: plan.endpointLabel || null,
-            ...(browserProviderInfo(plan.provider) || {}),
+            ...browserProviderInfo(plan.provider),
           }
         : { kind: plan.kind, executablePath: plan.executablePath || null };
     }
@@ -244,9 +244,18 @@ export function doctorChecks(
   report,
   { home = defaultHome(), env = process.env }: any = {},
 ) {
-  const checks = [];
-  const add = (group, label, status, detail, fix?: any) =>
-    checks.push({ group, label, status, detail, ...(fix ? { fix } : {}) });
+  const checks: Array<{
+    group: string;
+    label: string;
+    status: string;
+    detail: string;
+    fix?: string;
+  }> = [];
+  const add = (group: string, label: string, status: string, detail: string, fix?: string) => {
+    const check: (typeof checks)[number] = { group, label, status, detail };
+    if (fix) check.fix = fix;
+    checks.push(check);
+  };
 
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   add(

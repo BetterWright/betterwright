@@ -8,6 +8,7 @@ import {
   normalizeViewerUrl,
 } from "../../dist/src/live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "../../dist/src/live-view-html.js";
+import { isCallable, isString } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 function fakePage(url = "https://example.com/") {
@@ -41,7 +42,7 @@ function fakeCdp(respond = {}) {
     },
     async send(method, params) {
       calls.push({ method, params });
-      return typeof respond[method] === "function" ? respond[method](params) : respond[method];
+      return isCallable(respond[method]) ? respond[method](params) : respond[method];
     },
     async detach() {
       calls.push({ method: "detach" });
@@ -56,8 +57,22 @@ function fakeCdp(respond = {}) {
   };
 }
 
+type FakePage = ReturnType<typeof fakePage> & { close?: () => Promise<void> };
+type FakeCdp = ReturnType<typeof fakeCdp>;
+
+interface MakeServerOptions {
+  pages?: Array<{ id: string; page: FakePage; sessionId: string; active: boolean }>;
+  cdp?: FakeCdp;
+  newCDPSession?: (page: FakePage) => Promise<FakeCdp>;
+  preferredPage?: () => FakePage | null;
+  html?: () => string;
+  loginHtml?: () => string;
+  openPage?: () => Promise<FakePage>;
+  interactive?: boolean;
+}
+
 function makeServer(
-  { pages, cdp, newCDPSession, preferredPage, html, loginHtml, openPage }: Record<string, any> = {},
+  { pages, cdp, newCDPSession, preferredPage, html, loginHtml, openPage }: MakeServerOptions = {},
 ) {
   const activity = [];
   const pageList = pages || [{ id: "page-1", page: fakePage(), sessionId: "default", active: true }];
@@ -74,7 +89,7 @@ function makeServer(
   return { server, cdp: session, pages: pageList, activity };
 }
 
-async function startedServer(options: Record<string, any> = {}) {
+async function startedServer(options: MakeServerOptions = {}) {
   const parts = makeServer(options);
   const info = await parts.server.start({
     host: "127.0.0.1",
@@ -97,7 +112,7 @@ function nextMessage(client, predicate: (message: any) => boolean = () => true):
     const timer = setTimeout(() => reject(new Error("timed out waiting for message")), 2_000);
     const onMessage = (event) => {
       let value = event.data;
-      if (typeof value === "string") {
+      if (isString(value)) {
         try {
           value = JSON.parse(value);
         } catch {
@@ -428,7 +443,7 @@ test("tab previews use native scale, are cached, and broadcast as per-tab deltas
     const client = await connect(info);
     const thumbMessages = [];
     client.addEventListener("message", (event) => {
-      if (typeof event.data !== "string") return;
+      if (!isString(event.data)) return;
       try {
         const value = JSON.parse(event.data);
         if (value.t === "thumb") thumbMessages.push(value);
@@ -587,7 +602,7 @@ test("hidden viewers skip frames and repaint from the latest on return", async (
 
     const binaries = [];
     client.addEventListener("message", (event) => {
-      if (typeof event.data !== "string") binaries.push(Buffer.from(event.data));
+      if (!isString(event.data)) binaries.push(Buffer.from(event.data));
     });
     client.send(JSON.stringify({ t: "vis", hidden: true }));
     // The refresh round-trip proves the server processed the vis message.
@@ -1122,7 +1137,7 @@ test("a silent stop skips the bye so viewers fall into reconnect", async () => {
   await nextMessage(client, (message) => message.t === "hello");
   let sawBye = false;
   client.addEventListener("message", (event) => {
-    if (typeof event.data !== "string") return;
+    if (!isString(event.data)) return;
     try {
       if (JSON.parse(event.data).t === "bye") sawBye = true;
     } catch {
@@ -1338,7 +1353,9 @@ test("the viewer opens tabs through openPage and closes them via the strip", asy
   const closed = [];
   const extraPage = {
     ...fakePage("https://fresh.example/"),
-    close: async () => closed.push("page-2"),
+    close: async () => {
+      closed.push("page-2");
+    },
   };
   const pages = [{ id: "page-1", page: fakePage(), sessionId: "default", active: true }];
   let opened = 0;
@@ -1397,7 +1414,12 @@ test("watch-only servers reject navigation, new tabs, and tab closing", async ()
   const pages = [
     {
       id: "page-1",
-      page: { ...fakePage(), close: async () => closed.push("page-1") },
+      page: {
+        ...fakePage(),
+        close: async () => {
+          closed.push("page-1");
+        },
+      },
       sessionId: "default",
       active: true,
     },

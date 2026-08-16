@@ -9,6 +9,7 @@ import {
   unparkPage,
   unparkSession,
 } from "../../dist/src/page-park.js";
+import { isString } from "../../dist/src/untrusted-value.js";
 
 /** A Playwright Page stand-in that records the CDP traffic parking generates. */
 function fakePage({ closed = false }: any = {}) {
@@ -49,9 +50,7 @@ test("parking freezes the native page lifecycle and stops animation timelines", 
 test("parking never purges V8 memory — the call crashes the pinned fork", async () => {
   const page = fakePage();
   await parkPage(page, deps(page));
-  const methods = page.sent.map((entry) =>
-    typeof entry === "string" ? entry : entry.method,
-  );
+  const methods = page.sent.map((entry) => (isString(entry) ? entry : entry.method));
   assert.ok(!methods.some((method) => String(method).startsWith("Memory.")));
 });
 

@@ -34,7 +34,27 @@ function stubBrowser() {
   };
 }
 
-async function startTestDaemon(overrides: Record<string, any> = {}) {
+interface ResilienceOverrides {
+  browser?: ReturnType<typeof stubBrowser>;
+  reapIntervalMs?: number;
+  ttlMs?: number;
+  orphanGraceMs?: number;
+  finishedRunRetentionMs?: number;
+  runTask?: (options: {
+    signal?: AbortSignal;
+    session?: string;
+    onStep: (step: { step: number; tool: string; note: string }) => void;
+    history?: Array<{ role: string; text: string }>;
+  }) => Promise<{
+    ok: boolean;
+    reason: string;
+    steps: number;
+    answer: string;
+    transcript: Array<{ role: string; text: string }>;
+  }>;
+}
+
+async function startTestDaemon(overrides: ResilienceOverrides = {}) {
   const home = makeTempDir("bw-dr-");
   const browser = overrides.browser || stubBrowser();
   const exits = [];
@@ -114,7 +134,9 @@ const tick = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
  * signal between them, and reports how it ended — the same contract
  * runAgentTask keeps.
  */
-function scriptedTask({ steps = 3, stepDelayMs = 20, onStarted }: Record<string, any> = {}) {
+function scriptedTask(
+  { steps = 3, stepDelayMs = 20, onStarted }: { steps?: number; stepDelayMs?: number; onStarted?: () => void } = {},
+) {
   return async ({ signal, onStep, history = [] }) => {
     onStarted?.();
     const transcript = [...history, { role: "user", text: "task" }];

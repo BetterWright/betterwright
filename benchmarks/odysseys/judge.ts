@@ -16,6 +16,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import type { UntrustedValue } from "../../types/untrusted-value.js";
 import {
   filterTasksByIds,
   filterTasksByLevel,
@@ -24,6 +25,10 @@ import {
   loadTasks,
   tasksForManifest,
 } from "./runner.js";
+
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
 
 const JUDGE_SYSTEM = `You are a strict multimodal grader for Odysseys, a long-horizon web agent benchmark.
 
@@ -136,7 +141,7 @@ export function parseRubricResponse(text) {
   const parsed = JSON.parse(raw.slice(start, end + 1));
   const score = Number(parsed.score);
   if (![0, 1].includes(score)) throw new Error("Rubric score must be 0 or 1.");
-  if (typeof parsed.reasoning !== "string" || !parsed.reasoning.trim()) {
+  if (!isString(parsed.reasoning) || !parsed.reasoning.trim()) {
     throw new Error("Judge response has no reasoning.");
   }
   return {
@@ -148,10 +153,10 @@ export function parseRubricResponse(text) {
 
 function assistantText(message) {
   if (message?.role !== "assistant") return "";
-  if (typeof message.content === "string") return message.content.trim();
+  if (isString(message.content)) return message.content.trim();
   if (!Array.isArray(message.content)) return "";
   return message.content
-    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .filter((block) => block?.type === "text" && isString(block.text))
     .map((block) => block.text)
     .join("\n")
     .trim();
@@ -240,7 +245,7 @@ async function invokeRubricJudge(system, userText, evidence, options) {
 }
 
 async function mapLimit(items, concurrency, worker) {
-  const results = new Array(items.length);
+  const results: any[] = Array.from({ length: items.length });
   let next = 0;
   const consume = async () => {
     while (next < items.length) {
@@ -253,6 +258,17 @@ async function mapLimit(items, concurrency, worker) {
     Array.from({ length: Math.min(concurrency, items.length) }, () => consume()),
   );
   return results;
+}
+
+// One graded rubric line in the verdict; `error` is present only when the
+// judge call itself failed and the score-0 verdict records why.
+interface RubricScore {
+  requirement: string;
+  verification: string;
+  score: number;
+  reasoning: string;
+  evidence: string;
+  error?: string;
 }
 
 export async function judgeTask(task, outputDir, options) {
@@ -295,7 +311,7 @@ export async function judgeTask(task, outputDir, options) {
   }
 
   const evidence = await selectEvidence(result, taskDir, options.maxImages);
-  const rubricScores: Record<string, any> = {};
+  const rubricScores: Record<string, RubricScore> = {};
   let sum = 0;
   let count = 0;
   for (const [rubricId, rubric] of Object.entries<any>(task.rubrics)) {
@@ -311,14 +327,15 @@ export async function judgeTask(task, outputDir, options) {
         error: error?.message || String(error),
       };
     }
-    rubricScores[rubricId] = {
+    const scored: RubricScore = {
       requirement: rubric.requirement,
       verification: rubric.verification,
       score: graded.score,
       reasoning: graded.reasoning,
       evidence: graded.evidence,
-      ...(graded.error ? { error: graded.error } : {}),
     };
+    if (graded.error) scored.error = graded.error;
+    rubricScores[rubricId] = scored;
     sum += graded.score;
     count += 1;
   }
@@ -345,10 +362,32 @@ export async function judgeTask(task, outputDir, options) {
   return { task_id: task.task_id, status: "judged", verdict };
 }
 
-function parseCli(argv) {
+// The flags this judge reads. parseCli stores every `--flag value` pair it
+// receives; a flag outside this list lands untyped and is simply never read.
+interface JudgeCliOptions {
+  command: string;
+  force: boolean;
+  tasks?: string;
+  manifest?: string;
+  output?: string;
+  partition?: string;
+  level?: string;
+  levels?: string;
+  taskIds?: string;
+  taskId?: string;
+  model?: string;
+  thinking?: string;
+  effort?: string;
+  maxImages?: string;
+  timeoutMinutes?: string;
+  piBin?: string;
+  concurrency?: string;
+}
+
+function parseCli(argv): JudgeCliOptions {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith("-") ? args.shift() : "judge";
-  const options: Record<string, any> = { command, force: false };
+  const options: JudgeCliOptions = { command, force: false };
   const boolean = new Set(["force"]);
   while (args.length) {
     const token = args.shift();
@@ -368,15 +407,17 @@ function summarize(verdicts) {
   const n = judged.length || 1;
   const perfectRate = judged.filter((v) => v.verdict.perfect === 1).length / (judged.length || 1);
   const avg = judged.reduce((s, v) => s + (v.verdict.rubric_average || 0), 0) / n;
-  const byLevel: Record<string, any> = {};
+  const totals: Record<string, { count: number; perfect: number; rubric_sum: number }> = {};
   for (const row of judged) {
     const level = row.verdict.level || "unknown";
-    byLevel[level] ??= { count: 0, perfect: 0, rubric_sum: 0 };
-    byLevel[level].count += 1;
-    byLevel[level].perfect += row.verdict.perfect;
-    byLevel[level].rubric_sum += row.verdict.rubric_average;
+    totals[level] ??= { count: 0, perfect: 0, rubric_sum: 0 };
+    totals[level].count += 1;
+    totals[level].perfect += row.verdict.perfect;
+    totals[level].rubric_sum += row.verdict.rubric_average;
   }
-  for (const [level, stats] of Object.entries(byLevel)) {
+  const byLevel: Record<string, { count: number; perfect_rate: number; rubric_average: number }> =
+    {};
+  for (const [level, stats] of Object.entries(totals)) {
     byLevel[level] = {
       count: stats.count,
       perfect_rate: stats.perfect / stats.count,

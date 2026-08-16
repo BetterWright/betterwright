@@ -10,6 +10,7 @@ import { test } from "node:test";
 
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
+import { isCallable, isString } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 const browserStatus = await doctorReport();
@@ -37,6 +38,8 @@ async function listen(handler, host = "127.0.0.1") {
   const server = http.createServer(handler);
   server.listen(0, host);
   await once(server, "listening");
+  // SAFETY: the server finished `listen` on a TCP port, so `address()` returns
+  // an AddressInfo — not the null of an unbound server or a pipe-name string.
   const { port } = server.address() as AddressInfo;
   return {
     origin: `http://${host}:${port}`,
@@ -56,8 +59,7 @@ function scriptedAgentModel(turns) {
     async complete(request) {
       seen.push(request);
       const scripted = turns[index++];
-      const turn =
-        typeof scripted === "function" ? await scripted(request) : scripted;
+      const turn = isCallable(scripted) ? await scripted(request) : scripted;
       assert.ok(turn, `unexpected agent turn ${index}`);
       return { text: "", usage: null, ...turn };
     },
@@ -155,9 +157,9 @@ test("the selected managed browser keeps WebGL available with a coherent identit
     });`);
     assert.equal(result.ok, true, result.error);
     assert.equal(result.result.available, true, JSON.stringify(result.result));
-    assert.equal(typeof result.result.vendor, "string");
+    assert.ok(isString(result.result.vendor));
     assert.ok(result.result.vendor.length > 0);
-    assert.equal(typeof result.result.renderer, "string");
+    assert.ok(isString(result.result.renderer));
     assert.ok(result.result.renderer.length > 0);
     assert.ok(result.result.extensions > 0);
     for (const [index, actual] of result.result.pixels.entries()) {

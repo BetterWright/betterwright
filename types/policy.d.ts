@@ -1,10 +1,12 @@
+import type { UntrustedValue } from "./untrusted-value.js";
+
 export interface NetworkDecision {
   allowed: boolean;
   reason?: string;
 }
 
 export interface NetworkRequestDetails {
-  [key: string]: unknown;
+  [key: string]: UntrustedValue;
 }
 
 export type NetworkPolicyCustom = (
@@ -32,8 +34,8 @@ export class NetworkPolicy {
   blockHosts: string[];
   custom: NetworkPolicyCustom | null;
 
-  hostMatches(entry: unknown, hostname: string, port: number | null): boolean;
+  hostMatches(entry: UntrustedValue, hostname: string, port: number | null): boolean;
   isMetadata(hostname: string): boolean;
-  check(url: unknown, details?: NetworkRequestDetails): NetworkDecision;
+  check(url: UntrustedValue, details?: NetworkRequestDetails): NetworkDecision;
   checkHost(hostname: string, port: number | null): NetworkDecision;
 }

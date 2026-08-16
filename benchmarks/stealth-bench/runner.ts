@@ -13,6 +13,7 @@ import {
   CHROMIUM_FORK_RELEASE_TAG,
 } from "../../dist/src/chromium-fork.js";
 import { BetterWright, codexModel, runAgentTask } from "../../dist/src/index.js";
+import type { UntrustedValue } from "../../types/untrusted-value.js";
 
 export const DATASET_NAME = "Stealth_Bench_V1";
 export const PINNED_DATASET_SHA256 =
@@ -25,6 +26,10 @@ const BLOCK_PATTERN =
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
 }
 
 export async function resolveBenchmarkBinary(value?) {
@@ -235,7 +240,7 @@ function textFromObservation(observation) {
     observation?.bodyText,
     ...(observation?.warnings || []),
     ...(observation?.challenges || []).map((item) =>
-      typeof item === "string" ? item : JSON.stringify(item),
+      isString(item) ? item : JSON.stringify(item),
     ),
   ]
     .filter(Boolean)
@@ -258,13 +263,27 @@ export function classifyAttempt({ answer, observations = [], agentOk = false }) 
   return { status: "failed", challengeCount: 0 };
 }
 
+// What the in-page script in finalObservation returns. The guard only proves
+// the envelope is an object; every field read still falls back below.
+interface FinalObservationValue {
+  url?: string;
+  title?: string;
+  bodyText?: string;
+}
+
+function isFinalObservationValue(value: UntrustedValue): value is FinalObservationValue {
+  return Boolean(value) && typeof value === "object";
+}
+
 async function finalObservation(browser, session) {
   const result = await browser.run(
     `const bodyText = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
 return { url: page.url(), title: await page.title(), bodyText: bodyText.slice(0, 4000) };`,
     { session, note: "Inspect final benchmark state", timeout: 15 },
   );
-  const returned = result?.value && typeof result.value === "object" ? result.value : {};
+  const returned: FinalObservationValue = isFinalObservationValue(result?.value)
+    ? result.value
+    : {};
   return {
     url: returned.url || result?.pages?.find((page) => page.active)?.url || null,
     title: returned.title || null,
@@ -272,6 +291,19 @@ return { url: page.url(), title: await page.title(), bodyText: bodyText.slice(0,
     challenges: result?.challenges || [],
     warnings: result?.warnings || [],
   };
+}
+
+// The subset of BetterWright constructor options this benchmark sets (`dist/`
+// ships no declarations, so the contract is written out here).
+interface BenchLaunchOptions {
+  home: string;
+  headless?: boolean;
+  vault: boolean;
+  credentialCapture: boolean;
+  downloadPolicy: string;
+  stealthRuntimeFix: boolean;
+  upstreamProxy?: string;
+  geoip?: boolean;
 }
 
 export async function runTask(
@@ -288,15 +320,19 @@ export async function runTask(
   const home = await fs.mkdtemp(path.join(os.tmpdir(), `betterwright-stealth-${task.taskId}-`));
   const session = `stealth-${task.taskId}-${crypto.randomUUID()}`;
   const observations = [];
-  const browser = new BetterWright({
+  const launchOptions: BenchLaunchOptions = {
     home,
     headless: options.headless,
     vault: false,
     credentialCapture: false,
     downloadPolicy: "deny",
     stealthRuntimeFix: false,
-    ...(options.upstreamProxy ? { upstreamProxy: options.upstreamProxy, geoip: true } : {}),
-  });
+  };
+  if (options.upstreamProxy) {
+    launchOptions.upstreamProxy = options.upstreamProxy;
+    launchOptions.geoip = true;
+  }
+  const browser = new BetterWright(launchOptions);
   const originalRun = browser.run.bind(browser);
   browser.run = async (...args) => {
     const source = String(args[0] || "");
@@ -354,8 +390,25 @@ export async function runTask(
   }
 }
 
-function parseCli(argv): Record<string, any> {
-  const options: Record<string, any> = {};
+// The flags this runner reads. parseCli stores every `--flag value` pair it
+// receives; a flag outside this list lands untyped and is simply never read.
+interface CliOptions {
+  dataset?: string;
+  output?: string;
+  mode?: string;
+  binary?: string;
+  upstreamProxy?: string;
+  allowUnpinned?: boolean;
+  taskIds?: string;
+  category?: string;
+  limit?: string;
+  timeoutMinutes?: string;
+  model?: string;
+  effort?: string;
+}
+
+function parseCli(argv): CliOptions {
+  const options: CliOptions = {};
   const boolean = new Set(["allowUnpinned"]);
   const args = [...argv];
   while (args.length) {

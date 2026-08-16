@@ -34,7 +34,7 @@ import {
   classifyChallengeStage,
   clusterSimilarBoxes,
   extractDarkBlobs,
-  findGrowingShape,
+  findGrowingRegion,
   gridFromTiles,
   IMAGE_TILE_SELECTORS,
   isCaptchaChromeLabel,
@@ -135,6 +135,15 @@ import {
   filterInteractive,
   parseAnnotationBoxes,
 } from "./snapshot.js";
+import {
+  isBoolean,
+  isCallable,
+  isNumber,
+  isString,
+  type UntrustedFunction,
+  type UntrustedValue,
+  untrustedField,
+} from "./untrusted-value.js";
 import { httpOrigin, installVaultCapture } from "./vault-capture.js";
 
 // Re-exported for source compatibility: the `betterwright/worker` subpath now
@@ -175,6 +184,32 @@ const DEFAULT_SCREENSHOT_TIMEOUT_MS = 15_000;
 const CAPTCHA_SCREENSHOT_TIMEOUT_MS = 8_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const MAX_ACTIVE_SECRETS = 200;
+
+// Guards for values that cross the vm/page bridges, alongside the shared ones
+// in untrusted-value.ts. The shared isRecord excludes arrays, which the call
+// sites here must keep, and UntrustedFunction accepts no arguments, while the
+// bridge forwards prepared values into model-authored callbacks.
+function isObjectValue(value: UntrustedValue): value is UntrustedValue & object {
+  return typeof value === "object" && value !== null;
+}
+
+function isWrappableValue(value: UntrustedValue): value is UntrustedValue & object {
+  return (typeof value === "object" || typeof value === "function") && value !== null;
+}
+
+function isSymbolValue(value: UntrustedValue): value is symbol {
+  return typeof value === "symbol";
+}
+
+function isBigIntValue(value: UntrustedValue): value is bigint {
+  return typeof value === "bigint";
+}
+
+function isInvocable(
+  value: UntrustedValue,
+): value is (...args: UntrustedValue[]) => UntrustedValue {
+  return typeof value === "function";
+}
 
 let browserContext = null;
 let transportProxyPort = 0;
@@ -347,11 +382,11 @@ function trackSecret(value) {
 }
 
 function trackSecretValues(value, seen = new WeakSet()) {
-  if (typeof value === "string") {
+  if (isString(value)) {
     trackSecret(value);
     return;
   }
-  if (!value || typeof value !== "object" || seen.has(value)) return;
+  if (!isObjectValue(value) || seen.has(value)) return;
   seen.add(value);
   for (const item of Array.isArray(value) ? value : Object.values(value)) {
     trackSecretValues(item, seen);
@@ -359,10 +394,12 @@ function trackSecretValues(value, seen = new WeakSet()) {
 }
 
 function trackCredentialWriteSecrets(options) {
-  if (!options || typeof options !== "object") return;
-  if (typeof options.password === "string") trackSecret(options.password);
-  if (typeof options.notes === "string") trackSecret(options.notes);
-  trackSecretValues(options.fields);
+  if (!isObjectValue(options)) return;
+  const password = untrustedField(options, "password");
+  if (isString(password)) trackSecret(password);
+  const notes = untrustedField(options, "notes");
+  if (isString(notes)) trackSecret(notes);
+  trackSecretValues(untrustedField(options, "fields"));
 }
 
 function redactionCapacityError() {
@@ -561,7 +598,7 @@ const guardProxy = createGuardProxy({
 async function installDownloadGuard(context) {
   await closeDownloadGuard();
   const browser = context.browser?.();
-  if (!browser || typeof browser.newBrowserCDPSession !== "function") {
+  if (!browser || !isCallable(untrustedField(browser, "newBrowserCDPSession"))) {
     throw new Error("Chromium download byte limits require a browser CDP session.");
   }
   const session = await browser.newBrowserCDPSession();
@@ -1051,11 +1088,13 @@ async function captureScreenshotViaCdp(
       fromSurface: true,
       captureBeyondViewport: Boolean(options?.fullPage) && !options?.clip,
       clip: await cssScreenshotClip(page, options),
-      ...(format === "jpeg"
-        ? { quality: Number(options?.quality) || 80 }
-        : {}),
     };
-    const shot = await cdp.send("Page.captureScreenshot", params);
+    const shot = await cdp.send(
+      "Page.captureScreenshot",
+      format === "jpeg"
+        ? { ...params, quality: Number(options?.quality) || 80 }
+        : params,
+    );
     const content = Buffer.from(String(shot?.data || ""), "base64");
     if (!content.length) throw new Error("CDP screenshot returned no bytes.");
     return writeScreenshotBytes(session, requested, fallback, content);
@@ -1266,10 +1305,21 @@ const pageSiteRequests = new WeakMap();
 const requestSiteRecord = new WeakMap();
 const MAX_SITE_REQUESTS = 512;
 
+// One observed page request, filled in as its response or failure arrives.
+interface SiteRequestRecord {
+  method: string;
+  url: string;
+  resourceType: string;
+  status: number | null;
+  mimeType: string;
+  failure: string;
+  at: number;
+}
+
 function rememberSiteRequest(page, request) {
   const records = pageSiteRequests.get(page) || [];
   pageSiteRequests.set(page, records);
-  const record: Record<string, any> = {
+  const record: SiteRequestRecord = {
     method: String(request.method() || "GET"),
     url: String(request.url() || ""),
     resourceType: String(request.resourceType() || "other"),
@@ -1408,11 +1458,16 @@ async function redactPasswordValues(page, text) {
     const perFrame = await Promise.all(
       page.frames().map((frame) =>
         frame
-          .evaluate(() =>
-            Array.from(document.querySelectorAll("input[type=password]"))
+          .evaluate(() => {
+            const isFilledText = (value: UntrustedValue): value is string =>
+              typeof value === "string" && value.length > 0;
+            // SAFETY: the selector matches only password inputs, whose HTML
+            // interface is HTMLInputElement; an impostor element from another
+            // namespace reads `value` as undefined and fails the guard.
+            return Array.from(document.querySelectorAll("input[type=password]"))
               .map((element) => (element as HTMLInputElement).value)
-              .filter((value) => typeof value === "string" && value.length > 0),
-          )
+              .filter(isFilledText);
+          })
           .catch(() => []),
       ),
     );
@@ -1441,11 +1496,13 @@ async function snapshotPage(page, options: any = {}) {
     : options?.selector
       ? page.locator(String(options.selector))
       : page.locator("body");
-  let text = await scope.ariaSnapshot({
+  const snapshotRequest = {
     mode: "ai",
     timeout: Number(options?.timeout || DEFAULT_ACTION_TIMEOUT_MS),
-    ...(depth > 0 ? { depth } : {}),
-  });
+  };
+  let text = await scope.ariaSnapshot(
+    depth > 0 ? { ...snapshotRequest, depth } : snapshotRequest,
+  );
   // Playwright's aria snapshot includes filled input values, including
   // `<input type=password>`. Scrub those before the text is stored (for diffs),
   // truncated, or returned, so a routine read never slurps a just-typed or
@@ -1534,10 +1591,10 @@ function captchaPoint(value, label) {
 }
 
 function unwrapHumanTarget(page, value) {
-  if (typeof value === "string") return page.locator(value).first();
+  if (isString(value)) return page.locator(value).first();
   const raw = facadeToRaw.get(value) || value;
   if (["Locator", "ElementHandle"].includes(objectKind(raw))) return raw;
-  if (value && typeof value === "object") return captchaBounds(value, "target");
+  if (isObjectValue(value)) return captchaBounds(value, "target");
   throw new Error(
     "human target must be a selector, Locator, ElementHandle, or bounds object.",
   );
@@ -1545,14 +1602,14 @@ function unwrapHumanTarget(page, value) {
 
 async function humanTargetBox(page, value, timeout = DEFAULT_ACTION_TIMEOUT_MS, inputLikeOverride) {
   const target = unwrapHumanTarget(page, value);
-  if (typeof target?.boundingBox !== "function") {
+  if (!isCallable(untrustedField(target, "boundingBox"))) {
     return { target: null, box: target, inputLike: false };
   }
   await target.scrollIntoViewIfNeeded?.({ timeout });
   const box = await target.boundingBox({ timeout });
   if (!box) throw new Error("human target is not visible.");
   const inputLike =
-    typeof inputLikeOverride === "boolean"
+    isBoolean(inputLikeOverride)
       ? inputLikeOverride
       : await target
           .evaluate(
@@ -1587,9 +1644,11 @@ async function humanClickTarget(page, session, value, options: any = {}) {
 // shortcut would; the chord remains only for bounds-style targets that have
 // no element to select through.
 async function selectAllForClear(page, target) {
-  if (target && typeof target.evaluate === "function") {
+  if (target && isCallable(untrustedField(target, "evaluate"))) {
     await target.evaluate((element) => {
-      if (typeof element.select === "function") {
+      const isCallableValue = (value: UntrustedValue): value is UntrustedFunction =>
+        typeof value === "function";
+      if (isCallableValue(element.select)) {
         element.select();
         return;
       }
@@ -1861,11 +1920,12 @@ async function ensureBrowser(config) {
       // this same reference, so the stop never runs twice.
       endRemoteSession = providerPlan.end || null;
       try {
-        const browser = await chromium.connectOverCDP(providerPlan.cdpUrl, {
-          ...(Object.keys(providerPlan.headers || {}).length
+        const browser = await chromium.connectOverCDP(
+          providerPlan.cdpUrl,
+          Object.keys(providerPlan.headers || {}).length
             ? { headers: providerPlan.headers }
-            : {}),
-        });
+            : {},
+        );
         const existing = browser.contexts()[0];
         browserContext =
           existing ||
@@ -2030,7 +2090,7 @@ function objectKind(value) {
 
 function propertyForbidden(value, property) {
   if (
-    typeof property !== "string" ||
+    !isString(property) ||
     property.startsWith("_") ||
     FORBIDDEN_PROPERTIES.has(property)
   )
@@ -2065,7 +2125,7 @@ function isWithin(candidate, root) {
 }
 
 function assertReadableBrowserPath(candidate) {
-  if (typeof candidate !== "string" || !candidate) return;
+  if (!isString(candidate) || !candidate) return;
   let resolved;
   let root;
   try {
@@ -2083,7 +2143,7 @@ function assertReadableBrowserPath(candidate) {
 }
 
 function assertArtifactWritePath(candidate) {
-  if (typeof candidate !== "string" || !candidate) return;
+  if (!isString(candidate) || !candidate) return;
   if (!isWithin(candidate, launchConfig.artifactsDir)) {
     throw new Error(
       "Browser-created files must use artifactPath() or the screenshot() helper.",
@@ -2093,7 +2153,7 @@ function assertArtifactWritePath(candidate) {
 
 function prepareArgument(value, property, realm) {
   if (facadeToRaw.has(value)) return facadeToRaw.get(value);
-  if (typeof value === "function") {
+  if (isInvocable(value)) {
     if (BROWSER_SERIALIZED_CALLBACK_METHODS.has(property)) return value;
     return (...args) =>
       value(...args.map((item) => realm.adopt(wrap(item, realm))));
@@ -2105,7 +2165,7 @@ function prepareArgument(value, property, realm) {
   // Playwright text/name matchers into {}, which later stringify as
   // "[object Object]" inside internal selectors.
   if (utilTypes.isRegExp(value)) return new RegExp(value.source, value.flags);
-  if (value && typeof value === "object") {
+  if (isObjectValue(value)) {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,
@@ -2119,20 +2179,27 @@ function prepareArgument(value, property, realm) {
 function argumentType(value) {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
-  return typeof value;
+  if (value === undefined) return "undefined";
+  if (isString(value)) return "string";
+  if (isNumber(value)) return "number";
+  if (isBoolean(value)) return "boolean";
+  if (isCallable(value)) return "function";
+  if (isSymbolValue(value)) return "symbol";
+  if (isBigIntValue(value)) return "bigint";
+  return "object";
 }
 
 function validateMethodArguments(property, args) {
   if (property !== "getByRole" || args[1]?.name === undefined) return;
   const name = args[1].name;
-  if (typeof name === "string" || utilTypes.isRegExp(name)) return;
+  if (isString(name) || utilTypes.isRegExp(name)) return;
   throw new TypeError(
     `getByRole name must be a string or RegExp, received ${argumentType(name)}.`,
   );
 }
 
 function assertPageHandle(value, helper) {
-  if (typeof value === "string" || typeof value === "number") return;
+  if (isString(value) || isNumber(value)) return;
   throw new TypeError(
     `${helper} page handle must be a page ID string or numeric index, received ${argumentType(value)}.`,
   );
@@ -2154,7 +2221,7 @@ function validateMethodPaths(kind, property, args) {
         : args[1];
     const files = Array.isArray(supplied) ? supplied : [supplied];
     for (const file of files) {
-      if (typeof file === "string") assertReadableBrowserPath(file);
+      if (isString(file)) assertReadableBrowserPath(file);
     }
   }
   if (["Page", "Frame"].includes(kind) && property === "goto") {
@@ -2163,7 +2230,7 @@ function validateMethodPaths(kind, property, args) {
 }
 
 async function setContentCompatible(target, html, options: any = {}) {
-  if (typeof html !== "string") {
+  if (!isString(html)) {
     throw new TypeError("setContent requires an HTML string.");
   }
   const waitUntil = String(options?.waitUntil || "load");
@@ -2402,8 +2469,7 @@ function createRealm(context) {
 }
 
 function wrap(value, realm) {
-  if (!value || (typeof value !== "object" && typeof value !== "function"))
-    return value;
+  if (!isWrappableValue(value)) return value;
   if (facadeToRaw.has(value)) return value;
   if (Array.isArray(value)) return value.map((item) => wrap(item, realm));
   const cached = realm.cache.get(value);
@@ -2412,10 +2478,10 @@ function wrap(value, realm) {
   const facade = new Proxy(Object.create(null), {
     get(_target, property) {
       if (property === Symbol.toStringTag) return "PlaywrightObject";
-      if (typeof property === "symbol") return undefined;
+      if (isSymbolValue(property)) return undefined;
       if (propertyForbidden(value, property)) return undefined;
       const member = value[property];
-      if (typeof member !== "function") return wrap(member, realm);
+      if (!isCallable(member)) return wrap(member, realm);
       return realm.safeFunction((...args) => {
         const prepared = args.map((arg) =>
           prepareArgument(arg, property, realm),
@@ -2433,7 +2499,7 @@ function wrap(value, realm) {
         } else {
           result = member.apply(value, prepared);
         }
-        if (result && typeof result.then === "function") {
+        if (result && isCallable(untrustedField(result, "then"))) {
           return result.then((item) => wrap(item, realm));
         }
         return wrap(result, realm);
@@ -2536,6 +2602,37 @@ function recoveryFromError(error, session = null) {
   return redactDeep(recovery);
 }
 
+// Model-supplied credential specs, coerced field by field before any vault or
+// page interaction sees them. A record `id` is forwarded to the vault adapter
+// exactly as supplied, so it stays an opaque untrusted value.
+interface VaultListQuery {
+  text?: string;
+  category?: string;
+}
+
+interface CredentialFieldTargets {
+  usernameSelector?: string;
+  passwordSelector?: string;
+  currentPasswordSelector?: string;
+  confirmPasswordSelector?: string;
+  submitSelector?: string;
+  submit?: boolean;
+}
+
+interface CredentialRecordSelector {
+  id?: UntrustedValue;
+  username?: string;
+}
+
+interface CredentialGenerateRequest {
+  id?: string;
+  username?: string;
+  label?: string | null;
+  length?: number;
+  includeSymbols?: boolean;
+  matchMode?: ReturnType<typeof validateCredentialMatchMode>;
+}
+
 function buildCredentials(session, realm, execution) {
   const credentials = Object.create(null);
   const safeCredentialFunction = (operation) =>
@@ -2582,13 +2679,13 @@ function buildCredentials(session, realm, execution) {
   // and `{category}` to scope (e.g. "credit-card"); the vault backend applies
   // the filter and always strips secret values.
   credentials.list = safeCredentialFunction(async (query) => {
-    const payload =
-      query && typeof query === "object"
-        ? {
-            ...(query.text != null ? { text: String(query.text) } : {}),
-            ...(query.category != null ? { category: String(query.category) } : {}),
-          }
-        : {};
+    const payload: VaultListQuery = {};
+    if (isObjectValue(query)) {
+      const text = untrustedField(query, "text");
+      if (text != null) payload.text = String(text);
+      const category = untrustedField(query, "category");
+      if (category != null) payload.category = String(category);
+    }
     const response = await vaultCall(session, "list", payload);
     return response.credentials || [];
   });
@@ -2625,7 +2722,7 @@ function buildCredentials(session, realm, execution) {
   // an unlocked password-manager extension (a field an extension filled is
   // equally visible to page JS), which is the accepted posture.
   const fillFieldSpec = (options) => {
-    const fields: Record<string, any> = {};
+    const fields: CredentialFieldTargets = {};
     for (const key of [
       "usernameSelector",
       "passwordSelector",
@@ -2648,7 +2745,7 @@ function buildCredentials(session, realm, execution) {
     }
   });
   credentials.fill = safeCredentialFunction(async (options) => {
-    const record: Record<string, any> = {};
+    const record: CredentialRecordSelector = {};
     if (options?.id != null) record.id = String(options.id);
     if (options?.username != null) record.username = String(options.username);
     return redactDeep(
@@ -2661,13 +2758,13 @@ function buildCredentials(session, realm, execution) {
   });
   credentials.generateAndFill = safeCredentialFunction(async (options) => {
     assertRotationPreservesMatchMode(options);
-    const generate: Record<string, any> = {};
+    const generate: CredentialGenerateRequest = {};
     if (options?.id != null) generate.id = String(options.id);
     if (options?.username != null) generate.username = String(options.username);
     if (Object.hasOwn(options || {}, "label"))
       generate.label = options.label == null ? null : String(options.label);
     if (options?.length != null) generate.length = Number(options.length);
-    if (typeof options?.includeSymbols === "boolean")
+    if (isBoolean(options?.includeSymbols))
       generate.includeSymbols = options.includeSymbols;
     if (options?.matchMode !== undefined)
       generate.matchMode = validateCredentialMatchMode(options.matchMode);
@@ -2728,10 +2825,8 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
       const queryAll = (selector) =>
         roots.flatMap((root) => Array.from(root.querySelectorAll(selector)));
       const labelsFor = (element) => {
-        const labels = (
-          Array.from((element as HTMLInputElement).labels || []) as HTMLLabelElement[]
-        )
-          .map((label) => label.textContent || "")
+        const labels = Array.from(element.labels || [])
+          .map((label: Element) => label.textContent || "")
           .filter(Boolean);
         const root = element.getRootNode();
         const labelledBy = normalize(element.getAttribute?.("aria-labelledby"))
@@ -2842,14 +2937,19 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
       };
       const fieldMetadata = (element) => {
         if (!(element instanceof Element)) return null;
+        // SAFETY: `form` is read as an optional field — form-associated HTML
+        // controls expose their owner HTMLFormElement (or null) there, and any
+        // other candidate reads undefined, which the truthiness check treats
+        // as no owning form.
+        const ownerForm = (element as { form?: HTMLFormElement | null }).form;
         return {
           tag: element.tagName.toLowerCase(),
           type: normalize(element.getAttribute("type")) || null,
           autocomplete: normalize(element.getAttribute("autocomplete")) || null,
           name: element.getAttribute("name") || null,
           label: labelsFor(element) || element.getAttribute("aria-label") || null,
-          formIndex: (element as HTMLInputElement).form
-            ? Array.from(document.forms).indexOf((element as HTMLInputElement).form)
+          formIndex: ownerForm
+            ? Array.from(document.forms).indexOf(ownerForm)
             : null,
         };
       };
@@ -3078,7 +3178,16 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
           },
         };
       if (lightweight) {
-        const tagged: Record<string, any> = { metadata };
+        type TaggedSelectors = {
+          metadata: typeof metadata;
+          username?: string | null;
+          currentPassword?: string | null;
+          password?: string | null;
+          confirmPassword?: string | null;
+          submit?: string | null;
+          submitAmbiguous?: null;
+        };
+        const tagged: TaggedSelectors = { metadata };
         for (const [name, element] of Object.entries(selected)) {
           if (!(element instanceof Element)) {
             tagged[name] = null;
@@ -3114,10 +3223,10 @@ async function detectCredentialTargetsInFrame(frame, requestedAction, anchor = n
     } finally {
       await bundle.dispose().catch(() => {});
     }
-    const target = (name) =>
-      typeof serialized?.[name] === "string"
-        ? frame.locator(serialized[name]).first()
-        : null;
+    const target = (name) => {
+      const selector = untrustedField(serialized, name);
+      return isString(selector) ? frame.locator(selector).first() : null;
+    };
     let disposed = false;
     return {
       metadata: serialized?.metadata,
@@ -3330,10 +3439,10 @@ async function detectCredentialTargets(page, requestedAction, anchor = null) {
 // value, dispatching an `input` event so React-controlled and match-validated
 // forms observe the change.
 async function fillCredentialField(page, frame, session, target, value) {
-  const explicit = typeof target === "string" ? target.trim() : "";
+  const explicit = isString(target) ? target.trim() : "";
   const locator = explicit ? frame.locator(explicit).first() : target;
   if (!locator) throw new Error("A credential field target is required to fill.");
-  if (typeof locator.waitFor === "function") {
+  if (isCallable(untrustedField(locator, "waitFor"))) {
     await locator.waitFor({ state: "visible", timeout: DEFAULT_ACTION_TIMEOUT_MS });
   } else {
     await locator.waitForElementState?.("visible", {
@@ -3586,7 +3695,7 @@ async function performCredentialFill(
   spec,
   requestId = session.execution.requestId,
 ) {
-  const fields = spec.fields && typeof spec.fields === "object" ? spec.fields : {};
+  const fields = isObjectValue(spec.fields) ? spec.fields : {};
   const action = spec.action === "generate" ? "generate" : "fill";
   const page = await ensureSessionPage(session);
   const prepared = await prepareCredentialTargets(page, action, fields);
@@ -3597,29 +3706,30 @@ async function performCredentialFill(
     let vaultPayload;
     let generateSpec = null;
     if (action === "generate") {
-      generateSpec =
-        spec.generate && typeof spec.generate === "object" ? spec.generate : {};
+      generateSpec = isObjectValue(spec.generate) ? spec.generate : {};
       assertRotationPreservesMatchMode(generateSpec);
+      const generateId = untrustedField(generateSpec, "id");
+      const generateUsername = untrustedField(generateSpec, "username");
       vaultPayload = {
-        length: Number(generateSpec.length) || 24,
-        include_symbols: generateSpec.includeSymbols !== false,
+        length: Number(untrustedField(generateSpec, "length")) || 24,
+        include_symbols: untrustedField(generateSpec, "includeSymbols") !== false,
         pendingId: `pending_${crypto.randomUUID()}`,
       };
-      if (generateSpec.id != null) vaultPayload.id = generateSpec.id;
-      if (typeof generateSpec.username === "string")
-        vaultPayload.username = generateSpec.username;
+      if (generateId != null) vaultPayload.id = generateId;
+      if (isString(generateUsername))
+        vaultPayload.username = generateUsername;
       if (Object.hasOwn(generateSpec, "label"))
-        vaultPayload.label = generateSpec.label;
-      if (generateSpec.matchMode !== undefined)
-        vaultPayload.matchMode = validateCredentialMatchMode(
-          generateSpec.matchMode,
-        );
+        vaultPayload.label = untrustedField(generateSpec, "label");
+      const generateMatchMode = untrustedField(generateSpec, "matchMode");
+      if (generateMatchMode !== undefined)
+        vaultPayload.matchMode = validateCredentialMatchMode(generateMatchMode);
     } else {
-      const recordSpec =
-        spec.record && typeof spec.record === "object" ? spec.record : {};
+      const recordSpec = isObjectValue(spec.record) ? spec.record : {};
       vaultPayload = {};
-      if (recordSpec.id != null) vaultPayload.id = recordSpec.id;
-      if (recordSpec.username != null) vaultPayload.username = recordSpec.username;
+      const recordId = untrustedField(recordSpec, "id");
+      if (recordId != null) vaultPayload.id = recordId;
+      const recordUsername = untrustedField(recordSpec, "username");
+      if (recordUsername != null) vaultPayload.username = recordUsername;
     }
 
     let currentSecret = "";
@@ -3627,10 +3737,13 @@ async function performCredentialFill(
       action === "generate" &&
       (explicit.currentPassword || detection?.currentPassword)
     ) {
-      const currentPayload: Record<string, any> = {};
-      if (generateSpec.id != null) currentPayload.id = generateSpec.id;
-      else if (typeof generateSpec.username === "string")
-        currentPayload.username = generateSpec.username;
+      const currentPayload: CredentialRecordSelector = {};
+      const rotateId = untrustedField(generateSpec, "id");
+      if (rotateId != null) currentPayload.id = rotateId;
+      else {
+        const rotateUsername = untrustedField(generateSpec, "username");
+        if (isString(rotateUsername)) currentPayload.username = rotateUsername;
+      }
       const currentRecord = await vaultCallAtOrigin(
         session,
         origin,
@@ -3709,7 +3822,7 @@ async function performCredentialFill(
       (action === "generate" && !selectors.password
         ? detection?.confirmPassword
         : null);
-    if (usernameTarget && typeof record.username === "string" && record.username) {
+    if (usernameTarget && isString(record.username) && record.username) {
       lastLocator = await fillCredentialField(
         page,
         targetFrame,
@@ -3757,7 +3870,8 @@ async function performCredentialFill(
 
     let submitted = false;
     const submitTarget =
-      explicit.submit || (fields.submit === true ? detection?.submit : null);
+      explicit.submit ||
+      (untrustedField(fields, "submit") === true ? detection?.submit : null);
     if (submitTarget) {
       await humanClickTarget(page, session, submitTarget, {
         timeout: DEFAULT_ACTION_TIMEOUT_MS,
@@ -3795,7 +3909,7 @@ async function credentialFill(message) {
     pendingRecovery: null,
     generationStarted: false,
   };
-  const spec = message.spec && typeof message.spec === "object" ? message.spec : {};
+  const spec = isObjectValue(message.spec) ? message.spec : {};
   try {
     assertRedactionCapacity();
     await ensureBrowser(message.config);
@@ -3818,15 +3932,22 @@ async function credentialFill(message) {
     }
     const pendingCredential = recoveryFromError(error, session);
     const restartWorker = secretCapacityRequiresRestart(error);
+    const failureFields = {
+      firstEvent,
+      pages: [],
+      ok: false,
+      error: redactText(error?.message || String(error)),
+      restartWorker,
+    };
     sendResult(
-      await buildEnvelope(session, message, started, {
-        firstEvent,
-        pages: [],
-        ok: false,
-        error: redactText(error?.message || String(error)),
-        restartWorker,
-        ...(pendingCredential ? { pendingCredential } : {}),
-      }),
+      await buildEnvelope(
+        session,
+        message,
+        started,
+        pendingCredential
+          ? { ...failureFields, pendingCredential }
+          : failureFields,
+      ),
     );
   } finally {
     stampModelActivity(session);
@@ -4036,6 +4157,14 @@ async function inspectSiteAssets(page) {
   return [...unique.values()].slice(0, MAX_SITE_REQUESTS);
 }
 
+// Result-envelope entry for a screenshot the model requested.
+interface ScreenshotArtifact {
+  kind: string;
+  path: string;
+  media: string;
+  annotations?: number;
+}
+
 function buildSandbox(session, consoleMessages, execution) {
   const sandbox = Object.create(null);
   const context = vm.createContext(sandbox, {
@@ -4094,7 +4223,7 @@ function buildSandbox(session, consoleMessages, execution) {
       ([, page]) => !page.isClosed(),
     );
     const entry =
-      typeof selector === "number"
+      isNumber(selector)
         ? entries[selector]
         : entries.find(([id]) => id === String(selector));
     if (!entry)
@@ -4110,7 +4239,7 @@ function buildSandbox(session, consoleMessages, execution) {
     assertPageHandle(target, "closePage");
     const entries = [...session.pages.entries()];
     const entry =
-      typeof target === "number"
+      isNumber(target)
         ? entries[target]
         : entries.find(([id]) => id === String(target));
     if (!entry) return { closed: false };
@@ -4126,7 +4255,7 @@ function buildSandbox(session, consoleMessages, execution) {
   );
   sandbox.screenshot = realm.safeFunction(async (options) => {
     const settings =
-      typeof options === "string" ? { name: options } : options || {};
+      isString(options) ? { name: options } : options || {};
     const page = await ensureSessionPage(session);
     const kind = ["proof", "question", "debug"].includes(settings.kind)
       ? settings.kind
@@ -4147,19 +4276,23 @@ function buildSandbox(session, consoleMessages, execution) {
     }
     let file;
     try {
-      file = await captureScreenshot(page, session, requested, `${kind}.${type}`, {
-        type,
-        fullPage,
-        animations: "disabled",
-        ...(type === "jpeg" ? { quality: Number(settings.quality) || 80 } : {}),
-      });
+      const shotOptions = { type, fullPage, animations: "disabled" };
+      file = await captureScreenshot(
+        page,
+        session,
+        requested,
+        `${kind}.${type}`,
+        type === "jpeg"
+          ? { ...shotOptions, quality: Number(settings.quality) || 80 }
+          : shotOptions,
+      );
     } finally {
       if (annotateInResidentPage)
         await page
           .evaluate(removeAnnotationOverlay, ANNOTATION_OVERLAY_ID)
           .catch(() => {});
     }
-    const artifact: Record<string, any> = {
+    const artifact: ScreenshotArtifact = {
       kind,
       path: file,
       media: `MEDIA:${file}`,
@@ -4221,17 +4354,17 @@ function buildSandbox(session, consoleMessages, execution) {
   async function captureCaptcha(bounds, requested, instruction) {
     const page = await ensureSessionPage(session);
     const clip = bounds == null ? null : captchaBounds(bounds);
+    const shotOptions = {
+      type: "png",
+      animations: "disabled",
+      timeout: CAPTCHA_SCREENSHOT_TIMEOUT_MS,
+    };
     const file = await captureScreenshot(
       page,
       session,
       requested,
       requested,
-      {
-        type: "png",
-        animations: "disabled",
-        timeout: CAPTCHA_SCREENSHOT_TIMEOUT_MS,
-        ...(clip ? { clip } : {}),
-      },
+      clip ? { ...shotOptions, clip } : shotOptions,
     );
     const artifact = {
       kind: "captcha",
@@ -4305,12 +4438,11 @@ function buildSandbox(session, consoleMessages, execution) {
   });
   human.scroll = realm.safeFunction(async (deltaOrOptions, options: any = {}) => {
     const page = await ensureSessionPage(session);
-    const settings =
-      deltaOrOptions && typeof deltaOrOptions === "object"
-        ? deltaOrOptions
-        : { ...options, deltaY: deltaOrOptions };
-    const deltaX = Number(settings?.deltaX) || 0;
-    const deltaY = Number(settings?.deltaY) || 0;
+    const settings = isObjectValue(deltaOrOptions)
+      ? deltaOrOptions
+      : { ...options, deltaY: deltaOrOptions };
+    const deltaX = Number(untrustedField(settings, "deltaX")) || 0;
+    const deltaY = Number(untrustedField(settings, "deltaY")) || 0;
     if (!deltaX && !deltaY)
       throw new Error("human.scroll requires a non-zero deltaX or deltaY.");
     await scrollWheel(page.mouse, deltaX, deltaY, settings);
@@ -4384,7 +4516,7 @@ function summaryText(value, maxLength = 4_000) {
 
 async function callSummaryMethod(value, method, fallback = null) {
   try {
-    if (typeof value?.[method] !== "function") return fallback;
+    if (!isCallable(value?.[method])) return fallback;
     return await value[method]();
   } catch {
     return fallback;
@@ -4477,12 +4609,24 @@ async function summarizePlaywrightObject(raw, kind) {
   return { type: kind || "PlaywrightObject" };
 }
 
+/**
+ * JSON-safe summary of a sandbox value as `summarize` produces it: primitives
+ * pass through and every container is reduced to plain arrays and objects.
+ */
+type SummarizedValue =
+  | null
+  | string
+  | number
+  | boolean
+  | SummarizedValue[]
+  | { [key: string]: SummarizedValue };
+
 async function summarize(value, seen = new WeakSet(), depth = 0) {
   if (value === undefined) return null;
-  if (value === null || ["string", "number", "boolean"].includes(typeof value))
+  if (value === null || isString(value) || isNumber(value) || isBoolean(value))
     return redactDeep(value);
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "function")
+  if (isBigIntValue(value)) return value.toString();
+  if (isCallable(value))
     return `[Function ${value.name || "anonymous"}]`;
   const raw = facadeToRaw.get(value) || value;
   if (raw instanceof Error)
@@ -4501,7 +4645,7 @@ async function summarize(value, seen = new WeakSet(), depth = 0) {
           () => document.title || document.querySelector("title")?.textContent || "",
         )
         .catch(() => "");
-      if (typeof domTitle === "string" && domTitle) title = domTitle;
+      if (isString(domTitle) && domTitle) title = domTitle;
     } catch {
       /* page may have closed */
     }
@@ -4537,7 +4681,7 @@ async function summarize(value, seen = new WeakSet(), depth = 0) {
   if (kind !== "Object" && kind !== "") {
     return summarizePlaywrightObject(raw, kind);
   }
-  const output: Record<string, any> = {};
+  const output: Record<string, SummarizedValue> = {};
   for (const key of Object.keys(raw).slice(0, 200)) {
     try {
       output[redactText(key)] = await summarize(raw[key], seen, depth + 1);
@@ -4593,14 +4737,18 @@ const CHALLENGE_EVALUATE_RETRY =
  * lived.
  */
 const readSolvedProvidersInPage = () => {
+  const isResponseText = (value: UntrustedValue): value is string =>
+    typeof value === "string";
   const read = (name) => {
     const fields = [...document.querySelectorAll(`[name="${name}"]`)];
     if (fields.length === 0) return "";
-    const values = fields.map((element) =>
-      typeof (element as HTMLInputElement).value === "string"
-        ? (element as HTMLInputElement).value.trim()
-        : "",
-    );
+    const values = fields.map((element) => {
+      // SAFETY: challenge response fields are <input>/<textarea>, whose `value`
+      // is a string; any other element carrying the name reads undefined here
+      // and fails the guard below, counting as unfilled.
+      const fieldValue = (element as { value?: UntrustedValue }).value;
+      return isResponseText(fieldValue) ? fieldValue.trim() : "";
+    });
     // A provider only counts as solved once every response field is filled;
     // a partially populated multi-widget page is still an open challenge.
     return values.every(Boolean) ? values[0] : "";
@@ -4626,6 +4774,8 @@ const readSolvedProvidersInPage = () => {
  * nothing else, which is why cross-origin frames still cost stage 2.
  */
 const readFrameWalkInPage = (options: any) => {
+  const isTextValue = (value: UntrustedValue): value is string =>
+    typeof value === "string";
   const deadline = performance.now() + options.walkBudgetMs;
   const presentationOf = (element) => {
     const rect = element.getBoundingClientRect();
@@ -4653,7 +4803,10 @@ const readFrameWalkInPage = (options: any) => {
   );
   const iframes = elements.map((element) => ({
     name: element.getAttribute("name") || element.getAttribute("id") || "",
-    src: (element as HTMLIFrameElement).src || "",
+    // SAFETY: the selector matches only <iframe>/<frame> elements, whose `src`
+    // IDL attribute is a string; an impostor from another namespace reads
+    // undefined here, which || "" normalizes.
+    src: (element as { src?: string }).src || "",
     ...presentationOf(element),
   }));
 
@@ -4696,10 +4849,9 @@ const readFrameWalkInPage = (options: any) => {
           continue;
         }
         const innerBody = inner.body;
-        let frameText =
-          typeof innerBody?.innerText === "string"
-            ? innerBody.innerText
-            : String(innerBody?.textContent || "");
+        let frameText = isTextValue(innerBody?.innerText)
+          ? innerBody.innerText
+          : String(innerBody?.textContent || "");
         let frameTitle = inner.title || "";
         if (!frameText) {
           const srcdoc = element.getAttribute("srcdoc");
@@ -5348,10 +5500,13 @@ async function capturePuzzleScreenshot(page, session, name, clip, extra: any = {
     timeout: CAPTCHA_SCREENSHOT_TIMEOUT_MS,
   };
   try {
-    return await captureScreenshot(page, session, name, name, {
-      ...options,
-      ...(clip ? { clip } : {}),
-    });
+    return await captureScreenshot(
+      page,
+      session,
+      name,
+      name,
+      clip ? { ...options, clip } : options,
+    );
   } catch {
     return captureScreenshot(page, session, name, name, options);
   }
@@ -5543,7 +5698,7 @@ function bestGrownFromSamples(samples, options) {
   let best = null;
   for (let i = 0; i < samples.length; i += 1) {
     for (let j = i + 1; j < samples.length; j += 1) {
-      const grown = findGrowingShape(samples[i].image, samples[j].image, options);
+      const grown = findGrowingRegion(samples[i].image, samples[j].image, options);
       if (!grown) continue;
       if (!best || grown.score > best.grown.score) {
         best = { grown, sample: samples[j] };
@@ -5553,7 +5708,7 @@ function bestGrownFromSamples(samples, options) {
   return best;
 }
 
-async function locateGrowingShape(page, session, provider) {
+async function locateGrowingRegion(page, session, provider) {
   const scopes = [...candidateFrames(page, provider), page];
   for (const scope of scopes) {
     const samples = [];
@@ -5737,7 +5892,7 @@ async function runCaptchaSolveAction(
       return { ...slider, soft: true };
     }
     case "click_growing": {
-      const located = await locateGrowingShape(page, session, provider);
+      const located = await locateGrowingRegion(page, session, provider);
       if (!located?.bounds) {
         return runCaptchaSolveAction(page, session, classification, {
           action: "inspect",
@@ -6225,7 +6380,7 @@ function markChallengesForWorkerRestart(challenges) {
 function unhandledCredentialTaskError(error) {
   const detail = error?.message || String(error || "Credential operation failed.");
   const failure = new Error(`An unhandled credential operation failed: ${detail}`);
-  if (typeof error?.code === "string") failure.code = error.code;
+  if (isString(error?.code)) failure.code = error.code;
   if (error?.pendingCredential?.pendingId) {
     failure.pendingCredential = error.pendingCredential;
   }
@@ -6258,8 +6413,8 @@ async function waitForCredentialTasks(execution) {
 }
 
 function resultContainsPendingId(value, pendingId, seen = new WeakSet(), depth = 0) {
-  if (typeof value === "string") return value === pendingId;
-  if (!value || typeof value !== "object" || depth > 8 || seen.has(value)) {
+  if (isString(value)) return value === pendingId;
+  if (!isObjectValue(value) || depth > 8 || seen.has(value)) {
     return false;
   }
   seen.add(value);
@@ -6276,7 +6431,7 @@ function resultContainsPendingId(value, pendingId, seen = new WeakSet(), depth =
     );
   }
   try {
-    if (String(value.pendingId ?? "") === pendingId) return true;
+    if (String(untrustedField(value, "pendingId") ?? "") === pendingId) return true;
   } catch {
     return false;
   }
@@ -6492,17 +6647,24 @@ async function execute(message) {
       challenges = markChallengesForWorkerRestart(challenges);
     }
     await enforceArtifactQuota(session).catch(() => {});
+    const failureFields = {
+      firstEvent,
+      console: consoleMessages,
+      artifacts: session.artifacts.slice(firstArtifact),
+      challenges,
+      ok: false,
+      error: redactText(failure?.message || String(failure)),
+      restartWorker,
+    };
     sendResult(
-      await buildEnvelope(session, message, started, {
-        firstEvent,
-        console: consoleMessages,
-        artifacts: session.artifacts.slice(firstArtifact),
-        challenges,
-        ok: false,
-        error: redactText(failure?.message || String(failure)),
-        restartWorker,
-        ...(pendingCredential ? { pendingCredential } : {}),
-      }),
+      await buildEnvelope(
+        session,
+        message,
+        started,
+        pendingCredential
+          ? { ...failureFields, pendingCredential }
+          : failureFields,
+      ),
     );
   } finally {
     execution.acceptingCredentialTasks = false;
@@ -6595,8 +6757,8 @@ function ensureLiveView(preferredSessionId) {
 async function liveViewStart(message) {
   try {
     await ensureBrowser(message.config);
-    const options = message.options && typeof message.options === "object" ? message.options : {};
-    const view = ensureLiveView(options.session);
+    const options = isObjectValue(message.options) ? message.options : {};
+    const view = ensureLiveView(untrustedField(options, "session"));
     // A viewer is about to watch these pages, so nothing may stay parked: the
     // stream would show a still frame of a page whose script is switched off.
     // `parkingEnabled` keeps them awake from here on while the view runs.
@@ -6840,7 +7002,7 @@ input.on("line", (line) => {
     if (message.ok) pending.resolve(message.result);
     else {
       const error = new Error(message.error || "Browser runtime RPC failed");
-      if (typeof message.code === "string") error.code = message.code;
+      if (isString(message.code)) error.code = message.code;
       if (error.code === "VAULT_SECRET_CAPACITY") {
         redactionCapacityExceeded = true;
       }

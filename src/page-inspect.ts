@@ -145,7 +145,7 @@ export async function inspectControls(page) {
                   disabled: option.disabled,
                 }))
               : undefined;
-          return {
+          const control = {
             type,
             label: labelFor(element),
             value: password ? "[redacted]" : "value" in element ? String(element.value) : null,
@@ -157,11 +157,13 @@ export async function inspectControls(page) {
             max: element.getAttribute("max"),
             step: element.getAttribute("step"),
             disabled:
-              Boolean((element as HTMLInputElement).disabled) ||
+              ("disabled" in element && Boolean(element.disabled)) ||
               element.getAttribute("aria-disabled") === "true",
             visible: Boolean(element.getClientRects().length),
-            ...(options ? { options } : {}),
           };
+          // `options` stays absent (not present-undefined) for non-selects, as
+          // the serialized inspection result is compared and rendered as JSON.
+          return options ? { ...control, options } : control;
         });
       })
       .catch(() => []);

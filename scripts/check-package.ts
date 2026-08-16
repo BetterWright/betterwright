@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { UntrustedValue } from "../types/untrusted-value.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-package-"));
@@ -42,6 +43,10 @@ function isRoutableIpv4(literal) {
   if (a === 198 && b === 51 && octets[2] === 100) return false;
   if (a === 203 && b === 0 && octets[2] === 113) return false;
   return true;
+}
+
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
 }
 
 function npm(args, options = {}) {
@@ -91,11 +96,11 @@ try {
     manifest.main,
     ...Object.values(manifest.bin || {}),
     ...Object.values(manifest.exports || {}).flatMap((value) =>
-      typeof value === "string" ? [value] : Object.values(value || {}),
+      isString(value) ? [value] : Object.values(value || {}),
     ),
     ...(manifest.pi?.extensions || []),
   ]
-    .filter((target) => typeof target === "string" && target.endsWith(".js"))
+    .filter((target) => isString(target) && target.endsWith(".js"))
     .map((target) => target.replace(/^\.\//, ""));
   const missingTargets = [...new Set(runtimeTargets)].filter((target) => !paths.has(target));
   if (missingTargets.length) {

@@ -339,8 +339,46 @@ test("liveViewFromEnv defaults to LAN bind and disabled remote exposure", () => 
   );
 });
 
-function handoffBrowser(): Record<string, any> {
-  const calls = { start: [], stop: 0, status: 0 };
+interface HandoffBrowser {
+  calls: {
+    start: Array<{ host: string; port: number; interactive: boolean; session: string }>;
+    stop: number;
+    status: number;
+  };
+  vault: Record<string, never> | null;
+  startLiveView(options: {
+    host: string;
+    port: number;
+    interactive: boolean;
+    session: string;
+  }): Promise<{
+    ok: boolean;
+    url: string;
+    host: string;
+    port: number;
+    token: string;
+    interactive: boolean;
+    running: boolean;
+  }>;
+  stopLiveView(): Promise<{ ok: boolean; running: boolean }>;
+  liveViewStatus(): Promise<{
+    ok: boolean;
+    running: boolean;
+    url: string;
+    token: string;
+    viewers: number;
+    handoff: { active: boolean };
+  }>;
+  chatQueue?: Array<{ text: string; at: number }>;
+  posted?: Array<{ text?: string; kind?: string }>;
+  runs?: Array<{ code: string; options?: { session?: string } }>;
+  liveViewDrainChat?: () => Promise<{ ok: boolean; messages: Array<{ text: string; at: number }> }>;
+  liveViewPostChat?: (options: { text?: string; kind?: string }) => Promise<{ ok: boolean }>;
+  run?: (code: string, options?: { session?: string }) => Promise<{ ok: boolean; result: string }>;
+}
+
+function handoffBrowser(): HandoffBrowser {
+  const calls: HandoffBrowser["calls"] = { start: [], stop: 0, status: 0 };
   return {
     calls,
     vault: null,

@@ -48,6 +48,7 @@
 
 import { createRequire } from "node:module";
 import type { DownloadPolicy } from "../types/common.js";
+import type { BetterWrightOptions } from "../types/public.js";
 import {
   BetterWright,
   NetworkPolicy,
@@ -59,6 +60,7 @@ import { importOptionalPeer } from "./optional-peer.js";
 import { piImageArtifacts, piImageContent } from "./pi.js";
 import { resolveProfileName } from "./profile-name.js";
 import { mcpLoginInputSchema, mcpRunInputSchema } from "./tool-schemas.js";
+import { isString, type UntrustedValue } from "./untrusted-value.js";
 
 const require = createRequire(import.meta.url);
 
@@ -127,7 +129,7 @@ export function liveViewFromEnv(env = process.env, fileConfig = loadLiveViewConf
   // `betterwright view --set-password` also protects MCP-started views.
   const host =
     String(env.BETTERWRIGHT_LIVE_VIEW_HOST || "").trim() ||
-    (typeof fileConfig.host === "string" && fileConfig.host) ||
+    (isString(fileConfig.host) && fileConfig.host) ||
     "0.0.0.0";
   return {
     enabled: boolEnv(env, "BETTERWRIGHT_LIVE_VIEW"),
@@ -156,6 +158,12 @@ function isLoopbackHost(host) {
   );
 }
 
+// Unlike isRecord this admits arrays: a worker result's pendingCredential is
+// summarized field-by-field whenever it is any non-null object.
+function isObjectValue(value: UntrustedValue): value is UntrustedValue & object {
+  return typeof value === "object" && value !== null;
+}
+
 // The summary uses one documented vocabulary (snake_case duration_ms included)
 // but omits optional fields when empty. These results become model context, so
 // repeating nulls and empty arrays on every successful call is real token cost.
@@ -164,14 +172,13 @@ export async function contentForResult(result) {
   const files = (result.artifacts || [])
     .filter((artifact) => artifact.path && !imagePaths.has(artifact.path))
     .map((artifact) => ({ kind: artifact.kind, path: artifact.path }));
-  const pendingCredential =
-    result.pendingCredential && typeof result.pendingCredential === "object"
-      ? Object.fromEntries(
-          ["pendingId", "origin", "matchMode", "username", "label", "expiresAt"]
-            .filter((key) => Object.hasOwn(result.pendingCredential, key))
-            .map((key) => [key, result.pendingCredential[key]]),
-        )
-      : (result.pendingCredential ?? null);
+  const pendingCredential = isObjectValue(result.pendingCredential)
+    ? Object.fromEntries(
+        ["pendingId", "origin", "matchMode", "username", "label", "expiresAt"]
+          .filter((key) => Object.hasOwn(result.pendingCredential, key))
+          .map((key) => [key, result.pendingCredential[key]]),
+      )
+    : (result.pendingCredential ?? null);
   const summary: any = { ok: result.ok };
   if (result.result !== undefined) summary.result = result.result;
   if (result.error != null) summary.error = result.error;
@@ -228,6 +235,28 @@ const HANDOFF_DESCRIPTION = `Live view of this browser — the user watches or t
 Start FIRST when the user asks to watch ('live view', 'show me', 'share the browser') and keep working; also when human hands are needed — MFA/passkey, a captcha.solve()-resistant CAPTCHA, a login the vault cannot fill, a consequential step, explicit takeover. Cookies and page state carry both ways; never claim a live view is running without this tool's URL.
 action 'start' returns the URL — relay it VERBATIM, never log or share it elsewhere; for a handoff poll 'status' until done, then re-snapshot. Only watching: keep working — the view follows your session. 'stop' ends the view — never one the user asked for while they may still watch.
 Viewer chat is appended to browser tool results (userChat in 'status') — fresh user instructions. Browser-call notes mirror there — write them for the user. Open comparison pages via openPage() — each is a live thumbnail tab in the viewer.`;
+
+// startLiveView options as assembled from env/config for the handoff tool.
+// The expose/password values are deployer strings still unvalidated here
+// (startLiveView rejects bad ones), so this is looser than the public
+// LiveViewOptions contract.
+interface HandoffStartOptions {
+  host: string;
+  port: number;
+  interactive: boolean;
+  session: string;
+  publicHost?: string;
+  expose?: string;
+  password?: string;
+  passwordHash?: string;
+}
+
+// Per-call options for BetterWright.run built from `browser` tool arguments.
+interface BrowserRunToolOptions {
+  session: string;
+  note: string | undefined;
+  approvedDownloads?: boolean;
+}
 
 const HANDOFF_INPUT_SCHEMA = {
   type: "object",
@@ -374,16 +403,17 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
           "BETTERWRIGHT_LIVE_VIEW_EXPOSE=local for loopback-only).",
       );
     }
-    const view = await browser.startLiveView({
+    const startOptions: HandoffStartOptions = {
       host: liveView.host,
       port: liveView.port,
-      ...(liveView.publicHost ? { publicHost: liveView.publicHost } : {}),
-      ...(liveView.expose ? { expose: liveView.expose } : {}),
-      ...(liveView.password ? { password: liveView.password } : {}),
-      ...(liveView.passwordHash ? { passwordHash: liveView.passwordHash } : {}),
       interactive: args.interactive !== false,
       session: String(args.session || "default"),
-    });
+    };
+    if (liveView.publicHost) startOptions.publicHost = liveView.publicHost;
+    if (liveView.expose) startOptions.expose = liveView.expose;
+    if (liveView.password) startOptions.password = liveView.password;
+    if (liveView.passwordHash) startOptions.passwordHash = liveView.passwordHash;
+    const view = await browser.startLiveView(startOptions);
     if (!view.ok || !view.url) throw new Error(view.error || "The live view failed to start.");
     liveViewActive = true;
     const text =
@@ -420,7 +450,7 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
         if (name !== "browser" && name !== "browser_download") {
           throw new Error(`Unknown tool: ${name}`);
         }
-        const options: Record<string, any> = {
+        const options: BrowserRunToolOptions = {
           session: String(args.session || "default"),
           note: String(args.note || "") || undefined,
         };
@@ -464,26 +494,26 @@ export async function runMcpServer(env = process.env, options: any = {}) {
   // One persistent browser for the life of the server, so pages and logins
   // survive across tool calls the way an agent expects. The built-in encrypted
   // vault enables `browser_login`; an embedding may override or disable it.
-  const browser = new BetterWright({
+  const browserOptions: BetterWrightOptions = {
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
-    // A named profile is a separate identity, so two MCP servers sharing one
-    // home (a "social" one holding the logins, a "research" one that only
-    // reads) both stay signed in instead of one getting a signed-out
-    // ephemeral profile. Unset keeps the single default profile.
-    ...(profileFromEnv(env) ? { profile: profileFromEnv(env) } : {}),
-    // Identity must match egress geography (see docs/getting-started.md):
-    // a headless server whose exit IP sits in another country needs these
-    // pinned or geo-sensitive sites challenge every run.
-    ...(String(env.BETTERWRIGHT_TIMEZONE || "").trim()
-      ? { timezone: String(env.BETTERWRIGHT_TIMEZONE).trim() }
-      : {}),
-    ...(String(env.BETTERWRIGHT_LOCALE || "").trim()
-      ? { locale: String(env.BETTERWRIGHT_LOCALE).trim() }
-      : {}),
-    ...(Object.hasOwn(options, "vault") ? { vault: options.vault } : {}),
-  });
+  };
+  // A named profile is a separate identity, so two MCP servers sharing one
+  // home (a "social" one holding the logins, a "research" one that only
+  // reads) both stay signed in instead of one getting a signed-out
+  // ephemeral profile. Unset keeps the single default profile.
+  const profile = profileFromEnv(env);
+  if (profile) browserOptions.profile = profile;
+  // Identity must match egress geography (see docs/getting-started.md):
+  // a headless server whose exit IP sits in another country needs these
+  // pinned or geo-sensitive sites challenge every run.
+  const timezone = String(env.BETTERWRIGHT_TIMEZONE || "").trim();
+  if (timezone) browserOptions.timezone = timezone;
+  const locale = String(env.BETTERWRIGHT_LOCALE || "").trim();
+  if (locale) browserOptions.locale = locale;
+  if (Object.hasOwn(options, "vault")) browserOptions.vault = options.vault;
+  const browser = new BetterWright(browserOptions);
 
   const server = new Server(
     { name: "betterwright", version: require("../../package.json").version },

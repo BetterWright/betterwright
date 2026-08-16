@@ -42,7 +42,7 @@ export {
   parseTileIndexes,
   pickBestTileSet,
   pickDragFitPair,
-  findGrowingShape,
+  findGrowingRegion,
   extractDarkBlobs,
   solveTimeoutMs,
   unionClip,

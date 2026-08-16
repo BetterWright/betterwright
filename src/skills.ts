@@ -24,6 +24,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isString } from "./untrusted-value.js";
+
 const PACKAGED_SKILLS_DIR = fileURLToPath(
   new URL("../../skills/", import.meta.url),
 );
@@ -58,7 +60,7 @@ function parseStringArray(raw, field) {
   } catch {
     throw new Error(`Skill frontmatter field ${field} must be a JSON-style array.`);
   }
-  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+  if (!Array.isArray(parsed) || parsed.some((item) => !isString(item))) {
     throw new Error(`Skill frontmatter field ${field} must be an array of strings.`);
   }
   return parsed.map((item) => item.trim()).filter(Boolean);

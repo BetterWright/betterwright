@@ -22,15 +22,30 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import {
+  isCallable,
+  isRecord,
+  isString,
+  type UntrustedValue,
+  untrustedField,
+} from "./untrusted-value.js";
 
 const CDP_URL_ENV = "BETTERWRIGHT_CDP_URL";
+
+// The worker's redaction registrar. Exported entrypoints double-check it at
+// runtime because they are reachable from untyped call sites.
+type SecretTracker = (secret: string) => void;
+
+function isSecretTracker(value: UntrustedValue): value is SecretTracker {
+  return isCallable(value);
+}
 
 // Register `value` and its URL-encoded form with the worker's redaction set,
 // so an apiKey shows as [redacted] whether it appeared raw in a query string
 // or inside a serialized URL.
 function registerRedaction(trackSecret, value) {
   const secret = String(value || "");
-  if (!secret || typeof trackSecret !== "function") return;
+  if (!secret || !isSecretTracker(trackSecret)) return;
   for (const candidate of new Set([secret, encodeURIComponent(secret)])) {
     try {
       trackSecret(candidate);
@@ -46,7 +61,9 @@ export function describeCdpUrl(value) {
     const url = new URL(String(value));
     if (url.username) url.username = "***";
     if (url.password) url.password = "***";
-    for (const key of [...url.searchParams.keys()]) {
+    // Snapshot the keys: `set` mutates the parameter list mid-iteration when a
+    // key is duplicated (it drops the later occurrences).
+    for (const key of Array.from(url.searchParams.keys())) {
       if (/key|token|auth|secret|password/i.test(key)) {
         url.searchParams.set(key, "***");
       }
@@ -89,19 +106,27 @@ function isLoopbackHost(hostname) {
   return host.startsWith("127.") || host === "[::1]";
 }
 
-// fetchJson injectable so tests never touch the network.
+// Test seam: a fetchJson hook stands in for global fetch, receiving the same
+// request and resolving with the parsed body, so tests never touch the network.
+type FetchJsonHook = (
+  url: string,
+  request: { method: string; headers: Record<string, string>; body?: UntrustedValue },
+) => Promise<UntrustedValue>;
+
+function isFetchJsonHook(value: UntrustedValue): value is FetchJsonHook {
+  return isCallable(value);
+}
+
 async function httpJson(fetchJson, method, url, { headers, body }) {
-  if (typeof fetchJson === "function") {
+  if (isFetchJsonHook(fetchJson)) {
     return fetchJson(url, { method, headers, body });
   }
-  const response = await fetch(url, {
-    method,
-    headers: {
-      ...(body !== undefined ? { "content-type": "application/json" } : {}),
-      ...headers,
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
+  const requestHeaders: Record<string, string> = {};
+  if (body !== undefined) requestHeaders["content-type"] = "application/json";
+  Object.assign(requestHeaders, headers);
+  const init: RequestInit = { method, headers: requestHeaders };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const response = await fetch(url, init);
   const text = await response.text();
   let data = null;
   try {
@@ -111,9 +136,9 @@ async function httpJson(fetchJson, method, url, { headers, body }) {
   }
   if (!response.ok) {
     const detail =
-      (typeof data?.error === "string" && data.error) ||
-      (typeof data?.message === "string" && data.message) ||
-      (typeof data?.error?.message === "string" && data.error.message) ||
+      (isString(data?.error) && data.error) ||
+      (isString(data?.message) && data.message) ||
+      (isString(data?.error?.message) && data.error.message) ||
       text.slice(0, 200);
     throw new Error(
       `Cloud browser API ${method} ${url} failed with HTTP ${response.status}` +
@@ -332,16 +357,16 @@ export function resolveBrowserProvider(provider, { env = process.env } = {}) {
       ? resolveBrowserProvider({ cdpUrl: shorthand }, { env })
       : null;
   }
-  if (typeof provider === "string") provider = { provider };
-  if (typeof provider !== "object" || Array.isArray(provider)) {
+  if (isString(provider)) provider = { provider };
+  if (!isRecord(provider)) {
     throw new TypeError(
       "provider must be an object: { executablePath }, { cdpUrl }, or " +
         "{ provider: <name>, apiKey? }.",
     );
   }
-  const executablePath = String(provider.executablePath || "").trim();
-  const cdpUrl = String(provider.cdpUrl || "").trim();
-  const name = String(provider.provider || "").trim().toLowerCase();
+  const executablePath = String(untrustedField(provider, "executablePath") || "").trim();
+  const cdpUrl = String(untrustedField(provider, "cdpUrl") || "").trim();
+  const name = String(untrustedField(provider, "provider") || "").trim().toLowerCase();
   const kinds = [executablePath, cdpUrl, name].filter(Boolean).length;
   if (kinds !== 1) {
     throw new TypeError(
@@ -408,7 +433,7 @@ function resolveExplicitCdpProvider(cdpUrl, provider) {
   for (const [key, value] of Object.entries(provider.headers || {})) {
     const header = String(key || "").trim();
     if (!header) continue;
-    if (typeof value !== "string") {
+    if (!isString(value)) {
       throw new TypeError(`provider.headers[${JSON.stringify(header)}] must be a string.`);
     }
     headers[header] = value;
@@ -426,6 +451,13 @@ function resolveExplicitCdpProvider(cdpUrl, provider) {
   };
 }
 
+// Session options pass to the provider verbatim (including arrays — the
+// descriptor's request decides what they mean), so unlike `isRecord` this
+// only rules out non-objects.
+function isSessionOptionsObject(value: UntrustedValue): value is object {
+  return typeof value === "object" && value !== null;
+}
+
 function resolveNamedProvider(descriptor, name, provider, env) {
   const apiKey =
     takeString(provider.apiKey) || takeString(env?.[descriptor.keyEnv]);
@@ -435,10 +467,9 @@ function resolveNamedProvider(descriptor, name, provider, env) {
         `provider.apiKey or set ${descriptor.keyEnv}.`,
     );
   }
-  const sessionOptions =
-    provider.sessionOptions && typeof provider.sessionOptions === "object"
-      ? provider.sessionOptions
-      : {};
+  const sessionOptions = isSessionOptionsObject(provider.sessionOptions)
+    ? provider.sessionOptions
+    : {};
   if (descriptor.request) {
     // Deferred: the session is minted when the browser actually launches, so
     // a failed client construction never leaves a billed session behind.
@@ -468,11 +499,19 @@ function resolveNamedProvider(descriptor, name, provider, env) {
   };
 }
 
+// A descriptor's request.body is either a literal payload or a builder fed
+// the caller's sessionOptions.
+function isSessionBodyBuilder(
+  value: UntrustedValue,
+): value is (sessionOptions: UntrustedValue) => UntrustedValue {
+  return isCallable(value);
+}
+
 async function createNamedSession(descriptor, name, apiKey, sessionOptions, fetchJson) {
   const request = descriptor.request;
   const headers = descriptor.headers ? descriptor.headers(apiKey) : {};
   const body =
-    typeof request.body === "function" ? request.body(sessionOptions) : request.body;
+    isSessionBodyBuilder(request.body) ? request.body(sessionOptions) : request.body;
   const data = await httpJson(fetchJson, request.method, request.url, {
     headers,
     body,

@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { createGuardProxy } from "../../dist/src/guard-proxy.js";
 import { createGuardUrl } from "../../dist/src/guard-url.js";
+import { isCallable } from "../../dist/src/untrusted-value.js";
 
 const IPV6_ONE = "2001:db8:0:0:0:0:0:1";
 const IPV6_TWO = "2001:db8:0:0:0:0:0:2";
@@ -121,8 +122,23 @@ async function httpConnect(proxyPort, authority) {
   }
 }
 
+// The transport seam the tests stub out: name resolution, dialing, backoff
+// pacing, and the tuning knobs the proxy reads from the same object. Return
+// values of `delay` are ignored by the proxy.
+interface FakeTransport {
+  lookup?: (host: string) => Promise<Array<{ address: string; family: number }>>;
+  connect?: (options: { host: string; port: number }) => Promise<PassThrough>;
+  delay?: (milliseconds: number) => Promise<void>;
+  now?: () => number;
+  familyUnreachableTtlMs?: number;
+  failureBackoffBaseMs?: number;
+  failureBackoffMaxMs?: number;
+  failureCooldownMs?: number;
+  maxFailureTargets?: number;
+}
+
 function proxyOptions(
-  transport: Record<string, any> = {},
+  transport: FakeTransport = {},
   guardUrl: (url?: any, details?: any) => Promise<any> = async () => ({ allowed: true }),
 ) {
   return {
@@ -142,7 +158,7 @@ async function waitUntil(predicate) {
 
 function timedDelay(delays, paddingMs = 25) {
   return (milliseconds) =>
-    new Promise((resolve) => {
+    new Promise<void>((resolve) => {
       delays.push(milliseconds);
       setTimeout(resolve, milliseconds + paddingMs);
     });
@@ -211,6 +227,8 @@ test("plain HTTP proxy requests are full-URL guarded and rewritten for the origi
   });
   target.listen({ host: "127.0.0.1", port: 0 });
   await once(target, "listening");
+  // SAFETY: `listening` was awaited on a TCP listen, so `address()` returns an
+  // AddressInfo — not the null of an unbound server or a pipe-name string.
   const targetPort = (target.address() as AddressInfo).port;
   const calls = [];
   const proxy = createGuardProxy(
@@ -410,7 +428,9 @@ test("guard failures use bounded exponential delay without bypassing policy", as
           dialCount += 1;
           throw codedError("ECONNREFUSED");
         },
-        delay: async (milliseconds) => delays.push(milliseconds),
+        delay: async (milliseconds) => {
+          delays.push(milliseconds);
+        },
         now: () => 1_000,
         failureBackoffBaseMs: 5,
         failureBackoffMaxMs: 20,
@@ -476,7 +496,7 @@ test("an expired cooldown admits only one half-open DNS probe", async () => {
 
     clock += 20;
     const probe = socksConnect(port, "probe.test");
-    await waitUntil(() => typeof rejectProbe === "function");
+    await waitUntil(() => isCallable(rejectProbe));
     denyNextTarget = true;
     assert.equal(await socksConnect(port, "probe.test"), 2);
 
@@ -553,7 +573,9 @@ test("target failure history is bounded and cleared by close", async () => {
       connect: async () => {
         throw codedError("ECONNREFUSED");
       },
-      delay: async (milliseconds) => delays.push(milliseconds),
+      delay: async (milliseconds) => {
+        delays.push(milliseconds);
+      },
       now: () => clock,
       failureBackoffBaseMs: 5,
       failureBackoffMaxMs: 100,
@@ -594,7 +616,9 @@ test("a successful connection resets target failure backoff", async () => {
         if (attempt === 2) return new PassThrough();
         throw codedError("ECONNREFUSED");
       },
-      delay: async (milliseconds) => delays.push(milliseconds),
+      delay: async (milliseconds) => {
+        delays.push(milliseconds);
+      },
       now: () => clock,
       failureBackoffBaseMs: 5,
       failureBackoffMaxMs: 100,
@@ -660,6 +684,8 @@ test("the default transport still completes a SOCKS5 connection", async () => {
   const proxy = createGuardProxy(proxyOptions());
   try {
     const proxyPort = await proxy.ensure();
+    // SAFETY: `listening` was awaited on a TCP listen, so `address()` returns
+    // an AddressInfo — not the null of an unbound server or a pipe-name string.
     const upstreamPort = (upstream.address() as AddressInfo).port;
     assert.equal(await socksConnect(proxyPort, "127.0.0.1", upstreamPort), 0);
     const [socket] = await accepted;
@@ -693,7 +719,7 @@ test("SOCKS5 replies preserve policy, reachability, and address errors", async (
 
   for (const item of cases) {
     await t.test(item.name, async () => {
-      const transport: Record<string, any> = {
+      const transport: FakeTransport = {
         delay: async () => {},
         ...item.transport,
       };
@@ -742,7 +768,7 @@ function cachedGuardProxy(
   return { proxy, rpcs, urls: () => rpcs.map((payload) => payload.url) };
 }
 
-function addressTransport(resolve, extra: Record<string, any> = {}) {
+function addressTransport(resolve, extra: FakeTransport = {}) {
   const dialed = [];
   return {
     dialed,

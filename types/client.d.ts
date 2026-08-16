@@ -20,11 +20,12 @@ import type {
 } from "./public.js";
 import type { CredentialVault } from "./common.js";
 import type { NetworkPolicy } from "./policy.js";
+import type { UntrustedValue } from "./untrusted-value.js";
 import type { VaultMatchMode } from "./vault.js";
 
 export class BrowserError extends Error {}
 
-export function validateCredentialMatchMode(value: unknown): VaultMatchMode;
+export function validateCredentialMatchMode(value: UntrustedValue): VaultMatchMode;
 
 export class BetterWright {
   constructor(options?: BetterWrightOptions);
@@ -58,7 +59,12 @@ export class BetterWright {
    */
   parkBackgroundPages: boolean | undefined;
   defaultTimeout: number;
-  liveView: LiveViewOptions;
+  /**
+   * Live-view defaults: constructor built-ins merged with `<home>/config.json`
+   * and constructor options. `expose` is a plain string here because config
+   * files are hand-editable; presets are validated when the viewer starts.
+   */
+  liveView: Omit<LiveViewOptions, "expose"> & { expose?: string };
 
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;
   /**

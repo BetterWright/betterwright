@@ -11,6 +11,8 @@
 
 import dns from "node:dns/promises";
 import net from "node:net";
+import type { Duplex } from "node:stream";
+import { isCallable, type UntrustedValue } from "./untrusted-value.js";
 
 const SOCKS_HANDSHAKE_TIMEOUT_MS = 15_000;
 const SOCKS_CONNECT_TIMEOUT_MS = 10_000;
@@ -178,6 +180,12 @@ const SOCKS5_AUTH_NONE = 0;
 const SOCKS5_AUTH_USERPASS = 2;
 const SOCKS5_MAX_CREDENTIAL_BYTES = 255;
 
+/**
+ * Parses one upstream-proxy reply out of the bytes buffered so far: null (or
+ * undefined) while more bytes are needed, the reply value once complete.
+ */
+type UpstreamReplyParser = (buffer: Buffer) => number | string | null | undefined;
+
 /** SOCKS5 method greeting: offer user/password only when we have credentials. */
 function socks5Greeting(wantsAuth: boolean): Buffer {
   return wantsAuth
@@ -199,7 +207,7 @@ function socks5StatusByte(buffer: Buffer): number | null {
 async function negotiateSocks5Auth(
   socket,
   upstream,
-  readReply: (until: (buffer: Buffer) => unknown) => Promise<any>,
+  readReply: (until: UpstreamReplyParser) => Promise<any>,
   fail: (error: Error) => never,
   label: string,
 ): Promise<void> {
@@ -385,6 +393,36 @@ function waitFor(delayMs) {
   });
 }
 
+// The `transport` seam: tests replace DNS, dialing, and the clock with fakes.
+// A hook is either absent (production path) or a function honoring the
+// production signature — the guards below encode that contract, and anything
+// non-callable falls back to the production transport.
+type TransportLookup = (
+  host: string,
+  options: { all: true; verbatim: boolean },
+) => Promise<Array<{ address: string; family: number }>>;
+type TransportDial = (target: {
+  host: string;
+  port: number;
+  family: number;
+}) => Duplex | Promise<Duplex>;
+
+function isLookupHook(value: UntrustedValue): value is TransportLookup {
+  return isCallable(value);
+}
+
+function isDialHook(value: UntrustedValue): value is TransportDial {
+  return isCallable(value);
+}
+
+function isClockHook(value: UntrustedValue): value is () => number {
+  return isCallable(value);
+}
+
+function isDelayHook(value: UntrustedValue): value is (delayMs: number) => Promise<void> {
+  return isCallable(value);
+}
+
 export function createGuardProxy(
   { guardUrl, executeId, transport = {}, upstreamProxy = null }: any,
 ) {
@@ -402,11 +440,10 @@ export function createGuardProxy(
   let stateGeneration = 0;
   // Hooks make transport failures deterministic in tests without depending on
   // the host's IPv6 configuration. Production uses Node's DNS, TCP, and clock.
-  const lookup =
-    typeof transport.lookup === "function" ? transport.lookup : dns.lookup;
-  const dial = typeof transport.connect === "function" ? transport.connect : null;
-  const now = typeof transport.now === "function" ? transport.now : Date.now;
-  const delay = typeof transport.delay === "function" ? transport.delay : waitFor;
+  const lookup: TransportLookup = isLookupHook(transport.lookup) ? transport.lookup : dns.lookup;
+  const dial = isDialHook(transport.connect) ? transport.connect : null;
+  const now = isClockHook(transport.now) ? transport.now : Date.now;
+  const delay = isDelayHook(transport.delay) ? transport.delay : waitFor;
   const familyUnreachableTtlMs = positiveInteger(
     transport.familyUnreachableTtlMs,
     FAMILY_UNREACHABLE_TTL_MS,
@@ -737,7 +774,7 @@ export function createGuardProxy(
   // Tag and throw: every upstream failure reaches the browser as the same
   // guard-proxy error class regardless of which handshake step produced it.
   const failUpstream = (error: Error): never => {
-    (error as any).code = "BW_PROXY_UPSTREAM";
+    error.code = "BW_PROXY_UPSTREAM";
     throw error;
   };
 
@@ -1079,6 +1116,8 @@ export function createGuardProxy(
       server.once("error", reject);
       server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
         server.off("error", reject);
+        // SAFETY: inside the listen callback of a TCP listener, address() is
+        // an AddressInfo object — the string form exists only for pipe servers.
         resolve((server.address() as { port: number }).port);
       });
     });

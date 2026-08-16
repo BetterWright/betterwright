@@ -21,6 +21,7 @@
 import path from "node:path";
 
 import { PROFILE_LOCK_SUFFIX } from "./profile-lock.js";
+import { isString, type UntrustedValue } from "./untrusted-value.js";
 
 // Names Windows reserves for character devices regardless of extension. A
 // profile directory named for one is unusable there, so reject them on every
@@ -43,14 +44,22 @@ const PROFILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const MAX_PROFILE_NAME_LENGTH = 64;
 
 /** The label a message uses for a profile: the name, or "default". */
-export function profileLabel(name?: unknown) {
-  const resolved = typeof name === "string" && name ? name : null;
+export function profileLabel(name?: UntrustedValue) {
+  const resolved = isString(name) && name ? name : null;
   return resolved ? `"${resolved}"` : "default";
 }
 
 /** A profile name that collides with a Windows reserved device name. */
 export function isReservedProfileName(name: string) {
   return RESERVED_NAMES.has(String(name).toLowerCase());
+}
+
+function assertProfileNameString(name: UntrustedValue): asserts name is string {
+  if (typeof name !== "string") {
+    throw new TypeError(
+      `profile must be a string (received ${typeof name}); omit it for the default profile.`,
+    );
+  }
 }
 
 /**
@@ -68,13 +77,9 @@ export function isReservedProfileName(name: string) {
  * (default macOS, Windows). BetterWright does not fold case itself, because
  * doing so would rename directories out from under an existing install.
  */
-export function resolveProfileName(name: unknown): string | null {
+export function resolveProfileName(name: UntrustedValue): string | null {
   if (name === undefined || name === null) return null;
-  if (typeof name !== "string") {
-    throw new TypeError(
-      `profile must be a string (received ${typeof name}); omit it for the default profile.`,
-    );
-  }
+  assertProfileNameString(name);
   const trimmed = name.trim();
   if (!trimmed) {
     throw new TypeError("profile must not be empty; omit it for the default profile.");
@@ -130,7 +135,7 @@ export function resolveProfileName(name: unknown): string | null {
  *
  * Throws `TypeError` on an invalid name (see {@link resolveProfileName}).
  */
-export function profileDirFor(root: string, name?: unknown): string {
+export function profileDirFor(root: string, name?: UntrustedValue): string {
   const resolved = resolveProfileName(name);
   if (resolved === null) return path.join(root, "profile");
   const parent = path.join(root, "profiles");
@@ -150,7 +155,7 @@ export function profileDirFor(root: string, name?: unknown): string {
  * their historical names) and `-<name>` for a named one. Safe as a filename
  * component for exactly the reasons the name itself is.
  */
-export function profileFileSuffix(name?: unknown): string {
+export function profileFileSuffix(name?: UntrustedValue): string {
   const resolved = resolveProfileName(name);
   return resolved === null ? "" : `-${resolved}`;
 }

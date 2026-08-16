@@ -20,6 +20,15 @@ import { VAULT_MATCH_MODES } from "./vault.js";
 // Selector fields state only their target; the "CSS or current aria-ref=eN"
 // convention lives once in each surface's tool description, not per field.
 
+/** One parameter's JSON-Schema fragment, the subset these builders emit. */
+interface ToolPropertySchema {
+  type: string;
+  description?: string;
+  enum?: string[];
+  default?: string | boolean;
+  minLength?: number;
+}
+
 export const SESSION_PROPERTY_DESCRIPTION =
   "Independent pages/state; reuse a name across calls.";
 
@@ -108,7 +117,7 @@ export function mcpRunInputSchema() {
 }
 
 export function mcpLoginInputSchema() {
-  const properties: Record<string, any> = loginToolProperties();
+  const properties: Record<string, ToolPropertySchema> = loginToolProperties();
   properties.submit = { ...properties.submit, default: false };
   properties.generate = { ...properties.generate, default: false };
   properties.session = sessionProperty();
@@ -120,7 +129,7 @@ export function mcpLoginInputSchema() {
 // and rejects empty required inputs.
 
 export function piBrowserToolParameters() {
-  const properties: Record<string, any> = browserToolProperties();
+  const properties: Record<string, ToolPropertySchema> = browserToolProperties();
   properties.code = { ...properties.code, minLength: 1 };
   return {
     type: "object",
@@ -131,7 +140,7 @@ export function piBrowserToolParameters() {
 }
 
 export function piLoginToolParameters() {
-  const properties: Record<string, any> = loginToolProperties();
+  const properties: Record<string, ToolPropertySchema> = loginToolProperties();
   properties.passwordSelector = { ...properties.passwordSelector, minLength: 1 };
   return { type: "object", additionalProperties: false, properties };
 }
