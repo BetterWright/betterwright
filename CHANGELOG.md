@@ -9,6 +9,13 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.6] - 2026-08-16
+
+Releases the 1.8.5 content below. The 1.8.5 tag was cut before its squash merge
+and pointed at a commit that is not an ancestor of `main`, so it could not pass
+the publish workflow's provenance check; the release ships as 1.8.6. There are
+no code changes from 1.8.5.
+
 ## [1.8.5] - 2026-08-16
 
 A browser-platform release. The managed BetterChromium fork no longer
