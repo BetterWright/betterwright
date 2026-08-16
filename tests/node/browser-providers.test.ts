@@ -72,6 +72,15 @@ test("cdpUrl must be a ws(s) endpoint; diagnostics mask credentials", () => {
   );
 });
 
+test("plaintext ws:// is loopback-only; a remote endpoint must use wss://", () => {
+  for (const host of ["ws://127.0.0.1:9222/devtools/x", "ws://localhost:9222", "ws://[::1]:9222"]) {
+    assert.equal(resolveBrowserProvider({ cdpUrl: host }).plan.kind, "remote");
+  }
+  for (const host of ["ws://browser.example.com", "ws://192.168.1.20:9222", "ws://10.0.0.5"]) {
+    assert.throws(() => resolveBrowserProvider({ cdpUrl: host }), /wss:\/\/ for a remote endpoint/);
+  }
+});
+
 test("custom headers ride the CDP connect call", () => {
   const resolved = resolveBrowserProvider({
     cdpUrl: "wss://browser.example.com",

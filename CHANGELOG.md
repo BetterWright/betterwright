@@ -38,6 +38,17 @@ bringing your own local binary or a cloud CDP browser.
   local Chromium binary, `{ cdpUrl }` for a CDP endpoint, or
   `{ provider: "browserbase" | "browser-use" | "kernel" | ... }` for a cloud
   browser. See docs/browser-providers.md.
+- Published BetterChromium `151.0.7922.108-r3` with the rebuilt Linux archive
+  (the honest-identity fork above) and pinned setup/update to it. The macOS and
+  Windows artifacts are unchanged from r2.
+
+### Security
+
+- A remote CDP provider must connect over `wss://`; plaintext `ws://` is now
+  accepted only on loopback (`localhost`, `127.0.0.1`, `::1`), where the
+  traffic never leaves the host.
+- A session-minting cloud provider is released if the browser fails to connect
+  or open a context, so a failed launch never leaves a metered session running.
 
 ## [1.8.3] - 2026-08-13
 

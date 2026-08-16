@@ -60,6 +60,10 @@ betterwright run … --browser wss://browser.example.com/devtools/abc
 Anything else that speaks plain CDP — self-hosted browserless, Lightpanda, a
 tunneled `chrome --remote-debugging-port` — works through `{ cdpUrl }`.
 
+Because CDP exposes the whole browser, a remote endpoint must use `wss://`;
+plaintext `ws://` is accepted only for loopback (`localhost`, `127.0.0.1`,
+`::1`), where the traffic never leaves the host.
+
 ## What changes with a remote browser
 
 A remote browser runs on the provider's side of the WebSocket:

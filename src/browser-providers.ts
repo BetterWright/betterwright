@@ -69,7 +69,24 @@ function wssUrl(value, source) {
       `${source} must be a ws:// or wss:// URL; received ${JSON.stringify(url.protocol)}.`,
     );
   }
+  // Plaintext CDP exposes browser state, cookies, page data, and endpoint
+  // credentials to anyone on the path. It is only acceptable on loopback,
+  // where the traffic never leaves the host; a remote endpoint must encrypt.
+  if (url.protocol === "ws:" && !isLoopbackHost(url.hostname)) {
+    throw new TypeError(
+      `${source} must use wss:// for a remote endpoint; plaintext ws:// is ` +
+        "only allowed on loopback (localhost/127.0.0.1/::1).",
+    );
+  }
   return url;
+}
+
+function isLoopbackHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  // WHATWG URL parses IPv4 to canonical dotted form and wraps IPv6 in
+  // brackets, so these cover 127.x and the ::1 unspecified/loopback forms.
+  return host.startsWith("127.") || host === "[::1]";
 }
 
 // fetchJson injectable so tests never touch the network.

@@ -1839,19 +1839,30 @@ async function ensureBrowser(config) {
 
     if (remoteCdp) {
       const { chromium } = await loadPlaywrightDriver();
-      const browser = await chromium.connectOverCDP(providerPlan.cdpUrl, {
-        ...(Object.keys(providerPlan.headers || {}).length
-          ? { headers: providerPlan.headers }
-          : {}),
-      });
+      // A session-minting provider's stop call is armed before connect so a
+      // rejection from connectOverCDP or newContext still releases the metered
+      // session. On success the context's "close" handler disarms and consumes
+      // this same reference, so the stop never runs twice.
       endRemoteSession = providerPlan.end || null;
-      const existing = browser.contexts()[0];
-      browserContext =
-        existing ||
-        (await browser.newContext({
-          acceptDownloads: true,
-          serviceWorkers: "allow",
-        }));
+      try {
+        const browser = await chromium.connectOverCDP(providerPlan.cdpUrl, {
+          ...(Object.keys(providerPlan.headers || {}).length
+            ? { headers: providerPlan.headers }
+            : {}),
+        });
+        const existing = browser.contexts()[0];
+        browserContext =
+          existing ||
+          (await browser.newContext({
+            acceptDownloads: true,
+            serviceWorkers: "allow",
+          }));
+      } catch (error) {
+        const end = endRemoteSession;
+        endRemoteSession = null;
+        if (end) await end().catch(() => {});
+        throw error;
+      }
       useSetContentCompatibility = true;
     } else {
       // The managed fork (or an explicit provider binary) launches under
