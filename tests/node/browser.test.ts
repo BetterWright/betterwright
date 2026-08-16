@@ -157,11 +157,15 @@ test("the selected managed browser keeps WebGL available with a coherent identit
     for (const [index, actual] of result.result.pixels.entries()) {
       assert.ok(Math.abs(actual - [64, 128, 191, 255][index]) <= 1);
     }
-    if (browserStatus.browser === "chromium-fork") {
-      assert.equal(result.result.vendor, "Google Inc. (Apple)");
-      assert.match(result.result.renderer, /ANGLE Metal Renderer: Apple M4 Pro/);
-      assert.equal(result.result.platform, "MacIntel");
-      assert.match(result.result.userAgent, /Macintosh/);
+    if (browserStatus.browser === "chromium-fork" && process.platform === "linux") {
+      // Honest-Linux fork: no Mac masquerade. The WebGL identity is a common
+      // GPU (never "SwiftShader"/"llvmpipe", even on a GPU-less host), the
+      // platform is Linux, and the UA says Linux.
+      assert.equal(result.result.platform, "Linux x86_64");
+      assert.match(result.result.userAgent, /Linux/);
+      assert.doesNotMatch(result.result.userAgent, /Macintosh/);
+      assert.doesNotMatch(result.result.renderer, /SwiftShader|llvmpipe|softpipe/i);
+      assert.match(result.result.renderer, /ANGLE/);
     } else if (/Macintosh/.test(result.result.userAgent)) {
       assert.equal(result.result.platform, "MacIntel");
     } else if (/Windows/.test(result.result.userAgent)) {
