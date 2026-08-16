@@ -9,6 +9,21 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.8.7] - 2026-08-16
+
+Ships the release. 1.8.6 was tagged before the `credential-fill` gate fix
+landed, and release tags are immutable after creation, so the publish workflow
+re-ran the pre-fix suite and could not pass; the release ships as 1.8.7. This
+adds the gate fix and the version bump on top of the (otherwise unchanged)
+1.8.5/1.8.6 content.
+
+### Fixed
+
+- The `credential-fill` integration suite now skips cleanly when
+  `BETTERWRIGHT_CHROMIUM_PATH/ROOT=off` (no managed browser) instead of
+  failing at module load, so the publish workflow's final release verification
+  passes.
+
 ## [1.8.6] - 2026-08-16
 
 Releases the 1.8.5 content below. The 1.8.5 tag was cut before its squash merge
