@@ -1708,6 +1708,11 @@ async function ensureBrowser(config) {
     const remoteCdp = providerPlan?.kind === "remote";
     let forkBinary = null;
     let launchExecutable = null;
+    // GPU-less Linux: the fork must be launched with an explicit SwiftShader
+    // path because a runner with no render device does not always auto-init
+    // the GPU process for WebGL. Detected here so the launch args can bind the
+    // software rasterizer instead of leaving the context null.
+    let softwareGpu = false;
     if (remoteCdp) {
       backendSelectionNote = providerPlan.warnings[0];
     } else if (providerPlan?.kind === "local") {
@@ -1715,7 +1720,7 @@ async function ensureBrowser(config) {
       backendSelectionNote = providerPlan.warnings[0];
     } else {
       forkBinary = resolveChromiumForkBinary();
-      const softwareGpu = chromiumNeedsSoftwareGpu();
+      softwareGpu = chromiumNeedsSoftwareGpu();
       const browserSelection = selectManagedBrowserBackend({
         chromiumFork: forkBinary,
         softwareGpu,
@@ -1776,7 +1781,9 @@ async function ensureBrowser(config) {
     // browser never receives launch args at all.
     const args =
       !remoteCdp && forkBinary
-        ? managedForkArgs(fingerprintSeedForProfile(browserProfileDir))
+        ? managedForkArgs(fingerprintSeedForProfile(browserProfileDir), {
+            softwareGpu,
+          })
         : [];
 
     // Coherent launch identity: one story across the Chromium and network

@@ -104,7 +104,7 @@ export function chromiumNeedsSoftwareGpu({
 }
 
 /** Managed fork arguments: guarded WebRTC and a stable fingerprint seed. */
-export function managedForkArgs(fingerprintSeed) {
+export function managedForkArgs(fingerprintSeed, { softwareGpu = false } = {}) {
   return [
     // WebRTC is not represented by Playwright request routing and can
     // otherwise send STUN/data-channel UDP directly around the TCP-only guard
@@ -119,6 +119,19 @@ export function managedForkArgs(fingerprintSeed) {
     // not retain an unused ~120 MiB process for a workload that already has a
     // warm persistent browser.
     "--renderer-process-limit=2",
+    // On a GPU-less Linux host, bind the software rasterizer explicitly. A
+    // runner with no /dev/dri render device does not reliably auto-init the
+    // GPU process, which leaves every WebGL context null; pointing ANGLE at
+    // SwiftShader makes the WebGL surface deterministic. The fork's WebGL
+    // patch swaps the unmasked renderer for a common integrated-GPU string,
+    // so this never leaks "SwiftShader" to the page.
+    ...(softwareGpu
+      ? [
+          "--use-gl=angle",
+          "--use-angle=swiftshader",
+          "--enable-unsafe-swiftshader",
+        ]
+      : []),
     ...(fingerprintSeed ? [`--fingerprint=${fingerprintSeed}`] : []),
   ];
 }

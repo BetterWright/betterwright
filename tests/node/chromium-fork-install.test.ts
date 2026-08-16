@@ -42,7 +42,7 @@ test("Chromium 151 release is pinned to verified public assets", () => {
     "linux-x64": {
       name: "betterchromium-linux-x64.zip",
       sha256:
-        "316cc81b6eec8fccca59beb3bf35dbc76d4beb9f278688050e2cbbf62a521294",
+        "3eabe54aae9d8bde34170a6930df21932325be4570baf9d45431baad6cd03d98",
     },
     "win32-x64": {
       name: "betterchromium-win-x64.zip",
