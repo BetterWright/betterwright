@@ -94,6 +94,10 @@ export function clusterSimilarBoxes(
   boxes?: Array<{ x?: number; y?: number; width?: number; height?: number }>,
   options?: { minCount?: number; sizeSlack?: number },
 ): Array<{ x: number; y: number; width: number; height: number }>;
+export function collapseNestedBoxes(
+  boxes?: Array<{ x?: number; y?: number; width?: number; height?: number }>,
+  options?: { overlap?: number; minAreaRatio?: number },
+): Array<{ x: number; y: number; width: number; height: number }>;
 export function isCaptchaChromeLabel(label?: UntrustedValue): boolean;
 export function isPlausibleImageGrid(
   boxes?: UntrustedValue,

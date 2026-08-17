@@ -25,6 +25,7 @@ export {
   CAPTCHA_STAGES,
   classifyChallengeStage,
   clusterSimilarBoxes,
+  collapseNestedBoxes,
   extractDarkBlobs,
   findGrowingRegion,
   gridFromTiles,
