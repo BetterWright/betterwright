@@ -34,7 +34,7 @@ whole path works by loading a real page.
 | [Live view & handoff](live-view.md) | Watch/coach/take over in a browser tab; hosting presets, password gate, security model |
 | [CAPTCHA helpers](captcha.md) | Local checkbox/Turnstile/slider/motion/drag-fit solving; numbered-crop vision loop for image grids |
 | [Network policy](network-policy.md) | What the browser may reach; the unliftable metadata floor |
-| [Skill packs](skills.md) | Per-site / per-password-manager guidance the driving agent reads on demand — your own or the built-in loop |
+| [Skill packs](skills.md) | Per-site / per-password-manager packs, plus the host e2e-review playbook loaded only when a review is requested |
 | [Agent guidance](agent-prompt.md) | The operator prompt and its guardrail options |
 
 ## Under the hood

@@ -55,7 +55,7 @@ plus operator guidance. No server, no SDK, no glue code.
 betterwright init
 
 # Or do it by hand, one host at a time:
-betterwright skill --install       # ~/.claude/skills + ~/.agents/skills
+betterwright skill --install       # ~/.claude/skills + ~/.agents/skills (browser + e2e-review)
 betterwright skill --install --all # also ~/.cursor/skills
 betterwright skill --status        # where it landed, and whether it is current
 betterwright skill >> ~/.codex/AGENTS.md   # Codex reads an instructions file

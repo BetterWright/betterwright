@@ -23,6 +23,7 @@ test("SKILL.md matches `betterwright skill --claude` output", () => {
   assert.match(checkedIn, /never run `vault show --reveal`/i);
   assert.match(checkedIn, /Never claim a view is running without its URL/);
   assert.doesNotMatch(checkedIn, /prefer the site's own machinery/);
+  assert.doesNotMatch(checkedIn, /# Full-stack end-to-end review/);
   assert.equal(
     checkedIn,
     generated,

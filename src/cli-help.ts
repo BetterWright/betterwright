@@ -198,15 +198,18 @@ Anthropic models use ANTHROPIC_API_KEY instead; local models need no sign-in.`,
   skill: `Usage: betterwright skill [options]
 
 Print the agent instructions that teach any shell-capable agent to drive
-BetterWright. With no options, writes them to stdout for pasting.
+BetterWright. With no options, writes the browser skill to stdout for pasting.
 
 Options:
-  --install    write SKILL.md to ~/.claude/skills and ~/.agents/skills
+  --install    write browser + e2e-review skills to ~/.claude/skills and ~/.agents/skills
   --all        with --install, also write ~/.cursor/skills
-  --claude     print Claude-form SKILL.md (frontmatter included) to stdout
-  --status     show where the skill is installed and whether it is current
+  --claude     print Claude-form browser SKILL.md (frontmatter included) to stdout
+  --status     show where the skills are installed and whether they are current
 
-Codex reads an instructions file instead:
+The e2e-review skill is installed beside the browser skill. Hosts keep only
+its description in context until the user asks for an end-to-end review.
+
+Codex reads an instructions file instead (browser skill only):
   betterwright skill >> ~/.codex/AGENTS.md
 
 \`betterwright init\` does this for you, for whichever hosts it finds.`,

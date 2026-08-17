@@ -101,16 +101,17 @@ Install the skill where the host reads instructions:
 **Claude Code / Agent Skills hosts** — install it as a native skill:
 
 ```bash
-betterwright skill --install    # ~/.claude/skills + ~/.agents/skills (browser/SKILL.md)
-betterwright skill --install --all   # also ~/.cursor/skills/browser/SKILL.md
+betterwright skill --install    # ~/.claude/skills + ~/.agents/skills (browser + e2e-review)
+betterwright skill --install --all   # also ~/.cursor/skills/{browser,full-stack-e2e-review}
 betterwright skill --status     # which of those exist, and at what version
 ```
 
 Each install is stamped with the package version. After an npm upgrade,
 `betterwright setup` or `betterwright update` **refresh any already-installed**
-skill files automatically (they never create new ones; first install stays
-explicit). `betterwright doctor` warns if a managed skill is stale.
-For a project-scoped skill, redirect the output yourself:
+skill files automatically, and write the e2e-review companion next to an
+existing browser skill. They never create a browser skill from nothing; first
+install stays explicit. `betterwright doctor` warns if a managed skill is
+stale. For a project-scoped browser skill, redirect the output yourself:
 `betterwright skill --claude > .claude/skills/browser/SKILL.md`.
 
 **Codex** — append it to the instructions file Codex reads:

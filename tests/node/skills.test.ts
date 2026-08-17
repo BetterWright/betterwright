@@ -113,7 +113,13 @@ test("urlPatternMatches strips raw NULs so the ** sentinel cannot be forged", ()
 
 test("packaged skills ship and are discoverable", () => {
   const names = listSkills().map((skill) => skill.name);
-  for (const expected of ["1password", "bitwarden", "credential-manager", "github"])
+  for (const expected of [
+    "1password",
+    "bitwarden",
+    "credential-manager",
+    "full-stack-e2e-review",
+    "github",
+  ])
     assert.ok(names.includes(expected), `missing packaged skill ${expected}`);
   const github = readSkill("github");
   assert.equal(github.siteSpecific, true);
@@ -189,4 +195,27 @@ test("keyword and URL matching drive hints with readable paths", () => {
   assert.ok(hints[0].description);
   assert.ok(hints[0].path.endsWith(path.join("github", "SKILL.md")));
   assert.deepEqual(skillHintsForPages([], { skills }), []);
+});
+
+test("full-stack-e2e-review is a host playbook, not an auto-injected pack", () => {
+  const skill = readSkill("full-stack-e2e-review");
+  assert.deepEqual(skill.autoInject.keywords, []);
+  assert.deepEqual(skill.autoInject.url, []);
+  assert.ok(skill.description.length < 400, `description grew to ${skill.description.length}`);
+  assert.match(skill.description, /review this branch end to end/i);
+  assert.match(skill.description, /test everything/i);
+  assert.match(skill.body, /Execute the proof ladder/);
+  assert.equal(
+    matchSkillsForText("review this branch end to end and test everything").some(
+      (entry) => entry.name === "full-stack-e2e-review",
+    ),
+    false,
+    "keyword autoInject would load the playbook into the standalone browser loop",
+  );
+  assert.equal(
+    matchSkillsForUrl("https://github.com/o/r/pull/1").some(
+      (entry) => entry.name === "full-stack-e2e-review",
+    ),
+    false,
+  );
 });

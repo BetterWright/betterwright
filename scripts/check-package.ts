@@ -88,6 +88,7 @@ try {
     "types/mcp-server.d.ts",
     "types/public.d.ts",
     "types/skills.d.ts",
+    "skills/full-stack-e2e-review/SKILL.md",
   ];
   const missing = required.filter((name) => !paths.has(name));
   if (missing.length) throw new Error(`npm tarball is missing: ${missing.join(", ")}`);

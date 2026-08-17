@@ -9,6 +9,19 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- **End-to-end review skill, installed beside the browser skill.**
+  `betterwright init` and `skill --install` now write
+  `full-stack-e2e-review` next to `browser` in Claude Code, Agent Skills, and
+  (with `--all`) Cursor skill directories. Hosts keep only the name and
+  description in context; the playbook body loads when the user asks for an
+  e2e review. It is not merged into MCP tool descriptions or the browser
+  operator skill, and it has no `autoInject` keywords, so ordinary browsing
+  and `betterwright exec` do not pay for it. `setup` / `update` backfill the
+  companion next to an existing managed browser skill. Adapted from
+  [CuriosityOS/full-stack-e2e-review](https://github.com/CuriosityOS/full-stack-e2e-review).
+
 ## [1.9.3] - 2026-08-17
 
 ### Fixed

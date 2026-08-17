@@ -78,6 +78,11 @@ Packaged packs ship in the npm package's `skills/`:
 - `1password`, `bitwarden` — provider packs encoding the inline-menu detection
   heuristics, extension popup URLs, and unlock-then-reload flows.
 - `github` — a lean site pack (canonical URLs, working style, shortcuts).
+- `full-stack-e2e-review` — a host playbook for end-to-end product review.
+  `betterwright skill --install` writes it next to the browser skill. Hosts
+  keep only its name and description in context; the body loads when the user
+  asks for an e2e review. It has no `autoInject` keywords or URLs, so the
+  standalone browser loop and MCP result hints never pull it in.
 
 Add your own under `$BETTERWRIGHT_HOME/skills/<name>/SKILL.md`; a user pack
 overrides a packaged one with the same name. List everything with

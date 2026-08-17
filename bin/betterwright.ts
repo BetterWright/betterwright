@@ -19,7 +19,8 @@
 //   betterwright auth --login <p> OAuth sign-in for a model backend (codex|grok)
 //   betterwright skill            print paste-ready agent instructions
 //                                 (--claude: SKILL.md to stdout; --install:
-//                                 write Claude + Agent Skills dirs; --all: +Cursor)
+//                                 write browser + e2e-review to Claude + Agent
+//                                 Skills dirs; --all: +Cursor)
 //   betterwright skills [list|show]  read on-demand site/provider knowledge packs
 //   betterwright mcp              serve the MCP stdio server (needs the MCP SDK)
 //
@@ -627,14 +628,16 @@ function cmdSkill(flags) {
     let any = false;
     for (const dest of resolveSkillInstallPaths({ targets: "all" })) {
       if (!fs.existsSync(dest.file)) {
-        console.log(`  —  ${dest.label.padEnd(14)} not installed  ${dest.file}`);
+        console.log(
+          `  —  ${dest.label.padEnd(14)} ${dest.skill.padEnd(24)} not installed  ${dest.file}`,
+        );
         continue;
       }
       any = true;
       const installed = parseGeneratedBy(fs.readFileSync(dest.file, "utf8"));
       const stale = installed !== current;
       console.log(
-        `  ${stale ? "!" : "✓"}  ${dest.label.padEnd(14)} ${installed ? `v${installed}` : "unstamped"}${stale ? ` (this package is v${current})` : ""}  ${dest.file}`,
+        `  ${stale ? "!" : "✓"}  ${dest.label.padEnd(14)} ${dest.skill.padEnd(24)} ${installed ? `v${installed}` : "unstamped"}${stale ? ` (this package is v${current})` : ""}  ${dest.file}`,
       );
     }
     // Codex is wired through a marker block in ~/.codex/AGENTS.md, not a skill
@@ -664,19 +667,22 @@ function cmdSkill(flags) {
     return 0;
   }
   if (flags.has("--install")) {
-    // Generated (not vendored) so it always matches this CLI version. Writes
-    // Claude Code + Agent Skills dirs by default; --all also writes Cursor.
-    // setup/update refresh any of these that already exist — no npm postinstall.
+    // Browser skill is generated so it always matches this CLI version; the
+    // e2e-review playbook is stamped from skills/full-stack-e2e-review.
+    // Writes Claude Code + Agent Skills dirs by default; --all also writes
+    // Cursor. setup/update refresh any of these that already exist and
+    // backfill e2e-review next to a managed browser skill — no npm postinstall.
     const targets = flags.has("--all") ? "all" : "default";
     const markdown = agentSkillMarkdown();
     const { written } = installAgentSkills({ markdown, targets });
     for (const file of written) console.log(`Installed ${file}`);
     console.log(
       `Stamped betterwright@${packageVersion()}. ` +
-        "Hosts that load ~/.claude/skills or ~/.agents/skills pick it up " +
-        "automatically. After npm upgrades, re-run this (or `betterwright setup` / " +
-        "`update`, which refresh already-installed skill files). " +
-        "For paste-anywhere agents: `betterwright skill`.",
+        "Hosts that load ~/.claude/skills or ~/.agents/skills pick them up " +
+        "automatically. The e2e-review skill stays out of context until a " +
+        "review is requested. After npm upgrades, re-run this (or " +
+        "`betterwright setup` / `update`, which refresh already-installed " +
+        "skill files). For paste-anywhere agents: `betterwright skill`.",
     );
     return 0;
   }
