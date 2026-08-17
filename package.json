@@ -150,7 +150,7 @@
     "@biomejs/biome": "^2.5.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@oxlint/plugins": "^1.78.0",
-    "@types/node": "^22.20.1",
+    "@types/node": "^26.2.0",
     "oxlint": "^1.78.0",
     "typescript": "^7.0.2"
   },
