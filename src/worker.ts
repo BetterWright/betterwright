@@ -39,7 +39,6 @@ import {
   IMAGE_TILE_SELECTORS,
   isCaptchaChromeLabel,
   isCaptchaSkipSubmitLabel,
-  isCaptchaVerifySubmitLabel,
   MOTION_CONFIRM_SELECTORS,
   maxAutoStages,
   nextSolveAction,
@@ -5314,12 +5313,9 @@ async function findVerifyControl(page, scopes) {
       const label = await locatorAccessibleName(locator);
       if (isCaptchaSkipSubmitLabel(label)) continue;
       if (await locatorLooksDisabled(locator)) continue;
-      if (
-        selector === "#recaptcha-verify-button" &&
-        !isCaptchaVerifySubmitLabel(label)
-      ) {
-        continue;
-      }
+      // #recaptcha-verify-button is Skip or Verify in the widget locale.
+      // Only the Skip name is unsafe; a localized Verify still submits.
+      if (selector === "#recaptcha-verify-button" && !label) continue;
       const box = await elementBoxInPage(page, scope, locator);
       if (box) return { locator, box, scope, selector, label };
     }

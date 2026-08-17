@@ -328,7 +328,9 @@ test("reCAPTCHA Skip is not a verify submit, Verify is", () => {
   assert.equal(isCaptchaSkipSubmitLabel("SKIP"), true);
   assert.equal(isCaptchaSkipSubmitLabel("Skip Challenge"), true);
   assert.equal(isCaptchaSkipSubmitLabel("Refresh"), true);
+  assert.equal(isCaptchaSkipSubmitLabel("Omitir"), true);
   assert.equal(isCaptchaSkipSubmitLabel("Verify"), false);
+  assert.equal(isCaptchaSkipSubmitLabel("Verificar"), false);
   assert.equal(isCaptchaVerifySubmitLabel("Verify"), true);
   assert.equal(isCaptchaVerifySubmitLabel("Next"), true);
   assert.equal(isCaptchaVerifySubmitLabel("Skip"), false);

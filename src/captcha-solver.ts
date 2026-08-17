@@ -545,7 +545,8 @@ export function isCaptchaChromeLabel(label) {
   return Boolean(text) && CHROME_LABEL.test(text);
 }
 
-const SKIP_SUBMIT_LABEL = /^(skip|reload|refresh)(?:\s+challenge)?$/i;
+const SKIP_SUBMIT_LABEL =
+  /^(skip|reload|refresh|omitir|ignorar|pular|saltar|passer|ignorer|überspringen|uberspringen|salta|overslaan|пропустить|スキップ|跳过|건너뛰기)(?:\s+challenge)?$/i;
 const VERIFY_SUBMIT_LABEL =
   /^(verify|next|submit|continue|i am human|check)$/i;
 

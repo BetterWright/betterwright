@@ -16,9 +16,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 - **Do not click reCAPTCHA Skip after tile picks.** `#recaptcha-verify-button`
   is labeled Skip until a tile is selected; clicking it then requests a new
   puzzle instead of submitting. The solver now waits for a Verify/Next label
-  and leaves Skip alone. Agents are told that replacement photo grids are the
-  same image-grid stage, so they keep picking instead of handing off after
-  three photo swaps.
+  and leaves Skip alone (including common localized Skip names). A
+  non-English Verify label still submits. Agents are told that replacement
+  photo grids are the same image-grid stage, so they keep picking instead of
+  handing off after three photo swaps.
 
 ## [1.9.2] - 2026-08-17
 
