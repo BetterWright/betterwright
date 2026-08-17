@@ -26,6 +26,7 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("human.scroll"));
   assert.ok(compact.includes("host's approval-gated download surface"));
   assert.ok(compact.includes("three distinct stages"));
+  assert.ok(compact.includes("Replacement photo grids are the same stage"));
   assert.ok(compact.includes("hand off after rejection instead of repeating"));
   assert.ok(compact.includes("captcha.solve({tiles:[...]}"));
   assert.ok(compact.includes("never a submission, purchase, or message"));

@@ -9,6 +9,19 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-08-17
+
+### Fixed
+
+- **Do not click reCAPTCHA Skip after tile picks.** `#recaptcha-verify-button`
+  is labeled Skip until a tile is selected; clicking it then requests a new
+  puzzle instead of submitting. The solver waits until the control is actually
+  Verify: a known Verify/Next name, or an unknown-locale Skip → Verify label
+  change after a pick that started with no selected tiles. Replaying already
+  selected tiles (Verify → Skip) is left alone. Agents are told that
+  replacement photo grids are the same image-grid stage, so they keep picking
+  instead of handing off after three photo swaps.
+
 ## [1.9.2] - 2026-08-17
 
 ### Fixed
@@ -979,7 +992,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.2...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.3...HEAD
+[1.9.3]: https://github.com/BetterWright/betterwright/compare/v1.9.2...v1.9.3
 [1.9.2]: https://github.com/BetterWright/betterwright/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/BetterWright/betterwright/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/BetterWright/betterwright/compare/v1.8.7...v1.9.0

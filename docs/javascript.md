@@ -142,9 +142,10 @@ Browser snippets receive `captcha.inspect(bounds?)`, `captcha.click(bounds)`,
 and `captcha.solve({ tiles })`. Detected challenges also attach a `captcha` image
 automatically. For an image grid, open the numbered crop and call
 `captcha.solve({ tiles: [indexes] })`. Treat a challenge as resumable:
-inspect the fresh result after each action. A rejection at the same stage
-requires an immediate alternate first-party source or human handoff; otherwise,
-continue through at most three distinct stages before taking that handoff. When
+inspect the fresh result after each action. Replacement photo grids are the
+same image-grid stage — keep picking. A rejected Verify requires an immediate
+alternate first-party source or human handoff; otherwise continue through at
+most three distinct challenge types before taking that handoff. When
 the challenge clears, verify current application state and replay the original
 action only if it is idempotent or state proves it did not already complete.
 Never duplicate a submission, purchase, or message. No solver dependency or API

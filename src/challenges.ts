@@ -33,11 +33,12 @@ const SEARCH_CHALLENGE_ADVICE =
   "If solve returns status `processing` with a vision artifact (image grid or " +
   "text), open the attached numbered crop, pick matching tile indexes, then " +
   "call `captcha.solve({ tiles: [indexes] })`. Fall back to `captcha.inspect`, `captcha.click`, " +
-  "`captcha.drag`, `captcha.readText`, `captcha.clickTiles`, or `human.click` when needed. Continue " +
+  "`captcha.drag`, `captcha.readText`, `captcha.clickTiles`, or `human.click` when needed. A " +
+  "replacement photo grid after Verify is the same image-grid stage — keep picking. Continue " +
   "through up to three distinct stages of the same challenge. As soon as it " +
   "clears, resume the original action and continue the task. Never repeat the " +
-  "same failed action or rotate identities/search engines; after three unresolved " +
-  "stages, use a host web-research tool, first-party route, or human handoff.";
+  "same failed action or rotate identities/search engines; after a rejected " +
+  "Verify or three unresolved challenge types, use a host web-research tool, first-party route, or human handoff.";
 
 function normalizeSource(value, kind, index = null, fallback: any = {}) {
   const source = isRecord(value) ? value : {};

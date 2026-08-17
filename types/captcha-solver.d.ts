@@ -78,6 +78,7 @@ export const VERIFY_BUTTON_SELECTORS: readonly string[];
 export const SLIDER_SELECTORS: readonly string[];
 export const MOTION_CONFIRM_SELECTORS: readonly string[];
 export const IMAGE_TILE_SELECTORS: readonly string[];
+export const SELECTED_IMAGE_TILE_SELECTORS: readonly string[];
 export const CHALLENGE_WIDGET_SELECTORS: readonly string[];
 export const CHALLENGE_INSTRUCTION_SELECTORS: readonly string[];
 
@@ -99,6 +100,9 @@ export function collapseNestedBoxes(
   options?: { overlap?: number; minAreaRatio?: number },
 ): Array<{ x: number; y: number; width: number; height: number }>;
 export function isCaptchaChromeLabel(label?: UntrustedValue): boolean;
+export function isCaptchaSkipSubmitLabel(label?: UntrustedValue): boolean;
+export function isCaptchaVerifySubmitLabel(label?: UntrustedValue): boolean;
+export function isCaptchaVerifySubmitReady(state?: UntrustedValue): boolean;
 export function isPlausibleImageGrid(
   boxes?: UntrustedValue,
   options?: { minTiles?: number; minSide?: number },
