@@ -46,6 +46,7 @@ import {
   parseTileIndexes,
   pickBestTileSet,
   pickDragFitPair,
+  SELECTED_IMAGE_TILE_SELECTORS,
   SLIDER_SELECTORS,
   solveTimeoutMs,
   unionClip,
@@ -5299,6 +5300,24 @@ async function locatorLooksDisabled(locator) {
   return /(?:^|\s)(?:disabled|rc-button-disabled)(?:\s|$)/i.test(String(className || ""));
 }
 
+async function scopeHasSelectedCaptchaTiles(scope) {
+  const locator = scope.locator(SELECTED_IMAGE_TILE_SELECTORS.join(", "));
+  const count = await locator.count().catch(() => 0);
+  if (!count) return false;
+  for (let i = 0; i < Math.min(count, 8); i += 1) {
+    const visible = await locator.nth(i).isVisible({ timeout: 200 }).catch(() => false);
+    if (visible) return true;
+  }
+  return false;
+}
+
+async function anyScopeHasSelectedCaptchaTiles(scopes) {
+  for (const scope of scopes) {
+    if (await scopeHasSelectedCaptchaTiles(scope)) return true;
+  }
+  return false;
+}
+
 async function recaptchaVerifyButtonLabel(scopes) {
   for (const scope of scopes) {
     const locator = scope.locator("#recaptcha-verify-button").first();
@@ -5326,7 +5345,15 @@ async function findVerifyControl(page, scopes, options: any = {}) {
       if (isCaptchaSkipSubmitLabel(label)) continue;
       if (await locatorLooksDisabled(locator)) continue;
       if (selector === "#recaptcha-verify-button") {
-        if (!isCaptchaVerifySubmitReady({ label, previousLabel })) continue;
+        if (
+          !isCaptchaVerifySubmitReady({
+            label,
+            previousLabel,
+            hadSelection: options.hadSelection,
+          })
+        ) {
+          continue;
+        }
       }
       const box = await elementBoxInPage(page, scope, locator);
       if (box) return { locator, box, scope, selector, label };
@@ -5638,6 +5665,7 @@ async function clickStoredTiles(page, session, indexes) {
   if (!session.captchaTargets.size) return { ok: false, reason: "tiles_not_captured" };
   const scopes = [page, ...page.frames().filter((frame) => frame !== page.mainFrame()).slice(0, 8)];
   const previousLabel = await recaptchaVerifyButtonLabel(scopes);
+  const hadSelection = await anyScopeHasSelectedCaptchaTiles(scopes);
   const clicked = [];
   for (const index of indexes) {
     const tile = session.captchaTargets.get(index);
@@ -5648,7 +5676,10 @@ async function clickStoredTiles(page, session, indexes) {
   }
   if (!clicked.length) return { ok: false, reason: "tiles_not_found" };
   // The Skip/Verify label flips only after the last tile click lands.
-  const verify = await waitForVerifyControl(page, scopes, 2_500, { previousLabel });
+  const verify = await waitForVerifyControl(page, scopes, 2_500, {
+    previousLabel,
+    hadSelection,
+  });
   if (!verify) {
     return { ok: true, clicked, verified: false, reason: "verify_not_ready" };
   }

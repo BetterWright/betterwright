@@ -62,6 +62,9 @@
       });
       grid.appendChild(btn);
     }
+    if (params.get("preselect") === "1") {
+      for (const index of answers) grid.children[index].click();
+    }
     button.addEventListener("click", () => {
       if (button.textContent === skipLabel) {
         window.__bwSkipClicks += 1;

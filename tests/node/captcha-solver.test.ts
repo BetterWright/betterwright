@@ -344,19 +344,46 @@ test("an unrecognized Skip translation is not treated as Verify", () => {
   assert.equal(isCaptchaVerifySubmitLabel("Zweryfikuj"), false);
   assert.equal(isCaptchaVerifySubmitReady({ label: "Pomiń" }), false);
   assert.equal(isCaptchaVerifySubmitReady({ label: "Skip" }), false);
-  assert.equal(isCaptchaVerifySubmitReady({ label: "Pomiń", selectedTiles: true }), false);
   assert.equal(
-    isCaptchaVerifySubmitReady({ label: "Zweryfikuj", previousLabel: "Pomiń" }),
+    isCaptchaVerifySubmitReady({
+      label: "Zweryfikuj",
+      previousLabel: "Pomiń",
+      hadSelection: false,
+    }),
     true,
   );
   assert.equal(
-    isCaptchaVerifySubmitReady({ label: "Pomiń", previousLabel: "Pomiń" }),
+    isCaptchaVerifySubmitReady({
+      label: "Pomiń",
+      previousLabel: "Pomiń",
+      hadSelection: false,
+    }),
     false,
+  );
+  assert.equal(
+    isCaptchaVerifySubmitReady({
+      label: "Pomiń",
+      previousLabel: "Zweryfikuj",
+      hadSelection: true,
+    }),
+    false,
+  );
+  assert.equal(
+    isCaptchaVerifySubmitReady({
+      label: "Zweryfikuj",
+      previousLabel: "Zweryfikuj",
+      hadSelection: true,
+    }),
+    true,
   );
   assert.equal(isCaptchaVerifySubmitReady({ label: "Verify" }), true);
   assert.equal(isCaptchaVerifySubmitReady({ label: "Verificar" }), false);
   assert.equal(
-    isCaptchaVerifySubmitReady({ label: "Verificar", previousLabel: "Omitir" }),
+    isCaptchaVerifySubmitReady({
+      label: "Verificar",
+      previousLabel: "Omitir",
+      hadSelection: false,
+    }),
     true,
   );
 });
