@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-08-17
+
 ### Fixed
 
 - **Do not click reCAPTCHA Skip after tile picks.** `#recaptcha-verify-button`
@@ -988,7 +990,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.2...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.3...HEAD
+[1.9.3]: https://github.com/BetterWright/betterwright/compare/v1.9.2...v1.9.3
 [1.9.2]: https://github.com/BetterWright/betterwright/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/BetterWright/betterwright/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/BetterWright/betterwright/compare/v1.8.7...v1.9.0
