@@ -352,6 +352,30 @@ test("pickBestTileSet prefers a 3x3 puzzle over widget chrome", () => {
   assert.equal(picked[0].bounds.width, 100);
 });
 
+test("pickBestTileSet does not let a regular chrome cluster beat a photo grid", () => {
+  // collectClickableCluster can yield a 2×3 of similarly sized buttons or
+  // images. Those used to take the regular-grid bonus (4/6/9/16) and outrank
+  // a 3×4 puzzle or a slightly irregular 3×3.
+  const chrome = [
+    { x: 20, y: 520, width: 88, height: 88 },
+    { x: 116, y: 520, width: 88, height: 88 },
+    { x: 212, y: 520, width: 88, height: 88 },
+    { x: 20, y: 616, width: 88, height: 88 },
+    { x: 116, y: 616, width: 88, height: 88 },
+    { x: 212, y: 616, width: 88, height: 88 },
+  ].map((bounds, index) => ({ index, bounds, label: "task" }));
+  const photos12 = inferGridTiles({ x: 90, y: 200, width: 520, height: 390 }, 4, 3);
+  const picked12 = pickBestTileSet([chrome, photos12]);
+  assert.equal(picked12.length, 12);
+  assert.equal(picked12[0].bounds.width >= 120, true);
+
+  const noisyNine = inferGridTiles({ x: 90, y: 200, width: 390, height: 390 }, 3, 3);
+  noisyNine[8].bounds.y += 20;
+  const pickedNoisy = pickBestTileSet([chrome, noisyNine]);
+  assert.equal(pickedNoisy.length, 9);
+  assert.equal(pickedNoisy[0].bounds.width, 130);
+});
+
 test("collapseNestedBoxes drops inset selected-state wrappers", () => {
   const outer = { x: 220, y: 209, width: 130, height: 130 };
   const inset = { x: 222, y: 211, width: 126, height: 126 };

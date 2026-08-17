@@ -14,9 +14,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 - **Image-grid recapture after a selected reCAPTCHA tile.** Clicking a cell
   exposes a ~4px-inset selected-state wrapper. The tile cluster treated those
   inner boxes as extra cells, so a 3×3 recapture numbered 12 tiles and the
-  overlay skipped indexes. Nested boxes are now collapsed and a regular 3×3
-  or 4×4 wins over a larger messy cluster. A crop with no tiles no longer
-  asks the host to pick numbered indexes.
+  overlay skipped indexes. Nested boxes are now collapsed and a regular
+  photo-sized 3×3, 3×4, or 4×4 wins over a larger messy cluster. 2×2 and
+  2×3 stay unboosted so widget chrome cannot outrank a real puzzle. A crop
+  with no tiles no longer asks the host to pick numbered indexes.
 
 ## [1.9.1] - 2026-08-16
 

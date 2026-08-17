@@ -586,11 +586,24 @@ export function pickBestTileSet(sets) {
         0,
       ) / collapsed.length;
     const grid = gridFromTiles(collapsed);
-    const regular =
+    const minSide = Math.min(
+      ...collapsed.map((box) =>
+        Math.min(
+          Number(untrustedField(box, "width")) || 0,
+          Number(untrustedField(box, "height")) || 0,
+        ),
+      ),
+    );
+    // Only photo-sized 3×3 / 3×4 / 4×4 get the regularity bonus. 2×2 and
+    // 2×3 also match widget chrome from collectClickableCluster (buttons,
+    // decorative images), and a million-point boost let those outrank a
+    // genuine noisy or 12-tile puzzle.
+    const regularPhotoGrid =
       grid.rows * grid.cols === collapsed.length &&
-      [4, 6, 9, 16].includes(collapsed.length);
-    // A regular 3×3/4×4 beats a larger messy cluster of inset wrappers.
-    const score = (regular ? 1_000_000 : 0) + collapsed.length * 10_000 + area;
+      [9, 12, 16].includes(collapsed.length) &&
+      minSide >= 80;
+    const score =
+      (regularPhotoGrid ? 1_000_000 : 0) + collapsed.length * 10_000 + area;
     if (score <= bestScore) continue;
     bestScore = score;
     best = collapsed.map((box, index) => {
