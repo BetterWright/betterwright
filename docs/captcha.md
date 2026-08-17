@@ -12,7 +12,8 @@ same human-shaped mouse motion used elsewhere.
 > Use these helpers only for a legitimate flow you are authorized to complete.
 > Never rotate identities or repeat a failed action. A rejected repeat of the
 > same stage requires an immediate alternate source or human handoff; otherwise,
-> work through at most three distinct stages before taking that handoff.
+> work through at most three distinct challenge types before taking that
+> handoff. Replacement photo grids after Verify are the same image-grid stage.
 
 When BetterWright detects a visible challenge, the result contains a structured
 `challenges` entry (including `stage`, `autoSolvable`, and `needsVision`) and,
@@ -175,11 +176,12 @@ if (first.status === "processing" && first.tiles?.length) {
 return first;
 ```
 
-Inspect the fresh `challenges` report after Verify. A replacement set of tiles
-or another prompt is a new stage; a rejected repeat of the same grid is not.
-If the same stage rejects an action, stop native challenge attempts immediately
-and use an alternate first-party source or request human help. Otherwise,
-continue through no more than three distinct stages before taking that handoff.
+Inspect the fresh `challenges` report after Verify. A replacement set of photos
+with the same prompt is still the image-grid stage — pick the new numbered
+crop and call `captcha.solve({ tiles })` again. A rejected Verify (try-again
+on the same grid) is not: stop native attempts and use an alternate first-party
+source or request human help. Otherwise continue through no more than three
+distinct challenge types (checkbox, image grid, slider, …) before that handoff.
 When the challenge clears, verify the current application state before resuming.
 Replay the original action only if it is idempotent or the state proves it did
 not already complete; never duplicate a submission, purchase, or message.

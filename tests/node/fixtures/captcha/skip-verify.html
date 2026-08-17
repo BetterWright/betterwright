@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>reCAPTCHA-style Skip/Verify button fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; background: #f6f7f9; }
+    .grid {
+      display: grid; grid-template-columns: repeat(3, 100px); gap: 4px;
+      width: max-content; background: #fff; padding: 8px; border: 1px solid #d3d3d3;
+    }
+    .rc-imageselect-tile {
+      width: 100px; height: 100px; border: 0; cursor: pointer;
+      font-size: 12px; color: #fff;
+    }
+    .rc-imageselect-tile.selected { outline: 3px solid #1a73e8; }
+    #recaptcha-verify-button { margin-top: 12px; padding: 8px 16px; }
+  </style>
+</head>
+<body>
+  <h1>Select all images with traffic lights</h1>
+  <p>Please select all images containing a traffic light to continue.</p>
+  <div class="bw-captcha" data-bw-captcha="grid" id="bw-captcha">
+    <div class="grid" id="grid"></div>
+    <!-- Same id Google uses. Labeled Skip until a tile is selected. -->
+    <button type="button" id="recaptcha-verify-button" title="Skip">Skip</button>
+  </div>
+  <input type="hidden" name="bw-captcha-response" id="bw-captcha-response" value="" />
+  <p id="skips">0</p>
+  <script>
+    const answers = new Set([0, 4, 8]);
+    const selected = new Set();
+    const colors = ["#e74c3c","#3498db","#2ecc71","#9b59b6","#f39c12","#1abc9c","#34495e","#e67e22","#16a085"];
+    const grid = document.getElementById("grid");
+    const button = document.getElementById("recaptcha-verify-button");
+    const skips = document.getElementById("skips");
+    window.__bwSkipClicks = 0;
+    function syncButton() {
+      if (selected.size) {
+        button.textContent = "Verify";
+        button.title = "Verify";
+      } else {
+        button.textContent = "Skip";
+        button.title = "Skip";
+      }
+    }
+    for (let i = 0; i < 9; i += 1) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "rc-imageselect-tile";
+      btn.setAttribute("aria-label", answers.has(i) ? "traffic light" : "other");
+      btn.style.background = colors[i];
+      btn.textContent = String(i + 1);
+      btn.addEventListener("click", () => {
+        if (selected.has(i)) { selected.delete(i); btn.classList.remove("selected"); }
+        else { selected.add(i); btn.classList.add("selected"); }
+        syncButton();
+      });
+      grid.appendChild(btn);
+    }
+    button.addEventListener("click", () => {
+      if (button.textContent === "Skip") {
+        window.__bwSkipClicks += 1;
+        skips.textContent = String(window.__bwSkipClicks);
+        return;
+      }
+      const ok = answers.size === selected.size && [...answers].every((i) => selected.has(i));
+      if (ok) {
+        document.getElementById("bw-captcha-response").value = "bw_skipverify_token_" + Date.now().toString(36);
+        document.title = "Verified";
+      }
+    });
+  </script>
+</body>
+</html>

@@ -38,6 +38,8 @@ import {
   gridFromTiles,
   IMAGE_TILE_SELECTORS,
   isCaptchaChromeLabel,
+  isCaptchaSkipSubmitLabel,
+  isCaptchaVerifySubmitLabel,
   MOTION_CONFIRM_SELECTORS,
   maxAutoStages,
   nextSolveAction,
@@ -5276,6 +5278,65 @@ async function findClickableInScopes(page, scopes, selectors) {
   return null;
 }
 
+async function locatorAccessibleName(locator) {
+  const parts = await Promise.all([
+    locator.innerText().catch(() => ""),
+    locator.getAttribute("aria-label").catch(() => ""),
+    locator.getAttribute("title").catch(() => ""),
+    locator.getAttribute("value").catch(() => ""),
+  ]);
+  return (
+    parts
+      .map((value) => String(value || "").replace(/\s+/g, " ").trim())
+      .find(Boolean) || ""
+  );
+}
+
+async function locatorLooksDisabled(locator) {
+  const aria = await locator.getAttribute("aria-disabled").catch(() => null);
+  if (aria === "true") return true;
+  const className = await locator.getAttribute("class").catch(() => "");
+  return /(?:^|\s)(?:disabled|rc-button-disabled)(?:\s|$)/i.test(String(className || ""));
+}
+
+/**
+ * Submit control for the current challenge. reCAPTCHA reuses
+ * `#recaptcha-verify-button` for Skip (new puzzle) and Verify (submit).
+ * Clicking it while it still says Skip abandons a correct tile selection.
+ */
+async function findVerifyControl(page, scopes) {
+  for (const scope of scopes) {
+    for (const selector of VERIFY_BUTTON_SELECTORS) {
+      if (selector === "body") continue;
+      const locator = scope.locator(selector).first();
+      const visible = await locator.isVisible({ timeout: 400 }).catch(() => false);
+      if (!visible) continue;
+      const label = await locatorAccessibleName(locator);
+      if (isCaptchaSkipSubmitLabel(label)) continue;
+      if (await locatorLooksDisabled(locator)) continue;
+      if (
+        selector === "#recaptcha-verify-button" &&
+        !isCaptchaVerifySubmitLabel(label)
+      ) {
+        continue;
+      }
+      const box = await elementBoxInPage(page, scope, locator);
+      if (box) return { locator, box, scope, selector, label };
+    }
+  }
+  return null;
+}
+
+async function waitForVerifyControl(page, scopes, timeoutMs = 2_500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = await findVerifyControl(page, scopes);
+    if (found) return found;
+    await hostDelay(120);
+  }
+  return null;
+}
+
 async function humanClickBox(page, session, box, options: any = {}) {
   const inputLike = Boolean(options.inputLike);
   const leftBias = options.leftBias !== false;
@@ -5577,16 +5638,14 @@ async function clickStoredTiles(page, session, indexes) {
   }
   if (!clicked.length) return { ok: false, reason: "tiles_not_found" };
   const scopes = [page, ...page.frames().filter((frame) => frame !== page.mainFrame()).slice(0, 8)];
-  const verify = await findClickableInScopes(
-    page,
-    scopes,
-    VERIFY_BUTTON_SELECTORS.filter((selector) => selector !== "body"),
-  );
-  if (verify) {
-    await hostDelay(80 + Math.random() * 120);
-    await humanClickBox(page, session, verify.box, { leftBias: false });
+  // The Skip/Verify label flips only after the last tile click lands.
+  const verify = await waitForVerifyControl(page, scopes);
+  if (!verify) {
+    return { ok: true, clicked, verified: false, reason: "verify_not_ready" };
   }
-  return { ok: true, clicked, verified: Boolean(verify) };
+  await hostDelay(80 + Math.random() * 120);
+  await humanClickBox(page, session, verify.box, { leftBias: false });
+  return { ok: true, clicked, verified: true, label: verify.label || null };
 }
 
 async function dragSliderOnPage(page, session, provider) {
@@ -5853,7 +5912,7 @@ async function runCaptchaSolveAction(
           const point = await humanClickBox(page, session, inlineBox, { leftBias: true });
           return { ok: true, point, target: "widget" };
         }
-        found = await findClickableInScopes(page, scopes, VERIFY_BUTTON_SELECTORS);
+        found = await findVerifyControl(page, scopes);
         if (!found) return { ok: false, reason: "checkbox_not_found" };
         const verifyPoint = await humanClickBox(page, session, found.box, {
           leftBias: found.box.width > 80,
@@ -5874,10 +5933,9 @@ async function runCaptchaSolveAction(
       // Challenge-frame controls first so a host-page Submit cannot steal the
       // click. Next is how hCaptcha confirms a motion-target selection.
       const frames = candidateFrames(page, provider);
-      const found = await findClickableInScopes(page, [...frames, page], [
-        ...VERIFY_BUTTON_SELECTORS,
-        ...CHECKBOX_SELECTORS,
-      ]);
+      const found =
+        (await findVerifyControl(page, [...frames, page])) ||
+        (await findClickableInScopes(page, [...frames, page], CHECKBOX_SELECTORS));
       if (!found) return { ok: false, reason: "verify_control_not_found", soft: true };
       const point = await humanClickBox(page, session, found.box, {
         leftBias: false,

@@ -31,6 +31,8 @@ export {
   gridFromTiles,
   inferGridTiles,
   isCaptchaChromeLabel,
+  isCaptchaSkipSubmitLabel,
+  isCaptchaVerifySubmitLabel,
   isPlausibleImageGrid,
   maxAutoStages,
   nextSolveAction,

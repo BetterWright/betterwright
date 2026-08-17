@@ -545,6 +545,26 @@ export function isCaptchaChromeLabel(label) {
   return Boolean(text) && CHROME_LABEL.test(text);
 }
 
+const SKIP_SUBMIT_LABEL = /^(skip|reload|refresh)(?:\s+challenge)?$/i;
+const VERIFY_SUBMIT_LABEL =
+  /^(verify|next|submit|continue|i am human|check)$/i;
+
+/**
+ * reCAPTCHA's `#recaptcha-verify-button` is labeled Skip until at least one
+ * tile is selected. Clicking it then requests a new puzzle instead of
+ * submitting the current one.
+ */
+export function isCaptchaSkipSubmitLabel(label) {
+  const text = String(label || "").replace(/\s+/g, " ").trim();
+  return Boolean(text) && SKIP_SUBMIT_LABEL.test(text);
+}
+
+/** Positive name for a control that submits the current challenge. */
+export function isCaptchaVerifySubmitLabel(label) {
+  const text = String(label || "").replace(/\s+/g, " ").trim();
+  return Boolean(text) && VERIFY_SUBMIT_LABEL.test(text);
+}
+
 /**
  * True for a real image-grid cluster (3×3 photos, 1×3 large images), false
  * for a row of tiny toolbar buttons.

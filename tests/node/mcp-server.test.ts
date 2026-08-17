@@ -164,7 +164,8 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
     assert.ok(text("browser").includes(literal), `browser lost ${literal}`);
   }
   // Challenge limits are safety rules, not advice.
-  assert.match(text("browser"), /three distinct stages/);
+  assert.match(text("browser"), /three distinct challenge types/);
+  assert.match(text("browser"), /Replacement photo grids are the same stage/);
   assert.match(text("browser"), /Never duplicate a submission, purchase, or message/);
 
   // Downloads are gated; both escape hatches must stay discoverable.

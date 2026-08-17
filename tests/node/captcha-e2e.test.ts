@@ -52,6 +52,7 @@ async function startFixtureServer() {
     else if (url.pathname === "/drag") file = "drag.html";
     else if (url.pathname === "/managed") file = "managed.html";
     else if (url.pathname === "/submit-decoy") file = "submit-decoy.html";
+    else if (url.pathname === "/skip-verify") file = "skip-verify.html";
     else if (url.pathname === "/checkbox") file = "checkbox.html";
     else if (url.pathname !== "/" && url.pathname !== "/index.html") {
       res.writeHead(404);
@@ -197,6 +198,36 @@ test(
         `);
         assert.equal(result.ok, true, result.error);
         assert.match(result.result, /^bw_grid_token_/);
+      });
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+test(
+  "captcha.solve waits for Verify and does not click a Skip-labeled button",
+  opts,
+  async () => {
+    const server = await startFixtureServer();
+    try {
+      await withBrowser(async (bw) => {
+        const result = await bw.run(`
+          await page.goto(${JSON.stringify(`${server.base}/skip-verify`)}, { waitUntil: "domcontentloaded" });
+          const first = await captcha.solve({ timeout: 15_000, maxStages: 2 });
+          const picks = first.tiles
+            .filter((entry) => entry.label === "traffic light")
+            .map((entry) => entry.index);
+          const second = await captcha.solve({ tiles: picks, timeout: 15_000, maxStages: 2 });
+          const token = await page.locator('[name="bw-captcha-response"]').inputValue();
+          const skips = await page.evaluate(() => window.__bwSkipClicks);
+          return { first, second, picks, token, skips };
+        `);
+        assert.equal(result.ok, true, result.error);
+        assert.deepEqual(result.result.picks, [0, 4, 8]);
+        assert.equal(result.result.skips, 0, "Skip must not be clicked");
+        assert.equal(result.result.second.status, "ready");
+        assert.match(result.result.token, /^bw_skipverify_token_/);
       });
     } finally {
       await server.close();

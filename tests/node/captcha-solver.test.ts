@@ -14,6 +14,8 @@ import {
   gridFromTiles,
   inferGridTiles,
   isCaptchaChromeLabel,
+  isCaptchaSkipSubmitLabel,
+  isCaptchaVerifySubmitLabel,
   isPlausibleImageGrid,
   maxAutoStages,
   nextSolveAction,
@@ -319,6 +321,18 @@ test("chrome labels are not treated as image-grid tiles", () => {
   assert.equal(isCaptchaChromeLabel("Refresh Challenge."), true);
   assert.equal(isCaptchaChromeLabel("traffic light"), false);
   assert.equal(isCaptchaChromeLabel(""), false);
+});
+
+test("reCAPTCHA Skip is not a verify submit, Verify is", () => {
+  assert.equal(isCaptchaSkipSubmitLabel("Skip"), true);
+  assert.equal(isCaptchaSkipSubmitLabel("SKIP"), true);
+  assert.equal(isCaptchaSkipSubmitLabel("Skip Challenge"), true);
+  assert.equal(isCaptchaSkipSubmitLabel("Refresh"), true);
+  assert.equal(isCaptchaSkipSubmitLabel("Verify"), false);
+  assert.equal(isCaptchaVerifySubmitLabel("Verify"), true);
+  assert.equal(isCaptchaVerifySubmitLabel("Next"), true);
+  assert.equal(isCaptchaVerifySubmitLabel("Skip"), false);
+  assert.equal(isCaptchaVerifySubmitLabel(""), false);
 });
 
 test("isPlausibleImageGrid rejects a 1x3 toolbar and accepts a 3x3 puzzle", () => {

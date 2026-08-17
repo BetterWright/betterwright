@@ -99,6 +99,8 @@ export function collapseNestedBoxes(
   options?: { overlap?: number; minAreaRatio?: number },
 ): Array<{ x: number; y: number; width: number; height: number }>;
 export function isCaptchaChromeLabel(label?: UntrustedValue): boolean;
+export function isCaptchaSkipSubmitLabel(label?: UntrustedValue): boolean;
+export function isCaptchaVerifySubmitLabel(label?: UntrustedValue): boolean;
 export function isPlausibleImageGrid(
   boxes?: UntrustedValue,
   options?: { minTiles?: number; minSide?: number },
