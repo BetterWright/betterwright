@@ -8,6 +8,7 @@ import {
   CAPTCHA_STAGES,
   classifyChallengeStage,
   clusterSimilarBoxes,
+  collapseNestedBoxes,
   extractDarkBlobs,
   findGrowingRegion,
   gridFromTiles,
@@ -349,6 +350,96 @@ test("pickBestTileSet prefers a 3x3 puzzle over widget chrome", () => {
   const picked = pickBestTileSet([chrome, grid]);
   assert.equal(picked.length, 9);
   assert.equal(picked[0].bounds.width, 100);
+});
+
+test("pickBestTileSet does not let a regular chrome cluster beat a photo grid", () => {
+  // collectClickableCluster can yield a 2×3 of similarly sized buttons or
+  // images. Those used to take the regular-grid bonus (4/6/9/16) and outrank
+  // a 3×4 puzzle or a slightly irregular 3×3.
+  const chrome = [
+    { x: 20, y: 520, width: 88, height: 88 },
+    { x: 116, y: 520, width: 88, height: 88 },
+    { x: 212, y: 520, width: 88, height: 88 },
+    { x: 20, y: 616, width: 88, height: 88 },
+    { x: 116, y: 616, width: 88, height: 88 },
+    { x: 212, y: 616, width: 88, height: 88 },
+  ].map((bounds, index) => ({ index, bounds, label: "task" }));
+  const photos12 = inferGridTiles({ x: 90, y: 200, width: 520, height: 390 }, 4, 3);
+  const picked12 = pickBestTileSet([chrome, photos12]);
+  assert.equal(picked12.length, 12);
+  assert.equal(picked12[0].bounds.width >= 120, true);
+
+  const noisyNine = inferGridTiles({ x: 90, y: 200, width: 390, height: 390 }, 3, 3);
+  noisyNine[8].bounds.y += 20;
+  const pickedNoisy = pickBestTileSet([chrome, noisyNine]);
+  assert.equal(pickedNoisy.length, 9);
+  assert.equal(pickedNoisy[0].bounds.width, 130);
+});
+
+test("collapseNestedBoxes drops inset selected-state wrappers", () => {
+  const outer = { x: 220, y: 209, width: 130, height: 130 };
+  const inset = { x: 222, y: 211, width: 126, height: 126 };
+  const neighbor = { x: 350, y: 209, width: 130, height: 130 };
+  const collapsed = collapseNestedBoxes([outer, inset, neighbor]);
+  assert.equal(collapsed.length, 2);
+  assert.deepEqual(collapsed[0], outer);
+  assert.deepEqual(collapsed[1], neighbor);
+});
+
+test("collapseNestedBoxes does not swallow a 3x3 inside a larger widget frame", () => {
+  const frame = { x: 40, y: 160, width: 460, height: 460 };
+  const grid = inferGridTiles({ x: 90, y: 209, width: 390, height: 390 }, 3, 3).map(
+    (tile) => tile.bounds,
+  );
+  const collapsed = collapseNestedBoxes([frame, ...grid]);
+  assert.equal(collapsed.length, 10);
+  assert.equal(collapsed.some((box) => box.width === 460), true);
+  assert.equal(collapsed.filter((box) => box.width < 200).length, 9);
+});
+
+test("clusterSimilarBoxes keeps a 3x3 when selected tiles add inset wrappers", () => {
+  // Live recapture after clicking buses on Google's reCAPTCHA demo: nine
+  // 130px cells plus three ~4px-inset selected wrappers. Size slack 14
+  // used to keep all twelve and number the overlay 0–11.
+  const cells = [
+    { x: 90, y: 209, width: 130, height: 130 },
+    { x: 220, y: 209, width: 130, height: 130 },
+    { x: 222, y: 211, width: 126, height: 126 },
+    { x: 350, y: 209, width: 130, height: 130 },
+    { x: 90, y: 339, width: 130, height: 130 },
+    { x: 220, y: 339, width: 130, height: 130 },
+    { x: 350, y: 339, width: 130, height: 130 },
+    { x: 90, y: 469, width: 130, height: 130 },
+    { x: 92, y: 471, width: 126, height: 126 },
+    { x: 220, y: 469, width: 130, height: 130 },
+    { x: 350, y: 469, width: 130, height: 130 },
+    { x: 352, y: 471, width: 126, height: 126 },
+  ];
+  const clustered = clusterSimilarBoxes(cells);
+  assert.equal(clustered.length, 9);
+  assert.equal(gridFromTiles(clustered).rows, 3);
+  assert.equal(gridFromTiles(clustered).cols, 3);
+  assert.equal(
+    clustered.every((box) => box.width === 130 && box.height === 130),
+    true,
+  );
+  const picked = pickBestTileSet([cells.map((bounds, index) => ({ index, bounds }))]);
+  assert.equal(picked.length, 9);
+  assert.deepEqual(
+    picked.map((tile) => tile.index),
+    [0, 1, 2, 3, 4, 5, 6, 7, 8],
+  );
+});
+
+test("visionGridInstruction does not invent numbered tiles for a click-target crop", () => {
+  const text = visionGridInstruction({
+    prompt: "Please click on the animal who jumps the highest",
+    grid: { rows: 0, cols: 0 },
+    tileCount: 0,
+  });
+  assert.match(text, /animal who jumps the highest/);
+  assert.match(text, /captcha\.click\(bounds\)/);
+  assert.equal(/captcha\.solve\(\{ tiles:/.test(text), false);
 });
 
 test("publicCaptchaTiles flattens bounds for host vision", () => {

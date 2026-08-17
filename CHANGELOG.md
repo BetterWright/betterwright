@@ -9,6 +9,18 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-08-17
+
+### Fixed
+
+- **Image-grid recapture after a selected reCAPTCHA tile.** Clicking a cell
+  exposes a ~4px-inset selected-state wrapper. The tile cluster treated those
+  inner boxes as extra cells, so a 3×3 recapture numbered 12 tiles and the
+  overlay skipped indexes. Nested boxes are now collapsed and a regular
+  photo-sized 3×3, 3×4, or 4×4 wins over a larger messy cluster. 2×2 and
+  2×3 stay unboosted so widget chrome cannot outrank a real puzzle. A crop
+  with no tiles no longer asks the host to pick numbered indexes.
+
 ## [1.9.1] - 2026-08-16
 
 ### Changed
@@ -967,7 +979,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.2...HEAD
+[1.9.2]: https://github.com/BetterWright/betterwright/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/BetterWright/betterwright/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/BetterWright/betterwright/compare/v1.8.7...v1.9.0
 [1.8.7]: https://github.com/BetterWright/betterwright/compare/v1.8.6...v1.8.7

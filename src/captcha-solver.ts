@@ -450,8 +450,52 @@ export function sortTilesReadingOrder(boxes, yTolerance = 12) {
 }
 
 /**
+ * Intersection area of two axis-aligned boxes, or 0 when they do not overlap.
+ */
+function intersectionArea(a, b) {
+  const width = Math.max(
+    0,
+    Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x),
+  );
+  const height = Math.max(
+    0,
+    Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y),
+  );
+  return width * height;
+}
+
+/**
+ * Drop inset / selected-state inner boxes that sit inside a larger tile.
+ * After a reCAPTCHA Verify click the selected cells expose a ~4px-inset
+ * wrapper; keeping both numbers a 3×3 as 12 tiles and the overlay skips.
+ *
+ * Only near-same-size wrappers are removed. A photo tile inside a much
+ * larger widget frame is left alone so a real 3×3 is not swallowed.
+ */
+export function collapseNestedBoxes(
+  boxes,
+  { overlap = 0.8, minAreaRatio = 0.7 }: any = {},
+) {
+  const list = sortTilesReadingOrder(dedupeBoxes(boxes)).sort(
+    (a, b) => b.width * b.height - a.width * a.height,
+  );
+  const kept = [];
+  for (const box of list) {
+    const area = Math.max(1, box.width * box.height);
+    const nested = kept.some((outer) => {
+      const outerArea = Math.max(1, outer.width * outer.height);
+      if (area / outerArea < minAreaRatio) return false;
+      return intersectionArea(box, outer) / area >= overlap;
+    });
+    if (!nested) kept.push(box);
+  }
+  return sortTilesReadingOrder(kept);
+}
+
+/**
  * Keep the largest cluster of similarly sized rectangles. Image-grid tiles
- * share a size; headers, prompts, and the widget chrome do not.
+ * share a size; headers, prompts, and the widget chrome do not. Nested
+ * selected-state wrappers are collapsed so a 3×3 stays nine cells.
  */
 export function clusterSimilarBoxes(boxes, { minCount = 3, sizeSlack = 14 }: any = {}) {
   const usable = dedupeBoxes(boxes).filter(
@@ -471,7 +515,9 @@ export function clusterSimilarBoxes(boxes, { minCount = 3, sizeSlack = 14 }: any
     if (group.length > best.length) best = group;
   }
   if (best.length < minCount) return [];
-  return sortTilesReadingOrder(best);
+  const collapsed = collapseNestedBoxes(best);
+  if (collapsed.length < minCount) return [];
+  return sortTilesReadingOrder(collapsed);
 }
 
 /**
@@ -529,25 +575,46 @@ export function pickBestTileSet(sets) {
   let bestScore = 0;
   for (const set of Array.isArray(sets) ? sets : []) {
     if (!Array.isArray(set) || !set.length) continue;
-    const boxes = set.map(tileBounds);
-    if (!isPlausibleImageGrid(boxes)) continue;
+    const collapsed = collapseNestedBoxes(set.map(tileBounds));
+    if (!isPlausibleImageGrid(collapsed)) continue;
     const area =
-      boxes.reduce<number>(
+      collapsed.reduce<number>(
         (sum, box) =>
           sum +
           (Number(untrustedField(box, "width")) || 0) *
             (Number(untrustedField(box, "height")) || 0),
         0,
-      ) / boxes.length;
-    const score = set.length * 10_000 + area;
+      ) / collapsed.length;
+    const grid = gridFromTiles(collapsed);
+    const minSide = Math.min(
+      ...collapsed.map((box) =>
+        Math.min(
+          Number(untrustedField(box, "width")) || 0,
+          Number(untrustedField(box, "height")) || 0,
+        ),
+      ),
+    );
+    // Only photo-sized 3×3 / 3×4 / 4×4 get the regularity bonus. 2×2 and
+    // 2×3 also match widget chrome from collectClickableCluster (buttons,
+    // decorative images), and a million-point boost let those outrank a
+    // genuine noisy or 12-tile puzzle.
+    const regularPhotoGrid =
+      grid.rows * grid.cols === collapsed.length &&
+      [9, 12, 16].includes(collapsed.length) &&
+      minSide >= 80;
+    const score =
+      (regularPhotoGrid ? 1_000_000 : 0) + collapsed.length * 10_000 + area;
     if (score <= bestScore) continue;
     bestScore = score;
-    best = set.map((tile, index) => {
-      const bounds = roundedBox(tileBounds(tile));
+    best = collapsed.map((box, index) => {
+      const match = set.find((tile) => {
+        const bounds = roundedBox(tileBounds(tile));
+        return Math.abs(bounds.x - box.x) < 3 && Math.abs(bounds.y - box.y) < 3;
+      });
       return {
-        index: Number.isInteger(tile?.index) ? tile.index : index,
-        bounds,
-        label: tile?.label || null,
+        index,
+        bounds: roundedBox(box),
+        label: match?.label || null,
       };
     });
   }
@@ -650,8 +717,18 @@ export function unionClip(boxes, { pad = 12, promptPad = 72, viewport = null }: 
 export function visionGridInstruction({ prompt, grid, tileCount }: any = {}) {
   const rows = Number(grid?.rows) || 0;
   const cols = Number(grid?.cols) || 0;
-  const layout = rows && cols ? `${rows}×${cols}` : `${Number(tileCount) || 0}-tile`;
+  const count = Number(tileCount) || 0;
   const task = String(prompt || "").replace(/\s+/g, " ").trim();
+  if (!count && !rows && !cols) {
+    const match = task
+      ? `Open the attached crop and click the region that matches: ${task}`
+      : "Open the attached crop and click the matching region";
+    return (
+      `${match}. There is no numbered tile grid; use captcha.click(bounds) ` +
+      "on that region rather than captcha.solve({ tiles })."
+    );
+  }
+  const layout = rows && cols ? `${rows}×${cols}` : `${count}-tile`;
   const match = task
     ? `Pick every numbered tile that matches: ${task}`
     : "Pick every numbered tile that matches the on-screen prompt";

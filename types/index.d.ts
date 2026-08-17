@@ -33,6 +33,7 @@ export {
   CAPTCHA_STAGES,
   classifyChallengeStage,
   clusterSimilarBoxes,
+  collapseNestedBoxes,
   gridFromTiles,
   inferGridTiles,
   isCaptchaChromeLabel,
