@@ -39,12 +39,14 @@ import {
   IMAGE_TILE_SELECTORS,
   isCaptchaChromeLabel,
   isCaptchaSkipSubmitLabel,
+  isCaptchaVerifySubmitReady,
   MOTION_CONFIRM_SELECTORS,
   maxAutoStages,
   nextSolveAction,
   parseTileIndexes,
   pickBestTileSet,
   pickDragFitPair,
+  SELECTED_IMAGE_TILE_SELECTORS,
   SLIDER_SELECTORS,
   solveTimeoutMs,
   unionClip,
@@ -5298,12 +5300,34 @@ async function locatorLooksDisabled(locator) {
   return /(?:^|\s)(?:disabled|rc-button-disabled)(?:\s|$)/i.test(String(className || ""));
 }
 
+async function scopeHasSelectedCaptchaTiles(scope) {
+  const locator = scope.locator(SELECTED_IMAGE_TILE_SELECTORS.join(", "));
+  const count = await locator.count().catch(() => 0);
+  if (!count) return false;
+  for (let i = 0; i < Math.min(count, 8); i += 1) {
+    const visible = await locator.nth(i).isVisible({ timeout: 200 }).catch(() => false);
+    if (visible) return true;
+  }
+  return false;
+}
+
+async function recaptchaVerifyButtonLabel(scopes) {
+  for (const scope of scopes) {
+    const locator = scope.locator("#recaptcha-verify-button").first();
+    const visible = await locator.isVisible({ timeout: 400 }).catch(() => false);
+    if (!visible) continue;
+    return locatorAccessibleName(locator);
+  }
+  return "";
+}
+
 /**
  * Submit control for the current challenge. reCAPTCHA reuses
  * `#recaptcha-verify-button` for Skip (new puzzle) and Verify (submit).
  * Clicking it while it still says Skip abandons a correct tile selection.
  */
-async function findVerifyControl(page, scopes) {
+async function findVerifyControl(page, scopes, options: any = {}) {
+  const previousLabel = String(options.previousLabel || "");
   for (const scope of scopes) {
     for (const selector of VERIFY_BUTTON_SELECTORS) {
       if (selector === "body") continue;
@@ -5313,9 +5337,12 @@ async function findVerifyControl(page, scopes) {
       const label = await locatorAccessibleName(locator);
       if (isCaptchaSkipSubmitLabel(label)) continue;
       if (await locatorLooksDisabled(locator)) continue;
-      // #recaptcha-verify-button is Skip or Verify in the widget locale.
-      // Only the Skip name is unsafe; a localized Verify still submits.
-      if (selector === "#recaptcha-verify-button" && !label) continue;
+      if (selector === "#recaptcha-verify-button") {
+        const selectedTiles = await scopeHasSelectedCaptchaTiles(scope);
+        if (!isCaptchaVerifySubmitReady({ label, selectedTiles, previousLabel })) {
+          continue;
+        }
+      }
       const box = await elementBoxInPage(page, scope, locator);
       if (box) return { locator, box, scope, selector, label };
     }
@@ -5323,10 +5350,10 @@ async function findVerifyControl(page, scopes) {
   return null;
 }
 
-async function waitForVerifyControl(page, scopes, timeoutMs = 2_500) {
+async function waitForVerifyControl(page, scopes, timeoutMs = 2_500, options: any = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const found = await findVerifyControl(page, scopes);
+    const found = await findVerifyControl(page, scopes, options);
     if (found) return found;
     await hostDelay(120);
   }
@@ -5624,6 +5651,8 @@ async function captureTiles(page, session, provider) {
 
 async function clickStoredTiles(page, session, indexes) {
   if (!session.captchaTargets.size) return { ok: false, reason: "tiles_not_captured" };
+  const scopes = [page, ...page.frames().filter((frame) => frame !== page.mainFrame()).slice(0, 8)];
+  const previousLabel = await recaptchaVerifyButtonLabel(scopes);
   const clicked = [];
   for (const index of indexes) {
     const tile = session.captchaTargets.get(index);
@@ -5633,9 +5662,8 @@ async function clickStoredTiles(page, session, indexes) {
     await hostDelay(70 + Math.random() * 140);
   }
   if (!clicked.length) return { ok: false, reason: "tiles_not_found" };
-  const scopes = [page, ...page.frames().filter((frame) => frame !== page.mainFrame()).slice(0, 8)];
   // The Skip/Verify label flips only after the last tile click lands.
-  const verify = await waitForVerifyControl(page, scopes);
+  const verify = await waitForVerifyControl(page, scopes, 2_500, { previousLabel });
   if (!verify) {
     return { ok: true, clicked, verified: false, reason: "verify_not_ready" };
   }

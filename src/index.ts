@@ -33,6 +33,7 @@ export {
   isCaptchaChromeLabel,
   isCaptchaSkipSubmitLabel,
   isCaptchaVerifySubmitLabel,
+  isCaptchaVerifySubmitReady,
   isPlausibleImageGrid,
   maxAutoStages,
   nextSolveAction,

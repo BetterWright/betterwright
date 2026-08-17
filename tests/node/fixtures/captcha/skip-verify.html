@@ -31,19 +31,23 @@
     const answers = new Set([0, 4, 8]);
     const selected = new Set();
     const colors = ["#e74c3c","#3498db","#2ecc71","#9b59b6","#f39c12","#1abc9c","#34495e","#e67e22","#16a085"];
+    const params = new URLSearchParams(location.search);
+    const skipLabel = params.get("skip") || "Skip";
+    const verifyLabel = params.get("verify") || "Verify";
     const grid = document.getElementById("grid");
     const button = document.getElementById("recaptcha-verify-button");
     const skips = document.getElementById("skips");
     window.__bwSkipClicks = 0;
     function syncButton() {
       if (selected.size) {
-        button.textContent = "Verify";
-        button.title = "Verify";
+        button.textContent = verifyLabel;
+        button.title = verifyLabel;
       } else {
-        button.textContent = "Skip";
-        button.title = "Skip";
+        button.textContent = skipLabel;
+        button.title = skipLabel;
       }
     }
+    syncButton();
     for (let i = 0; i < 9; i += 1) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -59,7 +63,7 @@
       grid.appendChild(btn);
     }
     button.addEventListener("click", () => {
-      if (button.textContent === "Skip") {
+      if (button.textContent === skipLabel) {
         window.__bwSkipClicks += 1;
         skips.textContent = String(window.__bwSkipClicks);
         return;

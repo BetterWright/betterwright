@@ -367,6 +367,13 @@ export const IMAGE_TILE_SELECTORS = Object.freeze([
   "div[class*='image'] button",
 ]);
 
+/** Selected reCAPTCHA image-grid cells. Tight on purpose: a page `.selected` is not a tile. */
+export const SELECTED_IMAGE_TILE_SELECTORS = Object.freeze([
+  ".rc-imageselect-tileselected",
+  ".rc-imageselect-tile.selected",
+  ".rc-imageselect-tile[aria-pressed='true']",
+]);
+
 export const CHALLENGE_WIDGET_SELECTORS = Object.freeze([
   'iframe[src*="hcaptcha" i]',
   'iframe[src*="recaptcha" i]',
@@ -550,20 +557,42 @@ const SKIP_SUBMIT_LABEL =
 const VERIFY_SUBMIT_LABEL =
   /^(verify|next|submit|continue|i am human|check)$/i;
 
+function captchaSubmitLabelText(label) {
+  return String(label || "").replace(/\s+/g, " ").trim();
+}
+
 /**
  * reCAPTCHA's `#recaptcha-verify-button` is labeled Skip until at least one
  * tile is selected. Clicking it then requests a new puzzle instead of
  * submitting the current one.
  */
 export function isCaptchaSkipSubmitLabel(label) {
-  const text = String(label || "").replace(/\s+/g, " ").trim();
+  const text = captchaSubmitLabelText(label);
   return Boolean(text) && SKIP_SUBMIT_LABEL.test(text);
 }
 
 /** Positive name for a control that submits the current challenge. */
 export function isCaptchaVerifySubmitLabel(label) {
-  const text = String(label || "").replace(/\s+/g, " ").trim();
+  const text = captchaSubmitLabelText(label);
   return Boolean(text) && VERIFY_SUBMIT_LABEL.test(text);
+}
+
+/**
+ * Whether `#recaptcha-verify-button` is safe to click as Verify.
+ *
+ * A finite Skip-word list cannot cover every browser locale, so an
+ * unrecognized nonempty label is not treated as Verify on its own. Ready
+ * means a known Verify name, a selected image-grid tile, or a label that
+ * changed after the last tile pick (Skip → Verify in that locale).
+ */
+export function isCaptchaVerifySubmitReady(state) {
+  const label = captchaSubmitLabelText(untrustedField(state, "label"));
+  if (!label || isCaptchaSkipSubmitLabel(label)) return false;
+  if (isCaptchaVerifySubmitLabel(label)) return true;
+  const selected = untrustedField(state, "selectedTiles");
+  if (isBoolean(selected) && selected) return true;
+  const previous = captchaSubmitLabelText(untrustedField(state, "previousLabel"));
+  return Boolean(previous) && label !== previous;
 }
 
 /**

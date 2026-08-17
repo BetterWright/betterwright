@@ -16,6 +16,7 @@ import {
   isCaptchaChromeLabel,
   isCaptchaSkipSubmitLabel,
   isCaptchaVerifySubmitLabel,
+  isCaptchaVerifySubmitReady,
   isPlausibleImageGrid,
   maxAutoStages,
   nextSolveAction,
@@ -335,6 +336,30 @@ test("reCAPTCHA Skip is not a verify submit, Verify is", () => {
   assert.equal(isCaptchaVerifySubmitLabel("Next"), true);
   assert.equal(isCaptchaVerifySubmitLabel("Skip"), false);
   assert.equal(isCaptchaVerifySubmitLabel(""), false);
+});
+
+test("an unrecognized Skip translation is not treated as Verify", () => {
+  // Polish Skip/Verify are outside the English denylist / allowlist.
+  assert.equal(isCaptchaSkipSubmitLabel("Pomiń"), false);
+  assert.equal(isCaptchaVerifySubmitLabel("Zweryfikuj"), false);
+  assert.equal(isCaptchaVerifySubmitReady({ label: "Pomiń" }), false);
+  assert.equal(isCaptchaVerifySubmitReady({ label: "Skip" }), false);
+  assert.equal(isCaptchaVerifySubmitReady({ label: "Skip", selectedTiles: true }), false);
+  assert.equal(isCaptchaVerifySubmitReady({ label: "Pomiń", selectedTiles: true }), true);
+  assert.equal(
+    isCaptchaVerifySubmitReady({ label: "Zweryfikuj", previousLabel: "Pomiń" }),
+    true,
+  );
+  assert.equal(
+    isCaptchaVerifySubmitReady({ label: "Pomiń", previousLabel: "Pomiń" }),
+    false,
+  );
+  assert.equal(isCaptchaVerifySubmitReady({ label: "Verify" }), true);
+  assert.equal(isCaptchaVerifySubmitReady({ label: "Verificar" }), false);
+  assert.equal(
+    isCaptchaVerifySubmitReady({ label: "Verificar", selectedTiles: true }),
+    true,
+  );
 });
 
 test("isPlausibleImageGrid rejects a 1x3 toolbar and accepts a 3x3 puzzle", () => {
