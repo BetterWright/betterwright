@@ -367,13 +367,6 @@ export const IMAGE_TILE_SELECTORS = Object.freeze([
   "div[class*='image'] button",
 ]);
 
-/** Selected reCAPTCHA image-grid cells. Tight on purpose: a page `.selected` is not a tile. */
-export const SELECTED_IMAGE_TILE_SELECTORS = Object.freeze([
-  ".rc-imageselect-tileselected",
-  ".rc-imageselect-tile.selected",
-  ".rc-imageselect-tile[aria-pressed='true']",
-]);
-
 export const CHALLENGE_WIDGET_SELECTORS = Object.freeze([
   'iframe[src*="hcaptcha" i]',
   'iframe[src*="recaptcha" i]',
@@ -582,15 +575,14 @@ export function isCaptchaVerifySubmitLabel(label) {
  *
  * A finite Skip-word list cannot cover every browser locale, so an
  * unrecognized nonempty label is not treated as Verify on its own. Ready
- * means a known Verify name, a selected image-grid tile, or a label that
- * changed after the last tile pick (Skip → Verify in that locale).
+ * means a known Verify name, or a label that changed after the last tile
+ * pick (Skip → Verify in that locale). A still-visible unknown word is
+ * left alone even if a tile looks selected.
  */
 export function isCaptchaVerifySubmitReady(state) {
   const label = captchaSubmitLabelText(untrustedField(state, "label"));
   if (!label || isCaptchaSkipSubmitLabel(label)) return false;
   if (isCaptchaVerifySubmitLabel(label)) return true;
-  const selected = untrustedField(state, "selectedTiles");
-  if (isBoolean(selected) && selected) return true;
   const previous = captchaSubmitLabelText(untrustedField(state, "previousLabel"));
   return Boolean(previous) && label !== previous;
 }

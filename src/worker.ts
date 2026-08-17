@@ -46,7 +46,6 @@ import {
   parseTileIndexes,
   pickBestTileSet,
   pickDragFitPair,
-  SELECTED_IMAGE_TILE_SELECTORS,
   SLIDER_SELECTORS,
   solveTimeoutMs,
   unionClip,
@@ -5300,17 +5299,6 @@ async function locatorLooksDisabled(locator) {
   return /(?:^|\s)(?:disabled|rc-button-disabled)(?:\s|$)/i.test(String(className || ""));
 }
 
-async function scopeHasSelectedCaptchaTiles(scope) {
-  const locator = scope.locator(SELECTED_IMAGE_TILE_SELECTORS.join(", "));
-  const count = await locator.count().catch(() => 0);
-  if (!count) return false;
-  for (let i = 0; i < Math.min(count, 8); i += 1) {
-    const visible = await locator.nth(i).isVisible({ timeout: 200 }).catch(() => false);
-    if (visible) return true;
-  }
-  return false;
-}
-
 async function recaptchaVerifyButtonLabel(scopes) {
   for (const scope of scopes) {
     const locator = scope.locator("#recaptcha-verify-button").first();
@@ -5338,10 +5326,7 @@ async function findVerifyControl(page, scopes, options: any = {}) {
       if (isCaptchaSkipSubmitLabel(label)) continue;
       if (await locatorLooksDisabled(locator)) continue;
       if (selector === "#recaptcha-verify-button") {
-        const selectedTiles = await scopeHasSelectedCaptchaTiles(scope);
-        if (!isCaptchaVerifySubmitReady({ label, selectedTiles, previousLabel })) {
-          continue;
-        }
+        if (!isCaptchaVerifySubmitReady({ label, previousLabel })) continue;
       }
       const box = await elementBoxInPage(page, scope, locator);
       if (box) return { locator, box, scope, selector, label };

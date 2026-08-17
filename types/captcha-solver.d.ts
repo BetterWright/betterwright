@@ -78,7 +78,6 @@ export const VERIFY_BUTTON_SELECTORS: readonly string[];
 export const SLIDER_SELECTORS: readonly string[];
 export const MOTION_CONFIRM_SELECTORS: readonly string[];
 export const IMAGE_TILE_SELECTORS: readonly string[];
-export const SELECTED_IMAGE_TILE_SELECTORS: readonly string[];
 export const CHALLENGE_WIDGET_SELECTORS: readonly string[];
 export const CHALLENGE_INSTRUCTION_SELECTORS: readonly string[];
 
