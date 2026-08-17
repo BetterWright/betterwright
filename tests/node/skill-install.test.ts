@@ -187,6 +187,40 @@ test("refresh skips unrelated SKILL.md in the same path", () => {
   }
 });
 
+test("refresh preserves an unstamped user-authored e2e-review skill", () => {
+  const home = tempHome();
+  try {
+    const browser = wrapClaudeSkillMarkdown("body", { version: "1.0.0" });
+    const next = wrapClaudeSkillMarkdown("new body", { version: "1.1.0" });
+    const claudeFile = path.join(home, ".claude", "skills", "browser", "SKILL.md");
+    const e2eFile = path.join(
+      home,
+      ".claude",
+      "skills",
+      E2E_REVIEW_SKILL_NAME,
+      "SKILL.md",
+    );
+    const custom =
+      "---\nname: full-stack-e2e-review\ndescription: Mine.\n---\n\n# Full-stack end-to-end review\n\nuser playbook\n";
+    fs.mkdirSync(path.dirname(claudeFile), { recursive: true });
+    fs.mkdirSync(path.dirname(e2eFile), { recursive: true });
+    fs.writeFileSync(claudeFile, browser);
+    fs.writeFileSync(e2eFile, custom);
+
+    assert.equal(isManagedE2eReviewSkill(custom), false);
+    const { refreshed } = refreshInstalledAgentSkills({
+      markdown: next,
+      home,
+      targets: ["claude"],
+    });
+    assert.ok(refreshed.includes(claudeFile));
+    assert.ok(!refreshed.includes(e2eFile));
+    assert.equal(fs.readFileSync(e2eFile, "utf8"), custom);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("refresh does not create e2e-review on a host without the browser skill", () => {
   const home = tempHome();
   try {

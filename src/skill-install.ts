@@ -259,15 +259,14 @@ export function isManagedBrowserSkill(markdown) {
 }
 
 export function isManagedE2eReviewSkill(markdown) {
+  // Stamp plus heading, not the skill name alone: a user who already
+  // installed CuriosityOS/full-stack-e2e-review (or their own playbook)
+  // under this directory must not lose it on setup/update.
   const text = String(markdown || "");
-  if (/^\s*name:\s*"?full-stack-e2e-review"?\s*$/m.test(text)) return true;
-  if (
+  return (
     /generated_by:\s*betterwright@/i.test(text) &&
     /# Full-stack end-to-end review/i.test(text)
-  ) {
-    return true;
-  }
-  return false;
+  );
 }
 
 export function isManagedHostSkill(markdown, name) {
