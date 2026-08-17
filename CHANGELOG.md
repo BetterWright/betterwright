@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.5] - 2026-08-17
+
 ### Added
 
 - **End-to-end review skill, installed beside the browser skill.**
@@ -19,7 +21,8 @@ Releases before 1.1.3 predate this file; their notes live on the
   e2e review. It is not merged into MCP tool descriptions or the browser
   operator skill, and it has no `autoInject` keywords, so ordinary browsing
   and `betterwright exec` do not pay for it. `setup` / `update` backfill the
-  companion next to an existing managed browser skill. Adapted from
+  companion next to an existing managed browser skill, and do not overwrite
+  an unstamped user-authored playbook at that path. Adapted from
   [CuriosityOS/full-stack-e2e-review](https://github.com/CuriosityOS/full-stack-e2e-review).
 
 ## [1.9.3] - 2026-08-17
@@ -1005,7 +1008,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.3...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.5...HEAD
+[1.9.5]: https://github.com/BetterWright/betterwright/compare/v1.9.3...v1.9.5
 [1.9.3]: https://github.com/BetterWright/betterwright/compare/v1.9.2...v1.9.3
 [1.9.2]: https://github.com/BetterWright/betterwright/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/BetterWright/betterwright/compare/v1.9.0...v1.9.1
