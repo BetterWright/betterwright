@@ -341,6 +341,20 @@ browser configuration can guarantee undetectability or challenge acceptance.
 See [the security model](docs/architecture.md#security-model) for the
 boundaries the code does and does not enforce.
 
+## Project identity and attribution
+
+The official BetterWright project lives at
+[github.com/BetterWright/betterwright](https://github.com/BetterWright/betterwright).
+Forking, modification, integration, and commercial use are welcome under the
+MIT License. Distributed copies or substantial portions must retain the
+copyright and permission notice in [LICENSE](LICENSE).
+
+Public source forks are asked to identify themselves as based on BetterWright
+and use a distinct name and visual identity so users do not mistake them for
+the official project. This does not restrict using BetterWright as a component
+inside a larger product. See [NOTICE.md](NOTICE.md) and
+[TRADEMARKS.md](TRADEMARKS.md).
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

@@ -78,7 +78,10 @@
     "SECURITY.md",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "CITATION.cff",
+    "LICENSE",
+    "NOTICE.md",
+    "TRADEMARKS.md"
   ],
   "scripts": {
     "build:tools": "tsc -p tsconfig.tools.json",
@@ -137,7 +140,7 @@
     "pi-package"
   ],
   "license": "MIT",
-  "author": "BetterWright contributors",
+  "author": "The BetterWright Project and contributors",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/BetterWright/betterwright.git"

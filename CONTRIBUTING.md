@@ -63,6 +63,18 @@ turn it into a tool primarily for evading anti-bot systems at scale, bulk
 account creation, or credential stuffing are out of scope. Features that make
 authorized automation safer, clearer, or more reliable are welcome.
 
+## Licensing and attribution
+
+Unless explicitly agreed otherwise in writing, every contribution submitted
+for inclusion in BetterWright is licensed under the repository's
+[MIT License](LICENSE). By submitting a contribution, you confirm that you have
+the right to license it on those terms.
+
+Contributors retain copyright in their contributions. Preserve applicable
+copyright, license, and third-party notices, and do not submit code under terms
+that conflict with the MIT License. Project identity and fork guidance are in
+[NOTICE.md](NOTICE.md) and [TRADEMARKS.md](TRADEMARKS.md).
+
 ## Pinned Playwright
 
 The Playwright version is pinned in `package.json`. A bump is tested against
