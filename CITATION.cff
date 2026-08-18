@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: If you reference BetterWright in research or documentation, please cite the project.
+title: BetterWright
+type: software
+authors:
+  - name: The BetterWright Project and contributors
+repository-code: https://github.com/BetterWright/betterwright
+url: https://betterwright.com
+license: MIT
+abstract: A persistent, policy-guarded browser runtime for AI agents.
