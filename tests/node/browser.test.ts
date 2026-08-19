@@ -93,6 +93,19 @@ function directorySize(root) {
   return total;
 }
 
+function largestFileSize(root) {
+  if (!fs.existsSync(root)) return 0;
+  let largest = 0;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const target = path.join(root, entry.name);
+    largest = Math.max(
+      largest,
+      entry.isDirectory() ? largestFileSize(target) : fs.statSync(target).size,
+    );
+  }
+  return largest;
+}
+
 test("navigate and read the title", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), policy: new NetworkPolicy(), headless: true });
   try {
@@ -990,6 +1003,10 @@ test("downloads are canceled while crossing the byte limit", opts, async () => {
   });
   const home = tempHome();
   const maxDownloadBytes = 32 * 1024;
+  // Chromium batches Browser.downloadProgress notifications. Permit one 64 KiB
+  // notification window beyond the configured ceiling, but still prove that
+  // cancellation stops this 256 KiB response well before completion.
+  const progressAllowance = 64 * 1024;
   const bw = new LimitedBetterWright(
     {
       home,
@@ -999,9 +1016,15 @@ test("downloads are canceled while crossing the byte limit", opts, async () => {
     },
     { maxArtifactBytes: maxDownloadBytes, maxDownloadBytes },
   );
-  let maxObserved = 0;
+  let maxObservedFile = 0;
   const observer = setInterval(() => {
-    maxObserved = Math.max(maxObserved, directorySize(path.join(home, "artifacts")));
+    // The limit is per download. Summing both concurrent Chromium temp files
+    // compares an aggregate to a per-file ceiling and flakes on platforms
+    // where their progress overlaps for longer.
+    maxObservedFile = Math.max(
+      maxObservedFile,
+      largestFileSize(path.join(home, "artifacts")),
+    );
   }, 10);
   try {
     const result = await bw.run(`
@@ -1014,8 +1037,8 @@ test("downloads are canceled while crossing the byte limit", opts, async () => {
     `);
     assert.equal(result.ok, true, result.error);
     assert.ok(
-      maxObserved <= maxDownloadBytes + chunk.length * 4,
-      `download grew to ${maxObserved} bytes before cancellation`,
+      maxObservedFile <= maxDownloadBytes + progressAllowance,
+      `download grew to ${maxObservedFile} bytes before cancellation`,
     );
     const rejected = (result.events || []).filter(
       event => event.type === "download-rejected",
@@ -1409,6 +1432,31 @@ test("failed snippets preserve bot-challenge evidence for recovery", opts, async
     assert.equal(result.challenges?.[0]?.type, "bot_challenge");
     assert.ok(result.artifacts?.some((artifact) => artifact.kind === "captcha"));
     assert.ok(Array.isArray(result.pages));
+  } finally {
+    await bw.close();
+  }
+});
+
+test("a missing locator fails before the run deadline and preserves the page", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const seeded = await bw.run(
+      "await page.setContent('<p id=kept>still here</p>'); return true",
+    );
+    assert.equal(seeded.ok, true, seeded.error);
+
+    const started = Date.now();
+    const missed = await bw.run(
+      "await page.getByRole('button', {name:'never appears'}).click(); return true",
+      { timeout: 25_000 },
+    );
+    assert.equal(missed.ok, false);
+    assert.match(missed.error, /Timeout 10000ms exceeded/);
+    assert.ok(Date.now() - started < 20_000, `locator miss took ${Date.now() - started}ms`);
+
+    const recovered = await bw.run("return page.locator('#kept').textContent()");
+    assert.equal(recovered.ok, true, recovered.error);
+    assert.equal(recovered.result, "still here");
   } finally {
     await bw.close();
   }

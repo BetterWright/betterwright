@@ -615,7 +615,7 @@ Use \`betterwright\` for live-web tasks. Run async Playwright JavaScript with:
 
 It returns JSON with \`ok\`, \`result\`, \`error\`, \`console\`, \`events\`, \`artifacts\`, \`pages\`, \`challenges\`, \`warnings\`, and \`durationMs\`. Screenshot artifacts contain a path; inspect the image before relying on it.
 
-The daemon preserves tabs, page state, and the in-memory \`state\` object between calls; the profile preserves cookies and logins. Work in small action-and-observe calls. Use \`--session\` for parallel work, \`--profile\` for a separate identity, and \`betterwright close\` when finished.
+The daemon preserves tabs, page state, and the in-memory \`state\` object between calls; the profile preserves cookies and logins. Batch deterministic stretches and observe at uncertain boundaries. Use \`--session\` for parallel work, \`--profile\` for a separate identity, and \`betterwright close\` when finished.
 
 The browser is network-policy guarded. Private and loopback access are allowed unless disabled; cloud metadata is always blocked. Stored passwords are user-owned: never run \`vault show --reveal\`/\`get\`, \`vault copy\`, or \`vault rm\`; use trusted credential fill instead.`;
 

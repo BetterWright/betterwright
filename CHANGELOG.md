@@ -9,6 +9,40 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.8] - 2026-08-19
+
+### Changed
+
+- **Faster browser-agent turns without changing the public tool surface.** MCP,
+  Pi, the reusable operator prompt, and the built-in agent now tell models to
+  plan a deterministic stretch, batch it into one browser call, read known
+  article regions directly, inspect only unknown or failed UI, and capture
+  final proof in the same call. They also make automatic host cleanup explicit
+  so agents do not spend extra turns closing pages merely to finish. All tool
+  names, input schemas, and JavaScript/TypeScript APIs remain compatible with
+  1.9.7.
+- **Less permanent model context.** The advertised MCP catalog is 5,342
+  collapsed characters, down from 5,873 in 1.9.7 (9.0%), while regression
+  assertions pin the locator, proof, challenge, download, credential, WebMCP,
+  and handoff safety directives that must remain discoverable. The reusable
+  operator prompt is also pinned below 4,000 characters.
+
+### Fixed
+
+- **Off-screen image-grid CAPTCHA tiles are clicked at their visible viewport
+  coordinates.** Numbered captures can include tiles below the fold, but raw
+  pointer input is viewport-relative. BetterWright now retains page-relative
+  tile geometry, scrolls a selected tile into view when needed, and translates
+  its box before clicking, so bottom-row picks are not silently dropped. Grid
+  staleness checks also normalize for scrolling instead of treating the same
+  challenge at a new scroll offset as a replacement grid.
+- **A bad locator no longer consumes the entire browser-run deadline and
+  destroys recoverable page state.** Ordinary Playwright actions now time out
+  after 10 seconds while navigation keeps its 30-second allowance. A failed
+  action returns early enough for the agent to inspect and retry, and the next
+  call keeps the same live page instead of restarting the worker. A managed
+  browser regression test covers both the bound and the preserved DOM.
+
 ## [1.9.7] - 2026-08-19
 
 ### Added
@@ -1047,7 +1081,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.7...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.8...HEAD
+[1.9.8]: https://github.com/BetterWright/betterwright/compare/v1.9.7...v1.9.8
 [1.9.7]: https://github.com/BetterWright/betterwright/compare/v1.9.6...v1.9.7
 [1.9.6]: https://github.com/BetterWright/betterwright/compare/v1.9.5...v1.9.6
 [1.9.5]: https://github.com/BetterWright/betterwright/compare/v1.9.3...v1.9.5
