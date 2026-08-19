@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.7] - 2026-08-19
+
 ### Added
 
 - **Typed first-party WebMCP page tools.** Browser snippets can discover a
@@ -1045,7 +1047,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.6...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.7...HEAD
+[1.9.7]: https://github.com/BetterWright/betterwright/compare/v1.9.6...v1.9.7
 [1.9.6]: https://github.com/BetterWright/betterwright/compare/v1.9.5...v1.9.6
 [1.9.5]: https://github.com/BetterWright/betterwright/compare/v1.9.3...v1.9.5
 [1.9.3]: https://github.com/BetterWright/betterwright/compare/v1.9.2...v1.9.3
