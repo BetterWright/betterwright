@@ -87,6 +87,26 @@ test("WebMCP discovery returns a fresh, bounded public descriptor", async () => 
   assert.equal(session.detached, true);
 });
 
+test("WebMCP discovery observes delayed registration for the full requested window", async () => {
+  let delayed;
+  const session = new FakeCDP({
+    "WebMCP.enable": (cdp) => {
+      delayed = setTimeout(() => {
+        cdp.emit("WebMCP.toolsAdded", { tools: [registeredTool()] });
+      }, 15);
+    },
+  });
+
+  try {
+    const tools = await listWebMCPTools(page, { ...deps(session), timeout: 30 });
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].name, "search");
+    assert.equal(session.detached, true);
+  } finally {
+    clearTimeout(delayed);
+  }
+});
+
 test("WebMCP invocation discovers, disambiguates, invokes, and labels page output", async () => {
   const session = new FakeCDP({
     "WebMCP.enable": (cdp) => {
