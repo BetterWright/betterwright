@@ -1714,10 +1714,22 @@ async function restoreTypedFieldText(target, text) {
     }, value);
   }
   const after = await readTypedFieldText(target);
-  if (after != null && after !== value) {
-    throw new Error(
-      "human.type could not restore the field before retrying the insert.",
-    );
+  if (after != null && !typedFieldMatches(after, value)) {
+    throw new Error("human.type could not replace the field contents.");
+  }
+}
+
+function typedFieldMatches(actual, expected) {
+  if (expected === "") return String(actual).trim().length === 0;
+  return String(actual) === String(expected);
+}
+
+async function clearTypedField(page, target) {
+  await selectAllForClear(page, target);
+  await page.keyboard.press("Backspace");
+  const afterClear = await readTypedFieldText(target);
+  if (afterClear != null && afterClear.trim().length > 0) {
+    await restoreTypedFieldText(target, "");
   }
 }
 
@@ -4537,19 +4549,14 @@ function buildSandbox(session, consoleMessages, execution) {
     const page = await ensureSessionPage(session);
     const clickedTarget = await humanClickTarget(page, session, target, options);
     const clear = options?.clear !== false;
-    if (clear) {
-      await selectAllForClear(page, clickedTarget);
-      await page.keyboard.press("Backspace");
-    }
+    if (clear) await clearTypedField(page, clickedTarget);
     const expected = String(text);
     const before = await readTypedFieldText(clickedTarget);
     await typeText(page.keyboard, expected, options);
     let after = await readTypedFieldText(clickedTarget);
     if (!typedTextLanded(expected, before, after)) {
-      if (clear) {
-        await selectAllForClear(page, clickedTarget);
-        await page.keyboard.press("Backspace");
-      } else if (before != null) {
+      if (clear) await clearTypedField(page, clickedTarget);
+      else if (before != null) {
         await restoreTypedFieldText(clickedTarget, before);
       }
       const retryBefore = await readTypedFieldText(clickedTarget);

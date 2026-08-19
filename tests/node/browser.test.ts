@@ -1636,6 +1636,32 @@ test("human helpers use shaped pointer, keyboard, and wheel events", opts, async
   }
 });
 
+test("human.type clears even when Backspace is swallowed", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <input id="name" value="old" style="width:240px;height:40px">
+        <script>
+          document.querySelector('#name').addEventListener('keydown', (event) => {
+            if (event.key === 'Backspace' || event.key === 'Delete') event.preventDefault();
+          });
+        </script>
+      \`);
+      const typed = await human.type('#name', 'hello');
+      return {
+        typed,
+        value: await page.evaluate(() => document.querySelector('#name').value),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.typed.typed, 5);
+    assert.equal(result.result.value, "hello");
+  } finally {
+    await bw.close();
+  }
+});
+
 test("human.type inserts into a rich-text editor that swallows key events", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
