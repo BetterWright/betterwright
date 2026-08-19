@@ -1683,25 +1683,42 @@ async function readTypedFieldText(target) {
   });
 }
 
-async function restoreTypedFieldText(page, target, text) {
-  if (text == null || !target) return;
+async function restoreTypedFieldText(target, text) {
+  const value = String(text ?? "");
+  if (!target) return;
   if (isCallable(untrustedField(target, "evaluate"))) {
-    const restored = await target.evaluate((element, value) => {
+    await target.evaluate((element, next) => {
+      const isCallableValue = (value: UntrustedValue): value is UntrustedFunction =>
+        typeof value === "function";
       if (
         element instanceof HTMLInputElement ||
         element instanceof HTMLTextAreaElement
       ) {
-        element.value = value;
+        element.value = next;
         element.dispatchEvent(new Event("input", { bubbles: true }));
-        return true;
+        return;
       }
-      return false;
-    }, String(text));
-    if (restored) return;
+      if (!element.isContentEditable) return;
+      if (isCallableValue(element.focus)) element.focus();
+      const selection = element.ownerDocument.defaultView?.getSelection();
+      if (selection) {
+        const range = element.ownerDocument.createRange();
+        range.selectNodeContents(element);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      const doc = element.ownerDocument;
+      if (!isCallableValue(doc.execCommand)) return;
+      if (next) doc.execCommand("insertText", false, next);
+      else doc.execCommand("delete");
+    }, value);
   }
-  await selectAllForClear(page, target);
-  if (String(text)) await page.keyboard.insertText(String(text));
-  else await page.keyboard.press("Backspace");
+  const after = await readTypedFieldText(target);
+  if (after != null && after !== value) {
+    throw new Error(
+      "human.type could not restore the field before retrying the insert.",
+    );
+  }
 }
 
 async function insertTypedText(page, target, text, before) {
@@ -4533,7 +4550,7 @@ function buildSandbox(session, consoleMessages, execution) {
         await selectAllForClear(page, clickedTarget);
         await page.keyboard.press("Backspace");
       } else if (before != null) {
-        await restoreTypedFieldText(page, clickedTarget, before);
+        await restoreTypedFieldText(clickedTarget, before);
       }
       const retryBefore = await readTypedFieldText(clickedTarget);
       await insertTypedText(page, clickedTarget, expected, retryBefore);

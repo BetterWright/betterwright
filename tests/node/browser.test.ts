@@ -1691,6 +1691,39 @@ test("human.type retries when key events only land a prefix", opts, async () => 
   }
 });
 
+test("human.type restores a contenteditable before retrying a partial append", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <div id="editor" contenteditable="true" style="width:400px;height:80px">Ada</div>
+        <script>
+          const editor = document.querySelector('#editor');
+          let accepted = 0;
+          editor.addEventListener('keydown', (event) => {
+            if (event.key.length !== 1) return;
+            event.preventDefault();
+            if (accepted < 1) {
+              accepted += 1;
+              editor.textContent += event.key;
+            }
+          });
+        </script>
+      \`);
+      const typed = await human.type('#editor', 'Ada', {clear: false});
+      return {
+        typed,
+        text: await page.evaluate(() => document.querySelector('#editor').textContent),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.typed.typed, 3);
+    assert.equal(result.result.text, "AdaAda");
+  } finally {
+    await bw.close();
+  }
+});
+
 test("human.type retries a partial append onto existing matching text", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
