@@ -1691,6 +1691,41 @@ test("human.type retries when key events only land a prefix", opts, async () => 
   }
 });
 
+test("human.type retries a partial append onto existing matching text", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <input id="name" value="Ada" style="width:240px;height:40px">
+        <script>
+          const name = document.querySelector('#name');
+          let accepted = 0;
+          name.addEventListener('keydown', (event) => {
+            if (event.key.length !== 1) return;
+            event.preventDefault();
+            if (accepted < 1) {
+              accepted += 1;
+              name.value += event.key;
+            }
+          });
+        </script>
+      \`);
+      const typed = await human.type('#name', 'Ada', {clear: false});
+      return {
+        typed,
+        value: await page.evaluate(() => document.querySelector('#name').value),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.typed.typed, 3);
+    assert.match(result.result.value, /Ada.*Ada/);
+    assert.notEqual(result.result.value, "Ada");
+    assert.notEqual(result.result.value, "AdaA");
+  } finally {
+    await bw.close();
+  }
+});
+
 test("human.type appends when the field already contains the requested text", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
