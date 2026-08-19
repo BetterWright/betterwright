@@ -136,8 +136,9 @@ the field by default; pass `{clear: false}` to append, or set `minDelay` and
 occurrence of the requested text, so a prefix, an unchanged field, or a
 partial append onto a value that already contained the string is not a hit.
 If that check fails — typical of Draft.js and other rich-text editors that
-swallow synthetic key events — it retries with `insertText` and throws if
-the field still did not accept the text.
+swallow synthetic key events — it restores the original value when appending,
+retries with `insertText`, and throws if the field still did not accept the
+text.
 `human.scroll(deltaY, options?)` accepts `steps`, while the object
 form also accepts `deltaX`.
 

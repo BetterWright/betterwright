@@ -1683,6 +1683,27 @@ async function readTypedFieldText(target) {
   });
 }
 
+async function restoreTypedFieldText(page, target, text) {
+  if (text == null || !target) return;
+  if (isCallable(untrustedField(target, "evaluate"))) {
+    const restored = await target.evaluate((element, value) => {
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement
+      ) {
+        element.value = value;
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      }
+      return false;
+    }, String(text));
+    if (restored) return;
+  }
+  await selectAllForClear(page, target);
+  if (String(text)) await page.keyboard.insertText(String(text));
+  else await page.keyboard.press("Backspace");
+}
+
 async function insertTypedText(page, target, text, before) {
   const value = String(text);
   if (!value) return;
@@ -4511,6 +4532,8 @@ function buildSandbox(session, consoleMessages, execution) {
       if (clear) {
         await selectAllForClear(page, clickedTarget);
         await page.keyboard.press("Backspace");
+      } else if (before != null) {
+        await restoreTypedFieldText(page, clickedTarget, before);
       }
       const retryBefore = await readTypedFieldText(clickedTarget);
       await insertTypedText(page, clickedTarget, expected, retryBefore);
