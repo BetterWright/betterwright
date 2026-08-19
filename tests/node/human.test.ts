@@ -13,6 +13,7 @@ import {
   pointInside,
   pressPointer,
   scrollWheel,
+  typedTextLanded,
   typeText,
 } from "../../dist/src/human.js";
 
@@ -214,6 +215,19 @@ test("pressPointer dwells before pressing and between down and up", async (t) =>
   assert.deepEqual(mouse.calls, [["down"], ["up"]]);
   assert.equal(settled, true);
   await done;
+});
+
+test("typedTextLanded requires the requested text as a new change", () => {
+  assert.equal(typedTextLanded("", "", ""), true);
+  assert.equal(typedTextLanded("hello", "", null), true);
+  assert.equal(typedTextLanded("hello", "", "hello"), true);
+  assert.equal(typedTextLanded("hello", "pre", "prehello"), true);
+  assert.equal(typedTextLanded("hello", "hello", "hellohello"), true);
+  // Partial accept: the field changed but does not contain the request.
+  assert.equal(typedTextLanded("hello", "", "hel"), false);
+  // Unchanged append: the request is already in the field and nothing new landed.
+  assert.equal(typedTextLanded("hello", "hello", "hello"), false);
+  assert.equal(typedTextLanded("Ada", "Ada Lovelace", "Ada Lovelace"), false);
 });
 
 test("typeText routes ASCII through type and everything else through insertText, per character", async (t) => {
