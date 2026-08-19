@@ -12,10 +12,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 ### Changed
 
 - **MCP `browser_download` is autonomous.** Calling that tool grants the run
-  permission to save a remote file. Ordinary `browser` still cannot download
+  permission to save a remote file. The `browser` tool still cannot download
   under the default `ask` worker policy. `BETTERWRIGHT_DOWNLOAD_POLICY=deny`
-  disables downloads; `allow` also permits ordinary `browser` runs. MCP no
-  longer depends on elicitation, which most hosts cannot present. (#134)
+  disables downloads; `allow` also permits the `browser` tool to save files.
+  MCP no longer depends on elicitation, which most hosts cannot present. (#134)
 
 ## [1.9.8] - 2026-08-19
 
