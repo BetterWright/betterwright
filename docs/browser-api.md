@@ -118,6 +118,54 @@ response bodies are bounded to 1 MB. This surface is useful for any web app
 whose visible UI is backed by a first-party JSON API or client bundle; it does
 not contain site-specific puzzle or endpoint knowledge.
 
+## Page-published WebMCP tools
+
+Some pages publish typed first-party tools through Chromium's WebMCP API. Use
+those tools when available instead of reconstructing the same operation from a
+series of DOM clicks:
+
+```js
+const tools = await webmcp.tools();
+const search = tools.find((tool) => tool.name === 'search');
+if (!search) return {available: false};
+
+return webmcp.invoke(
+  search.name,
+  {query: 'wireless mouse'},
+  {frameId: search.frameId},
+);
+```
+
+`webmcp.tools({timeout})` returns a fresh snapshot on every call. Each descriptor
+has `name`, `description`, `frameId`, `trust: "untrusted_external_data"`, optional `inputSchema`, optional
+`backendNodeId`, and advisory `annotations` (`readOnly`, `untrustedContent`,
+`autosubmit`). Same-named tools in separate frames stay separate; invoking by
+name alone fails closed until `frameId` disambiguates them.
+
+`webmcp.invoke(name, input?, options?)` freshly discovers the tool, validates a
+JSON-object input, invokes it, and awaits the terminal `Completed`, `Canceled`,
+or `Error` result in one browser call. Options are:
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `frameId` | — | Required only when more than one frame publishes the same name. Copy it from `webmcp.tools()`. |
+| `discoveryTimeout` | `1000` | Tool-registration wait in milliseconds, capped at 10000. |
+| `timeout` | `30000` | Terminal-result wait in milliseconds, capped at 120000. A timeout requests cancellation before returning an error. |
+| `allowAutosubmit` | `false` | Must be `true` for a tool that declares `autosubmit: true`; set it only when the user's request authorizes submission. |
+
+Tool descriptors and outputs are controlled by the page. Annotations are hints,
+not security claims, and every invocation result carries
+`trust: "untrusted_external_data"`. BetterWright also bounds serialized inputs,
+schemas, and outputs to 1 MB and applies the normal result redaction before they
+leave the worker. Page traffic caused by a WebMCP call stays behind the same
+guard proxy and network policy as UI actions.
+
+BetterWright enables `WebMCPTesting,DevToolsWebMCPSupport` for every local
+Chromium it launches. A remote/CDP or cloud browser owns its own launch flags;
+start it with
+`--enable-features=WebMCPTesting,DevToolsWebMCPSupport` when that provider does
+not already enable WebMCP.
+
 ## Human-shaped interactions
 
 The frozen `human` global emits visible actions with curved pointer movement,

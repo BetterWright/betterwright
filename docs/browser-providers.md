@@ -80,6 +80,11 @@ A remote browser runs on the provider's side of the WebSocket:
 - **Profile persistence is the provider's.** The local profile dir, the
   launch identity flags, and the fingerprint seed only exist for locally
   launched browsers.
+- **WebMCP feature flags are the provider's.** BetterWright enables
+  `WebMCPTesting,DevToolsWebMCPSupport` for browsers it launches locally. An
+  attached or cloud browser must start Chromium with
+  `--enable-features=WebMCPTesting,DevToolsWebMCPSupport`; otherwise
+  `webmcp.tools()` returns an actionable unsupported-feature error.
 - **Sessions can keep billing.** Providers with a session-stop API (Kernel,
   Browserbase, Hyperbrowser) are released when the browser closes. Providers
   without one (Browser Use, Steel, Anchor, Browserless, Bright Data, Oxylabs)

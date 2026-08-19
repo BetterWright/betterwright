@@ -149,6 +149,11 @@ import {
   untrustedField,
 } from "./untrusted-value.js";
 import { httpOrigin, installVaultCapture } from "./vault-capture.js";
+import {
+  invokeWebMCPTool,
+  listWebMCPTools,
+  WEBMCP_FEATURE_SWITCH,
+} from "./webmcp.js";
 
 // Re-exported for source compatibility: the `betterwright/worker` subpath now
 // resolves to worker-constants.js, but direct imports of this file keep the
@@ -1963,15 +1968,21 @@ async function ensureBrowser(config) {
     // that is what clears the "masking detected" verdict on consistency
     // checkers that compare rendering against stock hardware.
     const fingerprintNoise = launchConfig.fingerprintNoise !== false;
-    const args =
-      !remoteCdp && forkBinary
-        ? managedForkArgs(
-            fingerprintNoise ? fingerprintSeedForProfile(browserProfileDir) : null,
-            {
-              softwareGpu,
-            },
-          )
-        : [];
+    // Page-published WebMCP tools are a browser feature, not a fork feature.
+    // Enable the domain for every local Chromium launch; an attached browser
+    // keeps its own launch flags and gets an actionable error from the helper
+    // when the domain is unavailable.
+    const args = remoteCdp ? [] : [WEBMCP_FEATURE_SWITCH];
+    if (!remoteCdp && forkBinary) {
+      args.push(
+        ...managedForkArgs(
+          fingerprintNoise ? fingerprintSeedForProfile(browserProfileDir) : null,
+          {
+            softwareGpu,
+          },
+        ),
+      );
+    }
 
     // Coherent launch identity: one story across the Chromium and network
     // layers. geoip resolves the locale/timezone to match the egress
@@ -4632,6 +4643,25 @@ function buildSandbox(session, consoleMessages, execution) {
     const page = await ensureSessionPage(session);
     return pageSiteRequest(page, url, options);
   });
+  const webmcp = Object.create(null);
+  webmcp.tools = realm.safeFunction(async (options: any = {}) => {
+    if (!isObjectValue(options) || Array.isArray(options)) {
+      throw new TypeError("webmcp.tools options must be an object.");
+    }
+    const page = await ensureSessionPage(session);
+    return listWebMCPTools(page, {
+      newCDPSession: (target) => browserContext.newCDPSession(target),
+      timeout: untrustedField(options, "timeout"),
+    });
+  });
+  webmcp.invoke = realm.safeFunction(
+    async (name, input: any = {}, options: any = {}) => {
+      const page = await ensureSessionPage(session);
+      return invokeWebMCPTool(page, name, input, options, {
+        newCDPSession: (target) => browserContext.newCDPSession(target),
+      });
+    },
+  );
   sandbox.dialogs = Object.freeze(dialogs);
   sandbox.captcha = Object.freeze(captcha);
   sandbox.human = Object.freeze(human);
@@ -4639,6 +4669,7 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.controls = Object.freeze(controls);
   sandbox.media = Object.freeze(media);
   sandbox.site = Object.freeze(site);
+  sandbox.webmcp = Object.freeze(webmcp);
   sandbox.credentials = buildCredentials(session, realm, execution);
   realm.installPage(getCurrentPage);
   return { context, realm, sandbox };

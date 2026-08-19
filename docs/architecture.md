@@ -67,6 +67,13 @@ The raw browser handle, CDP sessions, and Playwright private properties remain
 inside the worker. Launch configuration is trusted host state, never a snippet
 global or model-controlled browser-tool option.
 
+The `webmcp` helper is a narrow privileged bridge, not an escape hatch: the
+worker owns the temporary CDP session, returns only bounded JSON descriptors
+and terminal results, detaches listeners on every path, and never exposes the
+session object. Invocations still run in the guarded browser, their output is
+marked as untrusted page data, tools declaring `autosubmit` require a per-call
+opt-in, and a result timeout requests cancellation before detaching.
+
 We do **not** claim `node:vm` is a security boundary — it isn't, and the
 documentation says so in the worker itself. The sandbox raises the cost of
 misusing the API and removes the obvious footguns. The controls that are

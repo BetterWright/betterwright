@@ -18,9 +18,10 @@
 //      debugging), which profile is opened, and what identity is presented.
 //   2. A switch that merely collides with one already in the managed list, or
 //      is common compatibility boilerplate that would break the selected
-//      backend, is dropped and reported back. The caller learns it was ignored
-//      rather than getting an upgrade-time launch failure or different
-//      behavior than they asked for.
+//      backend, is dropped and reported back. The one composable exception is
+//      --enable-features: its comma-separated feature names are merged so a
+//      BetterWright-required feature does not erase a caller's independent
+//      Chromium features.
 //
 // Everything else is appended last and takes effect.
 
@@ -81,6 +82,24 @@ const RESERVED_PREFIXES = Object.freeze([
 function switchName(arg) {
   const equals = arg.indexOf("=");
   return equals === -1 ? arg : arg.slice(0, equals);
+}
+
+function switchValue(arg) {
+  const equals = arg.indexOf("=");
+  return equals === -1 ? null : arg.slice(equals + 1);
+}
+
+function mergeEnabledFeatures(current, incoming) {
+  const incomingValue = switchValue(incoming);
+  if (incomingValue === null) return null;
+  const features = [];
+  for (const value of [switchValue(current) ?? "", incomingValue]) {
+    for (const feature of value.split(",")) {
+      const name = feature.trim();
+      if (name && !features.includes(name)) features.push(name);
+    }
+  }
+  return `--enable-features=${features.join(",")}`;
 }
 
 function reservedReason(name) {
@@ -220,6 +239,8 @@ export function resolveChromiumArgs(option, env = process.env) {
 
 /**
  * Append caller switches to the managed list, dropping any that collide.
+ * Comma-separated `--enable-features` values are combined instead because
+ * multiple independent browser capabilities can safely coexist.
  *
  * A collision is dropped rather than appended because Chromium resolves
  * duplicates last-wins: appending would override the managed value, which is
@@ -235,6 +256,14 @@ export function mergeChromiumArgs(managedArgs, extraArgs) {
   const taken = new Set(managedArgs.map(switchName));
   for (const arg of extraArgs) {
     const name = switchName(arg);
+    if (name === "--enable-features" && taken.has(name)) {
+      const index = args.findIndex((candidate) => switchName(candidate) === name);
+      const merged = mergeEnabledFeatures(args[index], arg);
+      if (merged !== null) {
+        args[index] = merged;
+        continue;
+      }
+    }
     if (Object.hasOwn(DROP_WITH_WARNING, name) || taken.has(name)) {
       if (!ignored.includes(name)) ignored.push(name);
       continue;

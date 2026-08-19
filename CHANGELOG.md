@@ -9,6 +9,18 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- **Typed first-party WebMCP page tools.** Browser snippets can discover a
+  fresh, frame-aware tool snapshot with `webmcp.tools()` and invoke one with
+  `webmcp.invoke()`. BetterWright enables the Chromium feature for local
+  launches, keeps CDP worker-private, bounds schemas/inputs/outputs, marks all
+  page-controlled results untrusted, fails closed on duplicate names across
+  frames, requires explicit opt-in for tools declaring `autosubmit`, and
+  requests cancellation when a terminal result times out. Attached and cloud
+  browsers get an actionable launch-flag error when they do not expose the
+  WebMCP domain.
+
 ## [1.9.6] - 2026-08-19
 
 ### Fixed

@@ -167,6 +167,8 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser"), /three distinct challenge types/);
   assert.match(text("browser"), /Replacement photo grids are the same stage/);
   assert.match(text("browser"), /Never duplicate a submission, purchase, or message/);
+  assert.match(text("browser"), /webmcp\.tools\(\)\/webmcp\.invoke\(\)/);
+  assert.match(text("browser"), /autosubmit requires explicit opt-in/);
 
   // Downloads are gated; both escape hatches must stay discoverable.
   assert.match(text("browser_download"), /approval first/);
