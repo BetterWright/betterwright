@@ -112,6 +112,18 @@ export async function pressPointer(mouse, inputLike = false) {
   await mouse.up();
 }
 
+// True only when `text` is present as a *new* change. A field that already
+// contained the requested string and did not change is a miss (append into a
+// key-swallowing editor). A non-empty change that does not contain `text` is
+// also a miss (the editor accepted a prefix). Unreadable targets and empty
+// requests cannot be verified and pass.
+export function typedTextLanded(expected, before, after) {
+  if (!expected || after == null) return true;
+  const beforeText = String(before ?? "");
+  const afterText = String(after);
+  return afterText.includes(String(expected)) && afterText !== beforeText;
+}
+
 export async function typeText(keyboard, text, options: any = {}) {
   const minDelay = Math.max(10, Number(options.minDelay) || 35);
   const maxDelay = Math.max(minDelay, Number(options.maxDelay) || 95);

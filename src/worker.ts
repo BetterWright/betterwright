@@ -105,6 +105,7 @@ import {
   pointInside,
   pressPointer,
   scrollWheel,
+  typedTextLanded,
   typeText,
 } from "./human.js";
 import { buildLaunchIdentityPlan, resolveGeoIdentity } from "./launch-identity.js";
@@ -1682,21 +1683,35 @@ async function readTypedFieldText(target) {
   });
 }
 
-function typedTextLanded(expected, before, after) {
-  if (!expected || after == null) return true;
-  if (String(after).includes(expected)) return true;
-  return String(after) !== String(before ?? "") && String(after).trim().length > 0;
-}
-
-async function insertTypedText(page, target, text) {
+async function insertTypedText(page, target, text, before) {
   const value = String(text);
   if (!value) return;
   if (target && isCallable(untrustedField(target, "focus"))) {
     await target.focus().catch(() => {});
   }
+  if (target && isCallable(untrustedField(target, "evaluate"))) {
+    await target.evaluate((element) => {
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement
+      ) {
+        const end = element.value.length;
+        element.setSelectionRange(end, end);
+        return;
+      }
+      if (!element.isContentEditable) return;
+      const selection = element.ownerDocument.defaultView?.getSelection();
+      if (!selection) return;
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+  }
   await page.keyboard.insertText(value);
   const afterInsert = await readTypedFieldText(target);
-  if (afterInsert != null && typedTextLanded(value, "", afterInsert)) return;
+  if (afterInsert != null && typedTextLanded(value, before, afterInsert)) return;
   if (!target || !isCallable(untrustedField(target, "evaluate"))) return;
   await target.evaluate((element, inserted) => {
     const isCallableValue = (value: UntrustedValue): value is UntrustedFunction =>
@@ -4497,7 +4512,8 @@ function buildSandbox(session, consoleMessages, execution) {
         await selectAllForClear(page, clickedTarget);
         await page.keyboard.press("Backspace");
       }
-      await insertTypedText(page, clickedTarget, expected);
+      const retryBefore = await readTypedFieldText(clickedTarget);
+      await insertTypedText(page, clickedTarget, expected, retryBefore);
       after = await readTypedFieldText(clickedTarget);
     }
     if (!typedTextLanded(expected, before, after)) {

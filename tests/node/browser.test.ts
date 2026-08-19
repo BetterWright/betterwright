@@ -1664,6 +1664,59 @@ test("human.type inserts into a rich-text editor that swallows key events", opts
   }
 });
 
+test("human.type retries when key events only land a prefix", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <input id="name" style="width:240px;height:40px">
+        <script>
+          const name = document.querySelector('#name');
+          name.addEventListener('keydown', (event) => {
+            if (event.key.length === 1 && name.value.length >= 3) event.preventDefault();
+          });
+        </script>
+      \`);
+      const typed = await human.type('#name', 'hello');
+      return {
+        typed,
+        value: await page.evaluate(() => document.querySelector('#name').value),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.typed.typed, 5);
+    assert.equal(result.result.value, "hello");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("human.type appends when the field already contains the requested text", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <input id="name" value="Ada" style="width:240px;height:40px">
+        <script>
+          document.querySelector('#name').addEventListener('keydown', (event) => {
+            if (event.key.length === 1) event.preventDefault();
+          });
+        </script>
+      \`);
+      const typed = await human.type('#name', 'Ada', {clear: false});
+      return {
+        typed,
+        value: await page.evaluate(() => document.querySelector('#name').value),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.typed.typed, 3);
+    assert.equal(result.result.value, "AdaAda");
+  } finally {
+    await bw.close();
+  }
+});
+
 test("human.type throws when the field stays empty", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {

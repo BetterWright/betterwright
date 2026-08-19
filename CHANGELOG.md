@@ -26,9 +26,12 @@ Releases before 1.1.3 predate this file; their notes live on the
 - **`human.type` no longer reports success when the field stayed empty.**
   Rich-text editors such as Draft.js swallow synthetic key events, so
   typing resolved with `{ typed: N }` while the composer was still blank.
-  After typing, `human.type` reads the field back; if nothing landed it
-  retries with `insertText` (then `document.execCommand` / `beforeinput`)
-  and throws if the field is still unchanged. (#129)
+  After typing, `human.type` reads the field back and treats the action as
+  landed only when the requested text is present as a new change — a
+  prefix, or an unchanged field that already contained the string, is a
+  miss. It then retries with `insertText` (then `document.execCommand` /
+  `beforeinput`) and throws if the field still did not accept the text.
+  (#129)
 
 ## [1.9.5] - 2026-08-17
 
