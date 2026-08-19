@@ -29,9 +29,11 @@ Releases before 1.1.3 predate this file; their notes live on the
   After typing, `human.type` reads the field back and treats the action as
   landed only when the requested text occurs more times than before — a
   prefix, an unchanged field, or a partial append onto a value that
-  already contained the string, is a miss. It then retries with
-  `insertText` (then `document.execCommand` / `beforeinput`) and throws if
-  the field still did not accept the text. (#129)
+  already contained the string, is a miss. A failed append restores the
+  original value before retrying, so a leaked prefix is not left behind.
+  It then retries with `insertText` (then `document.execCommand` /
+  `beforeinput`) and throws if the field still did not accept the text.
+  (#129)
 
 ## [1.9.5] - 2026-08-17
 

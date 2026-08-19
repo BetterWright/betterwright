@@ -1718,9 +1718,7 @@ test("human.type retries a partial append onto existing matching text", opts, as
     `);
     assert.equal(result.ok, true, result.error);
     assert.equal(result.result.typed.typed, 3);
-    assert.match(result.result.value, /Ada.*Ada/);
-    assert.notEqual(result.result.value, "Ada");
-    assert.notEqual(result.result.value, "AdaA");
+    assert.equal(result.result.value, "AdaAda");
   } finally {
     await bw.close();
   }
