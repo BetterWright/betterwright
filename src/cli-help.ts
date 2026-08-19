@@ -95,7 +95,8 @@ Exit code is 0 when ready, 1 otherwise.`,
 
 Run one snippet of async Playwright JavaScript in the persistent browser and
 print one JSON object. A trailing expression, or an explicit \`return\`, is the
-result. Globals include page, snapshot, screenshot, credentials, human.
+result. Globals include page, snapshot, screenshot, credentials, human, site,
+and webmcp.
 
 Options:
   --session <name>       which persistent session to use (default "default")

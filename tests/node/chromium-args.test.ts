@@ -190,6 +190,17 @@ test("a collision keeps BetterWright's value and reports the dropped switch", ()
   assert.ok(args.includes("--disable-gpu"));
 });
 
+test("caller feature flags compose with BetterWright's required browser features", () => {
+  const { args, ignored } = mergeChromiumArgs(
+    ["--enable-features=WebMCPTesting,DevToolsWebMCPSupport"],
+    ["--enable-features=CanvasOopRasterization,WebMCPTesting"],
+  );
+  assert.deepEqual(args, [
+    "--enable-features=WebMCPTesting,DevToolsWebMCPSupport,CanvasOopRasterization",
+  ]);
+  assert.deepEqual(ignored, []);
+});
+
 test("software rasterizer boilerplate is dropped with a warning instead of failing launch", () => {
   const extra = normalizeChromiumArgs(["--disable-software-rasterizer"]);
   assert.deepEqual(extra, ["--disable-software-rasterizer"]);

@@ -10,7 +10,7 @@ import { test } from "node:test";
 
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
-import { isCallable, isString } from "../../dist/src/untrusted-value.js";
+import { isBoolean, isCallable, isString } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 const browserStatus = await doctorReport();
@@ -1862,6 +1862,67 @@ test("interactive snapshots expose refs that aria-ref locators can act on", opts
     assert.equal(clicked.result, "Done");
   } finally {
     await bw.close();
+  }
+});
+
+test("WebMCP discovers and invokes a real page-published tool without exposing CDP", opts, async () => {
+  const site = await listen((_request, response) => {
+    response.writeHead(200, {"content-type": "text/html"});
+    response.end(`<!doctype html>
+      <h1>WebMCP fixture</h1>
+      <p id="status">waiting</p>
+      <script>
+        const modelContext = navigator.modelContext || document.modelContext;
+        modelContext.registerTool({
+          name: "calculateSum",
+          description: "Add two numbers.",
+          inputSchema: {
+            type: "object",
+            properties: {a: {type: "number"}, b: {type: "number"}},
+            required: ["a", "b"],
+          },
+          annotations: {readOnly: true, untrustedContent: false},
+          execute: ({a, b}) => {
+            document.querySelector("#status").textContent = "invoked";
+            return {a, b, sum: Number(a) + Number(b)};
+          },
+        });
+      </script>`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      const tools = await webmcp.tools({timeout: 1000});
+      const invocation = await webmcp.invoke(
+        "calculateSum",
+        {a: 19, b: 23},
+        {frameId: tools[0].frameId, timeout: 5000},
+      );
+      return {
+        tools,
+        invocation,
+        visibleState: await page.locator("#status").innerText(),
+        cdpType: typeof context.newCDPSession,
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.tools.length, 1);
+    assert.equal(result.result.tools[0].name, "calculateSum");
+    assert.equal(result.result.tools[0].trust, "untrusted_external_data");
+    // Chromium normalizes annotations before emitting the descriptor (the
+    // pinned build currently reports an explicit boolean here even when the
+    // registration supplied true), so this pins preservation, not a browser
+    // implementation detail.
+    assert.ok(isBoolean(result.result.tools[0].annotations.readOnly));
+    assert.equal(result.result.invocation.status, "Completed");
+    assert.deepEqual(result.result.invocation.output, {a: 19, b: 23, sum: 42});
+    assert.equal(result.result.invocation.trust, "untrusted_external_data");
+    assert.equal(result.result.visibleState, "invoked");
+    assert.equal(result.result.cdpType, "undefined");
+  } finally {
+    await bw.close();
+    await site.close();
   }
 });
 

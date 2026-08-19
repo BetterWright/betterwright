@@ -217,6 +217,7 @@ step from what it sees, in a browser that must still be there next turn:
 | **Secrets** | Passwords in the script | AES-256-GCM vault; forms are detected and filled without the secret ever entering the conversation |
 | **Evidence** | Assertions | `screenshot({kind: 'proof'})` — tagged artifacts the agent cites as proof of work |
 | **CAPTCHAs** | Out of scope | Local `captcha.solve()` — checkbox, Turnstile, slider; vision handoff for image grids |
+| **First-party tools** | No discovery API | `webmcp.tools()` / `webmcp.invoke()` — typed page capabilities, frame-safe discovery, autosubmit gate, timeout cancellation |
 | **Human in the loop** | Out of scope | Token-gated [live view](docs/live-view.md): watch, chat, answer `ask`, or take over on `handoff` |
 
 ## What's in the box
@@ -230,6 +231,7 @@ step from what it sees, in a browser that must still be there next turn:
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
 | [**Human-shaped input**](docs/browser-api.md#human-shaped-interactions) | Curved pointer movement, paced typing, eased wheel — no extra dependency |
+| [**WebMCP page tools**](docs/browser-api.md#page-published-webmcp-tools) | Discover and invoke typed first-party page capabilities; fresh frame-aware lookup, bounded input/output, explicit autosubmit opt-in, and automatic timeout cancellation |
 | [**Launch identity**](docs/launch-identity.md) | Coherent native identity: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; the two public reCAPTCHA v3 score-detector demos in the stealth report return a server-verified 0.9 headed and headless |
 | [**BetterChromium**](docs/chromium-fork.md) | Default browser on supported macOS arm64, Linux x64, and Windows x64 hosts: per-profile-stable canvas/audio farbling, no OS masquerade (Linux runs as Linux). Bring your own executable, CDP endpoint, or cloud browser via the [provider option](docs/browser-providers.md) |
 | [**Browser providers**](docs/browser-providers.md) | Managed fork by default; attach a local executable, a raw CDP endpoint, or a named cloud browser (Kernel, Browserbase, Steel, Anchor, Bright Data, Hyperbrowser, Browserless, Oxylabs, Browser Use) |

@@ -24,6 +24,9 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("human.click"));
   assert.ok(compact.includes("human.type"));
   assert.ok(compact.includes("human.scroll"));
+  assert.ok(compact.includes("webmcp.tools()"));
+  assert.ok(compact.includes("webmcp.invoke(name,input,{frameId})"));
+  assert.ok(compact.includes("allowAutosubmit:true"));
   assert.ok(compact.includes("host's approval-gated download surface"));
   assert.ok(compact.includes("three distinct stages"));
   assert.ok(compact.includes("Replacement photo grids are the same stage"));

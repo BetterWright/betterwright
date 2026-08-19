@@ -158,6 +158,15 @@ for visible UI actions that should not arrive as perfectly timed bursts. See the
 [browser API](browser-api.md#human-shaped-interactions) for accepted targets and
 options.
 
+### Page-published tools
+
+Use `webmcp.tools()` to discover typed tools registered by the current page and
+`webmcp.invoke(name, input, options)` to call one. BetterWright refreshes the
+tool list before invocation, fails closed on ambiguous frames or an unapproved
+`autosubmit` annotation, labels every page-controlled result as untrusted, and
+cancels timed-out calls. See the
+[WebMCP browser API](browser-api.md#page-published-webmcp-tools).
+
 ## `NetworkPolicy`
 
 ```js
