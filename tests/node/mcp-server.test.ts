@@ -178,7 +178,7 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser"), /autosubmit requires explicit opt-in/);
 
   // Downloads are gated to this tool; deny must stay discoverable.
-  assert.match(text("browser_download"), /ordinary browser cannot/);
+  assert.match(text("browser_download"), /the browser tool cannot/);
   assert.match(text("browser_download"), /Autonomous by default/);
   assert.match(text("browser_download"), /BETTERWRIGHT_DOWNLOAD_POLICY=deny/);
 
@@ -662,7 +662,7 @@ test("browser_download deny-mode refuses before the run", async () => {
   assert.equal(browser.runs.length, 0);
 });
 
-test("ordinary browser tool never sets approvedDownloads", async () => {
+test("the browser tool never sets approvedDownloads", async () => {
   const browser = downloadBrowser();
   const handlers = _createMcpHandlersForTest({
     browser,

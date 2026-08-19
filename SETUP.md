@@ -209,10 +209,9 @@ If the host is an MCP client and you prefer a first-class tool over the CLI,
 BetterWright ships an MCP server that exposes `browser`, `browser_download`,
 `browser_handoff`, and `browser_doctor`, plus `browser_login` when the
 credential vault is enabled. `browser_download` is the autonomous download
-tool: calling it grants that one run permission to save a remote file. Ordinary
-`browser` cannot download. Set `BETTERWRIGHT_DOWNLOAD_POLICY=deny` to disable
-downloads, or `allow` if even ordinary `browser` runs should be able to save
-files.
+tool: calling it grants that one run permission to save a remote file. The
+`browser` tool cannot download. Set `BETTERWRIGHT_DOWNLOAD_POLICY=deny` to disable
+downloads, or `allow` if the `browser` tool should be able to save files too.
 
 The MCP server is the Node package plus the `@modelcontextprotocol/sdk` peer
 dependency (`npm install betterwright @modelcontextprotocol/sdk`).
@@ -272,12 +271,12 @@ first-party pages in BetterWright; the operator guidance says so. Set
 
 MCP `browser_download` is autonomous under the default `ask` worker policy:
 calling that tool is the grant, so hosts that cannot present a confirmation UI
-can still save files the user asked for. Ordinary `browser` still cannot
+can still save files the user asked for. The `browser` tool still cannot
 download. A sentence in the conversation is not a grant, and the tool never
 accepts an `approvedDownloads` (or similar) argument.
 
 Set `BETTERWRIGHT_DOWNLOAD_POLICY=deny` to disable downloads completely, or
-`allow` if every browser run should be able to save files. See **§6**.
+`allow` if the `browser` tool should be able to save files too. See **§6**.
 
 ---
 
@@ -385,7 +384,7 @@ or the MCP env vars):
 | Block loopback too | `--block-loopback` / `allowLoopback: false` | `BETTERWRIGHT_BLOCK_LOOPBACK=1` |
 | Restrict to specific sites | `--allow-host example.com` / `allowHosts: ["example.com"]` | `BETTERWRIGHT_ALLOW_HOSTS=example.com` |
 | Block specific sites | `--block-host ads.example.com` / `blockHosts: [...]` | `BETTERWRIGHT_BLOCK_HOSTS=ads.example.com` |
-| `browser_download` may save files; ordinary browser may not | `downloadPolicy: "ask"` (default) | `BETTERWRIGHT_DOWNLOAD_POLICY=ask` |
+| `browser_download` may save files; the `browser` tool may not | `downloadPolicy: "ask"` (default) | `BETTERWRIGHT_DOWNLOAD_POLICY=ask` |
 | Allow downloads from any run | `downloadPolicy: "allow"` | `BETTERWRIGHT_DOWNLOAD_POLICY=allow` |
 | Disable all downloads | `downloadPolicy: "deny"` | `BETTERWRIGHT_DOWNLOAD_POLICY=deny` |
 | Block public search-result UIs | `publicSearchPolicy: "block"` | `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block` |

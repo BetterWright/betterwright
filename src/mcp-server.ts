@@ -2,8 +2,8 @@
 //
 // This lets any MCP client — Claude Code, Cursor, Windsurf, and others — drive
 // a persistent, policy-guarded browser. It exposes `browser` for ordinary
-// runs, `browser_download` for autonomous file saves the ordinary `browser`
-// tool cannot perform, and `browser_doctor` for runtime diagnostics.
+// runs, `browser_download` for autonomous file saves the `browser` tool
+// cannot perform, and `browser_doctor` for runtime diagnostics.
 //
 // Run it directly (stdio transport):
 //
@@ -24,8 +24,8 @@
 //     BETTERWRIGHT_ALLOW_HOSTS=a.com,b.com always-allow list (comma-separated)
 //     BETTERWRIGHT_BLOCK_HOSTS=ads.com     always-block list (comma-separated)
 //     BETTERWRIGHT_DOWNLOAD_POLICY=ask     ask (default): browser_download may
-//                                          save files autonomously; ordinary
-//                                          browser cannot. allow: any run.
+//                                          save files autonomously; the browser
+//                                          tool cannot. allow: either tool.
 //                                          deny: no downloads.
 //     BETTERWRIGHT_HEADLESS=0              run the managed browser headed
 //     BETTERWRIGHT_PROFILE=<name>          act as a named browser profile: a
@@ -213,7 +213,7 @@ Plan then batch: for named controls/content use getByRole/getByLabel/getByText a
 snapshot({interactive: true}) reads unknown UIs; page.locator('aria-ref=eN') acts; snapshot({ref}) scopes; snapshot({diff: true}) verifies. Snapshots include iframes/off-screen content — never scroll to read or guess refs/URLs. Capture screenshot({kind: 'proof'}) inside the final verifying call.
 Challenge: keep page; captcha.solve() first; on 'processing', open crop then captcha.solve({tiles:[indexes]}). Replacement photo grids are the same stage. Max three distinct challenge types; rejection = stop/alternate/handoff. Verify cleared; replay only if idempotent/provably incomplete. Never duplicate a submission, purchase, or message.`;
 
-const BROWSER_DOWNLOAD_DESCRIPTION = `Variant of browser that may click a download link or save a remote file; ordinary browser cannot. Autonomous by default. BETTERWRIGHT_DOWNLOAD_POLICY=deny disables downloads, allow also permits the browser tool.`;
+const BROWSER_DOWNLOAD_DESCRIPTION = `Variant of the browser tool that may click a download link or save a remote file; the browser tool cannot. Autonomous by default. BETTERWRIGHT_DOWNLOAD_POLICY=deny disables downloads, allow also permits the browser tool.`;
 
 const LOGIN_DESCRIPTION = `Fill a saved/generated credential; the secret never enters the conversation. The worker detects visible login/signup controls, fills internally, and submits only with submit=true or submitSelector; values are never returned and password snapshots show '[redacted]'. Use CSS/current aria-ref selectors only after ambiguity. Typing passwords in browser code is blocked.
 Signup/rotation: generate=true stages and fills a strong password. After visible success call credentials.commitGenerated({pendingId}); on failure credentials.discardGenerated({pendingId}). Pending is inactive; after restart credentials.listPending() returns secret-free metadata.`;
@@ -425,10 +425,10 @@ function createMcpHandlers({ browser, downloadPolicy, liveView = liveViewFromEnv
           throw new Error(`Unknown tool: ${name}`);
         }
         // approvedDownloads is never taken from tool arguments: the model
-        // must not grant itself a download via the ordinary browser tool.
+        // must not grant itself a download via the browser tool.
         // Calling browser_download is the MCP grant — autonomous unless the
         // deployer set downloadPolicy=deny. Worker policy stays "ask" by
-        // default, so a plain browser run still cannot save files.
+        // default, so a browser-tool run still cannot save files.
         const options: BrowserRunToolOptions = {
           session: String(args.session || "default"),
           note: String(args.note || "") || undefined,
