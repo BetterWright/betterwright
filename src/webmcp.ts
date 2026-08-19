@@ -27,7 +27,6 @@ const MAX_TOOLS = 256;
 const MAX_TOOL_NAME_CHARS = 256;
 const MAX_TOOL_DESCRIPTION_CHARS = 10_000;
 const MAX_WEBMCP_JSON_CHARS = 1_000_000;
-const TOOLS_QUIET_WINDOW_MS = 100;
 
 interface WebMCPAnnotations {
   readOnly?: boolean;
@@ -202,12 +201,6 @@ function unsupportedError(error) {
 
 async function collectTools(cdp, timeout) {
   const tools = new Map();
-  let changedAt = 0;
-  let wake = null;
-  const signalChange = () => {
-    changedAt = Date.now();
-    wake?.();
-  };
   const onAdded = (event) => {
     const entries = Array.isArray(event?.tools) ? event.tools : [];
     for (const entry of entries) {
@@ -217,17 +210,14 @@ async function collectTools(cdp, timeout) {
       if (!tools.has(key) && tools.size >= MAX_TOOLS) continue;
       tools.set(key, tool);
     }
-    if (entries.length) signalChange();
   };
   const onRemoved = (event) => {
     const entries = Array.isArray(event?.tools) ? event.tools : [];
-    let changed = false;
     for (const entry of entries) {
       const frameId = String(entry?.frameId || "");
       const name = String(entry?.name || "");
-      if (frameId && name) changed = tools.delete(`${frameId}\u0000${name}`) || changed;
+      if (frameId && name) tools.delete(`${frameId}\u0000${name}`);
     }
-    if (changed) signalChange();
   };
 
   cdp.on("WebMCP.toolsAdded", onAdded);
@@ -238,29 +228,14 @@ async function collectTools(cdp, timeout) {
     } catch (error) {
       throw unsupportedError(error);
     }
-    if (timeout === 0) return [...tools.values()];
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      const quietRemaining = changedAt
-        ? Math.max(0, TOOLS_QUIET_WINDOW_MS - (Date.now() - changedAt))
-        : TOOLS_QUIET_WINDOW_MS;
-      if (quietRemaining === 0) break;
-      const outcome = await new Promise((resolve) => {
-        const timer = setTimeout(
-          () => resolve("quiet"),
-          Math.min(quietRemaining, deadline - Date.now()),
-        );
-        wake = () => {
-          clearTimeout(timer);
-          resolve("changed");
-        };
-      });
-      wake = null;
-      if (outcome === "quiet") break;
+    // `timeout` is an explicit registration window, not a quiet-period hint.
+    // Keep observing for the whole interval so a child frame or deferred page
+    // module that registers after an initially quiet page is not omitted.
+    if (timeout > 0) {
+      await new Promise((resolve) => setTimeout(resolve, timeout));
     }
     return [...tools.values()];
   } finally {
-    wake = null;
     cdp.off("WebMCP.toolsAdded", onAdded);
     cdp.off("WebMCP.toolsRemoved", onRemoved);
   }
