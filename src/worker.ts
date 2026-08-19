@@ -1669,6 +1669,57 @@ async function selectAllForClear(page, target) {
   await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
 }
 
+async function readTypedFieldText(target) {
+  if (!target || !isCallable(untrustedField(target, "evaluate"))) return null;
+  return target.evaluate((element) => {
+    if (
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement
+    ) {
+      return String(element.value ?? "");
+    }
+    return String(element.innerText ?? element.textContent ?? "");
+  });
+}
+
+function typedTextLanded(expected, before, after) {
+  if (!expected || after == null) return true;
+  if (String(after).includes(expected)) return true;
+  return String(after) !== String(before ?? "") && String(after).trim().length > 0;
+}
+
+async function insertTypedText(page, target, text) {
+  const value = String(text);
+  if (!value) return;
+  if (target && isCallable(untrustedField(target, "focus"))) {
+    await target.focus().catch(() => {});
+  }
+  await page.keyboard.insertText(value);
+  const afterInsert = await readTypedFieldText(target);
+  if (afterInsert != null && typedTextLanded(value, "", afterInsert)) return;
+  if (!target || !isCallable(untrustedField(target, "evaluate"))) return;
+  await target.evaluate((element, inserted) => {
+    const isCallableValue = (value: UntrustedValue): value is UntrustedFunction =>
+      typeof value === "function";
+    if (isCallableValue(element.focus)) element.focus();
+    const doc = element.ownerDocument;
+    if (
+      isCallableValue(doc.execCommand) &&
+      doc.execCommand("insertText", false, inserted)
+    ) {
+      return;
+    }
+    const eventInit = {
+      bubbles: true,
+      composed: true,
+      inputType: "insertText",
+      data: inserted,
+    };
+    element.dispatchEvent(new InputEvent("beforeinput", eventInit));
+    element.dispatchEvent(new InputEvent("input", eventInit));
+  }, value);
+}
+
 async function installContextGuard(context) {
   await context.route("**/*", async (route) => {
     const request = route.request();
@@ -4432,12 +4483,29 @@ function buildSandbox(session, consoleMessages, execution) {
   human.type = realm.safeFunction(async (target, text, options: any = {}) => {
     const page = await ensureSessionPage(session);
     const clickedTarget = await humanClickTarget(page, session, target, options);
-    if (options?.clear !== false) {
+    const clear = options?.clear !== false;
+    if (clear) {
       await selectAllForClear(page, clickedTarget);
       await page.keyboard.press("Backspace");
     }
-    await typeText(page.keyboard, text, options);
-    return { typed: String(text).length };
+    const expected = String(text);
+    const before = await readTypedFieldText(clickedTarget);
+    await typeText(page.keyboard, expected, options);
+    let after = await readTypedFieldText(clickedTarget);
+    if (!typedTextLanded(expected, before, after)) {
+      if (clear) {
+        await selectAllForClear(page, clickedTarget);
+        await page.keyboard.press("Backspace");
+      }
+      await insertTypedText(page, clickedTarget, expected);
+      after = await readTypedFieldText(clickedTarget);
+    }
+    if (!typedTextLanded(expected, before, after)) {
+      throw new Error(
+        "human.type did not change the field. The target may ignore synthetic key events (common in Draft.js and other rich-text editors).",
+      );
+    }
+    return { typed: expected.length };
   });
   human.scroll = realm.safeFunction(async (deltaOrOptions, options: any = {}) => {
     const page = await ensureSessionPage(session);

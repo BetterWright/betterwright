@@ -303,6 +303,28 @@ test("family unreachability suppresses new dials without skipping guard checks",
   }
 });
 
+test("IPv4 ENETUNREACH does not suppress an unrelated IPv4 target", async () => {
+  const dials = [];
+  const proxy = createGuardProxy(
+    proxyOptions({
+      delay: async () => {},
+      connect: async ({ host }) => {
+        dials.push(host);
+        if (host === "198.51.100.7") throw codedError("ENETUNREACH");
+        return new PassThrough();
+      },
+    }),
+  );
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "198.51.100.7", 81), 3);
+    assert.equal(await socksConnect(port, "127.0.0.1", 45999), 0);
+    assert.deepEqual(dials, ["198.51.100.7", "127.0.0.1"]);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("family suppression expires at its bounded TTL", async () => {
   let clock = 1_000;
   let dialCount = 0;
@@ -713,7 +735,8 @@ test("SOCKS5 replies preserve policy, reachability, and address errors", async (
     { name: "host unreachable", expected: 4, errorCode: "EHOSTUNREACH" },
     { name: "connection refused", expected: 5, errorCode: "ECONNREFUSED" },
     { name: "address family unsupported", expected: 8, errorCode: "EAFNOSUPPORT" },
-    { name: "general connect failure", expected: 1, errorCode: "BW_PROXY_CONNECT" },
+    { name: "connect timeout", expected: 4, errorCode: "BW_PROXY_CONNECT" },
+    { name: "OS timeout", expected: 4, errorCode: "ETIMEDOUT" },
     { name: "success", expected: 0, success: true },
   ];
 

@@ -74,7 +74,17 @@ function socksReply(code) {
 function socksReplyCode(error) {
   if (error?.code === "BW_PROXY_BLOCKED") return 2;
   if (error?.code === "ENETUNREACH") return 3;
-  if (["BW_PROXY_DNS", "EHOSTUNREACH"].includes(error?.code)) return 4;
+  // Timeouts and generic connect failures are a dead *target*, not a dead
+  // SOCKS server. Reply 1 (general server failure) is what Chromium treats as
+  // "the proxy itself is broken", after which unrelated reachable hosts fail
+  // with ERR_SOCKS_CONNECTION_FAILED until the worker restarts.
+  if (
+    ["BW_PROXY_DNS", "EHOSTUNREACH", "BW_PROXY_CONNECT", "ETIMEDOUT"].includes(
+      error?.code,
+    )
+  ) {
+    return 4;
+  }
   if (error?.code === "ECONNREFUSED") return 5;
   if (error?.code === "EAFNOSUPPORT") return 8;
   return 1;
@@ -489,6 +499,12 @@ export function createGuardProxy(
   function rememberUnavailableFamily(family, error) {
     if (![4, 6].includes(family) || !FAMILY_UNREACHABLE_CODES.has(error?.code))
       return;
+    // IPv4 ENETUNREACH is per-destination (no route to that network). Caching
+    // it as "IPv4 is down" makes the next unrelated target — a live loopback
+    // server, example.com — fail until the worker restarts. IPv6 ENETUNREACH
+    // and EAFNOSUPPORT usually mean the host has no IPv6, which is the case
+    // this cache exists to skip.
+    if (family === 4 && error.code === "ENETUNREACH") return;
     unavailableFamilies.delete(family);
     unavailableFamilies.set(family, {
       code: error.code,
