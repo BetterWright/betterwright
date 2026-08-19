@@ -290,26 +290,79 @@ async function loadSdk() {
   return { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema };
 }
 
+const DOWNLOAD_APPROVAL_SCHEMA = {
+  type: "object",
+  properties: {
+    approved: { type: "boolean", description: "Approve this browser download?" },
+  },
+  required: ["approved"],
+};
+
+const DOWNLOAD_ELICITATION_UNAVAILABLE =
+  "This MCP client cannot present download approval; the download was blocked. " +
+  "Conversation text is not a trusted approval channel. Set " +
+  "BETTERWRIGHT_DOWNLOAD_POLICY=allow in the MCP server environment to permit " +
+  "downloads without a prompt on this host, or deny to disable them.";
+
+function elicitationCapability(server) {
+  return server?.getClientCapabilities?.()?.elicitation;
+}
+
+// Spec: elicitation:{} means form mode. URL-only clients declare {url:{}}
+// without form. SDK 1.29's elicitInput additionally requires .form, so empty
+// {} is treated as form-capable here and retried via elicitation/create below.
+function clientSupportsFormElicitation(server) {
+  if (typeof server?.getClientCapabilities !== "function") {
+    return typeof server?.elicitInput === "function" || typeof server?.request === "function";
+  }
+  const elicitation = elicitationCapability(server);
+  if (elicitation == null) return false;
+  if (elicitation.form) return true;
+  return elicitation.url == null;
+}
+
+const PASSTHROUGH_ELICIT_RESULT = {
+  safeParse(data) {
+    return { success: true, data };
+  },
+};
+
+async function elicitFormInput(server, params) {
+  if (typeof server.elicitInput === "function") {
+    try {
+      return await server.elicitInput(params);
+    } catch (error) {
+      const elicitation = elicitationCapability(server);
+      const emptyFormDeclared =
+        elicitation != null && elicitation.form == null && elicitation.url == null;
+      if (!emptyFormDeclared || typeof server.request !== "function") throw error;
+    }
+  } else if (typeof server.request !== "function") {
+    throw new Error("MCP elicitation is unavailable");
+  }
+  // SDK 1.29+ elicitInput rejects elicitation:{} even though the spec treats
+  // that as form mode. request() still sends elicitation/create; we validate
+  // the accept/approved decision ourselves rather than importing the SDK schema.
+  return await server.request(
+    { method: "elicitation/create", params: { mode: "form", ...params } },
+    PASSTHROUGH_ELICIT_RESULT,
+  );
+}
+
 async function approveDownload(server, note) {
+  if (!clientSupportsFormElicitation(server)) {
+    throw new Error(DOWNLOAD_ELICITATION_UNAVAILABLE);
+  }
   let decision;
   try {
-    decision = await server.elicitInput({
+    decision = await elicitFormInput(server, {
       message:
         "Allow BetterWright to run browser code that may download a file?" +
         (note ? ` Requested action: ${note}` : ""),
-      requestedSchema: {
-        type: "object",
-        properties: {
-          approved: { type: "boolean", description: "Approve this browser download?" },
-        },
-        required: ["approved"],
-      },
+      requestedSchema: DOWNLOAD_APPROVAL_SCHEMA,
     });
   } catch {
-    // Clients without elicitation support fail closed.
-    throw new Error(
-      "This MCP client cannot present download approval; the download was blocked.",
-    );
+    throw new Error(DOWNLOAD_ELICITATION_UNAVAILABLE);
   }
   if (decision?.action !== "accept" || decision?.content?.approved !== true) {
     throw new Error("The user declined or cancelled the download.");
@@ -447,6 +500,9 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
         if (name !== "browser" && name !== "browser_download") {
           throw new Error(`Unknown tool: ${name}`);
         }
+        // approvedDownloads is never taken from tool arguments: the model
+        // must not grant itself a download. Ask-mode elicitation or the
+        // deployer download policy is the only trusted grant.
         const options: BrowserRunToolOptions = {
           session: String(args.session || "default"),
           note: String(args.note || "") || undefined,
