@@ -588,7 +588,8 @@ async function cmdRun(arg, flags) {
   const acquired = await acquireRunBrowser(flags);
   try {
     // One bounded download-enabled run; the skill instructs agents to get
-    // explicit user approval before passing this (MCP/Pi elicit instead).
+    // explicit user approval before passing this (Pi elicits; MCP
+    // browser_download is the autonomous grant).
     const runOptions: CliRunOptions = {
       session: acquired.session,
     };

@@ -2,8 +2,8 @@
 //
 // This lets any MCP client — Claude Code, Cursor, Windsurf, and others — drive
 // a persistent, policy-guarded browser. It exposes `browser` for ordinary
-// runs, `browser_download` for approval-gated downloads, and `browser_doctor`
-// for runtime diagnostics.
+// runs, `browser_download` for autonomous file saves the ordinary `browser`
+// tool cannot perform, and `browser_doctor` for runtime diagnostics.
 //
 // Run it directly (stdio transport):
 //
@@ -23,7 +23,10 @@
 //     BETTERWRIGHT_BLOCK_PRIVATE_NETWORK=1 block RFC1918 / *.internal (open by default)
 //     BETTERWRIGHT_ALLOW_HOSTS=a.com,b.com always-allow list (comma-separated)
 //     BETTERWRIGHT_BLOCK_HOSTS=ads.com     always-block list (comma-separated)
-//     BETTERWRIGHT_DOWNLOAD_POLICY=ask     ask (default), allow, or deny downloads
+//     BETTERWRIGHT_DOWNLOAD_POLICY=ask     ask (default): browser_download may
+//                                          save files autonomously; ordinary
+//                                          browser cannot. allow: any run.
+//                                          deny: no downloads.
 //     BETTERWRIGHT_HEADLESS=0              run the managed browser headed
 //     BETTERWRIGHT_PROFILE=<name>          act as a named browser profile: a
 //                                          separate identity (own cookies, own
@@ -210,7 +213,7 @@ Plan then batch: for named controls/content use getByRole/getByLabel/getByText a
 snapshot({interactive: true}) reads unknown UIs; page.locator('aria-ref=eN') acts; snapshot({ref}) scopes; snapshot({diff: true}) verifies. Snapshots include iframes/off-screen content — never scroll to read or guess refs/URLs. Capture screenshot({kind: 'proof'}) inside the final verifying call.
 Challenge: keep page; captcha.solve() first; on 'processing', open crop then captcha.solve({tiles:[indexes]}). Replacement photo grids are the same stage. Max three distinct challenge types; rejection = stop/alternate/handoff. Verify cleared; replay only if idempotent/provably incomplete. Never duplicate a submission, purchase, or message.`;
 
-const BROWSER_DOWNLOAD_DESCRIPTION = `Variant of browser for code that clicks a download link or saves a remote file — user approval first: 'ask' (default) confirms via the MCP client. BETTERWRIGHT_DOWNLOAD_POLICY=allow skips the prompt, deny disables downloads.`;
+const BROWSER_DOWNLOAD_DESCRIPTION = `Variant of browser that may click a download link or save a remote file; ordinary browser cannot. Autonomous by default. BETTERWRIGHT_DOWNLOAD_POLICY=deny disables downloads, allow also permits the browser tool.`;
 
 const LOGIN_DESCRIPTION = `Fill a saved/generated credential; the secret never enters the conversation. The worker detects visible login/signup controls, fills internally, and submits only with submit=true or submitSelector; values are never returned and password snapshots show '[redacted]'. Use CSS/current aria-ref selectors only after ambiguity. Typing passwords in browser code is blocked.
 Signup/rotation: generate=true stages and fills a strong password. After visible success call credentials.commitGenerated({pendingId}); on failure credentials.discardGenerated({pendingId}). Pending is inactive; after restart credentials.listPending() returns secret-free metadata.`;
@@ -290,85 +293,6 @@ async function loadSdk() {
   return { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema };
 }
 
-const DOWNLOAD_APPROVAL_SCHEMA = {
-  type: "object",
-  properties: {
-    approved: { type: "boolean", description: "Approve this browser download?" },
-  },
-  required: ["approved"],
-};
-
-const DOWNLOAD_ELICITATION_UNAVAILABLE =
-  "This MCP client cannot present download approval; the download was blocked. " +
-  "Conversation text is not a trusted approval channel. Set " +
-  "BETTERWRIGHT_DOWNLOAD_POLICY=allow in the MCP server environment to permit " +
-  "downloads without a prompt on this host, or deny to disable them.";
-
-function elicitationCapability(server) {
-  return server?.getClientCapabilities?.()?.elicitation;
-}
-
-// Spec: elicitation:{} means form mode. URL-only clients declare {url:{}}
-// without form. SDK 1.29's elicitInput additionally requires .form, so empty
-// {} is treated as form-capable here and retried via elicitation/create below.
-function clientSupportsFormElicitation(server) {
-  if (typeof server?.getClientCapabilities !== "function") {
-    return typeof server?.elicitInput === "function" || typeof server?.request === "function";
-  }
-  const elicitation = elicitationCapability(server);
-  if (elicitation == null) return false;
-  if (elicitation.form) return true;
-  return elicitation.url == null;
-}
-
-const PASSTHROUGH_ELICIT_RESULT = {
-  safeParse(data) {
-    return { success: true, data };
-  },
-};
-
-async function elicitFormInput(server, params) {
-  if (typeof server.elicitInput === "function") {
-    try {
-      return await server.elicitInput(params);
-    } catch (error) {
-      const elicitation = elicitationCapability(server);
-      const emptyFormDeclared =
-        elicitation != null && elicitation.form == null && elicitation.url == null;
-      if (!emptyFormDeclared || typeof server.request !== "function") throw error;
-    }
-  } else if (typeof server.request !== "function") {
-    throw new Error("MCP elicitation is unavailable");
-  }
-  // SDK 1.29+ elicitInput rejects elicitation:{} even though the spec treats
-  // that as form mode. request() still sends elicitation/create; we validate
-  // the accept/approved decision ourselves rather than importing the SDK schema.
-  return await server.request(
-    { method: "elicitation/create", params: { mode: "form", ...params } },
-    PASSTHROUGH_ELICIT_RESULT,
-  );
-}
-
-async function approveDownload(server, note) {
-  if (!clientSupportsFormElicitation(server)) {
-    throw new Error(DOWNLOAD_ELICITATION_UNAVAILABLE);
-  }
-  let decision;
-  try {
-    decision = await elicitFormInput(server, {
-      message:
-        "Allow BetterWright to run browser code that may download a file?" +
-        (note ? ` Requested action: ${note}` : ""),
-      requestedSchema: DOWNLOAD_APPROVAL_SCHEMA,
-    });
-  } catch {
-    throw new Error(DOWNLOAD_ELICITATION_UNAVAILABLE);
-  }
-  if (decision?.action !== "accept" || decision?.content?.approved !== true) {
-    throw new Error("The user declined or cancelled the download.");
-  }
-}
-
 function mcpTools(withLogin) {
   const tools: any[] = [
     { name: "browser", description: BROWSER_DESCRIPTION, inputSchema: RUN_INPUT_SCHEMA },
@@ -398,7 +322,7 @@ function mcpTools(withLogin) {
   return tools;
 }
 
-function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveViewFromEnv() }) {
+function createMcpHandlers({ browser, downloadPolicy, liveView = liveViewFromEnv() }) {
   const withLogin = Boolean(browser.vault);
   // Chat plumbing between the live-view page and the MCP client's model. The
   // standalone agent harness drains viewer chat at its own turn boundaries;
@@ -501,8 +425,10 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
           throw new Error(`Unknown tool: ${name}`);
         }
         // approvedDownloads is never taken from tool arguments: the model
-        // must not grant itself a download. Ask-mode elicitation or the
-        // deployer download policy is the only trusted grant.
+        // must not grant itself a download via the ordinary browser tool.
+        // Calling browser_download is the MCP grant — autonomous unless the
+        // deployer set downloadPolicy=deny. Worker policy stays "ask" by
+        // default, so a plain browser run still cannot save files.
         const options: BrowserRunToolOptions = {
           session: String(args.session || "default"),
           note: String(args.note || "") || undefined,
@@ -513,7 +439,6 @@ function createMcpHandlers({ browser, server, downloadPolicy, liveView = liveVie
               "Downloads are disabled by BETTERWRIGHT_DOWNLOAD_POLICY=deny.",
             );
           }
-          if (downloadPolicy === "ask") await approveDownload(server, options.note);
           options.approvedDownloads = true;
         }
         if (liveViewActive && options.note) {
@@ -573,7 +498,7 @@ export async function runMcpServer(env = process.env, options: any = {}) {
     { capabilities: { tools: {} } },
   );
 
-  const handlers = createMcpHandlers({ browser, server, downloadPolicy });
+  const handlers = createMcpHandlers({ browser, downloadPolicy });
   server.setRequestHandler(ListToolsRequestSchema, handlers.listTools);
   server.setRequestHandler(CallToolRequestSchema, handlers.callTool);
 
