@@ -7,7 +7,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases before 1.1.3 predate this file; their notes live on the
 [GitHub releases page](https://github.com/BetterWright/betterwright/releases).
 
-## [1.9.9] - Unreleased
+## [Unreleased]
+
+## [1.9.9] - 2026-08-19
 
 ### Changed
 
@@ -1089,7 +1091,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[1.9.9]: https://github.com/BetterWright/betterwright/compare/v1.9.8...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.9...HEAD
+[1.9.9]: https://github.com/BetterWright/betterwright/compare/v1.9.8...v1.9.9
 [1.9.8]: https://github.com/BetterWright/betterwright/compare/v1.9.7...v1.9.8
 [1.9.7]: https://github.com/BetterWright/betterwright/compare/v1.9.6...v1.9.7
 [1.9.6]: https://github.com/BetterWright/betterwright/compare/v1.9.5...v1.9.6
