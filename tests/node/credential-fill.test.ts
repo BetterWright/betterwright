@@ -1250,6 +1250,10 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       assert.ok(!JSON.stringify(result).includes("worker-capacity-secret-999"));
       assert.equal(result.console, undefined);
       assert.equal(bw._process, null);
+      // The result intentionally detaches the saturated worker immediately;
+      // under parallel browser-test load, its OS exit can land on the next
+      // event-loop turn even though replacement is already safe.
+      if (worker.exitCode === null) await once(worker, "exit");
       assert.notEqual(worker.exitCode, null);
 
       await visit("/login");

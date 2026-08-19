@@ -177,6 +177,7 @@ const DEFAULT_OUTPUT_LIMIT = 12_000;
  * where a slow-but-real element resolves.
  */
 const DEFAULT_ACTION_TIMEOUT_MS = 10_000;
+const DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000;
 /**
  * Hard ceiling on graceful shutdown. If the browser or a page handler wedges,
  * the process still exits rather than lingering and holding the profile lock.
@@ -1359,6 +1360,12 @@ function adoptPage(page, sessionId) {
   if (oldSessionId && oldSessionId !== session.id)
     sessions.get(oldSessionId)?.pages.delete(id);
   pageToSession.set(page, session.id);
+  // A missing semantic locator should fail while the snippet still has time to
+  // inspect and recover. Otherwise Playwright's 30s default consumes the whole
+  // run deadline and the worker must tear down the timed-out realm. Navigation
+  // keeps its larger budget because a real network load is not a bad selector.
+  page.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT_MS);
+  page.setDefaultNavigationTimeout(DEFAULT_NAVIGATION_TIMEOUT_MS);
   session.pages.set(id, page);
   session.currentId = id;
   // Live view streams one tab at a time; when the agent opens a page (or a
@@ -4453,9 +4460,25 @@ function buildSandbox(session, consoleMessages, execution) {
   captcha.click = realm.safeFunction(async (bounds) => {
     const page = await ensureSessionPage(session);
     const target = captchaBounds(bounds);
+    const stored = [...session.captchaTargets.values()].find(
+      (entry) =>
+        Math.abs(entry.bounds.x - target.x) < 2 &&
+        Math.abs(entry.bounds.y - target.y) < 2 &&
+        Math.abs(entry.bounds.width - target.width) < 2 &&
+        Math.abs(entry.bounds.height - target.height) < 2,
+    );
+    const visibleTarget = await captchaBoxInViewport(
+      page,
+      stored?.pageBounds || target,
+      Boolean(stored?.pageBounds),
+    );
     const point = {
-      x: Math.round(target.x + target.width * (0.13 + Math.random() * 0.04)),
-      y: Math.round(target.y + target.height * (0.44 + Math.random() * 0.12)),
+      x: Math.round(
+        visibleTarget.x + visibleTarget.width * (0.13 + Math.random() * 0.04),
+      ),
+      y: Math.round(
+        visibleTarget.y + visibleTarget.height * (0.44 + Math.random() * 0.12),
+      ),
     };
     await movePointer(page.mouse, session.cursor, point, { stepDivisor: 8 });
     await pressPointer(page.mouse);
@@ -5548,6 +5571,52 @@ async function humanClickBox(page, session, box, options: any = {}) {
   return point;
 }
 
+async function pageScrollMetrics(page) {
+  return page.evaluate(() => ({
+    x: window.scrollX,
+    y: window.scrollY,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
+}
+
+/**
+ * Turn a captured page-coordinate CAPTCHA box into current viewport
+ * coordinates, scrolling only when its center is outside the clickable
+ * viewport. Playwright can report a bounding box below the fold, while
+ * page.mouse uses viewport coordinates and otherwise clicks empty space.
+ */
+async function captchaBoxInViewport(page, box, pageCoordinates = false) {
+  const before = await pageScrollMetrics(page);
+  const absolute = pageCoordinates
+    ? box
+    : { ...box, x: box.x + before.x, y: box.y + before.y };
+  const center = {
+    x: absolute.x + absolute.width / 2,
+    y: absolute.y + absolute.height / 2,
+  };
+  const currentCenter = { x: center.x - before.x, y: center.y - before.y };
+  const margin = 8;
+  let left = before.x;
+  let top = before.y;
+  if (currentCenter.x < margin || currentCenter.x > before.width - margin) {
+    left = Math.max(0, center.x - before.width / 2);
+  }
+  if (currentCenter.y < margin || currentCenter.y > before.height - margin) {
+    top = Math.max(0, center.y - before.height / 2);
+  }
+  if (left !== before.x || top !== before.y) {
+    await page.evaluate(({ left: x, top: y }) => window.scrollTo(x, y), { left, top });
+  }
+  const after = await pageScrollMetrics(page);
+  return {
+    x: absolute.x - after.x,
+    y: absolute.y - after.y,
+    width: absolute.width,
+    height: absolute.height,
+  };
+}
+
 async function challengeStillPresent(page, provider) {
   const metadata = await collectChallengeMetadata(page);
   if (provider && metadata.tokens[provider]) return { present: false, metadata };
@@ -5696,13 +5765,13 @@ async function collectChallengeTiles(page, provider) {
 // Identifies the grid a numbered crop was taken from. Tile indexes only mean
 // something relative to the image the model looked at, so coordinates captured
 // for one challenge must never be replayed against another.
-function captchaGridSignature(tiles) {
+function captchaGridSignature(tiles, scroll = { x: 0, y: 0 }) {
   return tiles
     .map((tile) => {
       const box = tile.bounds || {};
       return [
-        Math.round(box.x || 0),
-        Math.round(box.y || 0),
+        Math.round((box.x || 0) + scroll.x),
+        Math.round((box.y || 0) + scroll.y),
         Math.round(box.width || 0),
         Math.round(box.height || 0),
       ].join(",");
@@ -5710,16 +5779,21 @@ function captchaGridSignature(tiles) {
     .join("|");
 }
 
-function rememberCaptchaTiles(page, session, tiles) {
+function rememberCaptchaTiles(page, session, tiles, scroll) {
   session.captchaTargets.clear();
   for (const tile of tiles) {
     session.captchaTargets.set(tile.index, {
       bounds: tile.bounds,
+      pageBounds: {
+        ...tile.bounds,
+        x: tile.bounds.x + scroll.x,
+        y: tile.bounds.y + scroll.y,
+      },
       label: tile.label || null,
     });
   }
   session.captchaGrid = tiles.length
-    ? { url: page.url(), signature: captchaGridSignature(tiles) }
+    ? { url: page.url(), signature: captchaGridSignature(tiles, scroll) }
     : null;
 }
 
@@ -5735,7 +5809,8 @@ async function captchaTilesStale(page, session, provider) {
   if (stored.url !== page.url()) return true;
   const live = await collectChallengeTiles(page, provider).catch(() => []);
   if (!live.length) return true;
-  return captchaGridSignature(live) !== stored.signature;
+  const scroll = await pageScrollMetrics(page);
+  return captchaGridSignature(live, scroll) !== stored.signature;
 }
 
 function clipForPuzzle(tileBoxes, widgetBox, viewport) {
@@ -5772,7 +5847,8 @@ async function capturePuzzleScreenshot(page, session, name, clip, extra: any = {
 
 async function captureTiles(page, session, provider) {
   const tiles = await collectChallengeTiles(page, provider);
-  rememberCaptchaTiles(page, session, tiles);
+  const scroll = await pageScrollMetrics(page);
+  rememberCaptchaTiles(page, session, tiles, scroll);
   const widgetBox = await challengeWidgetBox(page, provider);
   const viewport = page.viewportSize();
   const clip = tiles.length
@@ -5832,7 +5908,12 @@ async function clickStoredTiles(page, session, indexes) {
   for (const index of indexes) {
     const tile = session.captchaTargets.get(index);
     if (!tile?.bounds) continue;
-    await humanClickBox(page, session, tile.bounds, { leftBias: false });
+    const visibleBounds = await captchaBoxInViewport(
+      page,
+      tile.pageBounds || tile.bounds,
+      Boolean(tile.pageBounds),
+    );
+    await humanClickBox(page, session, visibleBounds, { leftBias: false });
     clicked.push(index);
     await hostDelay(70 + Math.random() * 140);
   }

@@ -133,10 +133,10 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
 
 // The MCP tool list is re-sent on every request, so its size is permanent
 // context overhead for every user of the server. This pins both halves of the
-// bargain struck when the descriptions were compressed on 2026-07-25 (8,670 →
-// 5,521 collapsed characters, ~1,945 → ~1,150 tokens): the budget stops the
-// prose creeping back, and the directive assertions stop a future pass from
-// buying room by dropping a rule instead of a redundant word.
+// bargain struck when descriptions were compressed on 2026-07-25 and again
+// for 1.9.8 (8,670 → 5,521; 1.9.7 grew to 5,873; now <5,350 collapsed chars):
+// the budget stops prose creeping back, and directive assertions stop a future
+// pass from buying room by dropping a rule instead of a redundant word.
 test("the advertised MCP tool list stays inside its context budget", async () => {
   const handlers = _createMcpHandlersForTest({
     browser: { vault: {} },
@@ -148,7 +148,7 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   // Collapse runs of whitespace: line wrapping is nearly free in characters but
   // costs a token per line, so raw length would understate a rewrap regression.
   const size = JSON.stringify(tools).replace(/\s+/g, " ").length;
-  assert.ok(size < 6_000, `MCP tool list grew to ${size} collapsed characters`);
+  assert.ok(size < 5_350, `MCP tool list grew to ${size} collapsed characters`);
 
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
   const text = (name) => byName[name].description.replace(/\s+/g, " ");
@@ -156,6 +156,9 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   // Reading and acting: the ref protocol is unusable if any of these literals
   // is paraphrased away.
   for (const literal of [
+    "Plan then batch",
+    "getByRole/getByLabel/getByText",
+    "Never add sleeps",
     "snapshot({interactive: true})",
     "page.locator('aria-ref=eN')",
     "snapshot({diff: true})",
@@ -163,6 +166,10 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   ]) {
     assert.ok(text("browser").includes(literal), `browser lost ${literal}`);
   }
+  assert.match(text("browser"), /article\/reference pages read a scoped DOM region directly/);
+  assert.match(text("browser"), /inside the final verifying call/);
+  assert.match(text("browser"), /Host cleanup is automatic/);
+  assert.match(text("browser"), /closePage\(idOrIndex\?\)/);
   // Challenge limits are safety rules, not advice.
   assert.match(text("browser"), /three distinct challenge types/);
   assert.match(text("browser"), /Replacement photo grids are the same stage/);
