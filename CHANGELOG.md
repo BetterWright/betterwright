@@ -27,13 +27,12 @@ Releases before 1.1.3 predate this file; their notes live on the
   Rich-text editors such as Draft.js swallow synthetic key events, so
   typing resolved with `{ typed: N }` while the composer was still blank.
   After typing, `human.type` reads the field back and treats the action as
-  landed only when the requested text occurs more times than before — a
-  prefix, an unchanged field, or a partial append onto a value that
-  already contained the string, is a miss. A failed append restores the
-  original value before retrying, so a leaked prefix is not left behind.
-  It then retries with `insertText` (then `document.execCommand` /
-  `beforeinput`) and throws if the field still did not accept the text.
-  (#129)
+  landed only when the requested text was inserted in full — a prefix, an
+  unchanged field, or an overlapping partial append is a miss. A failed
+  append restores the original value before retrying, so a leaked prefix
+  is not left behind. It then retries with `insertText` (then
+  `document.execCommand` / `beforeinput`) and throws if the field still
+  did not accept the text. (#129)
 
 ## [1.9.5] - 2026-08-17
 

@@ -217,20 +217,23 @@ test("pressPointer dwells before pressing and between down and up", async (t) =>
   await done;
 });
 
-test("typedTextLanded requires the requested text as a new occurrence", () => {
+test("typedTextLanded requires the requested text as a full insert", () => {
   assert.equal(typedTextLanded("", "", ""), true);
   assert.equal(typedTextLanded("hello", "", null), true);
   assert.equal(typedTextLanded("hello", "", "hello"), true);
   assert.equal(typedTextLanded("hello", "pre", "prehello"), true);
   assert.equal(typedTextLanded("hello", "hello", "hellohello"), true);
-  // Partial accept: the field changed but does not contain the request.
+  assert.equal(typedTextLanded("Lovelace", "\n", "Lovelace"), true);
+  // Partial accept: the field changed but is not a full insert of the request.
   assert.equal(typedTextLanded("hello", "", "hel"), false);
   // Unchanged append: the request is already in the field and nothing new landed.
   assert.equal(typedTextLanded("hello", "hello", "hello"), false);
   assert.equal(typedTextLanded("Ada", "Ada Lovelace", "Ada Lovelace"), false);
-  // Partial append: the old occurrence remains and only a suffix fragment landed.
+  // Partial append: leftover occurrence plus a fragment, or an overlapping prefix.
   assert.equal(typedTextLanded("hello", "hello", "helloX"), false);
   assert.equal(typedTextLanded("Ada", "Ada Lovelace", "Ada Lovelace!"), false);
+  assert.equal(typedTextLanded("aaa", "aa", "aaaa"), false);
+  assert.equal(typedTextLanded("aaa", "aa", "aaaaa"), true);
 });
 
 test("typeText routes ASCII through type and everything else through insertText, per character", async (t) => {

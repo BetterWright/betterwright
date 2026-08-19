@@ -112,31 +112,32 @@ export async function pressPointer(mouse, inputLike = false) {
   await mouse.up();
 }
 
-function countOccurrences(haystack, needle) {
-  if (!needle) return 0;
-  let count = 0;
-  let from = 0;
-  while (from <= haystack.length - needle.length) {
-    const index = haystack.indexOf(needle, from);
-    if (index === -1) return count;
-    count += 1;
-    from = index + needle.length;
+function isInsertOf(before, after, inserted) {
+  if (after.length !== before.length + inserted.length) return false;
+  for (let index = 0; index <= before.length; index += 1) {
+    if (
+      after.slice(0, index) === before.slice(0, index) &&
+      after.slice(index, index + inserted.length) === inserted &&
+      after.slice(index + inserted.length) === before.slice(index)
+    ) {
+      return true;
+    }
   }
-  return count;
+  return false;
 }
 
-// True only when `text` landed as a *new* occurrence. An unchanged field, a
-// prefix, or a partial append that leaves the old occurrence count the same
-// (the prior value already contained the string) is a miss. Unreadable
-// targets and empty requests cannot be verified and pass.
+// True only when `after` is `before` with the full requested string spliced
+// in once. A prefix, an unchanged field, a leftover occurrence, or an
+// overlapping partial append (`aa` + two of `aaa` → `aaaa`) is a miss.
+// Unreadable targets and empty requests cannot be verified and pass.
 export function typedTextLanded(expected, before, after) {
   if (!expected || after == null) return true;
   const request = String(expected);
   const beforeText = String(before ?? "");
   const afterText = String(after);
-  return (
-    countOccurrences(afterText, request) > countOccurrences(beforeText, request)
-  );
+  const baseline = beforeText.trim().length === 0 ? "" : beforeText;
+  if (baseline === "" && afterText.trim() === request) return true;
+  return isInsertOf(baseline, afterText, request);
 }
 
 export async function typeText(keyboard, text, options: any = {}) {
