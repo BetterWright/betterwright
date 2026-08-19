@@ -10,6 +10,7 @@ import { test } from "node:test";
 
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
+import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
 import { isBoolean, isCallable, isString } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -1097,6 +1098,63 @@ test("downloads require a trusted per-run approval by default", opts, async () =
     );
     assert.equal(downloads.length, 1, JSON.stringify(approved.events));
     assert.deepEqual(fs.readFileSync(downloads[0].path), body);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("MCP browser_download saves one real file without elicitation", opts, async () => {
+  const body = Buffer.from("MCP autonomous download contents");
+  const server = await listen((request, response) => {
+    if (request.url === "/") {
+      response.setHeader("content-type", "text/html");
+      response.end('<a id="download" href="/report.txt" download>Download</a>');
+      return;
+    }
+    response.setHeader("content-type", "text/plain");
+    response.setHeader(
+      "content-disposition",
+      'attachment; filename="report.txt"',
+    );
+    response.end(body);
+  });
+  const home = tempHome();
+  const bw = new BetterWright({
+    home,
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  const handlers = _createMcpHandlersForTest({
+    browser: bw,
+    downloadPolicy: "ask",
+    liveView: { enabled: false, host: "127.0.0.1", port: 0 },
+  });
+  const code = `
+    await page.goto(${JSON.stringify(server.origin)});
+    await page.locator('#download').click();
+    await page.waitForTimeout(100);
+    return 'done';
+  `;
+  try {
+    const ordinary = await handlers.callTool({
+      params: { name: "browser", arguments: { code } },
+    });
+    assert.equal(ordinary.isError, undefined, ordinary.content[0].text);
+    const ordinarySummary = JSON.parse(ordinary.content[0].text);
+    assert.equal(ordinarySummary.ok, true, ordinarySummary.error);
+    assert.equal(ordinarySummary.files, undefined);
+    assert.equal(directorySize(path.join(home, "artifacts", "downloads")), 0);
+
+    const download = await handlers.callTool({
+      params: { name: "browser_download", arguments: { code } },
+    });
+    assert.equal(download.isError, undefined, download.content[0].text);
+    const downloadSummary = JSON.parse(download.content[0].text);
+    assert.equal(downloadSummary.ok, true, downloadSummary.error);
+    const file = downloadSummary.files?.find((item) => item.kind === "download");
+    assert.ok(file?.path, JSON.stringify(downloadSummary));
+    assert.deepEqual(fs.readFileSync(file.path), body);
   } finally {
     await bw.close();
     await server.close();
