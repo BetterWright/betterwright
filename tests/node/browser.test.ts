@@ -1636,6 +1636,60 @@ test("human helpers use shaped pointer, keyboard, and wheel events", opts, async
   }
 });
 
+test("human.type inserts into a rich-text editor that swallows key events", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <div id="editor" contenteditable="true" style="width:400px;height:80px"></div>
+        <script>
+          document.querySelector('#editor').addEventListener('keydown', (event) => {
+            if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+              event.preventDefault();
+            }
+          });
+        </script>
+      \`);
+      const typed = await human.type('#editor', 'hello from human');
+      return {
+        typed,
+        text: await page.evaluate(() => document.querySelector('#editor').textContent),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.typed.typed, 16);
+    assert.equal(result.result.text, "hello from human");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("human.type throws when the field stays empty", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <div id="editor" contenteditable="true" style="width:400px;height:80px"></div>
+        <script>
+          const editor = document.querySelector('#editor');
+          new MutationObserver(() => { editor.textContent = ''; }).observe(editor, {
+            childList: true, subtree: true, characterData: true,
+          });
+          editor.addEventListener('keydown', (event) => {
+            if (event.key.length === 1) event.preventDefault();
+          });
+          editor.addEventListener('beforeinput', (event) => event.preventDefault());
+        </script>
+      \`);
+      await human.type('#editor', 'hello');
+    `);
+    assert.equal(result.ok, false);
+    assert.match(String(result.error), /did not change the field/i);
+  } finally {
+    await bw.close();
+  }
+});
+
 test("interactive snapshots expose refs that aria-ref locators can act on", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {

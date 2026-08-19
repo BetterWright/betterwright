@@ -132,7 +132,10 @@ await human.scroll(650); // negative values scroll upward
 `human.click(target, options?)` and `human.type(target, text, options?)` accept a
 selector, Locator, ElementHandle, or `{x, y, width, height}` bounds. Typing clears
 the field by default; pass `{clear: false}` to append, or set `minDelay` and
-`maxDelay`. `human.scroll(deltaY, options?)` accepts `steps`, while the object
+`maxDelay`. After typing, `human.type` reads the field back. If nothing landed —
+typical of Draft.js and other rich-text editors that swallow synthetic key
+events — it retries with `insertText` and throws if the field is still unchanged.
+`human.scroll(deltaY, options?)` accepts `steps`, while the object
 form also accepts `deltaX`.
 
 These helpers and the managed engines reduce behavioral and

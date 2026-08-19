@@ -9,6 +9,27 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.9.6] - 2026-08-19
+
+### Fixed
+
+- **A failed upstream connect no longer poisons the guard proxy.** An
+  `ENETUNREACH` from one IPv4 target — a dead TEST-NET address, a down
+  service, a private range with no route — was cached as "IPv4 is
+  unreachable" for 30 seconds. After that, unrelated reachable hosts,
+  including a live loopback server, failed with `ERR_SOCKS_CONNECTION_FAILED`
+  until the worker was restarted. Family-unreachability caching is now
+  IPv6-only, where `ENETUNREACH` / `EAFNOSUPPORT` still mean the host has no
+  IPv6. Connect timeouts are reported to Chromium as host-unreachable
+  (SOCKS reply 4) rather than a general SOCKS server failure (reply 1), so
+  the browser does not treat the proxy itself as dead. (#128)
+- **`human.type` no longer reports success when the field stayed empty.**
+  Rich-text editors such as Draft.js swallow synthetic key events, so
+  typing resolved with `{ typed: N }` while the composer was still blank.
+  After typing, `human.type` reads the field back; if nothing landed it
+  retries with `insertText` (then `document.execCommand` / `beforeinput`)
+  and throws if the field is still unchanged. (#129)
+
 ## [1.9.5] - 2026-08-17
 
 ### Added
@@ -1008,7 +1029,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.5...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.6...HEAD
+[1.9.6]: https://github.com/BetterWright/betterwright/compare/v1.9.5...v1.9.6
 [1.9.5]: https://github.com/BetterWright/betterwright/compare/v1.9.3...v1.9.5
 [1.9.3]: https://github.com/BetterWright/betterwright/compare/v1.9.2...v1.9.3
 [1.9.2]: https://github.com/BetterWright/betterwright/compare/v1.9.1...v1.9.2
