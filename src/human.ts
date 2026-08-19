@@ -112,16 +112,31 @@ export async function pressPointer(mouse, inputLike = false) {
   await mouse.up();
 }
 
-// True only when `text` is present as a *new* change. A field that already
-// contained the requested string and did not change is a miss (append into a
-// key-swallowing editor). A non-empty change that does not contain `text` is
-// also a miss (the editor accepted a prefix). Unreadable targets and empty
-// requests cannot be verified and pass.
+function countOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let count = 0;
+  let from = 0;
+  while (from <= haystack.length - needle.length) {
+    const index = haystack.indexOf(needle, from);
+    if (index === -1) return count;
+    count += 1;
+    from = index + needle.length;
+  }
+  return count;
+}
+
+// True only when `text` landed as a *new* occurrence. An unchanged field, a
+// prefix, or a partial append that leaves the old occurrence count the same
+// (the prior value already contained the string) is a miss. Unreadable
+// targets and empty requests cannot be verified and pass.
 export function typedTextLanded(expected, before, after) {
   if (!expected || after == null) return true;
+  const request = String(expected);
   const beforeText = String(before ?? "");
   const afterText = String(after);
-  return afterText.includes(String(expected)) && afterText !== beforeText;
+  return (
+    countOccurrences(afterText, request) > countOccurrences(beforeText, request)
+  );
 }
 
 export async function typeText(keyboard, text, options: any = {}) {

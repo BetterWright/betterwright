@@ -217,7 +217,7 @@ test("pressPointer dwells before pressing and between down and up", async (t) =>
   await done;
 });
 
-test("typedTextLanded requires the requested text as a new change", () => {
+test("typedTextLanded requires the requested text as a new occurrence", () => {
   assert.equal(typedTextLanded("", "", ""), true);
   assert.equal(typedTextLanded("hello", "", null), true);
   assert.equal(typedTextLanded("hello", "", "hello"), true);
@@ -228,6 +228,9 @@ test("typedTextLanded requires the requested text as a new change", () => {
   // Unchanged append: the request is already in the field and nothing new landed.
   assert.equal(typedTextLanded("hello", "hello", "hello"), false);
   assert.equal(typedTextLanded("Ada", "Ada Lovelace", "Ada Lovelace"), false);
+  // Partial append: the old occurrence remains and only a suffix fragment landed.
+  assert.equal(typedTextLanded("hello", "hello", "helloX"), false);
+  assert.equal(typedTextLanded("Ada", "Ada Lovelace", "Ada Lovelace!"), false);
 });
 
 test("typeText routes ASCII through type and everything else through insertText, per character", async (t) => {
