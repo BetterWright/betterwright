@@ -814,7 +814,7 @@ async function loadMcpSdk() {
   return { Client, Server, InMemoryTransport, types };
 }
 
-async function connectDownloadServer({ downloadPolicy, clientCapabilities, onElicit }) {
+async function connectDownloadServer({ downloadPolicy, clientCapabilities, onElicit = null }) {
   const sdk = await loadMcpSdk();
   const browser = downloadBrowser();
   const server = new sdk.Server(
