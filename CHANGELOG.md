@@ -9,6 +9,16 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP `browser_download` now returns configuration guidance when the client
+  cannot present elicitation.** The default `ask` policy still fails closed:
+  conversation text is not a trusted approval channel, and `approvedDownloads`
+  remains host-only. Clients that declare form elicitation still get a prompt;
+  hosts without that UI are told to set `BETTERWRIGHT_DOWNLOAD_POLICY=allow`
+  in the MCP server environment. Empty `elicitation: {}` capabilities are
+  treated as form support per the spec. (#134)
+
 ## [1.9.8] - 2026-08-19
 
 ### Changed

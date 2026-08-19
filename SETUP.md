@@ -267,9 +267,31 @@ Broad discovery should use the host's web-search tool, then open selected
 first-party pages in BetterWright; the operator guidance says so. Set
 `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block` to have the worker enforce it.
 
-The default `BETTERWRIGHT_DOWNLOAD_POLICY=ask` fails closed when an MCP client
-cannot present elicitation. Set it to `allow` to remove approval prompts or
-`deny` to disable downloads completely.
+The default `BETTERWRIGHT_DOWNLOAD_POLICY=ask` uses MCP elicitation so a
+capable host can show a real approval UI. A sentence in the conversation is
+not a trusted grant: the model could invent it, so `browser_download` never
+accepts an `approvedDownloads` (or similar) tool argument.
+
+When the client cannot present elicitation — Cloud Agents, headless hosts, or
+clients that never declared the capability — `ask` fails closed with
+configuration guidance rather than hanging or silently saving a file. Record
+the operator's standing approval in the MCP server environment:
+
+```json
+{
+  "mcpServers": {
+    "betterwright": {
+      "command": "npx",
+      "args": ["betterwright", "mcp"],
+      "env": {
+        "BETTERWRIGHT_DOWNLOAD_POLICY": "allow"
+      }
+    }
+  }
+}
+```
+
+Set the same variable to `deny` to disable downloads completely. See **§6**.
 
 ---
 

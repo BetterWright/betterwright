@@ -576,3 +576,330 @@ test("browser_handoff status carries drained viewer chat and stop ends mirroring
   assert.ok(!after.content.some((block) => /gone/.test(block.text || "")));
   assert.equal(browser.posted.length, 0);
 });
+
+function downloadBrowser() {
+  const runs = [];
+  return {
+    vault: null,
+    runs,
+    async run(code, options) {
+      runs.push({ code, options });
+      return { ok: true, result: "saved" };
+    },
+  };
+}
+
+async function callDownload(handlers, args = {}) {
+  return handlers.callTool({
+    params: { name: "browser_download", arguments: { code: "return 1", ...args } },
+  });
+}
+
+test("browser_download ask-mode elicits then runs with trusted approval", async () => {
+  const browser = downloadBrowser();
+  const elicitations = [];
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {
+      getClientCapabilities() {
+        return { elicitation: { form: {} } };
+      },
+      async elicitInput(params) {
+        elicitations.push(params);
+        return { action: "accept", content: { approved: true } };
+      },
+    },
+    downloadPolicy: "ask",
+  });
+
+  const response = await callDownload(handlers, { note: "Save the report" });
+  assert.equal(response.isError, undefined);
+  assert.equal(JSON.parse(response.content[0].text).result, "saved");
+  assert.equal(elicitations.length, 1);
+  assert.match(elicitations[0].message, /Save the report/);
+  assert.deepEqual(elicitations[0].requestedSchema.required, ["approved"]);
+  assert.deepEqual(browser.runs, [
+    { code: "return 1", options: { session: "default", note: "Save the report", approvedDownloads: true } },
+  ]);
+});
+
+test("browser_download ask-mode does not treat model-supplied flags as approval", async () => {
+  const browser = downloadBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "ask",
+  });
+
+  const response = await callDownload(handlers, { approvedDownloads: true, approved: true });
+  assert.equal(response.isError, true);
+  assert.match(response.content[0].text, /cannot present download approval/);
+  assert.match(response.content[0].text, /BETTERWRIGHT_DOWNLOAD_POLICY=allow/);
+  assert.match(response.content[0].text, /Conversation text is not a trusted approval channel/);
+  assert.equal(browser.runs.length, 0);
+});
+
+test("browser_download ask-mode blocks when elicitInput throws, with config guidance", async () => {
+  const browser = downloadBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {
+      getClientCapabilities() {
+        return { elicitation: { form: {} } };
+      },
+      async elicitInput() {
+        throw new Error("Client does not support form elicitation.");
+      },
+    },
+    downloadPolicy: "ask",
+  });
+
+  const response = await callDownload(handlers);
+  assert.equal(response.isError, true);
+  assert.match(response.content[0].text, /BETTERWRIGHT_DOWNLOAD_POLICY=allow/);
+  assert.equal(browser.runs.length, 0);
+});
+
+test("browser_download ask-mode treats empty elicitation:{} as form support", async () => {
+  const browser = downloadBrowser();
+  const requests = [];
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {
+      getClientCapabilities() {
+        return { elicitation: {} };
+      },
+      async elicitInput() {
+        throw new Error("Client does not support form elicitation.");
+      },
+      async request(payload) {
+        requests.push(payload);
+        return { action: "accept", content: { approved: true } };
+      },
+    },
+    downloadPolicy: "ask",
+  });
+
+  const response = await callDownload(handlers);
+  assert.equal(response.isError, undefined);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, "elicitation/create");
+  assert.equal(requests[0].params.mode, "form");
+  assert.equal(browser.runs[0].options.approvedDownloads, true);
+});
+
+test("browser_download ask-mode URL-only clients fail closed", async () => {
+  const browser = downloadBrowser();
+  let elicited = 0;
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {
+      getClientCapabilities() {
+        return { elicitation: { url: {} } };
+      },
+      async elicitInput() {
+        elicited += 1;
+        return { action: "accept", content: { approved: true } };
+      },
+    },
+    downloadPolicy: "ask",
+  });
+
+  const response = await callDownload(handlers);
+  assert.equal(response.isError, true);
+  assert.match(response.content[0].text, /BETTERWRIGHT_DOWNLOAD_POLICY=allow/);
+  assert.equal(elicited, 0);
+  assert.equal(browser.runs.length, 0);
+});
+
+test("browser_download declined elicitation does not run", async () => {
+  const browser = downloadBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {
+      async elicitInput() {
+        return { action: "accept", content: { approved: false } };
+      },
+    },
+    downloadPolicy: "ask",
+  });
+
+  const declined = await callDownload(handlers);
+  assert.equal(declined.isError, true);
+  assert.match(declined.content[0].text, /declined or cancelled/);
+  assert.equal(browser.runs.length, 0);
+
+  const cancelled = await _createMcpHandlersForTest({
+    browser,
+    server: {
+      async elicitInput() {
+        return { action: "cancel" };
+      },
+    },
+    downloadPolicy: "ask",
+  }).callTool({
+    params: { name: "browser_download", arguments: { code: "return 1" } },
+  });
+  assert.equal(cancelled.isError, true);
+  assert.match(cancelled.content[0].text, /declined or cancelled/);
+  assert.equal(browser.runs.length, 0);
+});
+
+test("browser_download allow-mode skips elicitation and grants the run", async () => {
+  const browser = downloadBrowser();
+  let elicited = 0;
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {
+      async elicitInput() {
+        elicited += 1;
+        throw new Error("should not elicit when policy is allow");
+      },
+    },
+    downloadPolicy: "allow",
+  });
+
+  const response = await callDownload(handlers);
+  assert.equal(response.isError, undefined);
+  assert.equal(elicited, 0);
+  assert.equal(browser.runs[0].options.approvedDownloads, true);
+});
+
+test("browser_download deny-mode refuses before elicitation", async () => {
+  const browser = downloadBrowser();
+  let elicited = 0;
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {
+      async elicitInput() {
+        elicited += 1;
+        return { action: "accept", content: { approved: true } };
+      },
+    },
+    downloadPolicy: "deny",
+  });
+
+  const response = await callDownload(handlers);
+  assert.equal(response.isError, true);
+  assert.match(response.content[0].text, /BETTERWRIGHT_DOWNLOAD_POLICY=deny/);
+  assert.equal(elicited, 0);
+  assert.equal(browser.runs.length, 0);
+});
+
+test("ordinary browser tool never sets approvedDownloads", async () => {
+  const browser = downloadBrowser();
+  const handlers = _createMcpHandlersForTest({
+    browser,
+    server: {},
+    downloadPolicy: "ask",
+  });
+
+  const response = await handlers.callTool({
+    params: {
+      name: "browser",
+      arguments: { code: "return 1", approvedDownloads: true },
+    },
+  });
+  assert.equal(response.isError, undefined);
+  assert.deepEqual(browser.runs[0].options, { session: "default", note: undefined });
+});
+
+async function loadMcpSdk() {
+  const [{ Client }, { Server }, { InMemoryTransport }, types] = await Promise.all([
+    import("@modelcontextprotocol/sdk/client/index.js"),
+    import("@modelcontextprotocol/sdk/server/index.js"),
+    import("@modelcontextprotocol/sdk/inMemory.js"),
+    import("@modelcontextprotocol/sdk/types.js"),
+  ]);
+  return { Client, Server, InMemoryTransport, types };
+}
+
+async function connectDownloadServer({ downloadPolicy, clientCapabilities, onElicit }) {
+  const sdk = await loadMcpSdk();
+  const browser = downloadBrowser();
+  const server = new sdk.Server(
+    { name: "betterwright-test", version: "0.0.0" },
+    { capabilities: { tools: {} } },
+  );
+  const handlers = _createMcpHandlersForTest({ browser, server, downloadPolicy });
+  server.setRequestHandler(sdk.types.ListToolsRequestSchema, handlers.listTools);
+  server.setRequestHandler(sdk.types.CallToolRequestSchema, handlers.callTool);
+
+  const client = new sdk.Client(
+    { name: "test-host", version: "0.0.0" },
+    { capabilities: clientCapabilities },
+  );
+  if (onElicit) {
+    client.setRequestHandler(sdk.types.ElicitRequestSchema, onElicit);
+  }
+  const [clientTransport, serverTransport] = sdk.InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+  return {
+    browser,
+    client,
+    async close() {
+      await client.close();
+      await server.close();
+    },
+  };
+}
+
+test("MCP protocol roundtrip: a form-capable host approves browser_download", async () => {
+  const session = await connectDownloadServer({
+    downloadPolicy: "ask",
+    clientCapabilities: { elicitation: { form: {} } },
+    onElicit: async (request) => {
+      assert.match(request.params.message, /Save the image/);
+      return { action: "accept", content: { approved: true } };
+    },
+  });
+  try {
+    const result = await session.client.callTool({
+      name: "browser_download",
+      arguments: { code: "return 1", note: "Save the image" },
+    });
+    assert.equal(result.isError, undefined);
+    assert.equal(JSON.parse(result.content[0].text).result, "saved");
+    assert.equal(session.browser.runs[0].options.approvedDownloads, true);
+  } finally {
+    await session.close();
+  }
+});
+
+test("MCP protocol roundtrip: a host without elicitation gets config guidance", async () => {
+  const session = await connectDownloadServer({
+    downloadPolicy: "ask",
+    clientCapabilities: {},
+  });
+  try {
+    const result = await session.client.callTool({
+      name: "browser_download",
+      arguments: { code: "return 1" },
+    });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /BETTERWRIGHT_DOWNLOAD_POLICY=allow/);
+    assert.equal(session.browser.runs.length, 0);
+  } finally {
+    await session.close();
+  }
+});
+
+test("MCP protocol roundtrip: empty elicitation:{} still presents form approval", async () => {
+  const session = await connectDownloadServer({
+    downloadPolicy: "ask",
+    clientCapabilities: { elicitation: {} },
+    onElicit: async () => ({ action: "accept", content: { approved: true } }),
+  });
+  try {
+    const result = await session.client.callTool({
+      name: "browser_download",
+      arguments: { code: "return 1" },
+    });
+    assert.equal(result.isError, undefined, result.content?.[0]?.text);
+    assert.equal(session.browser.runs[0].options.approvedDownloads, true);
+  } finally {
+    await session.close();
+  }
+});
+
+
