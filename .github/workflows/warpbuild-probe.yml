@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Confirm managed runner
         run: |
-          echo "WarpBuild connection refreshed"
+          echo "WarpBuild app reinstalled and runner group bound"
           uname -a
           nproc
           df -h /
