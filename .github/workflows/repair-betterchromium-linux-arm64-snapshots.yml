@@ -130,9 +130,18 @@ jobs:
           clang_base_path=$(dirname "$(dirname "$clang_path")")
           clang_resource_dir=$(clang -print-resource-dir)
           clang_version=$(basename "$clang_resource_dir")
+          clang_target=$(clang -print-target-triple)
+          clang_builtins=$(clang --rtlib=compiler-rt --print-libgcc-file-name)
+          chromium_builtins_dir="$clang_resource_dir/lib/$clang_target"
           test -f "$clang_resource_dir/include/module.modulemap"
-          printf 'clang_base_path=%s clang_version=%s resource_dir=%s\n' \
-            "$clang_base_path" "$clang_version" "$clang_resource_dir"
+          test -f "$clang_builtins"
+          sudo mkdir -p "$chromium_builtins_dir"
+          sudo ln -sf "$clang_builtins" \
+            "$chromium_builtins_dir/libclang_rt.builtins.a"
+          test -f "$chromium_builtins_dir/libclang_rt.builtins.a"
+          printf 'clang_base_path=%s clang_version=%s resource_dir=%s target=%s builtins=%s\n' \
+            "$clang_base_path" "$clang_version" "$clang_resource_dir" \
+            "$clang_target" "$clang_builtins"
           cat > "$WORK_ROOT/src/$OUT_DIR/args.gn" <<GN
           is_debug = false
           is_component_build = false
