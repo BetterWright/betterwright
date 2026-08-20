@@ -105,9 +105,19 @@ jobs:
           cd "$WORK_ROOT/src"
           sudo ./build/install-build-deps.sh \
             --no-prompt --no-chromeos-fonts --no-arm --no-android --no-nacl
-          sudo apt-get install -y clang lld gperf
-          clang --version
-          ld.lld --version
+          key=/tmp/apt.llvm.org.asc
+          curl --fail --silent --show-error --location \
+            https://apt.llvm.org/llvm-snapshot.gpg.key -o "$key"
+          fingerprint=$(gpg --show-keys --with-colons "$key" | \
+            awk -F: '$1 == "fpr" { print $10; exit }')
+          test "$fingerprint" = '6084F3CF814B57C1CF12EFD515CF4D18AF4F7421'
+          sudo install -m 0644 "$key" /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo 'deb [arch=arm64] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main' | \
+            sudo tee /etc/apt/sources.list.d/apt-llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-24 lld-24 libclang-rt-24-dev gperf
+          clang-24 --version
+          ld.lld-24 --version
           mkdir -p third_party/gperf/cipd/bin
           ln -sf /usr/bin/gperf third_party/gperf/cipd/bin/gperf
           third_party/gperf/cipd/bin/gperf --version
@@ -126,12 +136,12 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "$WORK_ROOT/src/$OUT_DIR"
-          clang_path=$(readlink -f "$(command -v clang)")
+          clang_path=$(readlink -f "$(command -v clang-24)")
           clang_base_path=$(dirname "$(dirname "$clang_path")")
-          clang_resource_dir=$(clang -print-resource-dir)
+          clang_resource_dir=$(clang-24 -print-resource-dir)
           clang_version=$(basename "$clang_resource_dir")
-          clang_target=$(clang -print-target-triple)
-          clang_builtins=$(clang --rtlib=compiler-rt --print-libgcc-file-name)
+          clang_target=$(clang-24 -print-target-triple)
+          clang_builtins=$(clang-24 --rtlib=compiler-rt --print-libgcc-file-name)
           chromium_builtins_dir="$clang_resource_dir/lib/$clang_target"
           test -f "$clang_resource_dir/include/module.modulemap"
           test -f "$clang_builtins"
@@ -159,6 +169,7 @@ jobs:
           chrome_pgo_phase = 0
           proprietary_codecs = true
           ffmpeg_branding = "Chrome"
+          enable_rust = false
           v8_use_external_startup_data = true
           use_v8_context_snapshot = true
           GN
