@@ -429,7 +429,9 @@ with `irreversible:true` to also require `allowIrreversible:true`. A batch that
 interacts must end in `read` or `readUrl`; the last result is the transaction's
 verification boundary and must supply a non-empty expected substring in
 `value`. The batch fails unless that expected text, form value, or URL is
-observed. Password fields reject `fill` by default. A credential
+observed on the final operation's specified target (`readUrl` checks the active
+page URL). Page-wide directory evidence never substitutes for that target.
+Password fields reject `fill` by default. A credential
 provided explicitly in the current task may use `allowPasswordFill:true`;
 stored or generated credentials must use the trusted credential helpers so the
 secret never enters model context. Operations run in list order with a 40 ms

@@ -216,7 +216,7 @@ Plan then batch: open an unvisited URL with browser_batch {url}; it automaticall
 snapshot({interactive: true}) reads unknown UIs; page.locator('aria-ref=eN') acts; snapshot({ref}) scopes; snapshot({diff: true}) verifies. Put screenshot({kind: 'proof'}) inside the final verifying call.
 Challenge: keep page; captcha.solve() first; on 'processing', open crop then captcha.solve({tiles:[indexes]}). Replacement photo grids are the same stage. Max three distinct challenge types; rejection = stop/alternate/handoff. Verify cleared; replay only if idempotent/provably incomplete. Never duplicate a submission, purchase, or message.`;
 
-const BROWSER_BATCH_DESCRIPTION = `Open with {url}; result.ui is its action directory. Default for ordinary forms: copy targets; batch known and later-revealed controls (they auto-wait). Mutations/proof return fresh controls/evidence; if state is proved, stop. Target: ref, role (+ name), label, text, placeholder, testId, or css; optional exact/nth/frame. Mutating batches require allowWrites=true. Task-supplied passwords need allowPasswords=true; stored ones use browser_login. Final mutation must end in read/readUrl with a non-empty expected value; proof=true only there. Missing target: snapshot. Ambiguity fails.`;
+const BROWSER_BATCH_DESCRIPTION = `Open with {url}; result.ui is its action directory. Default for ordinary forms: copy targets; batch known and later-revealed controls (they auto-wait). Mutations/proof return fresh controls/evidence; if state is proved, stop. Target: ref, role (+ name), label, text, placeholder, testId, or css; optional exact/nth/frame. Mutating batches require allowWrites=true. Task-supplied passwords need allowPasswords=true; stored ones use browser_login. Final mutation must end in read/readUrl with a non-empty expected value; read verifies only its target. proof=true only there. Missing target: snapshot. Ambiguity fails.`;
 
 const BROWSER_BATCH_INPUT_SCHEMA = {
   type: "object",
@@ -537,7 +537,6 @@ function createMcpHandlers({ browser, downloadPolicy, liveView = liveViewFromEnv
             minIntervalMs: args.minIntervalMs === undefined ? 40 : args.minIntervalMs,
             returnDirectory: hasWrites,
             directoryWaitMs: 2_500,
-            directoryEvidence: hasWrites && args.proof === true,
           };
           const code = args.proof === true
             ? `const outcome = await controls.batch(${encode(operations)}, ${encode(batchOptions)}); const {ui, ...batch} = outcome; const proof = await screenshot({kind:'proof'}); return ui ? {batch, ui, proof} : {batch, proof};`

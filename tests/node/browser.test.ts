@@ -990,20 +990,20 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
     assert.equal(missingExpectation.ok, false);
     assert.match(missingExpectation.error, /non-empty expected value/);
 
-    const evidenceFallback = await bw.run(`
-      await page.setContent('<button id="run">Resolve</button><article id="ticket">T-1</article><section id="summary" hidden></section><script>document.querySelector("#run").onclick=()=>setTimeout(()=>{document.querySelector("#summary").hidden=false;document.querySelector("#summary").textContent="Status resolved"},75)</script>');
+    const targetOnlyVerification = await bw.run(`
+      await page.setContent('<button id="run">Resolve</button><article id="ticket">T-1</article><section id="summary">Status resolved</section><script>document.querySelector("#run").onclick=()=>setTimeout(()=>{document.querySelector("#ticket").textContent="Ticket resolved"},300)</script>');
       return controls.batch({
         operations: [
           {id:'run', action:'click', target:{role:'button', name:'Resolve', exact:true}},
           {id:'status', action:'read', target:{css:'#ticket'}, value:'resolved'},
         ],
         allowWrites:true,
-        directoryEvidence:true,
         minIntervalMs:0,
       });
     `);
-    assert.equal(evidenceFallback.ok, true, evidenceFallback.error);
-    assert.equal(evidenceFallback.result.results.status.text, "Status resolved");
+    assert.equal(targetOnlyVerification.ok, true, targetOnlyVerification.error);
+    assert.equal(targetOnlyVerification.result.results.status.text, "Ticket resolved");
+    assert.ok(targetOnlyVerification.result.durationMs >= 250);
 
     const directory = await bw.run(`
       await page.setContent('<label>Query <input value="browser automation"></label><select><option selected>Current plan</option></select><button>Search</button><article><h2>T-1</h2><button>Assign</button></article><article><h2>T-2</h2><button>Assign</button></article>');
