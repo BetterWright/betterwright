@@ -1,0 +1,195 @@
+name: Repair BetterChromium Linux ARM64 snapshots
+
+on:
+  push:
+    branches:
+      - "build/betterchromium-linux-arm64"
+    paths:
+      - ".github/workflows/repair-betterchromium-linux-arm64-snapshots.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: betterchromium-linux-arm64-snapshot-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    name: Regenerate and test snapshots on native ARM64
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 180
+    env:
+      WORK_ROOT: ${{ github.workspace }}/.chromium-arm64-native
+      OUT_DIR: out/LinuxArm64NativeSnapshots
+      SEED_RUN_ID: "32342288971"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Download the completed ARM64 build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: betterchromium-linux-arm64
+          path: seed
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.SEED_RUN_ID }}
+
+      - name: Verify the seed archive
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd seed
+          sha256sum -c betterchromium-linux-arm64.zip.sha256
+          unzip -q betterchromium-linux-arm64.zip -d browser
+          file browser/linux-arm64/betterchromium
+          readelf -h browser/linux-arm64/betterchromium | grep -Eq 'Machine:[[:space:]]+AArch64'
+
+      - name: Reclaim runner disk
+        shell: bash
+        run: |
+          set -euxo pipefail
+          uname -a
+          nproc
+          free -h
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/local/.ghcup \
+            /usr/local/share/powershell \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /opt/hostedtoolcache/PyPy \
+            /opt/hostedtoolcache/Ruby \
+            /opt/hostedtoolcache/go || true
+          sudo docker system prune -af --volumes || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Fetch pinned Chromium source without history
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf "$WORK_ROOT"
+          mkdir -p "$WORK_ROOT"
+          git clone --depth 1 \
+            https://chromium.googlesource.com/chromium/tools/depot_tools.git \
+            "$WORK_ROOT/depot_tools"
+          echo "$WORK_ROOT/depot_tools" >> "$GITHUB_PATH"
+          cp scripts/chromium/gclient-151.py "$WORK_ROOT/.gclient"
+          cat >> "$WORK_ROOT/.gclient" <<'PY'
+          target_os = ["linux"]
+          target_cpu = ["arm64"]
+          PY
+          cd "$WORK_ROOT"
+          PATH="$WORK_ROOT/depot_tools:$PATH" gclient sync \
+            --no-history --nohooks --delete_unversioned_trees \
+            --force --reset --jobs 4
+          df -h /
+
+      - name: Install native ARM64 build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd "$WORK_ROOT/src"
+          sudo ./build/install-build-deps.sh \
+            --no-prompt --no-chromeos-fonts --no-arm --no-android --no-nacl
+          cd "$WORK_ROOT"
+          PATH="$WORK_ROOT/depot_tools:$PATH" gclient runhooks
+          df -h /
+
+      - name: Apply BetterChromium patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          scripts/chromium/apply-patches.sh "$WORK_ROOT/src"
+
+      - name: Generate matching snapshots natively
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$WORK_ROOT/src/$OUT_DIR"
+          cat > "$WORK_ROOT/src/$OUT_DIR/args.gn" <<'GN'
+          is_debug = false
+          is_component_build = false
+          symbol_level = 0
+          blink_symbol_level = 0
+          v8_symbol_level = 0
+          target_cpu = "arm64"
+          clang_use_chrome_plugins = false
+          dcheck_always_on = false
+          disable_fieldtrial_testing_config = true
+          treat_warnings_as_errors = false
+          use_remoteexec = false
+          chrome_pgo_phase = 0
+          proprietary_codecs = true
+          ffmpeg_branding = "Chrome"
+          v8_use_external_startup_data = true
+          use_v8_context_snapshot = true
+          GN
+          cd "$WORK_ROOT/src"
+          PATH="$WORK_ROOT/depot_tools:$PATH" gn gen "$OUT_DIR"
+          PATH="$WORK_ROOT/depot_tools:$PATH" autoninja -C "$OUT_DIR" \
+            v8:run_mksnapshot_default \
+            tools/v8_context_snapshot:generate_v8_context_snapshot
+          test -s "$OUT_DIR/snapshot_blob.bin"
+          test -s "$OUT_DIR/v8_context_snapshot.bin"
+          sha256sum \
+            "$OUT_DIR/snapshot_blob.bin" \
+            "$OUT_DIR/v8_context_snapshot.bin"
+          df -h /
+
+      - name: Repackage with native snapshots
+        shell: bash
+        run: |
+          set -euxo pipefail
+          stage="$GITHUB_WORKSPACE/seed/browser/linux-arm64"
+          cp "$WORK_ROOT/src/$OUT_DIR/snapshot_blob.bin" "$stage/snapshot_blob.bin"
+          cp "$WORK_ROOT/src/$OUT_DIR/v8_context_snapshot.bin" "$stage/v8_context_snapshot.bin"
+          chmod +x \
+            "$stage/betterchromium" \
+            "$stage/chrome-wrapper" \
+            "$stage/chrome-sandbox" \
+            "$stage/chrome_crashpad_handler"
+          archive="$GITHUB_WORKSPACE/betterchromium-linux-arm64.zip"
+          (cd "$GITHUB_WORKSPACE/seed/browser" && zip -qry "$archive" linux-arm64)
+          sha256sum "$archive" | tee "$archive.sha256"
+          du -h "$archive"
+
+      - name: Verify and render with repaired archive
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sha256sum -c betterchromium-linux-arm64.zip.sha256
+          rm -rf repaired-browser
+          unzip -q betterchromium-linux-arm64.zip -d repaired-browser
+          browser="$PWD/repaired-browser/linux-arm64"
+          binary="$browser/betterchromium"
+          chmod +x \
+            "$binary" \
+            "$browser/chrome-wrapper" \
+            "$browser/chrome-sandbox" \
+            "$browser/chrome_crashpad_handler"
+          file "$binary"
+          readelf -h "$binary" | grep -Eq 'Machine:[[:space:]]+AArch64'
+          "$binary" --version
+          timeout 60s "$binary" \
+            --headless=new --no-sandbox --disable-gpu \
+            --user-data-dir="$RUNNER_TEMP/betterchromium-profile" \
+            --dump-dom 'data:text/html,<title>BetterChromium ARM64 native snapshot</title><h1>ok</h1>' \
+            | tee smoke.html
+          grep -q '<h1>ok</h1>' smoke.html
+
+      - name: Upload repaired ARM64 archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: betterchromium-linux-arm64-repaired
+          path: |
+            betterchromium-linux-arm64.zip
+            betterchromium-linux-arm64.zip.sha256
+            smoke.html
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
