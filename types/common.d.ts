@@ -40,6 +40,10 @@ export interface ResultEnvelopeBase {
   pages?: unknown[];
   /** Skill packs whose autoInject.url patterns match an open page. */
   skills?: SkillHint[];
+  /** One-time compact action directory when the active origin publishes WebAgents. */
+  webagents?: unknown;
+  /** One-time compact semantic action directory synthesized from an ordinary page. */
+  ui?: unknown;
   profileMode?: string;
   durationMs?: number;
   envelopeTruncated?: boolean;

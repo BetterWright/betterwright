@@ -20,6 +20,7 @@ import {
   CHROMIUM_FORK_ASSETS,
   CHROMIUM_FORK_RELEASE_TAG,
   defaultChromiumForkRoot,
+  ensureWindowsChromiumAssembly,
   PLATFORM_LAYOUT,
   resolveChromiumForkBinary,
 } from "./chromium-fork.js";
@@ -167,6 +168,15 @@ export async function installChromiumFork({
   const binaryPath = path.join(root, layout);
 
   if (!force && existsSync(binaryPath)) {
+    const assembly = ensureWindowsChromiumAssembly({
+      binaryPath,
+      platform,
+      repair: true,
+      existsSync,
+    });
+    if (assembly.repaired) {
+      log(`Repaired BetterChromium Windows side-by-side manifest: ${assembly.manifest}`);
+    }
     const resolved = resolveChromiumForkBinary({
       env: {},
       platform,
@@ -213,6 +223,15 @@ export async function installChromiumFork({
         `Extract succeeded but binary missing at ${binaryPath}. ` +
           "The release zip layout may not match this BetterWright version.",
       );
+    }
+    const assembly = ensureWindowsChromiumAssembly({
+      binaryPath,
+      platform,
+      repair: true,
+      existsSync,
+    });
+    if (assembly.repaired) {
+      log(`Created BetterChromium Windows side-by-side manifest: ${assembly.manifest}`);
     }
     try {
       fs.chmodSync(binaryPath, 0o755);

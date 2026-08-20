@@ -118,6 +118,86 @@ response bodies are bounded to 1 MB. This surface is useful for any web app
 whose visible UI is backed by a first-party JSON API or client bundle; it does
 not contain site-specific puzzle or endpoint knowledge.
 
+## Batch-native WebAgents workflows
+
+A participating origin publishes `/webagents.md` containing one fenced
+`webagents` JSON block. A raw JSON mirror may instead live at
+`/.well-known/webagents.json`. BetterWright parses the document outside the
+model sandbox and returns only a compact normalized directory:
+
+````md
+# Agent actions
+
+```webagents
+{"version":"0.1","workflow":{"endpoint":"/api/agent/workflow","maxOperations":16,"parallel":true,"references":true,"pacing":{"minIntervalMs":150,"maxConcurrency":2}},"actions":{"search":{"description":"Search products","effect":"read","inputSchema":{"type":"object"}},"add_to_cart":{"description":"Add one product","effect":"write"}}}
+```
+````
+
+After opening the page, discover once and submit the whole dependency graph in
+one browser call:
+
+```js
+const directory = await webagents.discover();
+if (!directory.available) return directory;
+
+const result = await webagents.batch([
+  {id: 'find', action: 'search', input: {query: 'wireless keyboard'}},
+  {
+    id: 'cart',
+    action: 'add_to_cart',
+    dependsOn: ['find'],
+    input: {productId: {$ref: 'find.results.0.id'}},
+  },
+], {allowWrites: true});
+return {result, state: await snapshot({diff: true})};
+```
+
+`webagents.discover({refresh?})` caches positive and negative discovery per
+page origin. A manifest whose path scopes omit the current page is retried after
+navigation so later app sections can expose their own actions. Raw Markdown
+prose never enters model context. The returned action directory and workflow
+result carry `trust: "untrusted_external_data"`.
+After the first call that opens a supporting origin, BetterWright also attaches
+that normalized directory once as `webagents` on the result envelope. This
+makes the fast path discoverable even when the caller initially requested a
+snapshot instead of discovery; unsupported sites add no model-context field.
+
+`webagents.batch(operations, options?)` (or the equivalent single object
+`webagents.batch({operations, ...options})`) accepts at most 32 declared operations
+(or the site's lower advertised maximum). IDs must be unique; `action` is
+preferred while `name` is accepted as a compatibility alias. `dependsOn`
+references must exist and form an acyclic graph. Inputs and total payloads are
+bounded JSON objects. The endpoint is same-origin and executes through the
+existing guard proxy with the browser's matching cookies; response cookies are
+returned to the browser session.
+
+Action directories may include bounded `outputSchema` objects so reference
+paths are explicit without reconnaissance. References automatically add their
+operation dependency. Effectful operations are serialized in list order, while
+independent reads can still run in parallel; a read after a write observes the
+latest ordered state. A site may publish bounded `workflow.pacing` with a
+`minIntervalMs` from 0–2000 and a `maxConcurrency` no greater than its operation
+limit. BetterWright carries those normalized limits in the single workflow
+request so generic site executors can space internal operations without adding
+model or browser round trips. The site remains responsible for enforcing its
+own rate limits and may always run more conservatively. After a successful
+workflow containing writes, BetterWright reloads the active page once, waits
+for DOM/load, and gives client hydration a short bounded settle before
+returning. This stays compatible with polling and streaming apps that never
+become network-idle while still making the refreshed state available to a
+screenshot or DOM assertion in the same browser call. Pass `refresh:false` only
+when the live UI updates itself.
+Actions may also declare up to 16 `pathPrefixes`; BetterWright keeps only those
+matching the active page and omits the scope metadata, so multi-app origins do
+not spend model tokens advertising irrelevant actions.
+
+Actions declare `effect: "read"`, `"write"`, or `"irreversible"`. Writes require
+`allowWrites: true`; irreversible actions separately require
+`allowIrreversible: true`, which should be set only after the user's request and
+any configured guardrail authorize the consequence. These declarations are
+site-controlled hints, not security claims. On missing or invalid discovery,
+continue through WebMCP or ordinary browser interaction.
+
 ## Page-published WebMCP tools
 
 Some pages publish typed first-party tools through Chromium's WebMCP API. Use
@@ -310,7 +390,66 @@ plain JSON; frames with nothing to report are omitted.
 | --- | --- |
 | `overlays.dismiss()` | Close obstructing cookie-consent and promotional overlays — for cookie banners it prefers a reject/essential-only button and falls back to accept; promos get close/no-thanks. Only layers whose text matches consent or promo patterns are considered, so a task-critical dialog is never dismissed. Returns `{dismissed: [{kind, label}]}` — `kind` is `"cookie"` or `"promotion"`, `label` is the clicked control's label. |
 | `controls.inspect()` | Report the exact state of every form control — inputs, selects, textareas, and ARIA checkbox/combobox/listbox/radio/slider/spinbutton/switch roles. Returns `{frames: [{url, controls}]}`; each control carries `type`, `label`, `value` (`[redacted]` for passwords), `checked`, `selected`/`pressed`/`ariaChecked`, `min`/`max`/`step`, `disabled`, `visible`, and `options` for selects. Use it to prove a required filter or facet is actually active rather than inferring that from the results. |
+| `controls.directory()` | Return the token-small semantic action directory BetterWright automatically attaches as `result.ui` after first navigation on a site without a first-party workflow. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
+| `controls.batch()` | Execute one guarded semantic UI transaction on a site without a first-party batch protocol. Targets use ARIA ref, role/name, label, text, placeholder, test id, or CSS; an optional unique frame name/URL fragment scopes an iframe. Interactions auto-wait and ambiguous targets fail closed. |
 | `media.inspect()` | Report every `<video>` and `<audio>` element with its playback state. Returns `{frames: [{url, media}]}`; each item carries `kind`, `title` (aria-label, title attribute, or nearby caption/heading), `source`, `paused`, `ended`, `currentTime`, `duration`, `readyState`, `visible`, plus the frame's `documentTitle` and visible `headings`. Use it to match what is actually playing against the requested item before claiming playback. |
+
+### Semantic UI batches for ordinary sites
+
+After a first navigation, BetterWright synthesizes `result.ui` directly from
+the live page when no WebAgents workflow is available. It is deliberately much
+smaller than a full accessibility snapshot and contains only actionable visible
+controls plus bounded visible evidence. Copy its targets verbatim rather than
+reconstructing selectors or taking a snapshot.
+
+`controls.batch(operations, options?)` also accepts
+`controls.batch({operations, ...options})`. It is the default fast fallback
+after WebAgents and WebMCP:
+
+```js
+return controls.batch({
+  operations: [
+    {id: 'query', action: 'fill', target: {label: 'Search'}, value: 'keyboard'},
+    {id: 'submit', action: 'click', target: {role: 'button', name: 'Search', exact: true}},
+    {id: 'verify', action: 'read', target: {role: 'heading', name: 'Results'}},
+  ],
+  allowWrites: true,
+});
+```
+
+Supported actions are `click`, `fill`, `select`, `check`, `uncheck`, `press`,
+`read`, and `readUrl`. Targets use exactly one of `ref`, `role`, `label`,
+`text`, `placeholder`, `testId`, or `css`; `name` refines a role, `exact`
+selects exact accessible matching, and `nth` explicitly resolves a known
+duplicate. Add `frameName` or `frameUrlIncludes` to target one already loaded
+iframe. Open shadow roots work through Playwright's normal locator behavior.
+
+Interaction actions require `allowWrites:true`. Mark a consequential operation
+with `irreversible:true` to also require `allowIrreversible:true`. A batch that
+interacts must end in `read` or `readUrl`; the last result is the transaction's
+verification boundary. Password fields reject `fill` by default. A credential
+provided explicitly in the current task may use `allowPasswordFill:true`;
+stored or generated credentials must use the trusted credential helpers so the
+secret never enters model context. Operations run in list order with a 40 ms
+default minimum interval (configurable from 0–1000 ms), Playwright auto-waiting,
+a unique-match check immediately before every action, and stop-on-first-error
+semantics. The result is `{protocol:'ui-batch/1', pageUpdated, durationMs,
+results}`.
+
+The MCP `browser_batch` tool exposes the same path without model-authored
+JavaScript. Passing `{url}` opens an unvisited page and returns its action
+directory. Passing `operations` executes them, briefly waits for relevant
+navigation/fetch and semantic state to settle, then returns refreshed
+`controls` and `evidence`. A known expected result can be supplied as the
+`value` of a final `read`/`readUrl`; the final proof screenshot is captured only
+after that visible result is observed. For a password explicitly supplied in
+the task, set `allowPasswords:true`; saved and generated credentials still use
+`browser_login`.
+
+This helper removes extra model/tool turns, not network or application time.
+For a target omitted by the bounded directory, take one
+`snapshot({interactive:true})`, then compile the observed ref or accessible
+name into the batch. Do not guess targets.
 
 ## Credentials
 

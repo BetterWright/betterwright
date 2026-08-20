@@ -922,6 +922,300 @@ test("controls and media inspectors expose exact live state", opts, async () => 
   }
 });
 
+test("controls.batch runs a guarded semantic UI transaction and waits for verification", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <form id="signup">
+          <label>Display name <input name="name"></label>
+          <label>Plan <select name="plan"><option value="free">Free</option><option value="pro">Pro</option></select></label>
+          <label><input name="terms" type="checkbox"> Accept terms</label>
+          <button>Create account</button>
+        </form>
+        <div role="status" hidden></div>
+        <script>
+          document.querySelector('#signup').addEventListener('submit', (event) => {
+            event.preventDefault();
+            setTimeout(() => {
+              const status = document.querySelector('[role=status]');
+              status.hidden = false;
+              status.textContent = 'Created ' + event.target.elements.name.value + ' on ' + event.target.elements.plan.value;
+            }, 75);
+          });
+        </script>
+      \`);
+      return controls.batch({
+        operations: [
+          {id:'name', action:'fill', target:{label:'Display name', exact:true}, value:'Ada'},
+          {id:'plan', action:'select', target:{label:'Plan'}, value:'pro'},
+          {id:'terms', action:'check', target:{label:'Accept terms', exact:true}},
+          {id:'submit', action:'click', target:{role:'button', name:'Create account', exact:true}},
+          {id:'verify', action:'read', target:{role:'status'}},
+        ],
+        allowWrites: true,
+        minIntervalMs: 0,
+      });
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.protocol, "ui-batch/1");
+    assert.equal(result.result.pageUpdated, true);
+    assert.equal(result.result.results.verify.text, "Created Ada on pro");
+    assert.equal(result.result.results.terms.checked, true);
+
+    const expected = await bw.run(`
+      await page.setContent('<button id="run">Run</button><div id="status">Waiting</div><script>document.querySelector("#run").onclick=()=>setTimeout(()=>document.querySelector("#status").textContent="Finished",75)</script>');
+      return controls.batch({
+        operations: [
+          {id:'run', action:'click', target:{role:'button', name:'Run', exact:true}},
+          {id:'status', action:'read', target:{css:'#status'}, value:'Finished'},
+        ],
+        allowWrites:true,
+        minIntervalMs:0,
+      });
+    `);
+    assert.equal(expected.ok, true, expected.error);
+    assert.equal(expected.result.results.status.text, "Finished");
+    assert.ok(expected.result.durationMs >= 60);
+
+    const evidenceFallback = await bw.run(`
+      await page.setContent('<button id="run">Resolve</button><article id="ticket">T-1</article><section id="summary" hidden></section><script>document.querySelector("#run").onclick=()=>setTimeout(()=>{document.querySelector("#summary").hidden=false;document.querySelector("#summary").textContent="Status resolved"},75)</script>');
+      return controls.batch({
+        operations: [
+          {id:'run', action:'click', target:{role:'button', name:'Resolve', exact:true}},
+          {id:'status', action:'read', target:{css:'#ticket'}, value:'resolved'},
+        ],
+        allowWrites:true,
+        directoryEvidence:true,
+        minIntervalMs:0,
+      });
+    `);
+    assert.equal(evidenceFallback.ok, true, evidenceFallback.error);
+    assert.equal(evidenceFallback.result.results.status.text, "Status resolved");
+
+    const directory = await bw.run(`
+      await page.setContent('<label>Query <input value="browser automation"></label><select><option selected>Current plan</option></select><button>Search</button><article><h2>T-1</h2><button>Assign</button></article><article><h2>T-2</h2><button>Assign</button></article>');
+      return controls.directory();
+    `);
+    assert.equal(directory.ok, true, directory.error);
+    assert.equal(directory.result.protocol, "betterwright-ui/1");
+    assert.equal(directory.result.tool, "browser_batch");
+    assert.deepEqual(directory.result.controls[0].target, { label: "Query", exact: true });
+    assert.equal(directory.result.controls[0].value, "browser automation");
+    assert.deepEqual(directory.result.controls[1].target, { role: "combobox", exact: true });
+    assert.equal(directory.result.controls[1].value, "Current plan");
+    const assigns = directory.result.controls.filter((control) => control.target.name === "Assign");
+    assert.equal(assigns.length, 2);
+    assert.equal(assigns[0].target.nth, 0);
+    assert.equal(assigns[0].context, "T-1");
+    assert.equal(assigns[1].target.nth, 1);
+    assert.equal(assigns[1].context, "T-2");
+
+    const framed = await bw.run(`
+      await page.setContent('<iframe name="billing" srcdoc="<label>Region <select><option>US</option><option selected>EU</option></select></label>"></iframe>');
+      await page.locator('iframe').contentFrame().getByLabel('Region').waitFor();
+      return controls.batch([
+        {id:'region', action:'read', target:{frameName:'billing', label:'Region'}},
+      ]);
+    `);
+    assert.equal(framed.ok, true, framed.error);
+    assert.equal(framed.result.results.region.value, "EU");
+
+    const gated = await bw.run(`
+      return controls.batch([
+        {id:'submit', action:'click', target:{role:'button', name:'Create account', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}},
+      ]);
+    `);
+    assert.equal(gated.ok, false);
+    assert.match(gated.error, /allowWrites:true/);
+
+    const password = await bw.run(`
+      await page.setContent('<label>Password <input type="password"></label><div role="status">Ready</div>');
+      return controls.batch({
+        operations: [
+          {id:'secret', action:'fill', target:{label:'Password'}, value:'must-not-leak'},
+          {id:'verify', action:'read', target:{role:'status'}},
+        ],
+        allowWrites: true,
+      });
+    `);
+    assert.equal(password.ok, false);
+    assert.match(password.error, /cannot fill a password/);
+    assert.ok(!JSON.stringify(password).includes("must-not-leak"));
+
+    const suppliedPassword = await bw.run(`
+      return controls.batch({
+        operations: [
+          {id:'secret', action:'fill', target:{label:'Password'}, value:'task-supplied'},
+          {id:'verify', action:'read', target:{role:'status'}},
+        ],
+        allowWrites: true,
+        allowPasswordFill: true,
+      });
+    `);
+    assert.equal(suppliedPassword.ok, true, suppliedPassword.error);
+    assert.equal(suppliedPassword.result.results.secret.filled, 13);
+    assert.ok(!JSON.stringify(suppliedPassword).includes("task-supplied"));
+
+    const ambiguous = await bw.run(`
+      await page.setContent('<button>Save</button><button>Save</button>');
+      return controls.batch({
+        operations: [
+          {id:'save', action:'click', target:{role:'button', name:'Save', exact:true}},
+          {id:'url', action:'readUrl'},
+        ],
+        allowWrites: true,
+      });
+    `);
+    assert.equal(ambiguous.ok, false);
+    assert.match(ambiguous.error, /matched 2 elements/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("ordinary navigation attaches one compact UI directory automatically", opts, async () => {
+  let probes = 0;
+  const site = await listen((request, response) => {
+    if (request.url === "/webagents.md" || request.url === "/.well-known/webagents.json") {
+      probes += 1;
+      response.statusCode = 404;
+      response.end("missing");
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end('<label>Search <input value="compact"></label><button>Go</button>');
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const opened = await bw.run(`await page.goto('${site.origin}/form'); return page.url()`);
+    assert.equal(opened.ok, true, opened.error);
+    assert.equal(opened.ui.protocol, "betterwright-ui/1");
+    assert.deepEqual(opened.ui.controls[0].target, { label: "Search", exact: true });
+    assert.equal(probes, 2);
+
+    const repeated = await bw.run("return page.title()");
+    assert.equal(repeated.ok, true, repeated.error);
+    assert.equal(repeated.ui, undefined);
+    assert.equal(probes, 2);
+
+    const nextPath = await bw.run(`await page.goto('${site.origin}/other'); return page.url()`);
+    assert.equal(nextPath.ok, true, nextPath.error);
+    assert.equal(nextPath.ui.protocol, "betterwright-ui/1");
+    assert.equal(probes, 2);
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("WebAgents auto-discovery executes one same-origin operation DAG", opts, async () => {
+  let status = "open";
+  let workflowBody: any;
+  const site = await listen((request, response) => {
+    if (request.url === "/webagents.md") {
+      response.setHeader("content-type", "text/markdown");
+      response.end(`\`\`\`webagents
+{"version":"0.1","workflow":{"endpoint":"/workflow"},"actions":{"resolve":{"effect":"write"},"status":{"effect":"read"}}}
+\`\`\``);
+      return;
+    }
+    if (request.url === "/.well-known/webagents.json") {
+      response.statusCode = 404;
+      response.end("missing");
+      return;
+    }
+    if (request.url === "/workflow" && request.method === "POST") {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        workflowBody = JSON.parse(body);
+        status = "resolved";
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ status }));
+      });
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end(`<main><div role="status">${status}</div></main>`);
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const opened = await bw.run(`await page.goto('${site.origin}/tickets'); return page.url()`);
+    assert.equal(opened.ok, true, opened.error);
+    assert.equal(opened.webagents.protocol, "webagents/0.1");
+    assert.deepEqual(opened.webagents.actions.map((action) => action.name), ["resolve", "status"]);
+
+    const batch = await bw.run(`
+      return webagents.batch([
+        {id:'resolve', action:'resolve', input:{}},
+        {id:'verify', action:'status', input:{}},
+      ], {allowWrites:true});
+    `);
+    assert.equal(batch.ok, true, batch.error);
+    assert.equal(batch.result.pageUpdated, true);
+    assert.equal(batch.result.result.status, "resolved");
+    assert.deepEqual(workflowBody.operations, [
+      { id: "resolve", action: "resolve", input: {} },
+      { id: "verify", action: "status", input: {}, dependsOn: ["resolve"] },
+    ]);
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("WebAgents path scopes are rediscovered after navigation", opts, async () => {
+  let probes = 0;
+  const site = await listen((request, response) => {
+    if (request.url === "/webagents.md") {
+      probes += 1;
+      response.setHeader("content-type", "text/markdown");
+      response.end(`\`\`\`webagents
+{"version":"0.1","workflow":{"endpoint":"/workflow"},"actions":{"store":{"effect":"read","pathPrefixes":["/store"]}}}
+\`\`\``);
+      return;
+    }
+    if (request.url === "/.well-known/webagents.json") {
+      probes += 1;
+      response.statusCode = 404;
+      response.end("missing");
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end("<main>Scoped workflow</main>");
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const landing = await bw.run(`await page.goto('${site.origin}/'); return page.url()`);
+    assert.equal(landing.ok, true, landing.error);
+    assert.equal(landing.webagents, undefined);
+    assert.equal(probes, 2);
+
+    const store = await bw.run(`await page.goto('${site.origin}/store'); return page.url()`);
+    assert.equal(store.ok, true, store.error);
+    assert.deepEqual(store.webagents.actions.map((action) => action.name), ["store"]);
+    assert.equal(probes, 4);
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
 test("guard decisions are not reused across request methods", opts, async () => {
   let deleteRequests = 0;
   const server = await listen((request, response) => {

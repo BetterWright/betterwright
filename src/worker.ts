@@ -113,6 +113,7 @@ import { createLiveViewServer } from "./live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.js";
 import {
   dismissObstructiveOverlays,
+  inspectActionDirectory,
   inspectControls,
   inspectMedia,
 } from "./page-inspect.js";
@@ -139,6 +140,7 @@ import {
   filterInteractive,
   parseAnnotationBoxes,
 } from "./snapshot.js";
+import { executeUIBatch } from "./ui-batch.js";
 import {
   isBoolean,
   isCallable,
@@ -149,6 +151,13 @@ import {
   untrustedField,
 } from "./untrusted-value.js";
 import { httpOrigin, installVaultCapture } from "./vault-capture.js";
+import {
+  parseWebAgentsDocument,
+  prepareWebAgentsBatch,
+  publicWebAgentsManifest,
+  WEBAGENTS_DISCOVERY_PATHS,
+  WebAgentsPathScopeError,
+} from "./webagents.js";
 import {
   invokeWebMCPTool,
   listWebMCPTools,
@@ -726,6 +735,8 @@ function sessionFor(id) {
       // execute. Non-empty forces the full frame scan on the next one; only a
       // full scan writes this set, so it always drains once the page clears.
       openChallengeProviders: new Set(),
+      webAgentsAnnouncedOrigins: new Set(),
+      uiDirectoryAnnouncedOrigins: new Set(),
       // State that belongs to the execute currently running on this session.
       // Per-session, not global: sessions run concurrently, so one execute's
       // teardown must not clear another's request id or pending credential.
@@ -1312,6 +1323,7 @@ async function handleDialog(page, dialog) {
 const CHALLENGE_BLOCK_STATUSES = new Set([403, 429, 503]);
 const lastBlockedDocumentAt = new WeakMap();
 const pageSiteRequests = new WeakMap();
+const pageWebAgentsDiscovery = new WeakMap();
 const requestSiteRecord = new WeakMap();
 const MAX_SITE_REQUESTS = 512;
 
@@ -4262,6 +4274,111 @@ async function pageSiteRequest(page, url, options: any = {}) {
   return result;
 }
 
+async function discoverPageWebAgents(page, { refresh = false }: any = {}) {
+  let origin;
+  let pathname;
+  try {
+    const activeUrl = new URL(page.url());
+    origin = activeUrl.origin;
+    pathname = activeUrl.pathname;
+  } catch {
+    return {
+      manifest: null,
+      error: "WebAgents discovery requires an open HTTP(S) page.",
+    };
+  }
+  const cached = pageWebAgentsDiscovery.get(page);
+  if (
+    !refresh &&
+    cached?.origin === origin &&
+    (
+      cached.pathname === pathname ||
+      (!cached.manifest && cached.pathScoped !== true)
+    )
+  ) return cached;
+
+  const errors: string[] = [];
+  let pathScoped = false;
+  const probes = await Promise.all(WEBAGENTS_DISCOVERY_PATHS.map(async (path) => {
+    try {
+      return { path, response: await pageSiteRequest(page, path, { method: "GET" }) };
+    } catch (error) {
+      return { path, error };
+    }
+  }));
+  for (const probe of probes) {
+    const { path } = probe;
+    if ("error" in probe) {
+      errors.push(`${path}: ${probe.error?.message || probe.error}`);
+      continue;
+    }
+    const { response } = probe;
+    if (response.status === 404 || response.status === 410) continue;
+    if (!response.ok) {
+      errors.push(`${path}: HTTP ${response.status}`);
+      continue;
+    }
+    try {
+      const manifest = parseWebAgentsDocument(
+        response.text,
+        response.url,
+        page.url(),
+      );
+      const entry = { origin, pathname, manifest, error: "" };
+      pageWebAgentsDiscovery.set(page, entry);
+      return entry;
+    } catch (error) {
+      if (error instanceof WebAgentsPathScopeError) pathScoped = true;
+      errors.push(`${path}: ${error?.message || error}`);
+    }
+  }
+  const entry = {
+    origin,
+    pathname,
+    manifest: null,
+    pathScoped,
+    error: errors[0] || "This origin does not publish WebAgents.",
+  };
+  pageWebAgentsDiscovery.set(page, entry);
+  return entry;
+}
+
+async function unannouncedWebAgentsDirectory(session) {
+  const page = session.pages.get(session.currentId);
+  if (!page || page.isClosed()) return null;
+  let origin;
+  try {
+    const url = new URL(page.url());
+    if (!new Set(["http:", "https:"]).has(url.protocol)) return null;
+    origin = `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+  if (session.webAgentsAnnouncedOrigins.has(origin)) return null;
+  session.webAgentsAnnouncedOrigins.add(origin);
+  const discovered = await discoverPageWebAgents(page);
+  return discovered.manifest ? publicWebAgentsManifest(discovered.manifest) : null;
+}
+
+async function unannouncedUIDirectory(session) {
+  const page = session.pages.get(session.currentId);
+  if (!page || page.isClosed()) return null;
+  let key;
+  try {
+    const url = new URL(page.url());
+    if (!new Set(["http:", "https:"]).has(url.protocol)) return null;
+    key = `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+  if (session.uiDirectoryAnnouncedOrigins.has(key)) return null;
+  const discovered = pageWebAgentsDiscovery.get(page);
+  if (!discovered || discovered.manifest) return null;
+  session.uiDirectoryAnnouncedOrigins.add(key);
+  const directory = await inspectActionDirectory(page);
+  return directory.controls.length ? directory : null;
+}
+
 async function inspectSiteAssets(page) {
   const domAssets = await page.evaluate(() =>
     [
@@ -4626,6 +4743,22 @@ function buildSandbox(session, consoleMessages, execution) {
     const page = await ensureSessionPage(session);
     return inspectControls(page);
   });
+  controls.directory = realm.safeFunction(async () => {
+    const page = await ensureSessionPage(session);
+    return inspectActionDirectory(page);
+  });
+  controls.batch = realm.safeFunction(
+    async (operationsValue, optionsValue: any = {}) => {
+      let operations = operationsValue;
+      let options = optionsValue;
+      if (isObjectValue(operationsValue) && !Array.isArray(operationsValue)) {
+        operations = untrustedField(operationsValue, "operations");
+        options = operationsValue;
+      }
+      const page = await ensureSessionPage(session);
+      return executeUIBatch(page, operations, options);
+    },
+  );
   const media = Object.create(null);
   media.inspect = realm.safeFunction(async () => {
     const page = await ensureSessionPage(session);
@@ -4685,6 +4818,87 @@ function buildSandbox(session, consoleMessages, execution) {
       });
     },
   );
+  const webagents = Object.create(null);
+  webagents.discover = realm.safeFunction(async (options: any = {}) => {
+    if (!isObjectValue(options) || Array.isArray(options)) {
+      throw new TypeError("webagents.discover options must be an object.");
+    }
+    const page = await ensureSessionPage(session);
+    const discovered = await discoverPageWebAgents(page, {
+      refresh: untrustedField(options, "refresh") === true,
+    });
+    if (!discovered.manifest) {
+      return {
+        available: false,
+        error: String(discovered.error || "WebAgents is unavailable.").slice(0, 500),
+      };
+    }
+    const activeUrl = new URL(page.url());
+    session.webAgentsAnnouncedOrigins.add(`${activeUrl.origin}${activeUrl.pathname}`);
+    return publicWebAgentsManifest(discovered.manifest);
+  });
+  webagents.batch = realm.safeFunction(
+    async (operationsValue, optionsValue: any = {}) => {
+      let operations = operationsValue;
+      let options = optionsValue;
+      if (isObjectValue(operationsValue) && !Array.isArray(operationsValue)) {
+        operations = untrustedField(operationsValue, "operations");
+        options = operationsValue;
+      }
+      if (!isObjectValue(options) || Array.isArray(options)) {
+        throw new TypeError("webagents.batch options must be an object.");
+      }
+      const page = await ensureSessionPage(session);
+      const discovered = await discoverPageWebAgents(page, {
+        refresh: untrustedField(options, "refresh") === true,
+      });
+      if (!discovered.manifest) {
+        throw new Error(discovered.error || "This origin does not publish WebAgents.");
+      }
+      const activeUrl = new URL(page.url());
+      session.webAgentsAnnouncedOrigins.add(`${activeUrl.origin}${activeUrl.pathname}`);
+      const request = prepareWebAgentsBatch(
+        discovered.manifest,
+        operations,
+        options,
+      );
+      const response = await pageSiteRequest(page, request.endpoint, {
+        method: "POST",
+        json: request.body,
+        response: "json",
+      });
+      if (!response.ok) {
+        const responseJson = "json" in response ? response.json : null;
+        const detail = isObjectValue(responseJson)
+          ? untrustedField(responseJson, "error")
+          : "";
+        const suffix = isString(detail) && detail.trim()
+          ? ` Site error (untrusted): ${detail.trim().slice(0, 500)}`
+          : "";
+        throw new Error(`WebAgents workflow failed with HTTP ${response.status}.${suffix}`);
+      }
+      const effects = new Map(
+        discovered.manifest.actions.map((action) => [action.name, action.effect]),
+      );
+      const hasEffects = request.body.operations.some(
+        (operation) => effects.get(operation.action) !== "read",
+      );
+      let pageUpdated = false;
+      if (hasEffects && untrustedField(options, "refresh") !== false) {
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await page.waitForLoadState("load", { timeout: 5_000 }).catch(() => {});
+        await page.waitForTimeout(150);
+        pageUpdated = true;
+      }
+      return {
+        protocol: `webagents/${discovered.manifest.version}`,
+        status: response.status,
+        pageUpdated,
+        result: "json" in response ? response.json : null,
+        trust: "untrusted_external_data",
+      };
+    },
+  );
   sandbox.dialogs = Object.freeze(dialogs);
   sandbox.captcha = Object.freeze(captcha);
   sandbox.human = Object.freeze(human);
@@ -4693,6 +4907,7 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.media = Object.freeze(media);
   sandbox.site = Object.freeze(site);
   sandbox.webmcp = Object.freeze(webmcp);
+  sandbox.webagents = Object.freeze(webagents);
   sandbox.credentials = buildCredentials(session, realm, execution);
   realm.installPage(getCurrentPage);
   return { context, realm, sandbox };
@@ -6907,6 +7122,10 @@ async function execute(message) {
     }
     const summarized = await summarize(result);
     const challenges = await detectSessionChallenges(session);
+    const webagents = await unannouncedWebAgentsDirectory(session).catch(() => null);
+    const ui = webagents
+      ? null
+      : await unannouncedUIDirectory(session).catch(() => null);
     await enforceArtifactQuota(session);
 
     let publicResult = summarized;
@@ -6949,16 +7168,19 @@ async function execute(message) {
 
     assertRedactionCapacity();
 
+    const envelopeOptions = {
+      firstEvent,
+      console: consoleMessages,
+      artifacts: session.artifacts.slice(firstArtifact),
+      challenges,
+      drainSessionWarnings: true,
+      ok: true,
+      result: redactDeep(publicResult),
+    };
+    if (webagents) Object.assign(envelopeOptions, { webagents });
+    if (ui) Object.assign(envelopeOptions, { ui });
     sendResult(
-      await buildEnvelope(session, message, started, {
-        firstEvent,
-        console: consoleMessages,
-        artifacts: session.artifacts.slice(firstArtifact),
-        challenges,
-        drainSessionWarnings: true,
-        ok: true,
-        result: redactDeep(publicResult),
-      }),
+      await buildEnvelope(session, message, started, envelopeOptions),
     );
   } catch (error) {
     if (redactionCapacityExceeded) {

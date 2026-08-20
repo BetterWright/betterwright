@@ -3,6 +3,8 @@ set -euo pipefail
 platform="${1:?usage: package.sh <linux|mac|win> /path/to/chromium/src/out/dir /output.zip}"
 out="${2:?missing output directory}"
 dest="${3:?missing archive path}"
+root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+chromium_version="151.0.7922.108"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 case "$platform" in
@@ -25,7 +27,9 @@ case "$platform" in
     mkdir -p "$stage/win-x64"
     cp -a "$out"/. "$stage/win-x64/"
     [[ -f "$stage/win-x64/chrome.exe" ]] || { echo "staged Windows chrome.exe missing" >&2; exit 1; }
+    [[ -f "$stage/win-x64/chrome_elf.dll" ]] || { echo "staged Windows chrome_elf.dll missing" >&2; exit 1; }
     mv "$stage/win-x64/chrome.exe" "$stage/win-x64/betterchromium.exe"
+    cp "$root/scripts/chromium/$chromium_version.manifest" "$stage/win-x64/$chromium_version.manifest"
     (cd "$stage" && zip -qry "$dest" win-x64)
     ;;
   *) echo "unsupported platform: $platform" >&2; exit 1 ;;

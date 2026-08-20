@@ -3,11 +3,13 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   CHROMIUM_FORK_ASSETS,
   CHROMIUM_FORK_RELEASE_TAG,
+  windowsVersionAssemblyManifest,
 } from "../../dist/src/chromium-fork.js";
 import {
   _extractZipForTest,
@@ -15,6 +17,10 @@ import {
   installChromiumFork,
 } from "../../dist/src/chromium-fork-install.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
+
+const ROOT = path.dirname(
+  path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+);
 
 test("Chromium 151 release is pinned to verified public assets", () => {
   assert.equal(
@@ -50,6 +56,28 @@ test("Chromium 151 release is pinned to verified public assets", () => {
         "03d8abb5d6064bbd808cf52c2a327692502c4ca6c565b2e1cdb639200c52dccb",
     },
   });
+});
+
+test("Windows packaging carries Chromium's matching private assembly manifest", () => {
+  const manifestPath = path.join(
+    ROOT,
+    "scripts",
+    "chromium",
+    `${BETTERWRIGHT_CHROMIUM_VERSION}.manifest`,
+  );
+  assert.equal(
+    fs.readFileSync(manifestPath, "utf8"),
+    windowsVersionAssemblyManifest(),
+  );
+  const packageScript = fs.readFileSync(
+    path.join(ROOT, "scripts", "chromium", "package.sh"),
+    "utf8",
+  );
+  assert.match(packageScript, /chrome_elf\.dll missing/);
+  assert.match(
+    packageScript,
+    /cp "\$root\/scripts\/chromium\/\$chromium_version\.manifest" "\$stage\/win-x64\/\$chromium_version\.manifest"/,
+  );
 });
 
 test("installChromiumFork skips unsupported platforms without a public artifact", async () => {
@@ -121,6 +149,34 @@ test("installChromiumFork short-circuits when already installed", async () => {
   assert.match(logs.join("\n"), /already installed/);
 });
 
+test("installChromiumFork repairs an existing r3 Windows layout in place", async () => {
+  const home = makeTempDir("bw-fork-win-repair-");
+  const directory = path.join(home, ".betterwright", "chromium", "win-x64");
+  const binary = path.join(directory, "betterchromium.exe");
+  const manifest = path.join(directory, `${BETTERWRIGHT_CHROMIUM_VERSION}.manifest`);
+  const logs = [];
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(binary, "test executable");
+    fs.writeFileSync(path.join(directory, "chrome_elf.dll"), "test dll");
+    const result = await installChromiumFork({
+      platform: "win32",
+      arch: "x64",
+      home,
+      log: (line) => logs.push(String(line)),
+      download: async () => {
+        throw new Error("should not download");
+      },
+    });
+    assert.equal(result.binary, binary);
+    assert.equal(result.alreadyInstalled, true);
+    assert.equal(fs.readFileSync(manifest, "utf8"), windowsVersionAssemblyManifest());
+    assert.match(logs.join("\n"), /Repaired BetterChromium Windows side-by-side manifest/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("installChromiumFork downloads, verifies, and installs the Windows layout", async () => {
   const home = makeTempDir("bw-fork-home-");
   const payload = Buffer.from("betterchromium-test-zip");
@@ -148,6 +204,7 @@ test("installChromiumFork downloads, verifies, and installs the Windows layout",
         const out = path.join(destDir, binaryRel);
         fs.mkdirSync(path.dirname(out), { recursive: true });
         fs.writeFileSync(out, "#!/bin/sh\necho BetterChromium\n");
+        fs.writeFileSync(path.join(path.dirname(out), "chrome_elf.dll"), "test dll");
       },
     });
     assert.equal(
@@ -160,6 +217,19 @@ test("installChromiumFork downloads, verifies, and installs the Windows layout",
       path.join(home, ".betterwright", "chromium", "win-x64", "betterchromium.exe"),
     );
     assert.ok(fs.existsSync(result.binary));
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          home,
+          ".betterwright",
+          "chromium",
+          "win-x64",
+          `${BETTERWRIGHT_CHROMIUM_VERSION}.manifest`,
+        ),
+        "utf8",
+      ),
+      windowsVersionAssemblyManifest(),
+    );
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

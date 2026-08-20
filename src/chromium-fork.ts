@@ -7,6 +7,113 @@ import { isCallable } from "./untrusted-value.js";
 export const BETTERWRIGHT_CHROMIUM_VERSION = "151.0.7922.108";
 export const BETTERCHROMIUM_PRODUCT_NAME = "BetterChromium";
 
+/**
+ * Chromium's Windows launcher uses a private side-by-side assembly to locate
+ * chrome_elf.dll. The executable embeds a dependency whose name is the full
+ * Chromium version, and this companion manifest satisfies that dependency.
+ */
+export function windowsVersionAssemblyManifest(
+  version = BETTERWRIGHT_CHROMIUM_VERSION,
+) {
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`Invalid BetterChromium Windows assembly version: ${version}`);
+  }
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">\n' +
+    `  <assemblyIdentity name="${version}" version="${version}" type="win32"/>\n` +
+    '  <file name="chrome_elf.dll"/>\n' +
+    '</assembly>\n'
+  );
+}
+
+function validWindowsVersionAssemblyManifest(source, version) {
+  const identities = String(source).match(/<assemblyIdentity\b[^>]*>/gi) || [];
+  const identity = identities.find((entry) =>
+    new RegExp(`\\bname=["']${version.replaceAll(".", "\\.")}["']`, "i").test(entry) &&
+    new RegExp(`\\bversion=["']${version.replaceAll(".", "\\.")}["']`, "i").test(entry) &&
+    /\btype=["']win32["']/i.test(entry)
+  );
+  return Boolean(identity) &&
+    /<file\b[^>]*\bname=["']chrome_elf\.dll["'][^>]*>/i.test(String(source));
+}
+
+/**
+ * Validate or repair the private assembly beside the Windows launcher.
+ * Automatic repair is reserved for BetterWright-owned managed installations;
+ * explicit operator paths are only validated and never mutated.
+ */
+export function ensureWindowsChromiumAssembly({
+  binaryPath = "",
+  platform = process.platform,
+  version = BETTERWRIGHT_CHROMIUM_VERSION,
+  repair = false,
+  existsSync = fs.existsSync,
+  readFileSync = fs.readFileSync,
+  writeFileSync = fs.writeFileSync,
+} = {}) {
+  if (platform !== "win32") return { manifest: null, repaired: false };
+  if (!binaryPath) throw new Error("A BetterChromium binary path is required.");
+  const expectedManifest = windowsVersionAssemblyManifest(version);
+
+  const directory = path.dirname(binaryPath);
+  const chromeElf = path.join(directory, "chrome_elf.dll");
+  const manifest = path.join(directory, `${version}.manifest`);
+  if (!existsSync(chromeElf)) {
+    throw new Error(
+      `BetterChromium Windows installation is incomplete: chrome_elf.dll is missing beside ${binaryPath}. ` +
+        "Run `betterwright setup --force` to reinstall it.",
+    );
+  }
+
+  let valid = false;
+  if (existsSync(manifest)) {
+    try {
+      valid = validWindowsVersionAssemblyManifest(
+        readFileSync(manifest, "utf8"),
+        version,
+      );
+    } catch {
+      valid = false;
+    }
+  }
+  if (valid) return { manifest, repaired: false };
+  if (!repair) {
+    throw new Error(
+      `BetterChromium Windows side-by-side manifest is missing or invalid: ${manifest}. ` +
+        "Run `betterwright setup` to repair the managed install, or replace the configured custom artifact.",
+    );
+  }
+
+  try {
+    writeFileSync(manifest, expectedManifest, {
+      encoding: "utf8",
+      mode: 0o644,
+    });
+  } catch (error) {
+    throw new Error(
+      `Could not repair BetterChromium's Windows side-by-side manifest at ${manifest}: ` +
+        `${error instanceof Error ? error.message : String(error)}. ` +
+        "Run `betterwright setup --force` from a writable account.",
+    );
+  }
+  try {
+    valid = validWindowsVersionAssemblyManifest(
+      readFileSync(manifest, "utf8"),
+      version,
+    );
+  } catch {
+    valid = false;
+  }
+  if (!valid) {
+    throw new Error(
+      `BetterChromium Windows side-by-side manifest repair did not produce a valid file at ${manifest}. ` +
+        "Run `betterwright setup --force`.",
+    );
+  }
+  return { manifest, repaired: true };
+}
+
 // Playwright 1.61.1 defaults that deliberately change normal browser behavior.
 // Keep its lifecycle, profile, proxy, and CDP-pipe arguments, but let the fork
 // run the same web-platform features and foreground/background policies as a
@@ -209,6 +316,8 @@ export function resolveChromiumForkBinary({
   arch = process.arch,
   home = os.homedir(),
   existsSync = fs.existsSync,
+  readFileSync = fs.readFileSync,
+  writeFileSync = fs.writeFileSync,
 } = {}) {
   configuredBrowserBackend(env); // validates the variable's value
   const explicit = configuredValue(env.BETTERWRIGHT_CHROMIUM_PATH);
@@ -255,5 +364,13 @@ export function resolveChromiumForkBinary({
     if (implicit) return null; // runtime reports the missing required backend
     throw new Error(`BetterChromium binary not found: ${candidate}`);
   }
+  ensureWindowsChromiumAssembly({
+    binaryPath: candidate,
+    platform,
+    repair: implicit,
+    existsSync,
+    readFileSync,
+    writeFileSync,
+  });
   return candidate;
 }

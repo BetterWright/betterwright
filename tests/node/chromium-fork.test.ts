@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -10,8 +11,10 @@ import {
   chromiumForkContextOptions,
   chromiumForkPlatformSupported,
   configuredBrowserBackend,
+  ensureWindowsChromiumAssembly,
   resolveChromiumForkBinary,
   selectManagedBrowserBackend,
+  windowsVersionAssemblyManifest,
 } from "../../dist/src/chromium-fork.js";
 
 const present = () => true;
@@ -63,6 +66,89 @@ test("supported platforms with a missing deployment remain unavailable", () => {
       arch: "x64",
     }),
     { browser: "unavailable", selectionReason: "native-missing" },
+  );
+});
+
+test("default Windows install repairs Chromium's missing private assembly manifest", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-win-assembly-"));
+  const directory = path.join(home, ".betterwright", "chromium", "win-x64");
+  const binary = path.join(directory, "betterchromium.exe");
+  const manifest = path.join(directory, `${BETTERWRIGHT_CHROMIUM_VERSION}.manifest`);
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(binary, "test executable");
+    fs.writeFileSync(path.join(directory, "chrome_elf.dll"), "test dll");
+
+    assert.equal(
+      resolveChromiumForkBinary({
+        env: {},
+        platform: "win32",
+        arch: "x64",
+        home,
+      }),
+      binary,
+    );
+    assert.equal(
+      fs.readFileSync(manifest, "utf8"),
+      windowsVersionAssemblyManifest(),
+    );
+
+    fs.writeFileSync(manifest, "not an assembly manifest");
+    assert.equal(
+      resolveChromiumForkBinary({
+        env: {},
+        platform: "win32",
+        arch: "x64",
+        home,
+      }),
+      binary,
+    );
+    assert.equal(
+      fs.readFileSync(manifest, "utf8"),
+      windowsVersionAssemblyManifest(),
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("explicit Windows artifact roots are validated without being mutated", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bw-win-explicit-"));
+  const directory = path.join(root, "win-x64");
+  const binary = path.join(directory, "betterchromium.exe");
+  const manifest = path.join(directory, `${BETTERWRIGHT_CHROMIUM_VERSION}.manifest`);
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(binary, "test executable");
+    fs.writeFileSync(path.join(directory, "chrome_elf.dll"), "test dll");
+    assert.throws(
+      () =>
+        resolveChromiumForkBinary({
+          env: { BETTERWRIGHT_CHROMIUM_ROOT: root },
+          platform: "win32",
+          arch: "x64",
+        }),
+      /side-by-side manifest is missing or invalid.*betterwright setup/s,
+    );
+    assert.equal(fs.existsSync(manifest), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Windows assembly validation rejects an incomplete browser tree", () => {
+  assert.throws(
+    () =>
+      ensureWindowsChromiumAssembly({
+        binaryPath: "C:\\BetterWright\\betterchromium.exe",
+        platform: "win32",
+        existsSync: () => false,
+      }),
+    /chrome_elf\.dll is missing.*setup --force/s,
+  );
+  assert.throws(
+    () => windowsVersionAssemblyManifest("151.0.bad"),
+    /Invalid BetterChromium Windows assembly version/,
   );
 });
 
@@ -294,6 +380,7 @@ test("artifact root resolves native macOS, Linux, and Windows layouts", () => {
       platform: "win32",
       arch: "x64",
       existsSync: present,
+      readFileSync: () => windowsVersionAssemblyManifest(),
     }),
     path.join("/opt/betterwright", "win-x64", "betterchromium.exe"),
   );

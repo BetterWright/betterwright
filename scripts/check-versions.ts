@@ -77,6 +77,24 @@ if (declaredAssetNames.some((name) => name.includes("win-x64")) &&
     !assetEntries.some(([_, name]) => name === "betterchromium-win-x64.zip")) {
   failures.push("Windows x64 must not enter the BetterChromium manifest without a verified checksum");
 }
+if (chromiumVersion) {
+  const windowsPackage = read("scripts/chromium/package.sh");
+  const packagedChromiumVersion = windowsPackage.match(/chromium_version="([^"]+)"/)?.[1];
+  if (packagedChromiumVersion !== chromiumVersion) {
+    failures.push("Windows package assembly version must match the BetterChromium version pin");
+  }
+  const windowsManifestPath = `scripts/chromium/${chromiumVersion}.manifest`;
+  if (!fs.existsSync(path.join(root, windowsManifestPath))) {
+    failures.push(`Windows package assembly manifest is missing: ${windowsManifestPath}`);
+  } else {
+    const windowsManifest = read(windowsManifestPath);
+    if (!windowsManifest.includes(`name="${chromiumVersion}"`) ||
+        !windowsManifest.includes(`version="${chromiumVersion}"`) ||
+        !windowsManifest.includes('name="chrome_elf.dll"')) {
+      failures.push("Windows package assembly manifest does not match Chromium's private assembly");
+    }
+  }
+}
 
 // CI and trusted publishing must exercise the BetterChromium install.
 for (const workflow of [".github/workflows/ci.yml", ".github/workflows/publish-npm.yml"]) {
