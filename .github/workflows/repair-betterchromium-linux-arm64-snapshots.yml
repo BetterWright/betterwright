@@ -82,6 +82,7 @@ jobs:
           cat >> "$WORK_ROOT/.gclient" <<'PY'
           target_os = ["linux"]
           target_cpu = ["arm64"]
+          solutions[0]["custom_deps"]["src/third_party/gperf/cipd"] = None
           PY
           cd "$WORK_ROOT"
           PATH="$WORK_ROOT/depot_tools:$PATH" gclient sync \
@@ -96,6 +97,10 @@ jobs:
           cd "$WORK_ROOT/src"
           sudo ./build/install-build-deps.sh \
             --no-prompt --no-chromeos-fonts --no-arm --no-android --no-nacl
+          sudo apt-get install -y gperf
+          mkdir -p third_party/gperf/cipd/bin
+          ln -sf /usr/bin/gperf third_party/gperf/cipd/bin/gperf
+          third_party/gperf/cipd/bin/gperf --version
           cd "$WORK_ROOT"
           PATH="$WORK_ROOT/depot_tools:$PATH" gclient runhooks
           df -h /
