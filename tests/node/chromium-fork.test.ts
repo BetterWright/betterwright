@@ -334,6 +334,8 @@ test("explicit Chromium fork path wins and must be absolute", () => {
         BETTERWRIGHT_CHROMIUM_PATH: "/opt/betterwright/chrome",
         BETTERWRIGHT_CHROMIUM_ROOT: "/ignored",
       },
+      platform: "linux",
+      arch: "x64",
       existsSync: present,
     }),
     "/opt/betterwright/chrome",
@@ -342,6 +344,8 @@ test("explicit Chromium fork path wins and must be absolute", () => {
     () =>
       resolveChromiumForkBinary({
         env: { BETTERWRIGHT_CHROMIUM_PATH: "relative/chrome" },
+        platform: "linux",
+        arch: "x64",
         existsSync: present,
       }),
     /absolute path/,
