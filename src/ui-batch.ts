@@ -247,7 +247,6 @@ function normalizeOptions(value: UntrustedValue) {
       minIntervalMs: 40,
       returnDirectory: false,
       directoryWaitMs: 0,
-      directoryEvidence: false,
       allowPasswordFill: false,
     };
   }
@@ -272,7 +271,6 @@ function normalizeOptions(value: UntrustedValue) {
     minIntervalMs: pacing === undefined ? 40 : Number(pacing),
     returnDirectory,
     directoryWaitMs: directoryWait === undefined ? 2_500 : Number(directoryWait),
-    directoryEvidence: untrustedField(value, "directoryEvidence") === true,
     allowPasswordFill: untrustedField(value, "allowPasswordFill") === true,
   };
 }
@@ -319,18 +317,6 @@ async function settleAfterWrites(activity: BatchActivity, waitMs = 2_500) {
     }
     await hostDelay(25);
   } while (Date.now() < deadline);
-}
-
-async function matchingDirectoryEvidence(page, expected) {
-  if (!isString(expected) || !expected) return null;
-  const directory = await inspectActionDirectory(page);
-  const needle = expected.toLocaleLowerCase();
-  for (const evidence of directory.evidence || []) {
-    if (String(evidence.text || "").toLocaleLowerCase().includes(needle)) {
-      return { text: evidence.text };
-    }
-  }
-  return null;
 }
 
 /** A guarded one-call UI transaction for sites without a first-party protocol. */
@@ -410,17 +396,6 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
         if (operation.action === "readUrl") {
           results.set(operation.id, await readUrlWhen(page, operation.value, operation.id));
           continue;
-        }
-        if (
-          operation.action === "read" &&
-          options.directoryEvidence &&
-          index === operations.length - 1
-        ) {
-          const evidence = await matchingDirectoryEvidence(page, operation.value);
-          if (evidence) {
-            results.set(operation.id, evidence);
-            continue;
-          }
         }
         const locator = await exactLocator(page, operation.target, operation.id);
         if (operation.action === "click") {
