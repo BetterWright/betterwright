@@ -94,6 +94,8 @@ jobs:
           PATH="$WORK_ROOT/depot_tools:$PATH" gclient sync \
             --no-history --nohooks --delete_unversioned_trees \
             --force --jobs 4
+          git -C "$WORK_ROOT/src" checkout -- DEPS
+          test -z "$(git -C "$WORK_ROOT/src" status --porcelain)"
           df -h /
 
       - name: Install native ARM64 build dependencies
