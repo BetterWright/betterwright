@@ -24,6 +24,13 @@ Artifacts come from a revisioned GitHub Release tag such as
 published BetterWright packages bound to their original immutable assets.
 Each zip is SHA-256 pinned in the manifest before extract.
 
+On Windows, BetterChromium also requires Chromium's version-named private
+assembly manifest beside `betterchromium.exe`. BetterWright validates that
+manifest and `chrome_elf.dll` before launch. Managed installs missing the
+manifest from the `151.0.7922.108-r3` archive are repaired deterministically by
+`setup`, `update`, `doctor`, or the next managed-browser resolution; explicitly
+configured artifact paths are never modified and receive an actionable error.
+
 ## Runtime Selection
 
 Use an exact executable path:

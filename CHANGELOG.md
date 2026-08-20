@@ -9,6 +9,57 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-08-20
+
+### Added
+
+- **Batch-native WebAgents workflows.** Participating sites can publish a
+  compact action directory in `/webagents.md` (a fenced `webagents` JSON
+  contract) or `/.well-known/webagents.json`. Browser snippets discover only
+  the normalized directory with `webagents.discover()` and submit an entire
+  validated dependency graph with one `webagents.batch()` call. Discovery is
+  cached per page origin; raw prose never enters model context.
+- **Conservative protocol boundaries.** Workflow endpoints must be same-origin,
+  documents, schemas, actions, operation counts, and payloads are bounded, and
+  undeclared actions, duplicate IDs, missing dependencies, and dependency
+  cycles fail before a request is sent. Writes and irreversible actions require
+  separate explicit per-call opt-ins. Responses remain untrusted page data and
+  use the existing guarded, cookie-aware, redacted first-party request path.
+- Sites may declare a bounded minimum operation interval and concurrency cap.
+  BetterWright carries that normalized pacing contract in the single batch so
+  site executors can protect downstream rate limits without restoring extra
+  agent turns or UI round trips.
+- **Compact semantic action directories on every ordinary website.** When no
+  first-party workflow is published, BetterWright extracts visible controls,
+  accessible names, current values, select options, duplicate-control context,
+  iframe scope, and visible result evidence into a small `result.ui` directory.
+  Models copy its normalized targets into `browser_batch`/`controls.batch()`
+  instead of consuming a full accessibility snapshot or issuing one call per
+  click. State changes briefly settle, then return a refreshed directory.
+- **Guarded semantic UI batches.** The generic fast path executes up to 32
+  role/label/text/ref/CSS-targeted interactions with auto-waiting, ambiguity
+  rejection, bounded pacing, write/irreversible gates, password protection,
+  and final visible verification. MCP can open a URL directly through
+  `browser_batch`, eliminating a model-authored inspection on the first turn.
+
+### Changed
+
+- Agent, MCP, Pi, skill, and CLI guidance now checks WebAgents first, then uses
+  WebMCP or the automatically synthesized semantic action directory. A full
+  interactive snapshot is reserved for a target the compact directory omitted.
+- Post-workflow refreshes use a bounded DOM/load settle rather than waiting
+  forever for network-idle, so polling and streaming applications remain fast.
+
+### Fixed
+
+- **BetterChromium launches on Windows instead of failing with `spawn UNKNOWN`.**
+  Chromium's Windows launcher depends on a version-named private assembly for
+  `chrome_elf.dll`, but the `151.0.7922.108-r3` archive omitted its companion
+  manifest. Managed installs now reconstruct and validate that deterministic
+  manifest before launch, packaging includes it for future artifacts, and
+  custom incomplete browser trees fail early with specific setup guidance.
+  (#138)
+
 ## [1.9.9] - 2026-08-19
 
 ### Changed
@@ -1091,7 +1142,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.9.9...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/BetterWright/betterwright/compare/v1.9.9...v1.10.0
 [1.9.9]: https://github.com/BetterWright/betterwright/compare/v1.9.8...v1.9.9
 [1.9.8]: https://github.com/BetterWright/betterwright/compare/v1.9.7...v1.9.8
 [1.9.7]: https://github.com/BetterWright/betterwright/compare/v1.9.6...v1.9.7

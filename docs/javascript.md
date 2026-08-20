@@ -97,6 +97,7 @@ it from inside the sandbox.
 | `pages` | Open pages, each summarized. |
 | `challenges` | Visible CAPTCHA/bot checks with page, provider, URL, and routing advice. |
 | `warnings` | Non-fatal notices. |
+| `webagents` | One-time compact action directory when the active origin supports WebAgents. |
 | `durationMs` | Time spent in the worker. |
 
 ```js
@@ -159,6 +160,21 @@ for visible UI actions that should not arrive as perfectly timed bursts. See the
 options.
 
 ### Page-published tools
+
+For an origin that publishes `/webagents.md`, call
+`webagents.discover()` and submit a bounded operation DAG with
+`webagents.batch()`. This can replace a sequence of browser/model turns with one
+same-origin workflow request. Writes require `allowWrites: true`; use ordinary
+WebMCP or browser interaction when discovery reports `available: false`. See
+the [WebAgents browser API](browser-api.md#batch-native-webagents-workflows).
+
+When neither protocol is present, the first navigation result includes a
+compact `ui` action directory. Copy its normalized targets into one
+`controls.batch()` transaction; state changes return refreshed controls and
+visible evidence. Use an interactive snapshot only if the directory omitted a
+required target. The helper retains Playwright auto-waiting, rejects ambiguity
+and password fills by default, and requires explicit write opt-in. See
+[semantic UI batches](browser-api.md#semantic-ui-batches-for-ordinary-sites).
 
 Use `webmcp.tools()` to discover typed tools registered by the current page and
 `webmcp.invoke(name, input, options)` to call one. BetterWright refreshes the

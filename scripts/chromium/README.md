@@ -37,4 +37,10 @@ scripts/chromium/package.sh linux <work>/src/out/LinuxStatic /tmp/betterchromium
 scripts/chromium/package.sh win <work>/src/out/WinStatic /tmp/betterchromium-win-x64.zip
 ```
 
+The Windows launcher embeds Chromium's normal version-named private assembly
+dependency for `chrome_elf.dll`. Packaging must include the matching
+`win-x64/<version>.manifest`; `package.sh` copies the pinned manifest and fails
+if `chrome_elf.dll` is absent. Omitting that file makes Windows reject the
+executable during activation-context generation before Chromium starts.
+
 Apple system fonts are never included in public archives. `research/assemble-mac-fonts.sh` remains a private deployment overlay.
