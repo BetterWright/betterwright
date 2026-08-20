@@ -122,7 +122,7 @@ jobs:
           GN
           cd "$WORK_ROOT/src"
           PATH="$WORK_ROOT/depot_tools:$PATH" gn gen "$OUT_DIR"
-          PATH="$WORK_ROOT/depot_tools:$PATH" autoninja -C "$OUT_DIR" chrome
+          PATH="$WORK_ROOT/depot_tools:$PATH" autoninja -C "$OUT_DIR" chrome chrome_sandbox
           file "$OUT_DIR/chrome"
           readelf -h "$OUT_DIR/chrome" | tee "$GITHUB_WORKSPACE/readelf-linux-arm64.txt"
           grep -Eq 'Machine:[[:space:]]+AArch64' "$GITHUB_WORKSPACE/readelf-linux-arm64.txt"
@@ -138,7 +138,7 @@ jobs:
           mkdir -p "$stage"
 
           required=(
-            chrome chrome-wrapper chrome-sandbox chrome_crashpad_handler
+            chrome chrome-wrapper chrome_sandbox chrome_crashpad_handler
             icudtl.dat resources.pak chrome_100_percent.pak chrome_200_percent.pak
             snapshot_blob.bin v8_context_snapshot.bin locales resources
           )
@@ -157,6 +157,7 @@ jobs:
           done
 
           mv "$stage/chrome" "$stage/betterchromium"
+          mv "$stage/chrome_sandbox" "$stage/chrome-sandbox"
           sed -i 's|"$HERE/chrome"|"$HERE/betterchromium"|' "$stage/chrome-wrapper"
           chmod +x "$stage/betterchromium" "$stage/chrome-wrapper" "$stage/chrome-sandbox"
           file "$stage/betterchromium"
