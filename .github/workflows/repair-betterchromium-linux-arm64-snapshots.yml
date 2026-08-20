@@ -131,6 +131,52 @@ jobs:
           set -euxo pipefail
           scripts/chromium/apply-patches.sh "$WORK_ROOT/src"
 
+      - name: Disable unrelated Content Shell Rust tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - "$WORK_ROOT/src/content/shell/BUILD.gn" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text()
+          rust_targets = '''rust_static_library("rust_test_service") {
+            testonly = true
+            crate_root = "browser/rust_test_service.rs"
+            sources = [ "browser/rust_test_service.rs" ]
+            deps = [
+              ":rust_test_mojom_rust",
+              "//base:feature",
+              "//mojo/public/rust/bindings",
+            ]
+          }
+
+          rust_static_library("rust_test_service_ffi") {
+            testonly = true
+            allow_unsafe = true
+            crate_root = "browser/rust_test_service_ffi.rs"
+            sources = [ "browser/rust_test_service_ffi.rs" ]
+            cxx_bindings = [ "browser/rust_test_service_ffi.rs" ]
+            deps = [
+              ":rust_test_mojom_rust",
+              ":rust_test_service",
+              "//base",
+              "//mojo/public/rust/bindings",
+              "//mojo/public/rust/system",
+            ]
+          }
+          '''
+          assert source.count('    ":rust_test_service_ffi",\n') == 1
+          assert source.count('  generate_rust = true\n') == 1
+          assert source.count(rust_targets) == 1
+          source = source.replace('    ":rust_test_service_ffi",\n', "", 1)
+          source = source.replace('  generate_rust = true\n', '  generate_rust = false\n', 1)
+          source = source.replace(rust_targets, "", 1)
+          path.write_text(source)
+          PY
+          grep -A6 -B2 'rust_test_mojom' "$WORK_ROOT/src/content/shell/BUILD.gn"
+
       - name: Generate matching snapshots natively
         shell: bash
         run: |
