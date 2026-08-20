@@ -18,6 +18,7 @@ jobs:
     steps:
       - name: Confirm managed runner
         run: |
+          echo "WarpBuild connection refreshed"
           uname -a
           nproc
           df -h /
