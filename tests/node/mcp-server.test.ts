@@ -157,7 +157,7 @@ test("MCP browser_batch dispatches one guarded worker transaction", async () => 
         operations: [
           { id: "name", action: "fill", target: { label: "Name" }, value: "Ada\u2028Lovelace" },
           { id: "submit", action: "click", target: { role: "button", name: "Submit" } },
-          { id: "verify", action: "read", target: { text: "Received!", exact: true } },
+          { id: "verify", action: "read", target: { text: "Received!", exact: true }, value: "Received!" },
         ],
       },
     },
@@ -177,7 +177,7 @@ test("MCP browser_batch dispatches one guarded worker transaction", async () => 
   assert.equal(JSON.parse(response.content[0].text).result.protocol, "ui-batch/1");
 });
 
-test("MCP browser_batch adds one automatic post-action observation", async () => {
+test("MCP browser_batch rejects a mutation without asserted final state", async () => {
   const calls = [];
   const handlers = _createMcpHandlersForTest({
     browser: {
@@ -208,14 +208,12 @@ test("MCP browser_batch adds one automatic post-action observation", async () =>
     },
   });
 
-  assert.equal(response.isError, undefined);
-  assert.equal(calls.length, 1);
-  assert.match(calls[0].code, /"id":"bw_observe","action":"readUrl"/);
-  assert.match(calls[0].code, /"returnDirectory":true/);
-  assert.match(calls[0].code, /const \{ui, \.\.\.batch\} = outcome/);
+  assert.equal(response.isError, true);
+  assert.equal(calls.length, 0);
+  assert.match(response.content[0].text, /non-empty expected value/);
 });
 
-test("MCP browser_batch replaces a weak intermediate read with compact observation", async () => {
+test("MCP browser_batch rejects a final read without an expectation", async () => {
   const calls = [];
   const handlers = _createMcpHandlersForTest({
     browser: {
@@ -228,7 +226,7 @@ test("MCP browser_batch replaces a weak intermediate read with compact observati
     downloadPolicy: "deny",
   });
 
-  await handlers.callTool({
+  const response = await handlers.callTool({
     params: {
       name: "browser_batch",
       arguments: {
@@ -241,9 +239,9 @@ test("MCP browser_batch replaces a weak intermediate read with compact observati
     },
   });
 
-  assert.equal(calls.length, 1);
-  assert.match(calls[0], /"id":"weak","action":"readUrl"/);
-  assert.doesNotMatch(calls[0], /"target":\{"css":"main"\}/);
+  assert.equal(response.isError, true);
+  assert.equal(calls.length, 0);
+  assert.match(response.content[0].text, /non-empty expected value/);
 });
 
 test("MCP browser_batch opens a URL without model-authored inspection", async () => {
@@ -329,7 +327,7 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser_batch"), /role \(\+ name\), label, text/);
   assert.match(text("browser_batch"), /Mutating batches require allowWrites=true/);
   assert.match(text("browser_batch"), /Task-supplied passwords need allowPasswords=true/);
-  assert.match(text("browser_batch"), /end in read\/readUrl verification/);
+  assert.match(text("browser_batch"), /end in read\/readUrl with a non-empty expected value/);
   assert.deepEqual(byName.browser_batch.inputSchema.properties.operations.items.properties.action.enum, [
     "fill", "click", "select", "check", "uncheck", "press", "read", "readUrl",
   ]);

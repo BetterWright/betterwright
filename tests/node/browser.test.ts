@@ -951,7 +951,7 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
           {id:'plan', action:'select', target:{label:'Plan'}, value:'pro'},
           {id:'terms', action:'check', target:{label:'Accept terms', exact:true}},
           {id:'submit', action:'click', target:{role:'button', name:'Create account', exact:true}},
-          {id:'verify', action:'read', target:{role:'status'}},
+          {id:'verify', action:'read', target:{role:'status'}, value:'Created Ada on pro'},
         ],
         allowWrites: true,
         minIntervalMs: 0,
@@ -977,6 +977,18 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
     assert.equal(expected.ok, true, expected.error);
     assert.equal(expected.result.results.status.text, "Finished");
     assert.ok(expected.result.durationMs >= 60);
+
+    const missingExpectation = await bw.run(`
+      return controls.batch({
+        operations: [
+          {id:'run', action:'click', target:{role:'button', name:'Run', exact:true}},
+          {id:'status', action:'read', target:{css:'#status'}},
+        ],
+        allowWrites:true,
+      });
+    `);
+    assert.equal(missingExpectation.ok, false);
+    assert.match(missingExpectation.error, /non-empty expected value/);
 
     const evidenceFallback = await bw.run(`
       await page.setContent('<button id="run">Resolve</button><article id="ticket">T-1</article><section id="summary" hidden></section><script>document.querySelector("#run").onclick=()=>setTimeout(()=>{document.querySelector("#summary").hidden=false;document.querySelector("#summary").textContent="Status resolved"},75)</script>');
@@ -1035,7 +1047,7 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
       return controls.batch({
         operations: [
           {id:'secret', action:'fill', target:{label:'Password'}, value:'must-not-leak'},
-          {id:'verify', action:'read', target:{role:'status'}},
+          {id:'verify', action:'read', target:{role:'status'}, value:'Ready'},
         ],
         allowWrites: true,
       });
@@ -1048,7 +1060,7 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
       return controls.batch({
         operations: [
           {id:'secret', action:'fill', target:{label:'Password'}, value:'task-supplied'},
-          {id:'verify', action:'read', target:{role:'status'}},
+          {id:'verify', action:'read', target:{role:'status'}, value:'Ready'},
         ],
         allowWrites: true,
         allowPasswordFill: true,
@@ -1063,7 +1075,7 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
       return controls.batch({
         operations: [
           {id:'save', action:'click', target:{role:'button', name:'Save', exact:true}},
-          {id:'url', action:'readUrl'},
+          {id:'url', action:'readUrl', value:'about:blank'},
         ],
         allowWrites: true,
       });

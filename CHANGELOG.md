@@ -56,8 +56,10 @@ Releases before 1.1.3 predate this file; their notes live on the
   Chromium's Windows launcher depends on a version-named private assembly for
   `chrome_elf.dll`, but the `151.0.7922.108-r3` archive omitted its companion
   manifest. Managed installs now reconstruct and validate that deterministic
-  manifest before launch, packaging includes it for future artifacts, and
-  custom incomplete browser trees fail early with specific setup guidance.
+  manifest before launch; an install also missing the DLL is automatically
+  downloaded again by ordinary setup. Packaging includes the manifest for
+  future artifacts, and custom incomplete browser trees fail early with
+  specific setup guidance.
   (#138)
 
 ## [1.9.9] - 2026-08-19

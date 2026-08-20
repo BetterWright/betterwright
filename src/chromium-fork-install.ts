@@ -168,28 +168,35 @@ export async function installChromiumFork({
   const binaryPath = path.join(root, layout);
 
   if (!force && existsSync(binaryPath)) {
-    const assembly = ensureWindowsChromiumAssembly({
-      binaryPath,
-      platform,
-      repair: true,
-      existsSync,
-    });
-    if (assembly.repaired) {
-      log(`Repaired BetterChromium Windows side-by-side manifest: ${assembly.manifest}`);
-    }
-    const resolved = resolveChromiumForkBinary({
-      env: {},
-      platform,
-      arch,
-      home,
-      existsSync,
-    });
-    if (resolved) {
-      log(`BetterChromium already installed: ${resolved}`);
+    const windowsDll = path.join(path.dirname(binaryPath), "chrome_elf.dll");
+    if (platform === "win32" && !existsSync(windowsDll)) {
       log(
-        `Re-run with --force to re-download ${BETTERWRIGHT_CHROMIUM_VERSION}.`,
+        `BetterChromium installation is incomplete (missing ${windowsDll}); downloading a clean copy.`,
       );
-      return { binary: resolved, root, skipped: null, alreadyInstalled: true };
+    } else {
+      const assembly = ensureWindowsChromiumAssembly({
+        binaryPath,
+        platform,
+        repair: true,
+        existsSync,
+      });
+      if (assembly.repaired) {
+        log(`Repaired BetterChromium Windows side-by-side manifest: ${assembly.manifest}`);
+      }
+      const resolved = resolveChromiumForkBinary({
+        env: {},
+        platform,
+        arch,
+        home,
+        existsSync,
+      });
+      if (resolved) {
+        log(`BetterChromium already installed: ${resolved}`);
+        log(
+          `Re-run with --force to re-download ${BETTERWRIGHT_CHROMIUM_VERSION}.`,
+        );
+        return { binary: resolved, root, skipped: null, alreadyInstalled: true };
+      }
     }
   }
 

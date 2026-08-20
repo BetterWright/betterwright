@@ -177,6 +177,51 @@ test("installChromiumFork repairs an existing r3 Windows layout in place", async
   }
 });
 
+test("installChromiumFork reinstalls a managed Windows tree missing chrome_elf.dll", async () => {
+  const home = makeTempDir("bw-fork-win-incomplete-");
+  const directory = path.join(home, ".betterwright", "chromium", "win-x64");
+  const binary = path.join(directory, "betterchromium.exe");
+  const payload = Buffer.from("replacement-windows-zip");
+  const sha256 = createHash("sha256").update(payload).digest("hex");
+  const logs = [];
+  let downloads = 0;
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(binary, "incomplete executable");
+    const result = await installChromiumFork({
+      platform: "win32",
+      arch: "x64",
+      home,
+      assets: { "win32-x64": { name: "replacement.zip", sha256 } },
+      log: (line) => logs.push(String(line)),
+      download: async (_url, dest) => {
+        downloads += 1;
+        fs.writeFileSync(dest, payload);
+      },
+      extract: (_zipPath, destDir) => {
+        const out = path.join(destDir, "win-x64", "betterchromium.exe");
+        fs.mkdirSync(path.dirname(out), { recursive: true });
+        fs.writeFileSync(out, "replacement executable");
+        fs.writeFileSync(path.join(path.dirname(out), "chrome_elf.dll"), "replacement dll");
+      },
+    });
+    assert.equal(downloads, 1);
+    assert.equal(result.alreadyInstalled, false);
+    assert.equal(result.binary, binary);
+    assert.equal(fs.readFileSync(binary, "utf8"), "replacement executable");
+    assert.equal(
+      fs.readFileSync(
+        path.join(directory, `${BETTERWRIGHT_CHROMIUM_VERSION}.manifest`),
+        "utf8",
+      ),
+      windowsVersionAssemblyManifest(),
+    );
+    assert.match(logs.join("\n"), /incomplete.*missing.*chrome_elf\.dll/i);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("installChromiumFork downloads, verifies, and installs the Windows layout", async () => {
   const home = makeTempDir("bw-fork-home-");
   const payload = Buffer.from("betterchromium-test-zip");

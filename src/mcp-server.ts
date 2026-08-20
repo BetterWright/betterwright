@@ -216,7 +216,7 @@ Plan then batch: open an unvisited URL with browser_batch {url}; it automaticall
 snapshot({interactive: true}) reads unknown UIs; page.locator('aria-ref=eN') acts; snapshot({ref}) scopes; snapshot({diff: true}) verifies. Put screenshot({kind: 'proof'}) inside the final verifying call.
 Challenge: keep page; captcha.solve() first; on 'processing', open crop then captcha.solve({tiles:[indexes]}). Replacement photo grids are the same stage. Max three distinct challenge types; rejection = stop/alternate/handoff. Verify cleared; replay only if idempotent/provably incomplete. Never duplicate a submission, purchase, or message.`;
 
-const BROWSER_BATCH_DESCRIPTION = `Open with {url}; result.ui is its action directory. Default for ordinary forms: copy targets; batch known and later-revealed controls (they auto-wait). Mutations/proof return fresh controls/evidence; if state is proved, stop. Target: ref, role (+ name), label, text, placeholder, testId, or css; optional exact/nth/frame. Mutating batches require allowWrites=true. Task-supplied passwords need allowPasswords=true; stored ones use browser_login. read value awaits expected text/URL. Final mutation must end in read/readUrl verification; proof=true only there. Missing target: snapshot. Ambiguity fails.`;
+const BROWSER_BATCH_DESCRIPTION = `Open with {url}; result.ui is its action directory. Default for ordinary forms: copy targets; batch known and later-revealed controls (they auto-wait). Mutations/proof return fresh controls/evidence; if state is proved, stop. Target: ref, role (+ name), label, text, placeholder, testId, or css; optional exact/nth/frame. Mutating batches require allowWrites=true. Task-supplied passwords need allowPasswords=true; stored ones use browser_login. Final mutation must end in read/readUrl with a non-empty expected value; proof=true only there. Missing target: snapshot. Ambiguity fails.`;
 
 const BROWSER_BATCH_INPUT_SCHEMA = {
   type: "object",
@@ -516,30 +516,19 @@ function createMcpHandlers({ browser, downloadPolicy, liveView = liveViewFromEnv
           const hasWrites = args.operations.some(
             (operation) => !readActions.has(String(operation?.action || "")),
           );
-          let operations = args.operations;
-          let observationId = "bw_observe";
+          const operations = args.operations;
+          const finalOperation = operations.at(-1);
           if (
             hasWrites &&
-            args.proof !== true &&
-            operations.at(-1)?.action === "read" &&
-            operations.at(-1)?.value === undefined
+            (
+              !readActions.has(String(finalOperation?.action || "")) ||
+              !isString(finalOperation?.value) ||
+              !finalOperation.value.trim()
+            )
           ) {
-            observationId = String(operations.at(-1)?.id || observationId);
-            operations = operations.slice(0, -1);
-          }
-          if (
-            hasWrites &&
-            args.proof !== true &&
-            !readActions.has(String(operations.at(-1)?.action || ""))
-          ) {
-            if (operations.length >= 32) {
-              throw new RangeError(
-                "browser_batch needs one free operation slot for automatic post-action observation.",
-              );
-            }
-            let id = observationId;
-            while (operations.some((operation) => operation?.id === id)) id += "_";
-            operations = [...operations, { id, action: "readUrl" }];
+            throw new Error(
+              "A mutating browser_batch must end with read/readUrl and a non-empty expected value.",
+            );
           }
           const batchOptions = {
             allowWrites: args.allowWrites === true,

@@ -30,6 +30,8 @@ manifest and `chrome_elf.dll` before launch. Managed installs missing the
 manifest from the `151.0.7922.108-r3` archive are repaired deterministically by
 `setup`, `update`, `doctor`, or the next managed-browser resolution; explicitly
 configured artifact paths are never modified and receive an actionable error.
+If a managed tree is also missing `chrome_elf.dll`, ordinary `setup` treats it
+as incomplete and downloads a clean pinned archive without requiring `--force`.
 
 ## Runtime Selection
 

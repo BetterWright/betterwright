@@ -193,7 +193,7 @@ async function readLocator(locator) {
 
 async function readLocatorWhen(locator, expected, operationId) {
   if (expected === undefined) return readLocator(locator);
-  if (!isString(expected) || !expected.length || expected.length > MAX_TEXT_CHARS) {
+  if (!isString(expected) || !expected.trim() || expected.length > MAX_TEXT_CHARS) {
     throw new TypeError(
       `UI batch operation ${JSON.stringify(operationId)} read value must be a non-empty expected substring of at most ${MAX_TEXT_CHARS} characters.`,
     );
@@ -214,7 +214,7 @@ async function readLocatorWhen(locator, expected, operationId) {
 
 async function readUrlWhen(page, expected, operationId) {
   if (expected === undefined) return { url: page.url(), title: await page.title() };
-  if (!isString(expected) || !expected.length || expected.length > 2_000) {
+  if (!isString(expected) || !expected.trim() || expected.length > 2_000) {
     throw new TypeError(
       `UI batch operation ${JSON.stringify(operationId)} readUrl value must be a non-empty expected URL substring of at most 2000 characters.`,
     );
@@ -366,8 +366,17 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
     return { id, action, target, value: untrustedField(value, "value"), irreversible };
   });
   const hasWrites = operations.some((operation) => !READ_ACTIONS.has(operation.action));
-  if (hasWrites && !READ_ACTIONS.has(operations.at(-1)?.action || "")) {
+  const finalOperation = operations.at(-1);
+  if (hasWrites && !READ_ACTIONS.has(finalOperation?.action || "")) {
     throw new Error("A mutating controls.batch transaction must end with read or readUrl verification.");
+  }
+  if (
+    hasWrites &&
+    (!isString(finalOperation?.value) || !finalOperation.value.trim())
+  ) {
+    throw new Error(
+      "A mutating controls.batch transaction's final read/readUrl must include a non-empty expected value.",
+    );
   }
 
   const results = new Map<string, UIBatchOperationResult>();

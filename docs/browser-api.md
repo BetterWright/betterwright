@@ -427,7 +427,9 @@ iframe. Open shadow roots work through Playwright's normal locator behavior.
 Interaction actions require `allowWrites:true`. Mark a consequential operation
 with `irreversible:true` to also require `allowIrreversible:true`. A batch that
 interacts must end in `read` or `readUrl`; the last result is the transaction's
-verification boundary. Password fields reject `fill` by default. A credential
+verification boundary and must supply a non-empty expected substring in
+`value`. The batch fails unless that expected text, form value, or URL is
+observed. Password fields reject `fill` by default. A credential
 provided explicitly in the current task may use `allowPasswordFill:true`;
 stored or generated credentials must use the trusted credential helpers so the
 secret never enters model context. Operations run in list order with a 40 ms
@@ -440,9 +442,9 @@ The MCP `browser_batch` tool exposes the same path without model-authored
 JavaScript. Passing `{url}` opens an unvisited page and returns its action
 directory. Passing `operations` executes them, briefly waits for relevant
 navigation/fetch and semantic state to settle, then returns refreshed
-`controls` and `evidence`. A known expected result can be supplied as the
-`value` of a final `read`/`readUrl`; the final proof screenshot is captured only
-after that visible result is observed. For a password explicitly supplied in
+`controls` and `evidence`. Put the required expected result in the `value` of
+the final `read`/`readUrl`; the final proof screenshot is captured only after
+that visible result is observed. For a password explicitly supplied in
 the task, set `allowPasswords:true`; saved and generated credentials still use
 `browser_login`.
 

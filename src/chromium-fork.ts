@@ -62,7 +62,7 @@ export function ensureWindowsChromiumAssembly({
   if (!existsSync(chromeElf)) {
     throw new Error(
       `BetterChromium Windows installation is incomplete: chrome_elf.dll is missing beside ${binaryPath}. ` +
-        "Run `betterwright setup --force` to reinstall it.",
+        "Run `betterwright setup` to reinstall it.",
     );
   }
 
