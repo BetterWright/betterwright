@@ -21,8 +21,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'CuriosityOS')
-    # Chromium 151's supported Linux development image is Ubuntu 22.04.
-    runs-on: warp-ubuntu-2204-x64-32x
+    # Use WarpBuild's primary x64 image so the managed fleet can provision immediately.
+    runs-on: warp-ubuntu-latest-x64-32x
     # WarpBuild charges $0.064/min for this 32-vCPU runner. This hard ceiling is
     # $9.92 even if checkout, compilation, and artifact upload consume it all.
     timeout-minutes: 155
