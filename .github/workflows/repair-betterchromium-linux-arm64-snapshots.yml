@@ -128,9 +128,11 @@ jobs:
           mkdir -p "$WORK_ROOT/src/$OUT_DIR"
           clang_path=$(readlink -f "$(command -v clang)")
           clang_base_path=$(dirname "$(dirname "$clang_path")")
-          clang_version=$(clang --version | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -1)
-          test -n "$clang_version"
-          printf 'clang_base_path=%s clang_version=%s\n' "$clang_base_path" "$clang_version"
+          clang_resource_dir=$(clang -print-resource-dir)
+          clang_version=$(basename "$clang_resource_dir")
+          test -f "$clang_resource_dir/include/module.modulemap"
+          printf 'clang_base_path=%s clang_version=%s resource_dir=%s\n' \
+            "$clang_base_path" "$clang_version" "$clang_resource_dir"
           cat > "$WORK_ROOT/src/$OUT_DIR/args.gn" <<GN
           is_debug = false
           is_component_build = false
