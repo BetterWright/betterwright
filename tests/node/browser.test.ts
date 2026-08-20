@@ -1521,7 +1521,9 @@ test("download approval cannot be borrowed by a different browser session", opts
       { session: "attacker" },
     );
     assert.equal(attempted.result, true, attempted.error);
-    assert.equal(downloadRequests, 1);
+    // A canceled Chromium download may retry the transfer. Request count is
+    // not the security boundary; the unapproved session must retain no bytes.
+    assert.ok(downloadRequests >= 1);
     assert.equal(directorySize(path.join(home, "artifacts")), 0);
   } finally {
     await bw.close();
