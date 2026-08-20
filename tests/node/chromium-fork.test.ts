@@ -144,7 +144,7 @@ test("Windows assembly validation rejects an incomplete browser tree", () => {
         platform: "win32",
         existsSync: () => false,
       }),
-    /chrome_elf\.dll is missing.*setup --force/s,
+    /chrome_elf\.dll is missing.*betterwright setup/s,
   );
   assert.throws(
     () => windowsVersionAssemblyManifest("151.0.bad"),

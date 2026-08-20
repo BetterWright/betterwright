@@ -173,7 +173,9 @@ compact `ui` action directory. Copy its normalized targets into one
 `controls.batch()` transaction; state changes return refreshed controls and
 visible evidence. Use an interactive snapshot only if the directory omitted a
 required target. The helper retains Playwright auto-waiting, rejects ambiguity
-and password fills by default, and requires explicit write opt-in. See
+and password fills by default, requires explicit write opt-in, and accepts a
+mutation only when the final `read`/`readUrl` supplies and observes a non-empty
+expected value. See
 [semantic UI batches](browser-api.md#semantic-ui-batches-for-ordinary-sites).
 
 Use `webmcp.tools()` to discover typed tools registered by the current page and
