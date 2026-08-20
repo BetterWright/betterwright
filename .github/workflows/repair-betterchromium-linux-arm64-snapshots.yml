@@ -105,7 +105,9 @@ jobs:
           cd "$WORK_ROOT/src"
           sudo ./build/install-build-deps.sh \
             --no-prompt --no-chromeos-fonts --no-arm --no-android --no-nacl
-          sudo apt-get install -y gperf
+          sudo apt-get install -y clang lld gperf
+          clang --version
+          ld.lld --version
           mkdir -p third_party/gperf/cipd/bin
           ln -sf /usr/bin/gperf third_party/gperf/cipd/bin/gperf
           third_party/gperf/cipd/bin/gperf --version
@@ -124,13 +126,20 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "$WORK_ROOT/src/$OUT_DIR"
-          cat > "$WORK_ROOT/src/$OUT_DIR/args.gn" <<'GN'
+          clang_path=$(readlink -f "$(command -v clang)")
+          clang_base_path=$(dirname "$(dirname "$clang_path")")
+          clang_version=$(clang --version | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -1)
+          test -n "$clang_version"
+          printf 'clang_base_path=%s clang_version=%s\n' "$clang_base_path" "$clang_version"
+          cat > "$WORK_ROOT/src/$OUT_DIR/args.gn" <<GN
           is_debug = false
           is_component_build = false
           symbol_level = 0
           blink_symbol_level = 0
           v8_symbol_level = 0
           target_cpu = "arm64"
+          clang_base_path = "$clang_base_path"
+          clang_version = "$clang_version"
           clang_use_chrome_plugins = false
           dcheck_always_on = false
           disable_fieldtrial_testing_config = true
