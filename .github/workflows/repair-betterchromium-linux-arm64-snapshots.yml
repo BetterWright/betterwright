@@ -177,6 +177,47 @@ jobs:
           PY
           grep -A6 -B2 'rust_test_mojom' "$WORK_ROOT/src/content/shell/BUILD.gn"
 
+          python3 - "$WORK_ROOT/src/build/rust/rust_static_library.gni" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text()
+          template_head = 'template("rust_static_library") {\n'
+          template_tail = '''  rust_target(_target_name) {
+            forward_variables_from(invoker,
+                                   "*",
+                                   TESTONLY_AND_VISIBILITY + [ "configs" ])
+            forward_variables_from(invoker, TESTONLY_AND_VISIBILITY)
+            library_configs = _configs
+            all_dependent_configs = _all_dependent_configs
+            target_type = "rust_library"
+          }
+          }
+
+          set_defaults("rust_static_library") {
+          '''
+          stub_head = '''template("rust_static_library") {
+            if (!enable_rust) {
+              group(target_name) {
+                forward_variables_from(invoker, TESTONLY_AND_VISIBILITY)
+              }
+            } else {
+          '''
+          stub_tail = template_tail.replace(
+              '}\n\nset_defaults("rust_static_library") {\n',
+              '  }\n}\n\nset_defaults("rust_static_library") {\n',
+              1,
+          )
+          assert source.count(template_head) == 1
+          assert source.count(template_tail) == 1
+          source = source.replace(template_head, stub_head, 1)
+          source = source.replace(template_tail, stub_tail, 1)
+          path.write_text(source)
+          PY
+          grep -A10 -n 'template("rust_static_library")' \
+            "$WORK_ROOT/src/build/rust/rust_static_library.gni"
+
       - name: Generate matching snapshots natively
         shell: bash
         run: |
