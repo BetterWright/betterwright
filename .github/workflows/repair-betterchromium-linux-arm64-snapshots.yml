@@ -79,10 +79,10 @@ jobs:
             "$WORK_ROOT/depot_tools"
           echo "$WORK_ROOT/depot_tools" >> "$GITHUB_PATH"
           cp scripts/chromium/gclient-151.py "$WORK_ROOT/.gclient"
+          sed -i '/"custom_deps": {/a\      "src/third_party/gperf/cipd": None,' "$WORK_ROOT/.gclient"
           cat >> "$WORK_ROOT/.gclient" <<'PY'
           target_os = ["linux"]
           target_cpu = ["arm64"]
-          solutions[0]["custom_deps"]["src/third_party/gperf/cipd"] = None
           PY
           cd "$WORK_ROOT"
           PATH="$WORK_ROOT/depot_tools:$PATH" gclient sync \
