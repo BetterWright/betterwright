@@ -40,6 +40,9 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          uname -a
+          nproc
+          free -h
           df -h /
           sudo rm -rf \
             /usr/local/lib/android \
@@ -163,7 +166,7 @@ jobs:
           du -h "$archive"
 
       - name: Upload ARM64 archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: betterchromium-linux-arm64
           path: |
@@ -180,7 +183,7 @@ jobs:
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 15
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: betterchromium-linux-arm64
       - name: Verify and launch
