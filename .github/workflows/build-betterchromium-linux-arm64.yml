@@ -1,0 +1,207 @@
+name: Build BetterChromium Linux ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "build/betterchromium-linux-arm64"
+    paths:
+      - ".github/workflows/build-betterchromium-linux-arm64.yml"
+      - "patches/chromium-151/**"
+      - "scripts/chromium/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: betterchromium-linux-arm64-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Cross-compile Linux ARM64
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+       github.ref == 'refs/heads/build/betterchromium-linux-arm64' &&
+       github.actor == 'CuriosityOS')
+    # Use WarpBuild's primary x64 image so the managed fleet can provision immediately.
+    runs-on: warp-ubuntu-latest-x64-32x
+    # WarpBuild charges $0.064/min for this 32-vCPU runner. This hard ceiling is
+    # $9.92 even if checkout, compilation, and artifact upload consume it all.
+    timeout-minutes: 155
+    env:
+      WORK_ROOT: ${{ github.workspace }}/.chromium-arm64
+      OUT_DIR: out/LinuxArm64
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Reclaim runner disk
+        shell: bash
+        run: |
+          set -euxo pipefail
+          uname -a
+          nproc
+          free -h
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/local/.ghcup \
+            /usr/local/share/powershell \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /opt/hostedtoolcache/PyPy \
+            /opt/hostedtoolcache/Ruby \
+            /opt/hostedtoolcache/go || true
+          sudo docker system prune -af --volumes || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Fetch pinned Chromium source without history
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf "$WORK_ROOT"
+          mkdir -p "$WORK_ROOT"
+          git clone --depth 1 \
+            https://chromium.googlesource.com/chromium/tools/depot_tools.git \
+            "$WORK_ROOT/depot_tools"
+          echo "$WORK_ROOT/depot_tools" >> "$GITHUB_PATH"
+          cp scripts/chromium/gclient-151.py "$WORK_ROOT/.gclient"
+          cat >> "$WORK_ROOT/.gclient" <<'PY'
+          target_os = ["linux"]
+          target_cpu = ["arm64"]
+          PY
+          cd "$WORK_ROOT"
+          PATH="$WORK_ROOT/depot_tools:$PATH" gclient sync \
+            --no-history --nohooks --delete_unversioned_trees \
+            --force --reset --jobs 32
+          df -h /
+
+      - name: Install build dependencies and ARM64 sysroot
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd "$WORK_ROOT/src"
+          sudo ./build/install-build-deps.sh \
+            --no-prompt --no-chromeos-fonts --no-arm --no-android --no-nacl
+          cd "$WORK_ROOT"
+          PATH="$WORK_ROOT/depot_tools:$PATH" gclient runhooks
+          cd "$WORK_ROOT/src"
+          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=arm64
+          test -d build/linux/debian_bullseye_arm64-sysroot
+          df -h /
+
+      - name: Apply GitHub BetterChromium patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          scripts/chromium/apply-patches.sh "$WORK_ROOT/src"
+
+      - name: Generate ARM64 release build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$WORK_ROOT/src/$OUT_DIR"
+          cat > "$WORK_ROOT/src/$OUT_DIR/args.gn" <<'GN'
+          is_debug = false
+          is_component_build = false
+          symbol_level = 0
+          blink_symbol_level = 0
+          v8_symbol_level = 0
+          target_cpu = "arm64"
+          clang_use_chrome_plugins = false
+          dcheck_always_on = false
+          disable_fieldtrial_testing_config = true
+          treat_warnings_as_errors = false
+          use_remoteexec = false
+          chrome_pgo_phase = 0
+          proprietary_codecs = true
+          ffmpeg_branding = "Chrome"
+          GN
+          cd "$WORK_ROOT/src"
+          PATH="$WORK_ROOT/depot_tools:$PATH" gn gen "$OUT_DIR"
+          PATH="$WORK_ROOT/depot_tools:$PATH" autoninja -C "$OUT_DIR" chrome chrome_sandbox
+          file "$OUT_DIR/chrome"
+          readelf -h "$OUT_DIR/chrome" | tee "$GITHUB_WORKSPACE/readelf-linux-arm64.txt"
+          grep -Eq 'Machine:[[:space:]]+AArch64' "$GITHUB_WORKSPACE/readelf-linux-arm64.txt"
+          df -h /
+
+      - name: Package BetterChromium
+        shell: bash
+        run: |
+          set -euxo pipefail
+          out="$WORK_ROOT/src/$OUT_DIR"
+          stage="$RUNNER_TEMP/betterchromium-stage/linux-arm64"
+          archive="$GITHUB_WORKSPACE/betterchromium-linux-arm64.zip"
+          mkdir -p "$stage"
+
+          required=(
+            chrome chrome-wrapper chrome_sandbox chrome_crashpad_handler
+            icudtl.dat resources.pak chrome_100_percent.pak chrome_200_percent.pak
+            snapshot_blob.bin v8_context_snapshot.bin locales resources
+          )
+          for item in "${required[@]}"; do
+            test -e "$out/$item"
+            cp -a "$out/$item" "$stage/"
+          done
+
+          optional=(
+            libEGL.so libGLESv2.so libvk_swiftshader.so libvulkan.so.1
+            vk_swiftshader_icd.json headless_command_resources.pak
+            product_logo_48.png angledata
+          )
+          for item in "${optional[@]}"; do
+            if [[ -e "$out/$item" ]]; then cp -a "$out/$item" "$stage/"; fi
+          done
+
+          mv "$stage/chrome" "$stage/betterchromium"
+          mv "$stage/chrome_sandbox" "$stage/chrome-sandbox"
+          sed -i 's|"$HERE/chrome"|"$HERE/betterchromium"|' "$stage/chrome-wrapper"
+          chmod +x "$stage/betterchromium" "$stage/chrome-wrapper" "$stage/chrome-sandbox"
+          file "$stage/betterchromium"
+          readelf -h "$stage/betterchromium" | grep -Eq 'Machine:[[:space:]]+AArch64'
+          (cd "$(dirname "$stage")" && zip -qry "$archive" linux-arm64)
+          (cd "$GITHUB_WORKSPACE" && \
+            sha256sum betterchromium-linux-arm64.zip | \
+            tee betterchromium-linux-arm64.zip.sha256)
+          du -h "$archive"
+
+      - name: Upload ARM64 archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: betterchromium-linux-arm64
+          path: |
+            betterchromium-linux-arm64.zip
+            betterchromium-linux-arm64.zip.sha256
+            readelf-linux-arm64.txt
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke-test on native ARM64
+    needs: build
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: betterchromium-linux-arm64
+      - name: Verify and launch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sha256sum -c betterchromium-linux-arm64.zip.sha256
+          unzip -q betterchromium-linux-arm64.zip -d browser
+          binary="$PWD/browser/linux-arm64/betterchromium"
+          file "$binary"
+          readelf -h "$binary" | grep -Eq 'Machine:[[:space:]]+AArch64'
+          chmod +x "$binary" browser/linux-arm64/chrome-sandbox
+          "$binary" --version
+          timeout 60s "$binary" \
+            --headless=new --no-sandbox --disable-gpu \
+            --dump-dom 'data:text/html,<title>BetterChromium ARM64 smoke</title><h1>ok</h1>' \
+            | tee smoke.html
+          grep -q '<h1>ok</h1>' smoke.html
