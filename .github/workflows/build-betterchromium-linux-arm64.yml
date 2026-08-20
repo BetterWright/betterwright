@@ -86,9 +86,11 @@ jobs:
           cd "$WORK_ROOT/src"
           sudo ./build/install-build-deps.sh \
             --no-prompt --no-chromeos-fonts --no-arm --no-android --no-nacl
-          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=arm64
           cd "$WORK_ROOT"
           PATH="$WORK_ROOT/depot_tools:$PATH" gclient runhooks
+          cd "$WORK_ROOT/src"
+          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=arm64
+          test -d build/linux/debian_bullseye_arm64-sysroot
           df -h /
 
       - name: Apply GitHub BetterChromium patches
