@@ -79,15 +79,21 @@ jobs:
             "$WORK_ROOT/depot_tools"
           echo "$WORK_ROOT/depot_tools" >> "$GITHUB_PATH"
           cp scripts/chromium/gclient-151.py "$WORK_ROOT/.gclient"
-          sed -i '/"custom_deps": {/a\      "src/third_party/gperf/cipd": None,' "$WORK_ROOT/.gclient"
           cat >> "$WORK_ROOT/.gclient" <<'PY'
           target_os = ["linux"]
           target_cpu = ["arm64"]
           PY
+          git clone --depth 1 --branch 151.0.7922.108 \
+            https://chromium.googlesource.com/chromium/src.git \
+            "$WORK_ROOT/src"
+          sed -i \
+            "/'src\\/third_party\\/gperf\\/cipd': {/,/'dep_type': 'cipd'/ s/'condition': 'host_os == \"linux\" and non_git_source'/'condition': 'False'/" \
+            "$WORK_ROOT/src/DEPS"
+          grep -A9 -B1 "'src/third_party/gperf/cipd'" "$WORK_ROOT/src/DEPS"
           cd "$WORK_ROOT"
           PATH="$WORK_ROOT/depot_tools:$PATH" gclient sync \
             --no-history --nohooks --delete_unversioned_trees \
-            --force --reset --jobs 4
+            --force --jobs 4
           df -h /
 
       - name: Install native ARM64 build dependencies
