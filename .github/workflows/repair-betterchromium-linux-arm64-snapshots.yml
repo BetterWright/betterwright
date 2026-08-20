@@ -170,6 +170,7 @@ jobs:
           proprietary_codecs = true
           ffmpeg_branding = "Chrome"
           enable_rust = false
+          pdf_enable_rust_png = false
           v8_use_external_startup_data = true
           use_v8_context_snapshot = true
           GN
