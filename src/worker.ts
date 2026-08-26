@@ -112,6 +112,10 @@ import { buildLaunchIdentityPlan, resolveGeoIdentity } from "./launch-identity.j
 import { createLiveViewServer } from "./live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.js";
 import {
+  createSnippetPageEvents,
+  isSnippetPageEventMethod,
+} from "./page-events.js";
+import {
   dismissObstructiveOverlays,
   inspectActionDirectory,
   inspectControls,
@@ -2194,6 +2198,9 @@ async function ensureBrowser(config) {
   }
 }
 
+// Page.on/once/off stay in the set so Request/Context/Frame never expose raw
+// EventEmitter hooks. wrap() substitutes a dispatcher that accepts only
+// console and pageerror, and cannot remove the worker's own listeners.
 const FORBIDDEN_PROPERTIES = new Set([
   "addListener",
   "browser",
@@ -2604,7 +2611,7 @@ function getRealmFactoryScript() {
   return realmFactoryScript;
 }
 
-function createRealm(context) {
+function createRealm(context, pageEvents) {
   const factories = getRealmFactoryScript().runInContext(context);
   return {
     context,
@@ -2614,6 +2621,7 @@ function createRealm(context) {
     safeFunction: factories.make,
     safeTrackedFunction: factories.makeTracked,
     makePages: factories.makePages,
+    pageEvents,
   };
 }
 
@@ -2628,6 +2636,18 @@ function wrap(value, realm) {
     get(_target, property) {
       if (property === Symbol.toStringTag) return "PlaywrightObject";
       if (isSymbolValue(property)) return undefined;
+      if (isSnippetPageEventMethod(objectKind(value), property)) {
+        return realm.safeFunction((event, listener) => {
+          realm.pageEvents.dispatch(
+            value,
+            property,
+            event,
+            listener,
+            (payload) => realm.adopt(wrap(payload, realm)),
+          );
+          return wrap(value, realm);
+        });
+      }
       if (propertyForbidden(value, property)) return undefined;
       const member = value[property];
       if (!isCallable(member)) return wrap(member, realm);
@@ -2655,6 +2675,7 @@ function wrap(value, realm) {
       });
     },
     has(_target, property) {
+      if (isSnippetPageEventMethod(objectKind(value), property)) return true;
       return !propertyForbidden(value, property) && property in value;
     },
     ownKeys() {
@@ -4425,7 +4446,7 @@ function buildSandbox(session, consoleMessages, execution) {
     name: `betterwright-${session.id}`,
     codeGeneration: { strings: false, wasm: false },
   });
-  const realm = createRealm(context);
+  const realm = createRealm(context, execution.pageEvents);
   const addConsole = (level) =>
     realm.safeFunction((...args) => {
       if (consoleMessages.length >= MAX_CONSOLE_MESSAGES) return;
@@ -7025,9 +7046,11 @@ async function execute(message) {
   let holdsDownloadGate = false;
   let downloadPolicy = "ask";
   let downloadDeadline = 0;
+  const pageEvents = createSnippetPageEvents();
   const execution = {
     acceptingCredentialTasks: true,
     credentialTasks: [],
+    pageEvents,
   };
   // Give back this execute's claim on the shared download gate, at most once,
   // whether the snippet succeeded, threw, or timed out.
@@ -7230,6 +7253,7 @@ async function execute(message) {
       ),
     );
   } finally {
+    pageEvents.detachAll();
     execution.acceptingCredentialTasks = false;
     stampModelActivity(session);
     approvedDownloadSessions.delete(session.id);

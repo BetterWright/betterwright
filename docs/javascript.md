@@ -91,7 +91,7 @@ it from inside the sandbox.
 | `ok` | Whether the snippet completed. |
 | `result` | The snippet's return value. |
 | `error` | Error message when `ok` is `false`. |
-| `console` | Captured `console.*` calls. |
+| `console` | Captured snippet `console.*` calls. Page-side logs use `page.on("console")`. |
 | `events` | Page lifecycle events. |
 | `artifacts` | `[{ kind, path, media, size? }]`. |
 | `pages` | Open pages, each summarized. |

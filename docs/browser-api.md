@@ -521,8 +521,27 @@ value does exist in the live DOM after filling. See
 
 `console.log/info/warn/error` from your snippet are captured (not printed to a
 terminal) and returned alongside the result — up to 20 messages. Page-side
-`console` events are not captured here; read them with Playwright's
-`page.on(...)` equivalents via explicit waits if you need them.
+`console` and uncaught exceptions are not copied into that envelope; collect
+them on the current call with Playwright's usual listeners:
+
+```js
+const messages = [];
+const errors = [];
+page.on("console", (message) => messages.push({
+  type: message.type(),
+  text: message.text(),
+}));
+page.on("pageerror", (error) => errors.push(error.message));
+await page.setContent(`<script>
+  console.warn("from the page");
+  throw new Error("page boom");
+</script>`);
+return { messages, errors };
+```
+
+`page.once` and `page.off` work for the same two events. Listeners last for
+this snippet only; the next `run()` / `browser` call starts clean. One-shot
+waits (`page.waitForEvent("console")`) still work.
 
 ## What is removed
 
@@ -530,10 +549,12 @@ Model code gets Playwright's page-driving surface, not the APIs that would let
 it escape the policy or read the host. These are absent by design and return
 `undefined` (or throw) if accessed:
 
-- **Interception and eventing** — `route`, `routeWebSocket`, `unroute`, `on`,
-  `once`, `addListener`, `exposeFunction`, `exposeBinding`, `newCDPSession`.
-  Request routing is how the policy is enforced; handing it to model code would
-  defeat it.
+- **Interception and unrestricted eventing** — `route`, `routeWebSocket`,
+  `unroute`, `exposeFunction`, `exposeBinding`, `newCDPSession`,
+  `removeAllListeners`, and `page.on` / `once` / `off` for every event except
+  `console` and `pageerror`. Request routing is how the policy is enforced;
+  handing it to model code would defeat it. Other Playwright events stay
+  inside the worker.
 - **Browser and CDP internals** — the raw browser object, private Playwright
   properties, and CDP sessions stay inside the worker. Attach-mode endpoints
   are trusted host configuration and are not exposed as snippet globals.

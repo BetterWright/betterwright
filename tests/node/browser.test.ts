@@ -1410,6 +1410,57 @@ test("downloads require a trusted per-run approval by default", opts, async () =
   }
 });
 
+test("MCP browser tool collects page console through page.on", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  const handlers = _createMcpHandlersForTest({
+    browser: bw,
+    downloadPolicy: "deny",
+    liveView: { enabled: false, host: "127.0.0.1", port: 0 },
+  });
+  try {
+    const missing = await handlers.callTool({
+      params: {
+        name: "browser",
+        arguments: {
+          code: `
+            const messages = [];
+            page.on("console", (message) => messages.push(message.text()));
+            return messages;
+          `,
+        },
+      },
+    });
+    assert.equal(missing.isError, undefined, missing.content[0].text);
+    const missingSummary = JSON.parse(missing.content[0].text);
+    assert.equal(missingSummary.ok, true, missingSummary.error);
+    assert.deepEqual(missingSummary.result, []);
+
+    const collected = await handlers.callTool({
+      params: {
+        name: "browser",
+        arguments: {
+          code: `
+            const messages = [];
+            page.on("console", (message) => messages.push(message.text()));
+            await page.evaluate(() => console.log("mcp-console"));
+            return messages;
+          `,
+        },
+      },
+    });
+    assert.equal(collected.isError, undefined, collected.content[0].text);
+    const collectedSummary = JSON.parse(collected.content[0].text);
+    assert.equal(collectedSummary.ok, true, collectedSummary.error);
+    assert.deepEqual(collectedSummary.result, ["mcp-console"]);
+  } finally {
+    await bw.close();
+  }
+});
+
 test("MCP browser_download saves one real file without elicitation", opts, async () => {
   const body = Buffer.from("MCP autonomous download contents");
   const server = await listen((request, response) => {
@@ -2452,6 +2503,141 @@ test("model code cannot reach CDP or Playwright private channels", opts, async (
     });
   } finally {
     await bw.close();
+  }
+});
+
+test("page.on collects page console and pageerror for the current snippet", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const issueRepro = await bw.run(`
+      const messages = [];
+      page.on("console", (message) => messages.push(message.text()));
+      return { onType: typeof page.on, messages };
+    `);
+    assert.equal(issueRepro.ok, true, issueRepro.error);
+    assert.deepEqual(issueRepro.result, { onType: "function", messages: [] });
+
+    const captured = await bw.run(`
+      const messages = [];
+      const errors = [];
+      page.on("console", (message) => messages.push({
+        type: message.type(),
+        text: message.text(),
+      }));
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.setContent(\`<script>
+        console.log("hello from page");
+        console.warn("careful");
+        throw new Error("page boom");
+      </script>\`);
+      return { messages, errors };
+    `);
+    assert.equal(captured.ok, true, captured.error);
+    assert.ok(
+      captured.result.messages.some((item) => item.type === "log" && item.text.includes("hello from page")),
+      JSON.stringify(captured.result.messages),
+    );
+    assert.ok(
+      captured.result.messages.some((item) => item.type === "warning" && item.text.includes("careful")),
+      JSON.stringify(captured.result.messages),
+    );
+    assert.ok(
+      captured.result.errors.some((text) => text.includes("page boom")),
+      JSON.stringify(captured.result.errors),
+    );
+
+    const onceOnly = await bw.run(`
+      const seen = [];
+      page.once("console", (message) => seen.push(message.text()));
+      await page.evaluate(() => { console.log("first"); console.log("second"); });
+      return seen;
+    `);
+    assert.equal(onceOnly.ok, true, onceOnly.error);
+    assert.deepEqual(onceOnly.result, ["first"]);
+
+    const detached = await bw.run(`
+      const seen = [];
+      const listener = (message) => seen.push(message.text());
+      page.on("console", listener);
+      page.off("console", listener);
+      await page.evaluate(() => console.log("should not collect"));
+      return seen;
+    `);
+    assert.equal(detached.ok, true, detached.error);
+    assert.deepEqual(detached.result, []);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("page.on listeners do not leak into the next snippet", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const first = await bw.run(`
+      page.on("console", (message) => {
+        state.n = (state.n || 0) + 1;
+        state.last = message.text();
+      });
+      await page.evaluate(() => console.log("one"));
+      return { n: state.n, last: state.last };
+    `);
+    assert.equal(first.ok, true, first.error);
+    assert.deepEqual(first.result, { n: 1, last: "one" });
+
+    const second = await bw.run(`
+      await page.evaluate(() => console.log("two"));
+      return { n: state.n, last: state.last };
+    `);
+    assert.equal(second.ok, true, second.error);
+    assert.deepEqual(second.result, { n: 1, last: "one" });
+  } finally {
+    await bw.close();
+  }
+});
+
+test("page.on still refuses routing events and cannot strip worker listeners", opts, async () => {
+  const server = await listen((_request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end("<p>ok</p>");
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const result = await bw.run(`
+      const surface = {
+        on: typeof page.on,
+        once: typeof page.once,
+        off: typeof page.off,
+        route: typeof page.route,
+        removeAllListeners: typeof page.removeAllListeners,
+        prependListener: typeof page.prependListener,
+        contextOn: typeof context.on,
+      };
+      let requestError = "";
+      try { page.on("request", () => {}); }
+      catch (error) { requestError = error.message; }
+      await page.goto(${JSON.stringify(server.origin)});
+      const requests = await site.requests();
+      return { surface, requestError, requestCount: requests.length };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result.surface, {
+      on: "function",
+      once: "function",
+      off: "function",
+      route: "undefined",
+      removeAllListeners: "undefined",
+      prependListener: "undefined",
+      contextOn: "undefined",
+    });
+    assert.match(result.result.requestError, /can only listen for console and pageerror/);
+    assert.ok(result.result.requestCount > 0, JSON.stringify(result.result));
+  } finally {
+    await bw.close();
+    await server.close();
   }
 });
 

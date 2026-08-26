@@ -311,6 +311,7 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser"), /inside the final verifying call/);
   assert.match(text("browser"), /Host cleanup is automatic/);
   assert.match(text("browser"), /closePage\(idOrIndex\?\)/);
+  assert.match(text("browser"), /page\.on\('console'\|'pageerror', fn\)/);
   // Challenge limits are safety rules, not advice.
   assert.match(text("browser"), /three distinct challenge types/);
   assert.match(text("browser"), /Replacement photo grids are the same stage/);

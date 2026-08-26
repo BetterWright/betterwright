@@ -9,6 +9,15 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Fixed
+
+- **`page.on("console")` and `page.on("pageerror")` work in MCP `browser`
+  snippets.** The page global is still a restricted proxy — `route`, request
+  events, and `removeAllListeners` stay forbidden so they cannot undo the
+  worker's policy hooks — but the usual Playwright listeners now collect
+  page-side console messages and uncaught exceptions for the current call.
+  `once` / `off` match; listeners do not leak into the next snippet. (#143)
+
 ## [1.10.0] - 2026-08-20
 
 ### Added

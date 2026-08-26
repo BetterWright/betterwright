@@ -59,7 +59,8 @@ single mechanism is load-bearing on its own.
 Snippets run in a `node:vm` context with code generation disabled and a
 hand-built set of globals. The Playwright objects the model touches are wrapped
 in proxies that remove the escape-hatch surface: request interception (`route`,
-`on`, `exposeFunction`, `newCDPSession`), context mutation, raw `page.screenshot`,
+`exposeFunction`, `newCDPSession`), unrestricted eventing (`page.on` accepts
+only `console` and `pageerror`), context mutation, raw `page.screenshot`,
 and any method that could read BetterWright's own profile or vault or write
 outside the artifact directory. There is no `process`, `require`, or `fs`.
 
