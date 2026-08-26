@@ -7032,6 +7032,20 @@ function pendingCredentialNotReturnedError(recovery) {
   return failure;
 }
 
+// Playwright delivers `console` / `pageerror` from the CDP reader after the
+// command that produced them has already resolved. Without this pump, a
+// snippet that attaches `page.on` and immediately returns sees an empty
+// collection even though the events are already on the wire.
+async function pumpPageEventQueue(session) {
+  const pages = [...session.pages.values()].filter((page) => !page.isClosed());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (!pages.length) return;
+  await Promise.race([
+    Promise.all(pages.map((page) => page.evaluate(() => {}).catch(() => {}))),
+    new Promise((resolve) => setTimeout(resolve, 250)),
+  ]);
+}
+
 async function execute(message) {
   const started = performance.now();
   const session = sessionFor(message.sessionId);
@@ -7047,6 +7061,12 @@ async function execute(message) {
   let downloadPolicy = "ask";
   let downloadDeadline = 0;
   const pageEvents = createSnippetPageEvents();
+  let pageEventsPumped = false;
+  const flushPageEvents = async () => {
+    if (pageEventsPumped) return;
+    pageEventsPumped = true;
+    await pumpPageEventQueue(session);
+  };
   const execution = {
     acceptingCredentialTasks: true,
     credentialTasks: [],
@@ -7143,6 +7163,7 @@ async function execute(message) {
     ) {
       throw new Error(PUBLIC_SEARCH_BLOCK_ADVICE);
     }
+    await flushPageEvents();
     const summarized = await summarize(result);
     const challenges = await detectSessionChallenges(session);
     const webagents = await unannouncedWebAgentsDirectory(session).catch(() => null);
@@ -7253,6 +7274,11 @@ async function execute(message) {
       ),
     );
   } finally {
+    try {
+      await flushPageEvents();
+    } catch {
+      /* flushing must not hide the snippet outcome */
+    }
     pageEvents.detachAll();
     execution.acceptingCredentialTasks = false;
     stampModelActivity(session);

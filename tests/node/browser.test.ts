@@ -1429,7 +1429,7 @@ test("MCP browser tool collects page console through page.on", opts, async () =>
           code: `
             const messages = [];
             page.on("console", (message) => messages.push(message.text()));
-            return messages;
+            return { onType: typeof page.on, messages };
           `,
         },
       },
@@ -1437,7 +1437,7 @@ test("MCP browser tool collects page console through page.on", opts, async () =>
     assert.equal(missing.isError, undefined, missing.content[0].text);
     const missingSummary = JSON.parse(missing.content[0].text);
     assert.equal(missingSummary.ok, true, missingSummary.error);
-    assert.deepEqual(missingSummary.result, []);
+    assert.deepEqual(missingSummary.result, { onType: "function", messages: [] });
 
     const collected = await handlers.callTool({
       params: {
@@ -2546,14 +2546,23 @@ test("page.on collects page console and pageerror for the current snippet", opts
       JSON.stringify(captured.result.errors),
     );
 
+    const fromEvaluate = await bw.run(`
+      const messages = [];
+      page.on("console", (message) => messages.push(message.text()));
+      await page.evaluate(() => console.log("from-evaluate"));
+      return messages;
+    `);
+    assert.equal(fromEvaluate.ok, true, fromEvaluate.error);
+    assert.deepEqual(fromEvaluate.result, ["from-evaluate"]);
+
     const onceOnly = await bw.run(`
       const seen = [];
       page.once("console", (message) => seen.push(message.text()));
       await page.evaluate(() => { console.log("first"); console.log("second"); });
-      return seen;
+      return { seen };
     `);
     assert.equal(onceOnly.ok, true, onceOnly.error);
-    assert.deepEqual(onceOnly.result, ["first"]);
+    assert.deepEqual(onceOnly.result, { seen: ["first"] });
 
     const detached = await bw.run(`
       const seen = [];
@@ -2561,10 +2570,10 @@ test("page.on collects page console and pageerror for the current snippet", opts
       page.on("console", listener);
       page.off("console", listener);
       await page.evaluate(() => console.log("should not collect"));
-      return seen;
+      return { seen };
     `);
     assert.equal(detached.ok, true, detached.error);
-    assert.deepEqual(detached.result, []);
+    assert.deepEqual(detached.result, { seen: [] });
   } finally {
     await bw.close();
   }
@@ -2574,22 +2583,20 @@ test("page.on listeners do not leak into the next snippet", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
     const first = await bw.run(`
-      page.on("console", (message) => {
-        state.n = (state.n || 0) + 1;
-        state.last = message.text();
-      });
+      state.seen = [];
+      page.on("console", (message) => state.seen.push(message.text()));
       await page.evaluate(() => console.log("one"));
-      return { n: state.n, last: state.last };
+      return { seen: state.seen };
     `);
     assert.equal(first.ok, true, first.error);
-    assert.deepEqual(first.result, { n: 1, last: "one" });
+    assert.deepEqual(first.result, { seen: ["one"] });
 
     const second = await bw.run(`
       await page.evaluate(() => console.log("two"));
-      return { n: state.n, last: state.last };
+      return { seen: state.seen };
     `);
     assert.equal(second.ok, true, second.error);
-    assert.deepEqual(second.result, { n: 1, last: "one" });
+    assert.deepEqual(second.result, { seen: ["one"] });
   } finally {
     await bw.close();
   }

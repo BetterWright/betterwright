@@ -540,8 +540,10 @@ return { messages, errors };
 ```
 
 `page.once` and `page.off` work for the same two events. Listeners last for
-this snippet only; the next `run()` / `browser` call starts clean. One-shot
-waits (`page.waitForEvent("console")`) still work.
+this snippet only — including console and pageerror events that Playwright
+delivers just after the command that produced them — and the next `run()` /
+`browser` call starts clean. One-shot waits (`page.waitForEvent("console")`)
+still work.
 
 ## What is removed
 
