@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-08-26
+
 ### Fixed
 
 - **`page.on("console")` and `page.on("pageerror")` work in MCP `browser`
@@ -1153,7 +1155,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/BetterWright/betterwright/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/BetterWright/betterwright/compare/v1.9.9...v1.10.0
 [1.9.9]: https://github.com/BetterWright/betterwright/compare/v1.9.8...v1.9.9
 [1.9.8]: https://github.com/BetterWright/betterwright/compare/v1.9.7...v1.9.8
