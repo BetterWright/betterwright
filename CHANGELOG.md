@@ -9,6 +9,12 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP snippets now have 2 minutes** before the worker restarts (was 30
+  seconds). The JS API default is unchanged. Override with
+  `BETTERWRIGHT_TIMEOUT_SECONDS` (minimum 5).
+
 ## [1.10.1] - 2026-08-26
 
 ### Fixed

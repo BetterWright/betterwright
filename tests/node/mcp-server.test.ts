@@ -13,6 +13,7 @@ import {
   liveViewFromEnv,
   loginOptionsFromArgs,
   policyFromEnv,
+  timeoutFromEnv,
 } from "../../dist/src/mcp-server.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -394,6 +395,19 @@ test("headlessFromEnv defaults to auto and honors explicit values", () => {
   assert.equal(headlessFromEnv({}), "auto");
   assert.equal(headlessFromEnv({ BETTERWRIGHT_HEADLESS: "0" }), false);
   assert.equal(headlessFromEnv({ BETTERWRIGHT_HEADLESS: "true" }), true);
+});
+
+test("timeoutFromEnv defaults to 120 seconds and rejects junk", () => {
+  assert.equal(timeoutFromEnv({}), 120);
+  assert.equal(timeoutFromEnv({ BETTERWRIGHT_TIMEOUT_SECONDS: "180" }), 180);
+  assert.throws(
+    () => timeoutFromEnv({ BETTERWRIGHT_TIMEOUT_SECONDS: "4" }),
+    /must be a number of seconds >= 5/,
+  );
+  assert.throws(
+    () => timeoutFromEnv({ BETTERWRIGHT_TIMEOUT_SECONDS: "soon" }),
+    /must be a number of seconds >= 5/,
+  );
 });
 
 test("contentForResult separates screenshots from file paths", async () => {

@@ -39,6 +39,7 @@
 //     BETTERWRIGHT_TIMEZONE=<IANA tz>      pin the browser timezone to the egress
 //                                          geography (unset: host timezone)
 //     BETTERWRIGHT_LOCALE=<locale>         browser locale for the same identity
+//     BETTERWRIGHT_TIMEOUT_SECONDS=120     per-snippet timeout (default 120)
 //     BETTERWRIGHT_LIVE_VIEW_HOST=...      live-view bind host (default 127.0.0.1)
 //     BETTERWRIGHT_LIVE_VIEW_PORT=...      live-view port (default ephemeral)
 //     BETTERWRIGHT_LIVE_VIEW=1             allow a non-loopback live-view host
@@ -113,6 +114,24 @@ export function headlessFromEnv(env = process.env) {
   // explicit BETTERWRIGHT_HEADLESS=0/1 when the deployer sets one.
   if (!String(env.BETTERWRIGHT_HEADLESS || "").trim()) return "auto";
   return boolEnv(env, "BETTERWRIGHT_HEADLESS");
+}
+
+const DEFAULT_MCP_TIMEOUT_SECONDS = 120;
+
+/**
+ * Per-snippet wall clock for MCP `browser` / `browser_batch` /
+ * `browser_download` / `browser_login`. The JS API default is 30s; MCP
+ * snippets routinely include navigation plus extraction, so the server
+ * uses 2 minutes unless the deployer overrides it.
+ */
+export function timeoutFromEnv(env = process.env) {
+  const raw = String(env.BETTERWRIGHT_TIMEOUT_SECONDS || "").trim();
+  if (!raw) return DEFAULT_MCP_TIMEOUT_SECONDS;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 5) {
+    throw new Error("BETTERWRIGHT_TIMEOUT_SECONDS must be a number of seconds >= 5.");
+  }
+  return seconds;
 }
 
 /**
@@ -604,6 +623,7 @@ export async function runMcpServer(env = process.env, options: any = {}) {
     policy: policyFromEnv(env),
     headless: headlessFromEnv(env),
     downloadPolicy,
+    defaultTimeout: timeoutFromEnv(env),
   };
   // A named profile is a separate identity, so two MCP servers sharing one
   // home (a "social" one holding the logins, a "research" one that only

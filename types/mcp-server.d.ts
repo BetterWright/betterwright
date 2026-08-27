@@ -39,6 +39,11 @@ export function headlessFromEnv(
   env?: Record<string, string | undefined>,
 ): HeadlessMode;
 
+/** Read BETTERWRIGHT_TIMEOUT_SECONDS; defaults to 120. */
+export function timeoutFromEnv(
+  env?: Record<string, string | undefined>,
+): number;
+
 /** Read BETTERWRIGHT_LIVE_VIEW / _HOST / _PORT for the browser_handoff tool. */
 export function liveViewFromEnv(env?: Record<string, string | undefined>): {
   enabled: boolean;

@@ -251,7 +251,9 @@ It reports the two things that actually fail: a missing
 usually swallow the error), and a missing browser.
 
 The server keeps one browser alive for its lifetime, so pages and logins persist
-across tool calls.
+across tool calls. Each `browser`, `browser_batch`, `browser_download`, and
+`browser_login` snippet has two minutes before the worker restarts. Set
+`BETTERWRIGHT_TIMEOUT_SECONDS` to change that (minimum 5).
 
 BetterChromium (`~/.betterwright/chromium/`) is the default backend on
 supported macOS arm64, Linux x64, and Windows x64 hosts. Linux hosts without
@@ -389,6 +391,7 @@ or the MCP env vars):
 | Disable all downloads | `downloadPolicy: "deny"` | `BETTERWRIGHT_DOWNLOAD_POLICY=deny` |
 | Block public search-result UIs | `publicSearchPolicy: "block"` | `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block` |
 | Act as a second identity | `--profile social` / `profile: "social"` | `BETTERWRIGHT_PROFILE=social` (the CLI reads it too) |
+| Per-snippet timeout (MCP default 120s) | `defaultTimeout` (JS API default 30) | `BETTERWRIGHT_TIMEOUT_SECONDS=120` |
 
 A **profile** is a separate browser identity inside the same home: its own
 cookie jar, its own session daemon, its own `exec` history — so two agents (or
