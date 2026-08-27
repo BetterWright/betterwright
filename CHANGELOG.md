@@ -9,11 +9,13 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-08-27
+
 ### Changed
 
 - **MCP snippets now have 2 minutes** before the worker restarts (was 30
   seconds). The JS API default is unchanged. Override with
-  `BETTERWRIGHT_TIMEOUT_SECONDS` (minimum 5).
+  `BETTERWRIGHT_TIMEOUT_SECONDS` (minimum 5). (#145)
 
 ## [1.10.1] - 2026-08-26
 
@@ -1161,7 +1163,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.10.2...HEAD
+[1.10.2]: https://github.com/BetterWright/betterwright/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/BetterWright/betterwright/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/BetterWright/betterwright/compare/v1.9.9...v1.10.0
 [1.9.9]: https://github.com/BetterWright/betterwright/compare/v1.9.8...v1.9.9
