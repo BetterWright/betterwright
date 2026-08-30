@@ -93,6 +93,14 @@ await bw.close();
 returns one result envelope. Full API: [docs/javascript.md](docs/javascript.md)
 · [docs/browser-api.md](docs/browser-api.md).
 
+`page` and `context` are restricted Playwright wrappers. Request interception
+(`page.route`, `context.route`, `unroute`, and `routeFromHAR`) is unavailable
+because BetterWright's worker-owned routing enforces network policy. For
+deterministic page tests, install in-page mocks with `page.addInitScript`
+before navigation, use `page.setContent`, or serve a host-side local fixture.
+See [What is removed](docs/browser-api.md#what-is-removed) for the complete
+model-visible boundary.
+
 **[SETUP.md](SETUP.md)** is the full integration guide, written to be followed
 by an AI agent — point your coding agent at it and it wires any host end to end.
 

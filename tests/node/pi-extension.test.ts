@@ -161,6 +161,11 @@ test("native Pi extension registers persistent tools and records its supplied st
     }
     assert.match(pi.tools.get("browser").description, /usePage\(indexOrPageId\)/);
     assert.match(pi.tools.get("browser").description, /must not receive a Page object/);
+    assert.match(pi.tools.get("browser").description, /page\/context are restricted wrappers/);
+    assert.match(pi.tools.get("browser").description, /routing is unavailable/);
+    assert.match(pi.tools.get("browser").description, /page\.addInitScript before navigation/);
+    assert.match(pi.tools.get("browser").description, /page\.setContent/);
+    assert.match(pi.tools.get("browser").description, /host-served local fixture/);
     assert.ok(pi.handlers.has("before_agent_start"));
     assert.ok(pi.handlers.has("session_shutdown"));
 

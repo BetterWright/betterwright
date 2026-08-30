@@ -571,6 +571,12 @@ it escape the policy or read the host. These are absent by design and return
 - **Node internals** — there is no `process`, `require`, `import`, or `fs`. The
   snippet runs in a `node:vm` context with code generation disabled.
 
+For deterministic page tests, call `page.addInitScript` before navigation to
+install page-local `fetch` or XHR mocks, use `page.setContent` for fixture HTML,
+or serve a local fixture from the trusted host. `addInitScript` can affect the
+page's initial scripts, but it cannot replace the navigation response itself;
+that request always stays on the worker-owned guarded route.
+
 The [architecture doc](architecture.md) explains why this is defense in depth
 layered on top of the browser-level controls, not a claim that the `vm` boundary
 is itself a security boundary.

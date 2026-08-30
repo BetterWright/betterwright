@@ -82,6 +82,8 @@ export const PI_EVIDENCE_PARAMETERS = {
 const TOOL_DESCRIPTION =
   "Run async Playwright JavaScript in a persistent policy-guarded browser. page is active; " +
   "pages lists open tabs; usePage(indexOrPageId) selects one and must not receive a Page object. " +
+  "page/context are restricted wrappers: routing is unavailable; for deterministic tests use " +
+  "page.addInitScript before navigation, page.setContent, or a host-served local fixture. " +
   "Globals: context, state, openPage, closePage(idOrIndex?), snapshot, screenshot, artifactPath, dialogs, " +
   "credentials, captcha, human, overlays, controls, media, site, webagents, webmcp. Plan/batch named " +
   "controls/content with getByRole/getByLabel/getByText and auto-waits; read scoped DOM directly " +

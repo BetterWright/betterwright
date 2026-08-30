@@ -2648,6 +2648,53 @@ test("page.on still refuses routing events and cannot strip worker listeners", o
   }
 });
 
+test("restricted routing documents working page-local fixture alternatives", opts, async () => {
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", request.url === "/" ? "text/html" : "application/json");
+    response.end(
+      request.url === "/"
+        ? `<!doctype html><body>loading<script>
+            fetch("/api/value")
+              .then((reply) => reply.json())
+              .then(({ message }) => { document.body.textContent = message; });
+          </script></body>`
+        : JSON.stringify({ message: "live" }),
+    );
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const result = await bw.run(`
+      await page.addInitScript(() => {
+        const nativeFetch = window.fetch.bind(window);
+        window.fetch = (input, init) => {
+          const url = typeof input === "string" ? input : input.url;
+          if (new URL(url, location.href).pathname === "/api/value") {
+            return Promise.resolve(new Response(
+              JSON.stringify({ message: "mocked" }),
+              { headers: { "content-type": "application/json" } },
+            ));
+          }
+          return nativeFetch(input, init);
+        };
+      });
+      await page.goto(${JSON.stringify(server.origin)});
+      await page.getByText("mocked").waitFor();
+      const mocked = await page.locator("body").innerText();
+      await page.setContent('<p id="fixture">fixture</p>');
+      return { mocked, fixture: await page.locator("#fixture").innerText() };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result, { mocked: "mocked", fixture: "fixture" });
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
 test("returned Playwright objects cannot serialize host internals", opts, async () => {
   const variable = "BETTERWRIGHT_SERIALIZER_SENTINEL";
   const sentinel = `serializer-secret-${Date.now()}`;
