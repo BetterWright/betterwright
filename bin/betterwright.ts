@@ -6,6 +6,8 @@
 //   betterwright setup            install the managed browser for this host
 //   betterwright update           refresh the managed browser for this host
 //   betterwright doctor           report runtime readiness
+//   betterwright configure        choose the browser backend (cloud provider,
+//                                 CDP endpoint, own binary, or the managed fork)
 //   betterwright run <file|-|-c>  execute a Playwright snippet in the
 //                                 persistent session (tabs/state survive calls)
 //   betterwright repl             run blank-line-separated snippets from stdin
@@ -1942,6 +1944,10 @@ async function main() {
       return cmdUpdate(flags);
     case "doctor":
       return cmdDoctor(flags);
+    case "configure": {
+      const { runConfigure } = await import("../src/configure.js");
+      return runConfigure(rest);
+    }
     case "vault": {
       const { runVaultCommand } = await import("../src/vault-cli.js");
       return runVaultCommand(rest);

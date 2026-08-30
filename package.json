@@ -56,6 +56,11 @@
       "import": "./dist/src/mcp-server.js",
       "default": "./dist/src/mcp-server.js"
     },
+    "./sdk": {
+      "types": "./types/sdk.d.ts",
+      "import": "./dist/src/sdk.js",
+      "default": "./dist/src/sdk.js"
+    },
     "./skills": {
       "types": "./types/skills.d.ts",
       "import": "./dist/src/skills.js",

@@ -12,6 +12,7 @@ export const COMMAND_SUMMARIES = [
   ["setup", "download the managed browser for this host"],
   ["update", "download or refresh the managed browser for this host"],
   ["doctor", "check that everything needed is installed and reachable"],
+  ["configure", "choose the browser backend: cloud provider, custom CDP, or managed"],
   ["run", "run one Playwright snippet in the persistent session"],
   ["repl", "run blank-line-separated snippets from stdin"],
   ["exec", "hand a whole task to BetterWright's own browser agent"],
@@ -89,6 +90,45 @@ Options:
 
 Exit code is 0 when ready, 1 otherwise.`,
 
+  configure: `Usage: betterwright configure
+       betterwright configure --browser <name|wss-url|path> [--browser-key <key> | --key-env <NAME>]
+       betterwright configure --show [--json]
+
+Choose the browser every launch uses: the managed BetterChromium fork, a cloud
+provider, any CDP endpoint, or your own Chromium binary. With no options on a
+terminal it walks you through the choices and offers to connect once; the flags
+do the same things without prompting. The choice is stored in the browser
+section of <BETTERWRIGHT_HOME>/config.json, written owner-only.
+
+Options:
+  --show                 print the current setting (the default with no terminal)
+  --json                 machine-readable output for --show; stored keys are
+                         masked either way
+  --browser <value>      set the default. A provider name (browser-use, kernel,
+                         browserbase, steel, anchor, hyperbrowser, browserless,
+                         brightdata, oxylabs, or one you added), a wss:// CDP
+                         endpoint, or an absolute path to a Chromium binary
+  --browser-key <key>    store that provider's API key in the config file
+  --key-env <NAME>       read that provider's API key from this environment
+                         variable instead, so it never enters the file
+                         (mutually exclusive with --browser-key)
+  --managed, --reset     clear the default; launches use the managed fork again
+  --add <name>           add a custom provider named <name>, with
+    --cdp-url <template>   its connect URL, where \${apiKey} is replaced with
+                           the key at launch
+    --key-env <NAME> | --browser-key <key>   where its key comes from
+    --docs <url>           where the service documents its endpoint
+    --display-name <label> how menus and errors name it
+  --remove <name>        delete a custom provider
+  --test                 after setting (or on its own) connect to the configured
+                         browser and print its version
+  --no-test              do not offer the connection test in the interactive flow
+
+Precedence at launch: --browser / the provider option, then
+BETTERWRIGHT_CDP_URL, then this default, then the managed fork.
+Exit code is 0 on success, 1 on a bad value or a failed connection test.
+Details: docs/browser-providers.md`,
+
   run: `Usage: betterwright run -c "<javascript>"
        betterwright run <file>
        betterwright run -            read the snippet from stdin
@@ -113,8 +153,11 @@ Options:
   --stealth              isolated-world driver (needs patchright-core)
   --browser <name|url>   use a cloud browser provider (browser-use, kernel,
                          browserbase, steel, anchor, hyperbrowser, browserless,
-                         brightdata, oxylabs) or any wss:// CDP endpoint
-                         instead of the managed BetterChromium fork
+                         brightdata, oxylabs, or one added with
+                         \`betterwright configure --add\`) or any wss:// CDP
+                         endpoint instead of the managed BetterChromium fork.
+                         \`betterwright configure\` sets a default so you do
+                         not have to pass this every time
   --browser-key <key>    provider API key (or its env var, e.g.
                          BROWSERBASE_API_KEY); BETTERWRIGHT_CDP_URL is the
                          env shorthand for --browser <url>

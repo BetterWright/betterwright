@@ -165,8 +165,10 @@ new BetterWright({ browser: "chromium" });
 new BetterWright({ executablePath: "/opt/chromium" });
 // @ts-expect-error CDP attach goes through the provider option.
 new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" });
-// @ts-expect-error Unknown cloud providers are rejected at the type level.
-new BetterWright({ provider: { provider: "nope" } });
+// Custom provider names from `betterwright configure` are accepted alongside
+// the built-in union (which keeps its completions via the string intersection).
+new BetterWright({ provider: { provider: "driverdotnet" } });
+new BetterWright({ provider: { provider: "steel" } });
 
 void [
   run,
