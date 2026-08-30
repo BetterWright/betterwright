@@ -209,6 +209,7 @@ betterwright vault list                    # every record, metadata only
 betterwright vault list --query github     # filter by site, username, or label
 betterwright vault show <id>               # one record; password stays hidden
 betterwright vault copy <id>               # password → clipboard
+betterwright vault type <id>               # type into the focused window
 betterwright vault show <id> --reveal      # print it to the terminal
 betterwright vault rm <id>                 # delete one record
 betterwright vault audit                   # recent activity, metadata only
@@ -231,9 +232,17 @@ Three rules govern the one operation that produces plaintext:
 - **Every reveal is audited.** `owner-reveal` entries carry the timestamp,
   record id, and site — never the secret — and show up in `vault audit`.
 
-`vault copy` is the recommended path: the password goes to the clipboard
-through the platform's own tool (`pbcopy`, `clip`, `wl-copy`/`xclip`/`xsel`)
-and never enters terminal scrollback or shell history.
+`vault copy` is the recommended path when the destination accepts a paste: the
+password goes to the clipboard through the platform's own tool (`pbcopy`,
+`clip`, `wl-copy`/`xclip`/`xsel`) and never enters terminal scrollback or
+shell history.
+
+`vault type` is the path when paste is blocked — Proxmox noVNC, some VNC/SPICE
+consoles, a few remote-desktop clients. It waits five seconds (override with
+`--delay`), then types the password as keystrokes into whichever window has
+focus. The secret is piped to the platform tool on stdin so it never appears
+in `ps` or shell history. `--key-delay` (default 25ms) paces keystrokes for
+consoles that drop characters typed too fast. `paste` is an alias.
 
 Uncommitted signup passwords — a `generateAndFill` that never reached
 `commitGenerated` — are listed separately and can be revealed by their pending
@@ -347,7 +356,7 @@ An unlocked extension can still autofill in a headed persistent profile.
 
 Vault APIs never return stored or generated secrets to the model. The
 owner-only methods that do (`ownerReveal`, and `betterwright vault
-show --reveal` / `copy` on top of them) are not routed by `handleRequest`, so
+show --reveal` / `copy` / `type` on top of them) are not routed by `handleRequest`, so
 the browser worker cannot reach them however a snippet is written; they are for
 a trusted host acting for the person who owns the files. Snapshots,
 control inspection, console output, serialized results, and direct password

@@ -84,6 +84,16 @@ test("`skill --help` prints help, not the nine-kilobyte skill body", () => {
   assert.ok(result.stdout.length < 2000, "help should be short");
 });
 
+test("vault help names copy and type as the secret-delivery paths", () => {
+  const result = runCli(["vault", "--help"]);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /copy <id>/);
+  assert.match(result.stdout, /type <id>/);
+  assert.match(result.stdout, /paste <id>/);
+  assert.match(result.stdout, /--delay/);
+  assert.match(result.stdout, /--key-delay/);
+});
+
 test("bare --help and `help <command>` both work", () => {
   const bare = runCli(["--help"]);
   assert.equal(bare.status, 0);

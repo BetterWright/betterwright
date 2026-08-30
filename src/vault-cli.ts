@@ -13,8 +13,10 @@
 //   - metadata by default; printing a secret needs an explicit `--reveal`
 //   - `--reveal` to anything but a terminal needs `--force` on top, so a
 //     redirect into a file, a pipe, or an agent's captured stdout fails closed
-//   - `vault copy` is the recommended path: the secret goes to the clipboard
-//     and never enters scrollback or shell history at all
+//   - `vault copy` is the recommended path when the destination accepts a
+//     clipboard paste: the secret never enters scrollback or shell history
+//   - `vault type` is the path when paste is blocked (Proxmox noVNC, some
+//     VNC/SPICE consoles): it types into the focused window as keystrokes
 //   - every reveal is written to the metadata-only audit log
 
 import { spawn } from "node:child_process";
@@ -23,6 +25,15 @@ import { flagValue, positionalArgs } from "./cli-flags.js";
 import { wantsHelp } from "./cli-help.js";
 import { defaultHome } from "./home.js";
 import { createLocalCredentialVault, VAULT_CATEGORIES } from "./vault.js";
+import {
+  DEFAULT_KEY_DELAY_MS,
+  DEFAULT_TYPE_DELAY_SECONDS,
+  parseKeyDelayMs,
+  parseTypeDelaySeconds,
+  sleep,
+  spawnWithStdin,
+  typeIntoFocusedWindow,
+} from "./vault-type.js";
 
 const REVEAL_ESCAPE_HATCH = "BETTERWRIGHT_VAULT_ALLOW_NON_INTERACTIVE";
 
@@ -32,12 +43,16 @@ export const VAULT_USAGE = `Usage: betterwright vault <command>
   show <id> [--reveal]                     one credential; --reveal prints the password
   get <id>                                 alias for show
   copy <id>                                copy the password to the clipboard
+  type <id> [--delay <s>]                  type the password into the focused window
+  paste <id>                               alias for type
   rm <id> [--yes]                          delete one credential
   audit [--limit <n>]                      recent vault activity (metadata only)
   path                                     where the encrypted files live
 
 Options: --json  machine-readable output
          --force allow --reveal when stdout is not a terminal
+         --delay seconds to focus the target (type; default 5)
+         --key-delay ms between keystrokes (type; default 25)
 
 Categories: login (default), credit-card, identity, api-credential,
             secure-note, ssh-key.
@@ -67,16 +82,7 @@ export async function copyToClipboard(
   let lastError = null;
   for (const [command, args] of candidates) {
     try {
-      await new Promise<void>((resolve, reject) => {
-        const child = spawnFn(command, args, { stdio: ["pipe", "ignore", "ignore"] });
-        child.once("error", reject);
-        child.once("close", (code) =>
-          code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`)),
-        );
-        // SAFETY: the child is spawned with stdio[0] = "pipe" just above, so
-        // stdin is always a writable stream, never null.
-        (child.stdin as NonNullable<typeof child.stdin>).end(text);
-      });
+      await spawnWithStdin(spawnFn, command, args, text);
       return { ok: true, tool: command };
     } catch (error) {
       lastError = error;
@@ -88,8 +94,8 @@ export async function copyToClipboard(
     error:
       `No clipboard tool worked (tried ${tried}${lastError ? `; last error: ${lastError.message}` : ""}). ` +
       (platform === "linux"
-        ? "Install wl-clipboard or xclip, or use `vault show <id> --reveal`."
-        : "Use `vault show <id> --reveal` instead."),
+        ? "Install wl-clipboard or xclip, or use `vault type <id>` / `vault show <id> --reveal`."
+        : "Use `vault type <id>` or `vault show <id> --reveal` instead."),
   };
 }
 
@@ -175,7 +181,8 @@ export function revealAllowed({
     error:
       "Refusing to print a password to something that is not a terminal — it would " +
       "end up in a file, a pipe, or an agent's captured output.\n" +
-      "Use `betterwright vault copy <id>` to reach the clipboard instead, or pass " +
+      "Use `betterwright vault copy <id>` to reach the clipboard, " +
+      "`vault type <id>` to type into the focused window, or pass " +
       `--force (or set ${REVEAL_ESCAPE_HATCH}=1) if you really mean to redirect it.`,
   };
 }
@@ -293,12 +300,20 @@ async function dispatchVaultCommand(rest, io) {
     log(
       `${credentials.length} credential(s)${pendingCredentials.length ? `, ${pendingCredentials.length} uncommitted` : ""}. ` +
         "`betterwright vault copy <id>` puts a password on the clipboard; " +
+        "`vault type <id>` types it into the focused window; " +
         "`vault show <id> --reveal` prints it.",
     );
     return 0;
   }
 
-  if (subcommand === "show" || subcommand === "get" || subcommand === "copy" || subcommand === "rm") {
+  const isType = subcommand === "type" || subcommand === "paste";
+  if (
+    subcommand === "show" ||
+    subcommand === "get" ||
+    subcommand === "copy" ||
+    isType ||
+    subcommand === "rm"
+  ) {
     const { credentials, pendingCredentials } = await vault.ownerList();
     let id;
     try {
@@ -343,7 +358,7 @@ async function dispatchVaultCommand(rest, io) {
       return 0;
     }
 
-    const wantsSecret = subcommand === "copy" || flags.has("--reveal");
+    const wantsSecret = subcommand === "copy" || isType || flags.has("--reveal");
     if (!wantsSecret) {
       const record = credentials.find((candidate) => candidate.id === id);
       const entry =
@@ -368,17 +383,32 @@ async function dispatchVaultCommand(rest, io) {
         ]),
       );
       log("");
-      log("Add --reveal to print the password, or `betterwright vault copy <id>` to");
-      log("put it on the clipboard without it touching this terminal.");
+      log("Add --reveal to print the password, `betterwright vault copy <id>` to");
+      log("put it on the clipboard, or `vault type <id>` to type it into the");
+      log("focused window when paste is blocked.");
       return 0;
+    }
+
+    // Parse type timing before the reveal so a bad --delay does not audit a
+    // read that never sent the secret anywhere.
+    let typeDelaySec = DEFAULT_TYPE_DELAY_SECONDS;
+    let keyDelayMs = DEFAULT_KEY_DELAY_MS;
+    if (isType) {
+      try {
+        typeDelaySec = parseTypeDelaySeconds(flagValue(rest, "--delay"));
+        keyDelayMs = parseKeyDelayMs(flagValue(rest, "--key-delay"));
+      } catch (error) {
+        fail(error.message);
+        return 1;
+      }
     }
 
     // Gate every path that puts plaintext on stdout. Keying this on the
     // subcommand name once let the `get` alias through: `vault get <id>
     // --reveal > creds.txt` printed the secret with no terminal and no
-    // --force. `copy` is the sole exemption, and only because the secret
-    // reaches the clipboard instead of stdout.
-    if (subcommand !== "copy") {
+    // --force. `copy` and `type`/`paste` are exempt because the secret
+    // reaches the clipboard or the focused window instead of stdout.
+    if (subcommand !== "copy" && !isType) {
       const gate = revealAllowed({ force: flags.has("--force") });
       if (!gate.ok) {
         fail(gate.error);
@@ -393,7 +423,7 @@ async function dispatchVaultCommand(rest, io) {
     }
 
     if (subcommand === "copy") {
-      const copied = await copyToClipboard(revealed.secret);
+      const copied = await copyToClipboard(revealed.secret, { spawn: io.spawn || spawn });
       if (!copied.ok) {
         fail(copied.error);
         return 1;
@@ -402,6 +432,48 @@ async function dispatchVaultCommand(rest, io) {
         `Copied the ${site(revealed.origin)} password for ${revealed.username || "(no username)"} to the clipboard.`,
       );
       log("It stays there until you copy something else — clear it when you are done.");
+      if (revealed.auditWarning) fail(`  ! ${revealed.auditWarning.message}`);
+      return 0;
+    }
+
+    if (isType) {
+      const sleepFn = io.sleep || sleep;
+      if (typeDelaySec > 0) {
+        if (!json) {
+          log(
+            `Focus the target window. Typing the ${site(revealed.origin)} password for ` +
+              `${revealed.username || "(no username)"} in ${typeDelaySec}s — click into it now.`,
+          );
+        }
+        await sleepFn(Math.round(typeDelaySec * 1000));
+      }
+      const typeFn =
+        io.typeIntoFocusedWindow ||
+        ((secret, opts) => typeIntoFocusedWindow(secret, { ...opts, spawn: io.spawn || spawn }));
+      const typed = await typeFn(revealed.secret, { keyDelayMs });
+      if (!typed.ok) {
+        fail(typed.error);
+        return 1;
+      }
+      if (json) {
+        log(
+          JSON.stringify(
+            {
+              ok: true,
+              tool: typed.tool,
+              id: revealed.pending ? revealed.pendingId : revealed.id,
+              origin: revealed.origin,
+              username: revealed.username || "",
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        log(
+          `Typed the ${site(revealed.origin)} password for ${revealed.username || "(no username)"} into the focused window.`,
+        );
+      }
       if (revealed.auditWarning) fail(`  ! ${revealed.auditWarning.message}`);
       return 0;
     }

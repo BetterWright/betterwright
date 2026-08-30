@@ -278,6 +278,7 @@ signup. So there is a separate, human-only door:
 ```bash
 betterwright vault list                # metadata: site, username, when
 betterwright vault copy <id>           # password → clipboard, never the screen
+betterwright vault type <id>           # type into the focused window (Proxmox / VNC)
 betterwright vault show <id> --reveal  # print it (refuses to a pipe or a file)
 betterwright vault audit               # every read and write, metadata only
 ```
