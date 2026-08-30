@@ -499,7 +499,12 @@ function installFakeTypeTool(binDir, recordPath) {
   return name;
 }
 
-test("the CLI binary types through a PATH tool and never prints the secret", async () => {
+test("the CLI binary types through a PATH tool and never prints the secret", {
+  // Windows SearchPath looks in System32 before PATH, so a stub
+  // `powershell.cmd` never shadows the real host. The stdin contract is
+  // covered by typeIntoFocusedWindow({ platform: "win32", spawn: recordingSpawn }).
+  skip: process.platform === "win32",
+}, async () => {
   const home = tempHome();
   const { github } = await seed(home);
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-type-bin-"));
