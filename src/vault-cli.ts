@@ -23,6 +23,7 @@ import { spawn } from "node:child_process";
 
 import { flagValue, positionalArgs } from "./cli-flags.js";
 import { wantsHelp } from "./cli-help.js";
+import { cliPaint, paintedError, paintedLog } from "./cli-theme.js";
 import { defaultHome } from "./home.js";
 import { createLocalCredentialVault, VAULT_CATEGORIES } from "./vault.js";
 import {
@@ -204,7 +205,7 @@ async function confirm(question) {
  * @param {{home?: string, log?: Function, error?: Function}} [io]
  */
 export async function runVaultCommand(rest: any[] = [], io: any = {}) {
-  const fail = io.error || ((line) => console.error(line));
+  const fail = io.error || paintedError(cliPaint({ stream: process.stderr }));
   try {
     return await dispatchVaultCommand(rest, io);
   } catch (error) {
@@ -226,8 +227,8 @@ export async function runVaultCommand(rest: any[] = [], io: any = {}) {
 }
 
 async function dispatchVaultCommand(rest, io) {
-  const log = io.log || ((line) => console.log(line));
-  const fail = io.error || ((line) => console.error(line));
+  const log = io.log || paintedLog(cliPaint());
+  const fail = io.error || paintedError(cliPaint({ stream: process.stderr }));
   const flags = new Set(rest.filter((token) => token.startsWith("--")));
   const json = flags.has("--json");
   const positional = positionalArgs(rest);
@@ -235,7 +236,7 @@ async function dispatchVaultCommand(rest, io) {
   const vault = createLocalCredentialVault({ home: io.home || defaultHome() });
 
   if (wantsHelp(rest) || subcommand === "help") {
-    log(VAULT_USAGE);
+    log(cliPaint().help(VAULT_USAGE));
     return 0;
   }
 

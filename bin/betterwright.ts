@@ -56,6 +56,7 @@ import {
   makeLineReader,
   readExecTaskFromStdin,
 } from "../src/cli-io.js";
+import { cliPaint } from "../src/cli-theme.js";
 import {
   daemonLogPath,
   daemonProfilesInHome,
@@ -332,7 +333,8 @@ async function cmdDoctor(flags) {
   }
   const checks = doctorChecks(report);
   const quiet = flags.has("--quiet");
-  const text = formatDoctorChecks(checks, { quiet });
+  const paint = styler();
+  const text = formatDoctorChecks(checks, { quiet, paint });
   if (text) console.log(text);
   const problems = checks.filter((check) => check.status === "fail");
   const warnings = checks.filter((check) => check.status === "warn");
@@ -340,11 +342,13 @@ async function cmdDoctor(flags) {
   if (report.ready && !problems.length) {
     console.log(
       warnings.length
-        ? `BetterWright is ready. ${warnings.length} optional thing${warnings.length === 1 ? "" : "s"} above ${warnings.length === 1 ? "is" : "are"} not set up.`
-        : "BetterWright is ready.",
+        ? `${paint.accentBold("BetterWright is ready.")} ${warnings.length} optional thing${warnings.length === 1 ? "" : "s"} above ${warnings.length === 1 ? "is" : "are"} not set up.`
+        : paint.accentBold("BetterWright is ready."),
     );
   } else {
-    console.log("Not ready — fix the ✗ lines above, then run `betterwright doctor` again.");
+    console.log(
+      paint.status(`${paint.red("Not ready")} — fix the ✗ lines above, then run \`betterwright doctor\` again.`),
+    );
   }
   return report.ready && !problems.length ? 0 : 1;
 }
@@ -832,13 +836,10 @@ function formatDuration(ms) {
   return n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`;
 }
 
-// ANSI helpers that no-op when stdout is not a TTY or NO_COLOR is set.
+// The one paint set for this process; src/cli-theme.ts owns the rules
+// (orange accent, TTY/NO_COLOR gating, identity when off).
 function styler() {
-  const on = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
-  return {
-    dim: (s) => (on ? `\x1b[2m${s}\x1b[0m` : s),
-    bold: (s) => (on ? `\x1b[1m${s}\x1b[0m` : s),
-  };
+  return cliPaint();
 }
 
 const INTERACTIVE_HELP = `Commands:
@@ -890,7 +891,7 @@ async function cmdInteractive(flags) {
     runAgentTask,
   } = await import("../src/agent.js");
   const argv = process.argv;
-  const { dim, bold } = styler();
+  const { dim, bold, accent, accentBold } = styler();
   const removedFlag = removedModelFlagMessage(argv);
   if (removedFlag) {
     console.error(removedFlag);
@@ -918,7 +919,7 @@ async function cmdInteractive(flags) {
       });
       if (view?.ok && view.url) {
         if (!quiet || !view.alreadyRunning) {
-          console.log(`\n  ${bold("▶ Watch live:")} ${view.url}\n`);
+          console.log(`\n  ${accentBold("▶ Watch live:")} ${view.url}\n`);
         }
         interactiveLiveView = opts;
         return view;
@@ -956,7 +957,7 @@ async function cmdInteractive(flags) {
   };
   const showSteeringPrompt = () => {
     if (!taskRunning || !process.stdout.isTTY) return;
-    rl.setPrompt(dim("steer ▸ "));
+    rl.setPrompt(`${dim("steer ")}${accent("▸ ")}`);
     rl.prompt(true);
   };
   const writeInteractive = (
@@ -984,7 +985,7 @@ async function cmdInteractive(flags) {
 
   const modelLabel = () => model || "(choose a model)";
   const reasoningLabel = () => modelOptions.effort || "model default";
-  console.log(`${bold("BetterWright")} — interactive agent console`);
+  console.log(`${accentBold("BetterWright")} — interactive agent console`);
   console.log(
     dim(
       `model ${modelLabel()} · reasoning ${reasoningLabel()} · session ${session}` +
@@ -1902,7 +1903,7 @@ async function main() {
       return 0;
     }
     if (wantsHelp(tokens)) {
-      console.log(MAIN_USAGE);
+      console.log(styler().help(MAIN_USAGE));
       return 0;
     }
     return cmdInteractive(flags);
@@ -1917,7 +1918,7 @@ async function main() {
   // `exec` and `vault` are excluded because they own their own help text —
   // exec's lives beside its flag parsing, vault's beside its subcommands.
   if (wantsHelp(rest) && !["exec", "vault"].includes(command)) {
-    console.log(helpFor(command));
+    console.log(styler().help(helpFor(command)));
     return 0;
   }
   if (command === "help") {
@@ -1925,14 +1926,14 @@ async function main() {
     // route to them rather than duplicating the text in the help table.
     if (positional === "vault") {
       const { VAULT_USAGE } = await import("../src/vault-cli.js");
-      console.log(VAULT_USAGE);
+      console.log(styler().help(VAULT_USAGE));
       return 0;
     }
     if (positional === "exec") {
-      console.log(EXEC_USAGE);
+      console.log(styler().help(EXEC_USAGE));
       return 0;
     }
-    console.log(positional ? helpFor(positional) : MAIN_USAGE);
+    console.log(styler().help(positional ? helpFor(positional) : MAIN_USAGE));
     return 0;
   }
   switch (command) {
@@ -2010,7 +2011,7 @@ async function main() {
       return runSessionDaemon(process.argv);
     }
     default:
-      console.error(`Unknown command "${command}".\n\n${MAIN_USAGE}`);
+      console.error(`Unknown command "${command}".\n\n${cliPaint({ stream: process.stderr }).help(MAIN_USAGE)}`);
       return 1;
   }
 }

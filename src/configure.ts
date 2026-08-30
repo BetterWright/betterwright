@@ -34,6 +34,7 @@ import {
   resolveBrowserProvider,
 } from "./browser-providers.js";
 import { flagValue } from "./cli-flags.js";
+import { type CliPaint, cliPaint, paintedError, paintedLog } from "./cli-theme.js";
 import { defaultHome } from "./home.js";
 import { isCallable } from "./untrusted-value.js";
 
@@ -138,7 +139,7 @@ function maskEntry(entry, env): MaskedBrowserEntry {
   return masked;
 }
 
-function showConfig({ home, env, log, json }) {
+function showConfig({ home, env, log, json, paint }) {
   const config = loadBrowserConfig(home);
   if (json) {
     const custom: Record<string, MaskedBrowserEntry> = {};
@@ -159,7 +160,7 @@ function showConfig({ home, env, log, json }) {
     return 0;
   }
   log("");
-  log("Browser backend");
+  log(paint.heading("Browser backend"));
   log("");
   for (const line of summaryLines(config, env, home)) log(line);
   log("");
@@ -436,12 +437,12 @@ async function addCustomProvider(prompt, { home, env, log }) {
 }
 
 /** The interactive menu. Returns the process exit code. */
-async function configureInteractively({ home, env, log, connect, fetchJson, prompt, offerTest }) {
+async function configureInteractively({ home, env, log, connect, fetchJson, prompt, offerTest, paint }) {
   const io = prompt || createPrompter();
   try {
     const config = loadBrowserConfig(home);
     log("");
-    log("Browser backend");
+    log(paint.heading("Browser backend"));
     log("");
     for (const line of summaryLines(config, env, home)) log(line);
     log("");
@@ -501,8 +502,9 @@ async function configureInteractively({ home, env, log, connect, fetchJson, prom
 export async function runConfigure(argv: string[] = [], options: any = {}) {
   const home = options.home || defaultHome();
   const env = options.env || process.env;
-  const log = options.log || ((line) => console.log(line));
-  const fail = options.error || ((line) => console.error(line));
+  const paint: CliPaint = options.paint || cliPaint();
+  const log = options.log || paintedLog(paint);
+  const fail = options.error || paintedError(paint);
   const connect = options.connect || connectOverCdp;
   const fetchJson = options.fetchJson;
 
@@ -537,9 +539,10 @@ export async function runConfigure(argv: string[] = [], options: any = {}) {
         fetchJson,
         prompt: options.prompt,
         offerTest: !hasFlag(argv, "--no-test"),
+        paint,
       });
     }
-    return showConfig({ home, env, log, json: false });
+    return showConfig({ home, env, log, json: false, paint });
   }
 
   try {
@@ -581,6 +584,6 @@ export async function runConfigure(argv: string[] = [], options: any = {}) {
   }
 
   if (wantsTest) return testConnection({ home, env, log, fail, connect, fetchJson });
-  if (!acts) return showConfig({ home, env, log, json: wantsJson });
+  if (!acts) return showConfig({ home, env, log, json: wantsJson, paint });
   return 0;
 }
