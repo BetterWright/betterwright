@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-08-30
+
 ### Added
 
 - **`betterwright vault type <id>`** types a stored password into the focused
@@ -17,7 +19,7 @@ Releases before 1.1.3 predate this file; their notes live on the
   to click the target; `--delay` and `--key-delay` override the wait and the
   inter-key pace. The secret is piped on stdin so it never appears in `ps` or
   terminal scrollback. `paste` is an alias. Owner-only, audited, unreachable
-  from the worker RPC — the same boundary as `vault copy`.
+  from the worker RPC — the same boundary as `vault copy`. (#152)
 
 ## [1.10.3] - 2026-08-30
 
@@ -1183,7 +1185,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.10.3...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/BetterWright/betterwright/compare/v1.10.3...v1.11.0
 [1.10.3]: https://github.com/BetterWright/betterwright/compare/v1.10.2...v1.10.3
 [1.10.2]: https://github.com/BetterWright/betterwright/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/BetterWright/betterwright/compare/v1.10.0...v1.10.1
