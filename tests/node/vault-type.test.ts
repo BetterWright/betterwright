@@ -194,7 +194,7 @@ test("typeIntoFocusedWindow pipes the secret on stdin of a real child", async ()
   assert.equal(fs.readFileSync(record, "utf8"), SECRET);
 });
 
-test("typeIntoFocusedWindow falls through to the next Linux tool", async () => {
+test("typeIntoFocusedWindow falls through when the first tool is missing", async () => {
   const record = path.join(os.tmpdir(), `bw-type-fallback-${process.pid}-${Date.now()}`);
   test.after(() => fs.rmSync(record, { force: true }));
   const calls = [];
@@ -259,6 +259,24 @@ test("a non-zero tool exit is not treated as success", async () => {
   });
   assert.equal(result.ok, false);
   assert.match(result.error, /osascript exited 1/);
+  assert.match(result.error, /Not trying another/);
+  assert.equal(result.error.includes(SECRET), false);
+});
+
+test("a keystroke tool that starts and exits nonzero is not retried", async () => {
+  const calls = [];
+  const result = await typeIntoFocusedWindow(SECRET, {
+    platform: "linux",
+    spawn: (command) => {
+      calls.push(command);
+      return closingSpawn(1);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(calls, ["wtype"]);
+  assert.match(result.error, /wtype exited 1/);
+  assert.match(result.error, /Not trying another/);
+  assert.equal(result.error.includes(SECRET), false);
 });
 
 test("vault type types through the owner API and never prints the secret", async () => {
