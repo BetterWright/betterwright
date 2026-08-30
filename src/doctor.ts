@@ -438,8 +438,16 @@ export function doctorChecks(
 
 const STATUS_MARK = { ok: "✓", warn: "!", fail: "✗" };
 
-/** Render doctorChecks() rows as the text `betterwright doctor` prints. */
-export function formatDoctorChecks(checks, { quiet = false }: any = {}) {
+const STATUS_COLOR = { ok: "accent", warn: "yellow", fail: "red" };
+
+/**
+ * Render doctorChecks() rows as the text `betterwright doctor` prints.
+ * `paint` (a CliPaint from cli-theme.ts) is optional so callers that want
+ * plain text — tests, files, pipes — pass nothing and get the same bytes
+ * as always.
+ */
+export function formatDoctorChecks(checks, { quiet = false, paint = null }: any = {}) {
+  const tint = (color, text) => (paint ? paint[color](text) : text);
   const lines = [];
   let group = null;
   for (const check of checks) {
@@ -447,10 +455,12 @@ export function formatDoctorChecks(checks, { quiet = false }: any = {}) {
     if (check.group !== group) {
       group = check.group;
       if (lines.length) lines.push("");
-      lines.push(group);
+      lines.push(tint("bold", group));
     }
-    lines.push(`  ${STATUS_MARK[check.status]} ${`${check.label}:`.padEnd(16)} ${check.detail}`);
-    if (check.fix) lines.push(`      → ${check.fix}`);
+    lines.push(
+      `  ${tint(STATUS_COLOR[check.status], STATUS_MARK[check.status])} ${`${check.label}:`.padEnd(16)} ${check.detail}`,
+    );
+    if (check.fix) lines.push(tint("dim", `      → ${check.fix}`));
   }
   return lines.join("\n");
 }

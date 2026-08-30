@@ -25,6 +25,12 @@ Releases before 1.1.3 predate this file; their notes live on the
   optional `${apiKey}` placeholder, headers, and a key or key-env var. The
   name then works everywhere a built-in provider name does, including
   `provider: { provider: "<name>" }` in code. `--remove <name>` deletes it.
+- **An orange terminal theme.** The CLI paints its output when stdout is a
+  color terminal: the wordmark, command names, flags, success marks, menu
+  numbers, and quoted commands in BetterWright orange; failures stay red and
+  warnings yellow. Applied across help, `doctor`, `init`, `configure`, and
+  `vault`. Piped output, `--json`, NO_COLOR, and TERM=dumb get exactly the
+  plain bytes they always did; FORCE_COLOR overrides in either direction.
 - **The `betterwright/sdk` entrypoint**, a curated TypeScript import for
   embedding: the client, policy, vault, agent, and provider helpers together,
   plus a new `withBrowser(options?, fn)` helper that constructs a client, runs

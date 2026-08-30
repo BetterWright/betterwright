@@ -21,6 +21,8 @@ import path from "node:path";
 import readline from "node:readline";
 import { promisify } from "node:util";
 
+import { cliPaint, paintedLog } from "./cli-theme.js";
+
 const execFileAsync = promisify(execFile);
 
 const CODEX_BEGIN_PREFIX = "<!-- betterwright:begin";
@@ -230,7 +232,7 @@ export async function runInit({
   verify,
   version = null,
   home = os.homedir(),
-  log = (line) => console.log(line),
+  log = paintedLog(cliPaint()),
 }: any = {}) {
   const assumeYes = flags.has("--yes");
   const interactive = !assumeYes && Boolean(process.stdin.isTTY);
@@ -240,7 +242,7 @@ export async function runInit({
 
   try {
     log("");
-    log("Setting up BetterWright.");
+    log(cliPaint().heading("Setting up BetterWright."));
     log("");
 
     // 1. Runtime. Nothing below can work without it, and the failure is much
