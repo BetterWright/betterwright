@@ -313,6 +313,11 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser"), /Host cleanup is automatic/);
   assert.match(text("browser"), /closePage\(idOrIndex\?\)/);
   assert.match(text("browser"), /page\.on\('console'\|'pageerror', fn\)/);
+  assert.match(text("browser"), /Restricted wrappers omit page\.route\/context\.route/);
+  assert.match(text("browser"), /worker policy routing stays private/);
+  assert.match(text("browser"), /addInitScript before goto/);
+  assert.match(text("browser"), /setContent/);
+  assert.match(text("browser"), /host fixture/);
   // Challenge limits are safety rules, not advice.
   assert.match(text("browser"), /three distinct challenge types/);
   assert.match(text("browser"), /Replacement photo grids are the same stage/);

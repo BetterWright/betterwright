@@ -9,6 +9,16 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [1.10.3] - 2026-08-30
+
+### Fixed
+
+- **MCP and Pi now describe `page` and `context` as restricted Playwright
+  wrappers.** Their live browser-tool descriptions name request routing as
+  unavailable because it protects the network policy, and direct deterministic
+  tests toward `page.addInitScript`, `page.setContent`, or a host-served local
+  fixture instead of promising an API that fails only at runtime. (#150)
+
 ## [1.10.2] - 2026-08-27
 
 ### Changed
@@ -1163,7 +1173,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.10.2...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.10.3...HEAD
+[1.10.3]: https://github.com/BetterWright/betterwright/compare/v1.10.2...v1.10.3
 [1.10.2]: https://github.com/BetterWright/betterwright/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/BetterWright/betterwright/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/BetterWright/betterwright/compare/v1.9.9...v1.10.0
