@@ -44,11 +44,30 @@ export function sleep(ms) {
  */
 export function spawnWithStdin(spawnFn, command, args, text) {
   return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      fn(value);
+    };
     const child = spawnFn(command, args, { stdio: ["pipe", "ignore", "ignore"] });
-    child.once("error", reject);
-    child.once("close", (code) =>
-      code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`)),
-    );
+    // Spawn errors (ENOENT, EACCES) mean the process never started, so a
+    // later candidate is safe to try. A close with a non-zero code means
+    // the tool ran — it may already have typed — and is tagged `started`.
+    child.once("error", (error) => {
+      error.started = false;
+      finish(reject, error);
+    });
+    child.once("close", (code) => {
+      if (code === 0) {
+        finish(resolve, undefined);
+        return;
+      }
+      const error: any = new Error(`${command} exited ${code}`);
+      error.started = true;
+      error.exitCode = code;
+      finish(reject, error);
+    });
     // SAFETY: the child is spawned with stdio[0] = "pipe" just above, so
     // stdin is always a writable stream, never null. Ignore EPIPE: a tool
     // that exits before reading still reports through close/error, and an
@@ -229,6 +248,16 @@ export async function typeIntoFocusedWindow(
       return { ok: true, tool: command };
     } catch (error) {
       lastError = error;
+      // A tool that started may have already typed part of the secret.
+      // Falling through would duplicate it in the focused field.
+      if (error?.started) {
+        return {
+          ok: false,
+          error:
+            `${error.message}. Not trying another keystroke tool — this one may have already typed. ` +
+            "Use `vault copy` or `vault show <id> --reveal` if the field is empty.",
+        };
+      }
     }
   }
   return {

@@ -19,7 +19,8 @@ Releases before 1.1.3 predate this file; their notes live on the
   to click the target; `--delay` and `--key-delay` override the wait and the
   inter-key pace. The secret is piped on stdin so it never appears in `ps` or
   terminal scrollback. `paste` is an alias. Owner-only, audited, unreachable
-  from the worker RPC — the same boundary as `vault copy`. (#152)
+  from the worker RPC — the same boundary as `vault copy`. A tool that starts
+  and then fails is not retried, so a partial type is not duplicated. (#152)
 
 ## [1.10.3] - 2026-08-30
 
