@@ -113,5 +113,8 @@ test("firstPositional skips value-flag arguments but not assigned or boolean fla
   assert.equal(firstPositional(["--headed", "the task"]), "the task");
   // A value flag's argument must never be mistaken for a positional.
   assert.equal(firstPositional(["--model", "gpt-5.6-sol"]), undefined);
+  // The browser choice is a value: `run --browser steel script.js` runs the file.
+  assert.equal(firstPositional(["--browser", "steel", "script.js"]), "script.js");
+  assert.equal(firstPositional(["--browser", "steel", "--browser-key", "sk-live"]), undefined);
   assert.equal(firstPositional([]), undefined);
 });

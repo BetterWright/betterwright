@@ -41,6 +41,10 @@ export const VALUE_FLAGS = new Set([
   "--api-key-env",
   "--base-url",
   "--block-host",
+  // `run --browser steel script.js` must read script.js as the file, not
+  // steel: the browser choice and its key are values, never positionals.
+  "--browser",
+  "--browser-key",
   "--category",
   "--delay",
   "--effort",

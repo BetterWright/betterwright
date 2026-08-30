@@ -37,6 +37,13 @@ Releases before 1.1.3 predate this file; their notes live on the
   the callback, and always closes it. The root `betterwright` export is
   unchanged.
 
+### Fixed
+
+- **`betterwright run --browser steel script.js` runs the file.** `--browser`
+  and `--browser-key` were missing from the value-flag list, so the provider
+  name was read as the script positional. Both now consume their value in
+  every command's argument parsing.
+
 ## [1.11.0] - 2026-08-30
 
 ### Added
