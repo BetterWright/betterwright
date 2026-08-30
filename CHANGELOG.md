@@ -9,6 +9,16 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- **`betterwright vault type <id>`** types a stored password into the focused
+  window as keystrokes, for destinations that swallow clipboard paste
+  (Proxmox noVNC, some VNC/SPICE consoles). A 5-second countdown leaves time
+  to click the target; `--delay` and `--key-delay` override the wait and the
+  inter-key pace. The secret is piped on stdin so it never appears in `ps` or
+  terminal scrollback. `paste` is an alias. Owner-only, audited, unreachable
+  from the worker RPC — the same boundary as `vault copy`.
+
 ## [1.10.3] - 2026-08-30
 
 ### Fixed

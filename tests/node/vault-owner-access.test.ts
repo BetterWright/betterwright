@@ -180,6 +180,7 @@ test("reveal is refused when stdout is not a terminal", () => {
   assert.equal(piped.ok, false);
   assert.match(piped.error, /not a terminal/);
   assert.match(piped.error, /vault copy/);
+  assert.match(piped.error, /vault type/);
 
   assert.equal(revealAllowed({ isTTY: false, force: true, env: {} }).ok, true);
   assert.equal(
@@ -214,7 +215,7 @@ test("clipboard copy reports a usable error when no tool exists", async () => {
   // the assertions conditional and leave a test secret on the CI clipboard).
   const failingSpawn = () => {
     const child: any = new EventEmitter();
-    child.stdin = { end() {} };
+    child.stdin = { end() {}, on() { return this; } };
     queueMicrotask(() => child.emit("error", new Error("ENOENT")));
     return child;
   };
@@ -334,6 +335,8 @@ test("value-flag arguments are not mistaken for positionals", () => {
   assert.deepEqual(positionalArgs(["show", "cred_1", "--reveal"]), ["show", "cred_1"]);
   assert.deepEqual(positionalArgs(["list", "--query=github"]), ["list"]);
   assert.deepEqual(positionalArgs(["audit", "--limit", "5"]), ["audit"]);
+  assert.deepEqual(positionalArgs(["type", "--delay", "5", "cred_1"]), ["type", "cred_1"]);
+  assert.deepEqual(positionalArgs(["type", "cred_1", "--key-delay", "40"]), ["type", "cred_1"]);
 });
 
 test("a mistyped flag reads as a mistake, not a crash", async () => {
