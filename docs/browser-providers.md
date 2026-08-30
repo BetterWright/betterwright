@@ -43,6 +43,57 @@ betterwright run … --browser wss://browser.example.com/devtools/abc
 
 `BETTERWRIGHT_CDP_URL` is the host-level shorthand for `{ cdpUrl }`.
 
+## Configuring a default
+
+Passing `--browser` on every call gets old. `betterwright configure` writes the
+choice once, into the `browser` section of `<BETTERWRIGHT_HOME>/config.json`,
+and every later launch picks it up. Run it with no flags on a terminal and it
+lists the current setting, the built-in providers, any custom ones you added,
+a custom CDP endpoint, and your own Chromium binary, then offers to connect
+once so you find out immediately whether the key works.
+
+The same choices are available without prompting:
+
+```bash
+betterwright configure --show                      # current setting (--json for scripts)
+betterwright configure --browser steel --key-env STEEL_API_KEY
+betterwright configure --browser browserbase --browser-key bb_live_…
+betterwright configure --browser wss://browser.example.com/devtools/abc
+betterwright configure --browser /opt/chrome/chrome  # a local binary
+betterwright configure --managed                   # back to the managed fork
+betterwright configure --test                      # connect and print the version
+```
+
+Precedence for one launch, first hit wins:
+
+1. the explicit `provider` option, or `--browser` on the command line
+2. `BETTERWRIGHT_CDP_URL`
+3. the configured default
+4. the managed BetterChromium fork
+
+### Custom named providers
+
+Any service that speaks CDP can have a name of its own, so it works as
+`--browser <name>` everywhere a built-in provider does:
+
+```bash
+betterwright configure --add my-cloud \
+  --cdp-url 'wss://cdp.my-cloud.example/connect?token=${apiKey}' \
+  --key-env MY_CLOUD_TOKEN --display-name "My Cloud" --docs https://my-cloud.example/docs
+betterwright configure --remove my-cloud
+```
+
+`${apiKey}` in the connect URL (and in any header value) is replaced with the
+key at launch. A template with no `${apiKey}` needs no key at all.
+
+### Where keys are stored
+
+`--browser-key` stores the key in `config.json`, which is written owner-only
+(mode 0600) because of exactly this. `--key-env NAME` stores only the variable
+name, so the key stays in your environment and out of the file; the launch
+fails with a clear message when the variable is unset. Provider credentials
+are redacted from result envelopes either way.
+
 ## Named providers
 
 | Provider      | `provider:`      | API key env var          | Key format / notes |

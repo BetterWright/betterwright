@@ -9,6 +9,28 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- **`betterwright configure`** sets up the browser backend from the CLI: an
+  interactive picker over the managed fork, the nine built-in cloud providers,
+  a raw CDP URL, or a local binary, with non-interactive flags (`--browser`,
+  `--browser-key`, `--key-env`, `--managed`, `--show`, `--test`) for scripts.
+  The choice is persisted as `browser.default` in `<home>/config.json`
+  (written owner-only) and applies to every entry point: the JS API, the CLI,
+  MCP, and the daemon. Precedence for one launch: the explicit `provider`
+  option, then `BETTERWRIGHT_CDP_URL`, then the configured default, then the
+  managed fork.
+- **Custom named providers.** `betterwright configure --add <name>` registers
+  any CDP service under a name of your own, as a connect-URL template with an
+  optional `${apiKey}` placeholder, headers, and a key or key-env var. The
+  name then works everywhere a built-in provider name does, including
+  `provider: { provider: "<name>" }` in code. `--remove <name>` deletes it.
+- **The `betterwright/sdk` entrypoint**, a curated TypeScript import for
+  embedding: the client, policy, vault, agent, and provider helpers together,
+  plus a new `withBrowser(options?, fn)` helper that constructs a client, runs
+  the callback, and always closes it. The root `betterwright` export is
+  unchanged.
+
 ## [1.11.0] - 2026-08-30
 
 ### Added

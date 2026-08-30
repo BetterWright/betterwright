@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadCodexAuth, loadGrokAuth } from "./auth.js";
+import { configuredDefaultProvider } from "./browser-config.js";
 import { browserProviderInfo, resolveBrowserProvider } from "./browser-providers.js";
 import { chromiumNeedsSoftwareGpu } from "./browser-runtime.js";
 import {
@@ -75,7 +76,14 @@ export async function doctorReport() {
   let provider = null;
   let providerError = null;
   try {
-    const resolved = resolveBrowserProvider(undefined);
+    // The same ladder a launch walks: the env shorthand (which
+    // resolveBrowserProvider reads itself), then the default persisted by
+    // `betterwright configure`. A configured default whose key is missing
+    // throws here and is reported as the provider problem it is.
+    const configured = String(process.env.BETTERWRIGHT_CDP_URL || "").trim()
+      ? undefined
+      : configuredDefaultProvider();
+    const resolved = resolveBrowserProvider(configured ?? undefined);
     if (resolved?.plan) {
       const plan = resolved.plan;
       provider = plan.provider

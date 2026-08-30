@@ -93,6 +93,10 @@ await bw.close();
 returns one result envelope. Full API: [docs/javascript.md](docs/javascript.md)
 · [docs/browser-api.md](docs/browser-api.md).
 
+`betterwright/sdk` is the same API as a curated entrypoint, with a
+`withBrowser(fn)` helper that closes the client for you when your callback
+returns or throws: [docs/sdk.md](docs/sdk.md).
+
 `page` and `context` are restricted Playwright wrappers. Request interception
 (`page.route`, `context.route`, `unroute`, and `routeFromHAR`) is unavailable
 because BetterWright's worker-owned routing enforces network policy. For

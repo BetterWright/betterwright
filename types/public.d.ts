@@ -46,9 +46,13 @@ export type CloudBrowserProviderName =
   | "brightdata"
   | "oxylabs";
 
-/** A cloud browser minted over a named provider's API. */
+/**
+ * A cloud browser minted over a named provider's API, or a custom provider
+ * defined in `<home>/config.json` (`betterwright configure`). The union keeps
+ * completion for the built-in names while accepting configured ones.
+ */
 export interface CloudBrowserProvider {
-  provider: CloudBrowserProviderName;
+  provider: CloudBrowserProviderName | (string & {});
   /** Falls back to the provider's env var (e.g. BROWSERBASE_API_KEY). */
   apiKey?: string;
   /** Provider-native create-session fields, passed through verbatim. */
@@ -99,7 +103,11 @@ export interface BetterWrightOptions {
    *   (BETTERWRIGHT_CDP_URL is the env shorthand);
    * - `{ provider, apiKey?, sessionOptions? }` — mint a cloud browser over a
    *   named provider's API: "browser-use", "kernel", "browserbase", "steel",
-   *   "anchor", "hyperbrowser", "browserless", "brightdata", "oxylabs".
+   *   "anchor", "hyperbrowser", "browserless", "brightdata", "oxylabs", or a
+   *   custom name defined with `betterwright configure`.
+   *
+   * When the option is absent, the default saved by `betterwright configure`
+   * (in `<home>/config.json`) applies; BETTERWRIGHT_CDP_URL overrides it.
    *
    * Remote browsers run outside the guard proxy — page traffic cannot be
    * network-policy enforced there; the launch warning says so. Provider

@@ -432,6 +432,7 @@ export async function runInit({
     }
     log("");
     log("  Saved passwords:  betterwright vault list");
+    log("  Other browsers:   betterwright configure   (cloud providers, custom CDP)");
     log("  Anything wrong:   betterwright doctor");
     for (const note of notes) {
       log("");

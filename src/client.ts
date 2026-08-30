@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
 // implementation against them turns a drift between the two into a compile
 // error instead of something only a consumer would notice.
 import type { BetterWrightOptions, LiveViewOptions } from "../types/public.js";
+import {
+  configuredDefaultProvider,
+  expandProviderChoice,
+} from "./browser-config.js";
 import { resolveChromiumArgs } from "./chromium-args.js";
 import {
   assertRotationPreservesMatchMode,
@@ -87,12 +91,20 @@ function resolveHeadless(headless) {
   return headless !== false;
 }
 
-function resolveProviderOption(options) {
+function resolveProviderOption(options, home) {
   // Explicit option wins; BETTERWRIGHT_CDP_URL is the host-level shorthand
-  // for "attach to this CDP endpoint" (validated in the worker).
-  if (Object.hasOwn(options, "provider")) return options.provider ?? null;
+  // for "attach to this CDP endpoint" (validated in the worker); beneath
+  // both sits the default persisted by `betterwright configure`. Custom
+  // provider names expand here, on the client side, so the worker's
+  // validator stays free of filesystem access.
+  if (Object.hasOwn(options, "provider")) {
+    return options.provider == null
+      ? null
+      : expandProviderChoice(options.provider, { home });
+  }
   const env = String(process.env.BETTERWRIGHT_CDP_URL || "").trim();
-  return env ? { cdpUrl: env } : null;
+  if (env) return { cdpUrl: env };
+  return configuredDefaultProvider({ home });
 }
 
 /** The managed-browser legacy toggles are gone; reject them with the fix. */
@@ -367,7 +379,9 @@ export class BetterWright {
    *   apiKey?, sessionOptions? }` mints a cloud browser over that provider's
    *   API. Remote browsers run outside the guard proxy — the launch warning
    *   says so. BETTERWRIGHT_CDP_URL is the host-level shorthand for
-   *   `{ cdpUrl }`. See docs/browser-providers.md.
+   *   `{ cdpUrl }`; beneath both sits the default saved by `betterwright
+   *   configure`, where custom provider names are defined too. See
+   *   docs/browser-providers.md.
    * @param {string} [options.upstreamProxy] http:// or socks5:// egress proxy
    *   chained through the local policy guard (the IP layer): targets observe
    *   the upstream IP while policy and DNS-rebinding checks stay local.
@@ -432,7 +446,7 @@ export class BetterWright {
       ? options.credentialCapture !== false
       : false;
     assertNoLegacyBrowserOptions();
-    this.provider = resolveProviderOption(options);
+    this.provider = resolveProviderOption(options, this.home);
     this.browserFlavor = "chromium-fork";
     this.headless = resolveHeadless(options.headless);
     this.fingerprintNoise = options.fingerprintNoise !== false;
