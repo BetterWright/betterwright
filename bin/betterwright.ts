@@ -966,26 +966,48 @@ async function cmdInteractive(flags) {
     }
     readline.cursorTo(process.stdout, 0);
   };
+  // Readline repaints a prompt as several small writes (clear, text, cursor
+  // moves), and a terminal is free to paint between them — at eight repaints
+  // a second that shows up as flicker. Cork batches each repaint into one
+  // flush so the terminal only ever sees complete lines.
+  const paintAtomically = (draw) => {
+    if (!process.stdout.isTTY) {
+      draw();
+      return;
+    }
+    process.stdout.cork();
+    try {
+      draw();
+    } finally {
+      process.stdout.uncork();
+    }
+  };
   const showSteeringPrompt = () => {
     if (!taskRunning || promptHeld || !process.stdout.isTTY) return;
     const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
     const elapsed = formatElapsed(Date.now() - phaseStartedAt);
-    rl.setPrompt(`${accent(frame)} ${dim(`${spinnerLabel} · ${elapsed} · steer `)}${accent("▸ ")}`);
-    rl.prompt(true);
+    paintAtomically(() => {
+      rl.setPrompt(`${accent(frame)} ${dim(`${spinnerLabel} · ${elapsed} · steer `)}${accent("▸ ")}`);
+      rl.prompt(true);
+    });
   };
   const writeInteractive = (
     prefix,
     text,
     style = (value) => value,
   ) => {
-    if (taskRunning) clearInputPrompt();
-    const wrapped = formatHangingText(prefix, text, {
-      columns: process.stdout.columns || 100,
+    // One flush for erase + line + fresh prompt, so a burst of step lines
+    // never shows a half-cleared prompt between them.
+    paintAtomically(() => {
+      if (taskRunning) clearInputPrompt();
+      const wrapped = formatHangingText(prefix, text, {
+        columns: process.stdout.columns || 100,
+      });
+      process.stdout.write(
+        `${wrapped.split("\n").map((line) => style(line)).join("\n")}\n`,
+      );
+      showSteeringPrompt();
     });
-    process.stdout.write(
-      `${wrapped.split("\n").map((line) => style(line)).join("\n")}\n`,
-    );
-    showSteeringPrompt();
   };
   const beginTaskInput = () => {
     taskRunning = true;
