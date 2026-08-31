@@ -1008,10 +1008,13 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
           try {
             const remainingSeconds = Math.max(5, Math.floor((deadline - Date.now()) / 1000));
             let reply = "";
-            // Prefer the live-view chat when the viewer surface is available;
-            // fall back to the host's askUser (CLI) when it is not.
+            // A host-provided askUser is someone actually at a terminal, so
+            // the question goes there. The live-view chat handles the rest:
+            // exec-style runs where a viewer URL is the only human surface.
+            // Preferring live view when both exist parked the question in a
+            // chat nobody had open while the console sat on a silent prompt.
             const canLiveAsk =
-              withHandoff && isCallable(browser.waitForAsk);
+              !askUser && withHandoff && isCallable(browser.waitForAsk);
             if (canLiveAsk) {
               const view = await withinDeadline(() => ensureAgentLiveView(), deadline, stopSignal);
               if (view?.url) {

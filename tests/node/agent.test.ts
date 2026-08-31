@@ -1748,6 +1748,34 @@ test("ask tool waits on live-view chat when liveView is available", async () => 
   assert.match(toolTurn.results[0].content, /account ending 999/);
 });
 
+test("ask goes to askUser, not the live-view chat, when the host provides one", async () => {
+  // Regression: with both surfaces available the question used to wait in
+  // the live-view chat, which the person at the terminal had never opened,
+  // while their console showed only a working prompt.
+  const browser = liveViewBrowser();
+  const asked = [];
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "a1", name: "ask", input: { question: "Proceed?", options: [] } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const result = await runAgentTask({
+    task: "sign in",
+    model,
+    browser,
+    liveView: true,
+    onStep: () => {},
+    askUser: async ({ question }) => {
+      asked.push(question);
+      return "yes";
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(asked, ["Proceed?"]);
+  assert.equal(browser.calls.asks.length, 0);
+  const toolTurn = result.transcript.find((message) => message.role === "tool");
+  assert.match(toolTurn.results[0].content, /User answered: yes/);
+});
+
 // --- Tool schema parity across the three surfaces --------------------------
 
 // Drop the keys a surface layers on top of the shared field schemas, so the
