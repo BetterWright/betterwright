@@ -67,6 +67,14 @@ export interface AgentStepEvent {
   prompt?: string;
 }
 
+export interface AgentPhaseEvent {
+  /** "reasoning" while a model turn is in flight, "acting" while its tool calls run. */
+  phase: "reasoning" | "acting";
+  step: number;
+  /** The tool names about to run, present on `phase: "acting"`. */
+  tools?: string[];
+}
+
 export interface RunAgentTaskOptions {
   task: string;
   model?: string | AgentModel;
@@ -95,6 +103,11 @@ export interface RunAgentTaskOptions {
    */
   signal?: AbortSignal;
   onStep?: (event: AgentStepEvent) => void;
+  /**
+   * Fired at the start of each model turn ("reasoning") and again when its
+   * tool calls begin ("acting"), so a live UI can label the current wait.
+   */
+  onPhase?: (event: AgentPhaseEvent) => void;
   /**
    * When provided, the loop exposes an `ask` tool so the model can put a
    * question to the user mid-task; the returned string is fed back as the

@@ -101,6 +101,10 @@ function isStepCallback(value: UntrustedValue): value is NonNullable<RunAgentTas
   return isCallable(value);
 }
 
+function isPhaseCallback(value: UntrustedValue): value is NonNullable<RunAgentTaskOptions["onPhase"]> {
+  return isCallable(value);
+}
+
 /**
  * Close an unfinished turn so the transcript stays a valid conversation.
  *
@@ -674,6 +678,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   const session = String(options.session || "default");
   const stopSignal = options.signal instanceof AbortSignal ? options.signal : null;
   const onStep = isStepCallback(options.onStep) ? options.onStep : () => {};
+  const onPhase = isPhaseCallback(options.onPhase) ? options.onPhase : () => {};
   const askUser = isCallable(options.askUser) ? options.askUser : null;
   const drainSteering = isCallable(options.drainSteering) ? options.drainSteering : null;
   const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
@@ -903,6 +908,10 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
       }
       // Human guidance lands at turn boundaries (never mid-browser step).
       appendHumanGuidance(await collectHumanGuidance());
+      // The two long silences in a run are the model turn and the tool batch
+      // that follows it. Announce each so a live UI can say which one the
+      // user is waiting on; step events only fire once a tool has news.
+      onPhase({ phase: "reasoning", step: steps });
       let response;
       try {
         response = await completeWithRetry(
@@ -957,6 +966,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
         break;
       }
 
+      onPhase({ phase: "acting", step: steps, tools: toolCalls.map((call) => call.name) });
       const results = [];
       for (const call of toolCalls) {
         if (call.name === "done") {

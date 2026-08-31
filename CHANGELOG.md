@@ -31,6 +31,12 @@ Releases before 1.1.3 predate this file; their notes live on the
   warnings yellow. Applied across help, `doctor`, `init`, `configure`, and
   `vault`. Piped output, `--json`, NO_COLOR, and TERM=dumb get exactly the
   plain bytes they always did; FORCE_COLOR overrides in either direction.
+- **A live working indicator.** While a task runs, the interactive console's
+  steering prompt animates a spinner with the current phase and how long it
+  has been in it ("reasoning · 12s", "browsing · 3s"), and `exec` shows the
+  same spinner on stderr between step lines. Phases come from a new optional
+  `onPhase` callback on `runAgentTask`, fired at the start of each model turn
+  and each tool batch. TTY only; piped output is unchanged.
 - **The `betterwright/sdk` entrypoint**, a curated TypeScript import for
   embedding: the client, policy, vault, agent, and provider helpers together,
   plus a new `withBrowser(options?, fn)` helper that constructs a client, runs
