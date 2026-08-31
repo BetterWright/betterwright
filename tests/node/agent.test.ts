@@ -163,6 +163,30 @@ test("runAgentTask drives browser then finishes on done", async () => {
   assert.match(toolTurn.results[0].content, /"result":"HN"/);
 });
 
+test("runAgentTask announces each model turn and tool batch through onPhase", async () => {
+  const browser = fakeBrowser({ runs: [{ ok: true, result: "HN", artifacts: [], durationMs: 9 }] });
+  const model = scriptedModel([
+    { text: "checking", toolCalls: [{ id: "c1", name: "browser", input: { code: "1", note: "read" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "done", input: { answer: "The answer" } }] },
+  ]);
+  const phases = [];
+
+  const result = await runAgentTask({
+    task: "get the title",
+    model,
+    browser,
+    onPhase: (event) => phases.push(event),
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(phases, [
+    { phase: "reasoning", step: 1 },
+    { phase: "acting", step: 1, tools: ["browser"] },
+    { phase: "reasoning", step: 2 },
+    { phase: "acting", step: 2, tools: ["done"] },
+  ]);
+});
+
 test("successful browser observations omit empty optional fields", async () => {
   const browser = fakeBrowser({
     runs: [{ ok: true, result: "Example Domain", artifacts: [], durationMs: 7 }],

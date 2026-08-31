@@ -56,6 +56,7 @@ import {
   makeLineReader,
   readExecTaskFromStdin,
 } from "../src/cli-io.js";
+import { createSpinner, formatElapsed, phaseLabel, SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "../src/cli-spinner.js";
 import { cliPaint } from "../src/cli-theme.js";
 import {
   daemonLogPath,
@@ -945,6 +946,16 @@ async function cmdInteractive(flags) {
   const nextLine = makeLineReader(rl);
   rl.on("SIGINT", () => rl.close());
   let taskRunning = false;
+  // The steering prompt doubles as the working indicator: a spinner frame,
+  // the current phase, and how long it has been in it animate in front of
+  // "steer ▸", so a long model call never looks like a hang.
+  let phaseStartedAt = 0;
+  let spinnerLabel = "reasoning";
+  let spinnerFrame = 0;
+  let spinnerTimer = null;
+  // While the ask tool holds the line ("answer ▸"), the animation must not
+  // repaint the prompt out from under the user's reply.
+  let promptHeld = false;
 
   const clearInputPrompt = () => {
     if (!process.stdout.isTTY) return;
@@ -956,8 +967,10 @@ async function cmdInteractive(flags) {
     readline.cursorTo(process.stdout, 0);
   };
   const showSteeringPrompt = () => {
-    if (!taskRunning || !process.stdout.isTTY) return;
-    rl.setPrompt(`${dim("steer ")}${accent("▸ ")}`);
+    if (!taskRunning || promptHeld || !process.stdout.isTTY) return;
+    const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
+    const elapsed = formatElapsed(Date.now() - phaseStartedAt);
+    rl.setPrompt(`${accent(frame)} ${dim(`${spinnerLabel} · ${elapsed} · steer `)}${accent("▸ ")}`);
     rl.prompt(true);
   };
   const writeInteractive = (
@@ -976,9 +989,22 @@ async function cmdInteractive(flags) {
   };
   const beginTaskInput = () => {
     taskRunning = true;
+    phaseStartedAt = Date.now();
+    spinnerLabel = "reasoning";
+    spinnerFrame = 0;
+    if (process.stdout.isTTY && !spinnerTimer) {
+      spinnerTimer = setInterval(() => {
+        spinnerFrame += 1;
+        // prompt(true) preserves whatever steering text is mid-typing.
+        showSteeringPrompt();
+      }, SPINNER_INTERVAL_MS);
+      spinnerTimer.unref?.();
+    }
     showSteeringPrompt();
   };
   const endTaskInput = () => {
+    if (spinnerTimer) clearInterval(spinnerTimer);
+    spinnerTimer = null;
     clearInputPrompt();
     taskRunning = false;
   };
@@ -1160,6 +1186,13 @@ async function cmdInteractive(flags) {
           history,
           drainSteering: () => steering.splice(0, steering.length),
           liveView: liveViewCliOptions(process.argv),
+          onPhase: (event) => {
+            const label = phaseLabel(event);
+            if (label === spinnerLabel) return;
+            spinnerLabel = label;
+            phaseStartedAt = Date.now();
+            showSteeringPrompt();
+          },
           onStep: ({ step, tool, note, url }) => {
             // `ask` is rendered by the askUser handler below; skip it here.
             if (tool === "ask") return;
@@ -1193,7 +1226,13 @@ async function cmdInteractive(flags) {
               for (const [i, option] of options.entries())
                 writeInteractive(`      ${i + 1}. `, option, dim);
             }
-            const ans = await nextLine("  answer ▸ ");
+            promptHeld = true;
+            let ans;
+            try {
+              ans = await nextLine("  answer ▸ ");
+            } finally {
+              promptHeld = false;
+            }
             showSteeringPrompt();
             return ans === null ? "" : ans.trim();
           },
@@ -1297,17 +1336,29 @@ async function cmdExec(flags) {
   const session = sessionName(flagValue(argv, "--session", "default"));
   const fresh = flags.has("--fresh");
   const home = defaultDaemonHome();
+  // Step lines share stderr with a spinner that fills the silence between
+  // them (a single model call can run for tens of seconds). The spinner owns
+  // the current line, so every stderr write goes through `progress`, which
+  // erases it first; the next tick redraws it under the new line.
+  const spinner = createSpinner({
+    stream: process.stderr,
+    paint: cliPaint({ stream: process.stderr }),
+  });
+  const progress = (text) => {
+    spinner.clear();
+    process.stderr.write(text);
+  };
   const onStep = ({ step, tool, note, url }) => {
     if (url && (tool === "handoff" || tool === "liveView")) {
-      process.stderr.write(`\n  ▶ ${tool === "handoff" ? "HANDOFF" : "LIVE VIEW"}: ${url}\n`);
-      if (tool === "handoff") process.stderr.write(`    ${note}\n\n`);
+      progress(`\n  ▶ ${tool === "handoff" ? "HANDOFF" : "LIVE VIEW"}: ${url}\n`);
+      if (tool === "handoff") progress(`    ${note}\n\n`);
       return;
     }
     if (tool === "liveView" && note) {
-      process.stderr.write(`  ! ${note}\n`);
+      progress(`  ! ${note}\n`);
       return;
     }
-    process.stderr.write(`  [${step}] ${tool}${note ? `: ${note}` : ""}\n`);
+    progress(`  [${step}] ${tool}${note ? `: ${note}` : ""}\n`);
   };
 
   let result;
@@ -1324,15 +1375,16 @@ async function cmdExec(flags) {
       let interrupting = false;
       const onSigint = () => {
         if (interrupting) {
-          process.stderr.write("\n  ! giving up on the interrupt; the run may still be stopping\n");
+          progress("\n  ! giving up on the interrupt; the run may still be stopping\n");
           process.exit(130);
         }
         interrupting = true;
-        process.stderr.write("\n  ! stopping the run — the transcript is kept, so you can resume it\n");
+        progress("\n  ! stopping the run — the transcript is kept, so you can resume it\n");
         void interruptSession(channel, session, { wait: false });
       };
       process.on("SIGINT", onSigint);
       try {
+        spinner.start();
         // The agent loop runs in the daemon, so the conversation and the
         // browser session both persist for the next exec in this session.
         result = await execTask(
@@ -1349,7 +1401,7 @@ async function cmdExec(flags) {
           },
           {
             onStep,
-            onNotice: (note) => process.stderr.write(`  ! ${note}\n`),
+            onNotice: (note) => progress(`  ! ${note}\n`),
             // The run belongs to the daemon, not to this socket. If the pipe
             // breaks mid-task, get back to the same run rather than losing it.
             reconnect: async () => {
@@ -1371,6 +1423,7 @@ async function cmdExec(flags) {
             .catch(() => {});
         }
       } catch (error) {
+        spinner.stop();
         // Config problems (missing credentials, missing SDK) read better as a
         // plain line than a stack trace.
         console.error(error?.message || String(error));
@@ -1379,6 +1432,7 @@ async function cmdExec(flags) {
         }
         return 1;
       } finally {
+        spinner.stop();
         process.off("SIGINT", onSigint);
         channel.end();
       }
@@ -1409,18 +1463,23 @@ async function cmdExec(flags) {
         headless: !flags.has("--headed"),
         liveView: liveViewCliOptions(argv),
         onStep,
+        onPhase: (event) => spinner.setLabel(phaseLabel(event)),
       };
       // The same identity the daemon would have used, so a one-shot exec
       // sees the same logins instead of silently acting as the default.
       const profile = cliProfile();
       if (profile) taskOptions.profile = profile;
+      spinner.start();
       const full = await runAgentTask(taskOptions);
       saveTranscript(home, session, full.transcript, {}, cliProfile());
       const { transcript: _transcript, ...summary } = full;
       result = { ...summary, session, resumedMessages: history.length };
     } catch (error) {
+      spinner.stop();
       console.error(error?.message || String(error));
       return 1;
+    } finally {
+      spinner.stop();
     }
   }
   process.stderr.write(
