@@ -9,6 +9,13 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-31
+
+BetterWright 2.0 contains no breaking changes: every 1.x API, CLI command,
+flag, and config file keeps working unchanged. The major version marks the
+new setup experience (first-run onboarding, `configure`, the SDK entrypoint)
+rather than a compatibility break.
+
 ### Added
 
 - **First-run onboarding.** A bare `betterwright` on a terminal with nothing
@@ -1240,7 +1247,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/BetterWright/betterwright/compare/v1.11.0...v2.0.0
 [1.11.0]: https://github.com/BetterWright/betterwright/compare/v1.10.3...v1.11.0
 [1.10.3]: https://github.com/BetterWright/betterwright/compare/v1.10.2...v1.10.3
 [1.10.2]: https://github.com/BetterWright/betterwright/compare/v1.10.1...v1.10.2
