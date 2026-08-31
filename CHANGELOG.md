@@ -45,6 +45,11 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
+- **The `ask` tool asks the person at the terminal.** When a host provides an
+  `askUser` callback (the interactive console always does), the question goes
+  there. It used to wait in the live-view chat whenever a live-view surface
+  existed, even one nobody had open, so the console showed no question and
+  swallowed replies as steering until the ask timed out.
 - **`betterwright run --browser steel script.js` runs the file.** `--browser`
   and `--browser-key` were missing from the value-flag list, so the provider
   name was read as the script positional. Both now consume their value in
