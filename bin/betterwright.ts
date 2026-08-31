@@ -1987,6 +1987,16 @@ async function main() {
       console.log(styler().help(MAIN_USAGE));
       return 0;
     }
+    // First launch on a TTY with nothing installed: offer the guided init
+    // before dropping into a console whose first task could only fail. Every
+    // other entry point (mcp, __daemon, exec, run, non-TTY) is untouched.
+    const { maybeOfferFirstRunSetup } = await import("../src/onboard.js");
+    const firstRun = await maybeOfferFirstRunSetup({
+      doctorReport,
+      version: packageVersion(),
+      runInit: () => cmdInit(flags),
+    });
+    if (firstRun !== null) return firstRun;
     return cmdInteractive(flags);
   }
   const command = first;

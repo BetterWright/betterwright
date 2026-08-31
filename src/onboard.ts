@@ -22,6 +22,7 @@ import readline from "node:readline";
 import { promisify } from "node:util";
 
 import { cliPaint, paintedLog } from "./cli-theme.js";
+import { defaultHome } from "./home.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -210,6 +211,126 @@ function createPrompter({ interactive, log }) {
     },
     log,
   };
+}
+
+// --- First-run onboarding -------------------------------------------------
+//
+// A bare `betterwright` is the most likely first command someone ever runs,
+// and without a browser installed the console can only fail on its first
+// task. So the console checks a one-time marker in the BetterWright home and,
+// when nothing is installed yet, offers the same guided init before starting.
+// The marker (not readiness) is the gate so the offer happens at most once:
+// declining it is remembered, and someone who set up by hand never sees it.
+
+export function firstRunMarkerPath(home = defaultHome()) {
+  return path.join(home, "first-run.json");
+}
+
+function writeFirstRunMarker(home, version, setup) {
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(
+    firstRunMarkerPath(home),
+    `${JSON.stringify({ setup, version, at: new Date().toISOString() }, null, 2)}\n`,
+  );
+}
+
+// The welcome card follows the bast.sh first-run look: a rounded box, one
+// accent glyph beside a bold title, a one-line pitch, then a legend whose
+// markers carry the accent while the text stays dim. Painted here rather than
+// at the log sink because box-drawing rows match none of the status-glyph
+// patterns paintedLog knows.
+export function welcomeCardLines(paint = cliPaint()) {
+  const rows = [
+    {
+      text: "◆  Welcome to BetterWright",
+      render: `${paint.accentBold("◆")}  ${paint.bold("Welcome to BetterWright")}`,
+    },
+    { text: "" },
+    { text: "A persistent, policy-guarded browser for your coding agents." },
+    { text: "" },
+    { text: "First run: the managed browser is not installed yet." },
+    { text: "Guided setup takes about a minute:" },
+    { text: "" },
+    ...[
+      ["1", "download the managed browser (~200 MB, once)"],
+      ["2", "wire the coding agents found on this machine"],
+      ["3", "verify everything with a real page load"],
+    ].map(([key, what]) => ({
+      text: `${key}   ${what}`,
+      render: `${paint.accent(key)}   ${paint.dim(what)}`,
+    })),
+  ];
+  const width = Math.max(...rows.map((row) => row.text.length));
+  const bar = "─".repeat(width + 2);
+  return [
+    paint.dim(`╭${bar}╮`),
+    ...rows.map((row) => {
+      const pad = " ".repeat(width - row.text.length);
+      return `${paint.dim("│")} ${row.render ?? paint.dim(row.text)}${pad} ${paint.dim("│")}`;
+    }),
+    paint.dim(`╰${bar}╯`),
+  ];
+}
+
+/**
+ * Offer guided setup on the first interactive console launch.
+ * Returns null to continue into the console, or an exit code when the accepted
+ * setup failed (a console with no browser would only fail more confusingly).
+ *
+ * @param {object} options
+ * @param {string} options.home BetterWright home (marker location)
+ * @param {boolean} options.isTTY both stdin and stdout are terminals
+ * @param {Function} options.doctorReport
+ * @param {Function} options.runInit async () => number, the wired `init` command
+ * @param {Function} [options.confirm] async (question) => boolean, for tests
+ */
+export async function maybeOfferFirstRunSetup({
+  home = defaultHome(),
+  isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  doctorReport,
+  runInit,
+  version = null,
+  log = paintedLog(cliPaint()),
+  confirm = null,
+}: any = {}) {
+  // Scripted and piped invocations must never block on a prompt.
+  if (!isTTY) return null;
+  if (fs.existsSync(firstRunMarkerPath(home))) return null;
+  const report = await doctorReport();
+  if (report.ready) {
+    // Set up by hand before ever opening the console. Record that quietly so
+    // later launches skip the doctor check.
+    writeFirstRunMarker(home, version, "already-ready");
+    return null;
+  }
+  const paint = cliPaint();
+  log("");
+  for (const line of welcomeCardLines(paint)) log(`  ${line}`);
+  log("");
+  let accepted;
+  const question = `  ${paint.accent("▸")} Run guided setup now?`;
+  if (confirm) {
+    accepted = await confirm(question);
+  } else {
+    const prompt = createPrompter({ interactive: true, log });
+    try {
+      accepted = await prompt.confirm(question, true);
+    } finally {
+      prompt.close();
+    }
+  }
+  if (!accepted) {
+    // Remembered: the console never asks twice. `betterwright init` stays
+    // available for when they want it.
+    writeFirstRunMarker(home, version, "declined");
+    log("  Skipping setup. Run `betterwright init` anytime for the guided path.");
+    log("");
+    return null;
+  }
+  const code = await runInit();
+  if (code !== 0) return code; // no marker: a failed download should offer again
+  writeFirstRunMarker(home, version, "completed");
+  return null;
 }
 
 /**
