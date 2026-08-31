@@ -16,8 +16,11 @@ import {
 import {
   agentHostTargets,
   detectAgentHosts,
+  firstRunMarkerPath,
+  maybeOfferFirstRunSetup,
   runInit,
   upsertCodexInstructions,
+  welcomeCardLines,
 } from "../../dist/src/onboard.js";
 
 function tempHome() {
@@ -391,4 +394,116 @@ test("a usable-but-defaultless backend gets a name-one hint, not a false refusal
   // "no model backend is configured" — that is false and offers no route out.
   assert.doesNotMatch(hint, /No model backend is configured/);
   assert.match(hint, /openrouter\/<id>/);
+});
+
+// --- First-run onboarding gate ---------------------------------------------
+
+const NOT_READY_REPORT = { ...READY_REPORT, chromium_fork: null, browser: "unavailable", ready: false };
+
+function firstRunHarness(home, overrides = {}) {
+  const calls = { doctor: 0, init: 0 };
+  return {
+    calls,
+    options: {
+      home,
+      isTTY: true,
+      version: "9.9.9",
+      log: () => {},
+      doctorReport: async () => {
+        calls.doctor += 1;
+        return NOT_READY_REPORT;
+      },
+      runInit: async () => {
+        calls.init += 1;
+        return 0;
+      },
+      confirm: async () => true,
+      ...overrides,
+    },
+  };
+}
+
+function readMarker(home) {
+  return JSON.parse(fs.readFileSync(firstRunMarkerPath(home), "utf8"));
+}
+
+test("first-run offer never fires without a TTY", async () => {
+  const home = tempHome();
+  const { calls, options } = firstRunHarness(home, { isTTY: false });
+  assert.equal(await maybeOfferFirstRunSetup(options), null);
+  assert.equal(calls.doctor, 0);
+  assert.equal(calls.init, 0);
+  assert.equal(fs.existsSync(firstRunMarkerPath(home)), false);
+});
+
+test("accepted first run delegates to init and writes the marker once", async () => {
+  const home = tempHome();
+  const { calls, options } = firstRunHarness(home);
+  assert.equal(await maybeOfferFirstRunSetup(options), null);
+  assert.equal(calls.init, 1);
+  assert.equal(readMarker(home).setup, "completed");
+  assert.equal(readMarker(home).version, "9.9.9");
+  // The marker short-circuits the next launch before any doctor check.
+  assert.equal(await maybeOfferFirstRunSetup(options), null);
+  assert.equal(calls.doctor, 1);
+  assert.equal(calls.init, 1);
+});
+
+test("declining the first-run offer is remembered and never re-asked", async () => {
+  const home = tempHome();
+  const { calls, options } = firstRunHarness(home, { confirm: async () => false });
+  assert.equal(await maybeOfferFirstRunSetup(options), null);
+  assert.equal(calls.init, 0);
+  assert.equal(readMarker(home).setup, "declined");
+  assert.equal(await maybeOfferFirstRunSetup(options), null);
+  assert.equal(calls.doctor, 1);
+});
+
+test("an already-ready install records the marker quietly, no prompt", async () => {
+  const home = tempHome();
+  let asked = false;
+  const { calls, options } = firstRunHarness(home, {
+    doctorReport: async () => {
+      calls.doctor += 1;
+      return READY_REPORT;
+    },
+    confirm: async () => {
+      asked = true;
+      return true;
+    },
+  });
+  // The harness's calls object is created before overrides run; rebuild count.
+  calls.doctor = 0;
+  assert.equal(await maybeOfferFirstRunSetup(options), null);
+  assert.equal(asked, false);
+  assert.equal(calls.init, 0);
+  assert.equal(readMarker(home).setup, "already-ready");
+});
+
+test("a failed init surfaces its exit code and leaves no marker", async () => {
+  const home = tempHome();
+  const { options } = firstRunHarness(home, { runInit: async () => 7 });
+  assert.equal(await maybeOfferFirstRunSetup(options), 7);
+  // No marker: the next launch should offer setup again.
+  assert.equal(fs.existsSync(firstRunMarkerPath(home)), false);
+  assert.equal(await maybeOfferFirstRunSetup({ ...options, runInit: async () => 0 }), null);
+  assert.equal(readMarker(home).setup, "completed");
+});
+
+test("welcome card is a closed box with even edges and no paint bleed", () => {
+  const identity = (text) => String(text);
+  const paint = {
+    accent: identity,
+    accentBold: identity,
+    bold: identity,
+    dim: identity,
+    heading: identity,
+  };
+  const lines = welcomeCardLines(paint);
+  assert.ok(lines[0].startsWith("╭") && lines[0].endsWith("╮"));
+  assert.ok(lines.at(-1).startsWith("╰") && lines.at(-1).endsWith("╯"));
+  const width = lines[0].length;
+  for (const line of lines) assert.equal(line.length, width, line);
+  assert.ok(lines.some((line) => line.includes("Welcome to BetterWright")));
+  assert.ok(lines.some((line) => line.includes("~200 MB")));
 });

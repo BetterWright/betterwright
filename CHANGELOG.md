@@ -11,6 +11,14 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Added
 
+- **First-run onboarding.** A bare `betterwright` on a terminal with nothing
+  installed now opens with a welcome card and offers the guided setup
+  (`betterwright init`) before starting the console: browser download, agent
+  wiring, and a verified page load. The offer happens at most once; declining
+  is remembered in `<home>/first-run.json`, and installs done by hand are
+  detected and never prompted. Scripted entry points (`exec`, `run`, `mcp`,
+  pipes) are untouched.
+
 - **`betterwright configure`** sets up the browser backend from the CLI: an
   interactive picker over the managed fork, the nine built-in cloud providers,
   a raw CDP URL, or a local binary, with non-interactive flags (`--browser`,
