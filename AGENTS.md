@@ -62,3 +62,26 @@ because they are enforced by code, not convention.
 - **`src/worker.ts` compiles to an entrypoint with import side effects** (stdin
   readline, ready handshake) — never import the source or
   `dist/src/worker.js` directly from unit tests.
+
+## Cursor Cloud specific instructions
+
+The Cloud Agent environment is defined by `.cursor/environment.json`, whose
+install phase (`.cursor/install.sh`) selects the `.nvmrc` Node (22.18.0, the
+`engines` floor), runs `npm ci`, builds the runtime/CLI and test harness, and
+downloads the pinned BetterChromium backend. So `dist/`, `node_modules`, and the
+browser are already present on a fresh agent — running the built CLI
+(`node dist/bin/betterwright.js …`) and the product work out of the box.
+
+One caveat when running the repo's own npm scripts as a Cloud Agent: the
+platform's non-interactive shell puts a bundled `node` (currently 22.14.x)
+ahead of the pinned toolchain on `PATH`, which is below the `>=22.18.0` floor
+and breaks `npm run lint` (oxlint loads a `.ts` plugin that needs Node's native
+type stripping). Interactive terminals already pick up the pinned Node via nvm;
+for a one-off non-interactive command, activate it explicitly first (a bare
+`nvm use` does not reliably win against the bundled `node`):
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v$(tr -d '[:space:]' < /workspace/.nvmrc)/bin:$PATH"
+node --version   # -> v22.18.0
+npm run lint     # and typecheck / test:unit / release:check
+```
