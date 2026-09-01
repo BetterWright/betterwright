@@ -24,7 +24,8 @@ Releases before 1.1.3 predate this file; their notes live on the
   Oxylabs stay connect-only and are refused with a clear message. Keys resolve
   from `--browser-key` / `--key-env`, then a saved account, then a matching
   launch default, then the provider's well-known env var. `--session-id` on
-  `run` / `repl` / `exec` attaches to an existing box instead of minting.
+  `run` / `repl` / `exec` attaches to an existing box instead of minting,
+  and disconnect does not stop that box.
 - **SDK session helpers** on `betterwright/sdk`: `createProviderSession`,
   `listProviderSessions`, `getProviderSession`, `stopProviderSession`,
   `REST_BROWSER_PROVIDER_NAMES`, and `lifecycle` on `browserProviderInfo`.

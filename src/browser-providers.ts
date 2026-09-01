@@ -569,6 +569,9 @@ function resolveNamedProvider(descriptor, name, provider, env) {
   // does not mint a second billed browser. Steel's connect URL can also
   // carry sessionId; REST attach is used when the provider has a get
   // endpoint so a missing id fails here instead of at the WebSocket.
+  // Attach never owns the box — close / failed CDP connect must not stop
+  // it — so the billing-keeps-running warning applies even when the
+  // provider has a stop API.
   if (sessionId && descriptor.get) {
     return {
       kind: "remote",
@@ -576,7 +579,7 @@ function resolveNamedProvider(descriptor, name, provider, env) {
       apiKey,
       create: ({ fetchJson }: any = {}) =>
         attachNamedSession(descriptor, name, apiKey, sessionId, fetchJson),
-      warnings: remoteWarnings(descriptor.displayName, Boolean(descriptor.end)),
+      warnings: remoteWarnings(descriptor.displayName, false),
     };
   }
   if (descriptor.staticEndpoint) {
@@ -635,6 +638,13 @@ async function attachNamedSession(descriptor, name, apiKey, sessionId, fetchJson
   const data = await fetchProviderRecord(descriptor, apiKey, sessionId, fetchJson);
   const plan = await sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson);
   if (!plan.sessionId) plan.sessionId = sessionId;
+  // sessionPlanFromPayload arms descriptor.end for sessions this launch
+  // minted. An existing box is owned by `boxes stop` (or the provider's
+  // timeout); the worker calls plan.end on CDP connect failure and on
+  // context close, so leaving that callback here would delete the box
+  // the caller meant to keep.
+  plan.end = null;
+  plan.warnings = remoteWarnings(descriptor.displayName, false);
   return plan;
 }
 

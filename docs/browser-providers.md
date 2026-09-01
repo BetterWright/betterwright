@@ -138,7 +138,7 @@ list/show/stop) refuses them with a message that says to connect instead.
 | Provider      | `provider:`      | API key env var          | Launch / boxes |
 | ------------- | ---------------- | ------------------------ | -------------- |
 | Browser Use   | `browser-use`    | `BROWSER_USE_API_KEY`    | Launch is a connect URL (`sessionOptions.proxyCountryCode` sets egress). Boxes speak the v4 browsers API. `--session-id` GETs that browser and attaches. |
-| Kernel        | `kernel`         | `KERNEL_API_KEY`         | Sessions minted via `POST /browsers` and released on close. `boxes` uses the same browsers API. |
+| Kernel        | `kernel`         | `KERNEL_API_KEY`         | Launch mints via `POST /browsers` and releases on close. `--session-id` attaches without taking ownership. `boxes` uses the same browsers API. |
 | Browserbase   | `browserbase`    | `BROWSERBASE_API_KEY`    | Sessions released on close (`REQUEST_RELEASE`). `sessionOptions` passes create-session fields. |
 | Steel         | `steel`          | `STEEL_API_KEY`          | Launch is `wss://connect.steel.dev`. Boxes speak the Sessions API. `--session-id` GETs the session, then reconstructs the connect URL. |
 | Anchor        | `anchor`         | `ANCHOR_API_KEY`         | Sessions minted via `POST /api/v1/sessions` and deleted on close. |
@@ -177,8 +177,10 @@ A remote browser runs on the provider's side of the WebSocket:
   `webmcp.tools()` returns an actionable unsupported-feature error.
 - **Sessions can keep billing.** Providers whose *launch* path mints a REST
   session (Kernel, Browserbase, Anchor, Hyperbrowser) release that session
-  when the browser closes. Steel and Browser Use still launch through a
-  connect URL, so a launch does not create a billed REST session — use
+  when the browser closes. Attaching to an existing box (`--session-id` /
+  `sessionOptions.sessionId`) never takes that ownership: disconnect does
+  not stop the box. Steel and Browser Use still launch through a connect
+  URL, so a launch does not create a billed REST session — use
   `betterwright boxes start` / `stop` when you want one. Browserless, Bright
   Data, and Oxylabs have no session ids; the browser lasts as long as the
   WebSocket. The launch warning names the cases that can keep billing after

@@ -298,6 +298,7 @@ test("kernel --session-id attaches via GET instead of minting", async () => {
     { provider: "kernel", apiKey: MOCK_PROVIDER_KEYS.kernel, sessionOptions: { sessionId: created.id } },
     { env: {} },
   );
+  assert.match(resolved.plan.warnings.join("\n"), /keep running \(and billing\)/);
   const plan = await resolved.plan.create({ fetchJson: api.fetchJson });
   assert.equal(plan.sessionId, created.id);
   assert.equal(plan.cdpUrl, "wss://onkernel.example/devtools/existing");
@@ -306,6 +307,49 @@ test("kernel --session-id attaches via GET instead of minting", async () => {
     `https://api.onkernel.com/browsers/${created.id}`,
   );
   assert.equal(api.calls.at(-1).method, "GET");
+  // Attach must not inherit the mint-on-launch stop callback: the worker
+  // calls plan.end on CDP connect failure and on context close.
+  assert.equal(plan.end, null);
+  assert.match(plan.warnings.join("\n"), /keep running \(and billing\)/);
+  const callsAfterAttach = api.calls.length;
+  if (plan.end) await plan.end();
+  assert.equal(api.calls.length, callsAfterAttach);
+  assert.equal(
+    api.calls.some((call) => call.method === "DELETE"),
+    false,
+  );
+  const stillThere = await getProviderSession("kernel", created.id, {
+    apiKey: MOCK_PROVIDER_KEYS.kernel,
+    fetchJson: api.fetchJson,
+  });
+  assert.equal(stillThere.id, created.id);
+  assert.equal(stillThere.status, "active");
+});
+
+test("steel --session-id attach does not release the box on close", async () => {
+  const api = createProviderApiMock();
+  const created = api.mint("steel", {
+    status: "live",
+    sessionViewerUrl: "https://app.steel.dev/sessions/existing",
+  });
+  const resolved = resolveBrowserProvider(
+    { provider: "steel", apiKey: MOCK_PROVIDER_KEYS.steel, sessionOptions: { sessionId: created.id } },
+    { env: {} },
+  );
+  const plan = await resolved.plan.create({ fetchJson: api.fetchJson });
+  assert.equal(plan.sessionId, created.id);
+  assert.equal(plan.end, null);
+  assert.match(plan.warnings.join("\n"), /keep running \(and billing\)/);
+  if (plan.end) await plan.end();
+  assert.equal(
+    api.calls.some((call) => String(call.url).endsWith("/release")),
+    false,
+  );
+  const stillThere = await getProviderSession("steel", created.id, {
+    apiKey: MOCK_PROVIDER_KEYS.steel,
+    fetchJson: api.fetchJson,
+  });
+  assert.equal(stillThere.id, created.id);
 });
 
 test("steel launch without a session id still uses the connect URL", () => {

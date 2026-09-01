@@ -148,6 +148,11 @@ test("REST providers mint the session lazily at launch time", async () => {
   ]);
   assert.equal(plan.cdpUrl, "wss://connect.browserbase.com/devtools/abc");
   assert.equal(plan.sessionId, "sess_1");
+  assert.ok(isCallable(plan.end), "a minted Browserbase session is released on close");
+  assert.equal(
+    plan.warnings.some((warning) => /keep running \(and billing\)/.test(warning)),
+    false,
+  );
   // Releasing the session releases it on the provider, too.
   await plan.end();
   assert.equal(
@@ -179,6 +184,7 @@ test("kernel and hyperbrowser mint CDP endpoints from their APIs", async () => {
     },
   });
   assert.equal(kernelPlan.cdpUrl, "wss://onkernel.com/devtools/s9");
+  assert.ok(isCallable(kernelPlan.end), "a minted Kernel session is released on close");
   await kernelPlan.end();
   assert.equal(kernelCalls[1].url, "https://api.onkernel.com/browsers/s9");
   assert.equal(kernelCalls[1].init.method, "DELETE");
@@ -197,6 +203,7 @@ test("kernel and hyperbrowser mint CDP endpoints from their APIs", async () => {
   assert.equal(hyperCalls[0].url, "https://api.hyperbrowser.ai/api/session");
   assert.deepEqual(hyperCalls[0].init.headers, { "x-api-key": "h" });
   assert.equal(hyperPlan.cdpUrl, "wss://hyper/x");
+  assert.ok(isCallable(hyperPlan.end), "a minted Hyperbrowser session is stopped on close");
   await hyperPlan.end();
   assert.equal(
     hyperCalls[1].url,
@@ -219,6 +226,7 @@ test("anchor reports the nested session fields and ends the session", async () =
   assert.equal(plan.cdpUrl, "wss://anchor/x");
   assert.equal(plan.sessionId, "anch_1");
   assert.deepEqual(calls[0].init.headers, { "anchor-api-key": "a" });
+  assert.ok(isCallable(plan.end), "a minted Anchor session is deleted on close");
   await plan.end();
   assert.equal(calls[1].url, "https://api.anchorbrowser.io/api/v1/sessions/anch_1");
   assert.equal(calls[1].init.method, "DELETE");
@@ -280,6 +288,10 @@ test("steel sessionId attaches via GET then reconstructs the connect URL", async
   assert.equal(calls[0].init.method, "GET");
   assert.equal(plan.cdpUrl, "wss://connect.steel.dev/?apiKey=st&sessionId=s1");
   assert.equal(plan.sessionId, "s1");
+  assert.equal(plan.end, null);
+  assert.match(plan.warnings.join("\n"), /keep running \(and billing\)/);
+  if (plan.end) await plan.end();
+  assert.equal(calls.length, 1, "attach must not POST /release when the browser closes");
 });
 
 test("brightdata and oxylabs take userinfo credentials", () => {

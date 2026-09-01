@@ -129,6 +129,16 @@ function rawChannel(socketPath): Promise<RawChannel> {
 
 const tick = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function waitUntil(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = predicate();
+    if (value) return value;
+    await tick(10);
+  }
+  return undefined;
+}
+
 /**
  * A stand-in agent loop: emits `steps` progress notes, honours the abort
  * signal between them, and reports how it ended — the same contract
@@ -196,7 +206,11 @@ test("interrupt stops a run, keeps the transcript, and reports it", async () => 
     assert.equal(stopped.ok, true);
     assert.equal(stopped.interrupted, true);
 
-    const final = frames.find((frame) => frame.id === execId && !frame.event);
+    // Interrupt returns on the control channel; the original exec's reply
+    // is a separate write and can lag on a loaded Windows runner.
+    const final = await waitUntil(
+      () => frames.find((frame) => frame.id === execId && !frame.event),
+    );
     assert.ok(final, "the interrupted run still answers its original request");
     assert.equal(final.ok, true);
     assert.equal(final.result.reason, "interrupted");
