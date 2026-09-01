@@ -119,7 +119,13 @@ function isFetchJsonHook(value: UntrustedValue): value is FetchJsonHook {
 
 async function httpJson(fetchJson, method, url, { headers, body }) {
   if (isFetchJsonHook(fetchJson)) {
-    return fetchJson(url, { method, headers, body });
+    const request: {
+      method: string;
+      headers: Record<string, string>;
+      body?: UntrustedValue;
+    } = { method, headers };
+    if (body !== undefined) request.body = body;
+    return fetchJson(url, request);
   }
   const requestHeaders: Record<string, string> = {};
   if (body !== undefined) requestHeaders["content-type"] = "application/json";
@@ -181,8 +187,9 @@ const PROVIDERS = Object.freeze({
     displayName: "Browser Use",
     keyEnv: "BROWSER_USE_API_KEY",
     docs: "https://docs.browser-use.com/cloud",
-    // The static connect URL mints a browser per connection and needs no
-    // session bookkeeping, so no REST call is required.
+    // Launch still uses the connect URL (a browser per WebSocket). Box
+    // management speaks the v4 browsers API the official SDK maps to
+    // client.browsers.create() / .list() / .stop().
     staticEndpoint({ apiKey, sessionOptions = {} }: any = {}) {
       const url = new URL("wss://connect.browser-use.com");
       url.searchParams.set("apiKey", apiKey);
@@ -193,6 +200,25 @@ const PROVIDERS = Object.freeze({
       if (country) url.searchParams.set("proxyCountryCode", country);
       return url.href;
     },
+    request: {
+      method: "POST",
+      url: "https://api.browser-use.com/api/v4/browsers",
+      body: (sessionOptions) => sessionOptions,
+    },
+    headers: (apiKey) => ({ "x-browser-use-api-key": apiKey }),
+    pick: (data) => takeString(data?.cdpUrl, data?.cdp_url, data?.wsEndpoint),
+    id: (data) => takeString(data?.id, data?.session_id, data?.sessionId),
+    liveView: (data) => takeString(data?.liveUrl, data?.live_url, data?.liveViewUrl),
+    list: "https://api.browser-use.com/api/v4/browsers",
+    get: (id) => ({
+      method: "GET",
+      url: `https://api.browser-use.com/api/v4/browsers/${encodeURIComponent(id)}`,
+    }),
+    end: (id) => ({
+      method: "PATCH",
+      url: `https://api.browser-use.com/api/v4/browsers/${encodeURIComponent(id)}`,
+      body: { action: "stop" },
+    }),
   },
   kernel: {
     displayName: "Kernel",
@@ -206,6 +232,13 @@ const PROVIDERS = Object.freeze({
     headers: (apiKey) => ({ authorization: `Bearer ${apiKey}` }),
     pick: (data) => takeString(data?.cdp_ws_url, data?.cdpWsUrl, data?.cdp_url),
     id: (data) => takeString(data?.session_id, data?.sessionId, data?.id),
+    liveView: (data) =>
+      takeString(data?.browser_live_view_url, data?.browserLiveViewUrl, data?.live_view_url),
+    list: "https://api.onkernel.com/browsers",
+    get: (id) => ({
+      method: "GET",
+      url: `https://api.onkernel.com/browsers/${encodeURIComponent(id)}`,
+    }),
     end: (id) => ({
       method: "DELETE",
       url: `https://api.onkernel.com/browsers/${encodeURIComponent(id)}`,
@@ -223,6 +256,13 @@ const PROVIDERS = Object.freeze({
     headers: (apiKey) => ({ "x-bb-api-key": apiKey }),
     pick: (data) => takeString(data?.connectUrl, data?.connect_url),
     id: (data) => takeString(data?.id),
+    liveView: (data) =>
+      takeString(data?.debuggerFullscreenUrl, data?.debugger_fullscreen_url, data?.debugUrl),
+    list: "https://api.browserbase.com/v1/sessions",
+    get: (id) => ({
+      method: "GET",
+      url: `https://api.browserbase.com/v1/sessions/${encodeURIComponent(id)}`,
+    }),
     end: (id) => ({
       method: "POST",
       url: `https://api.browserbase.com/v1/sessions/${encodeURIComponent(id)}`,
@@ -233,8 +273,11 @@ const PROVIDERS = Object.freeze({
     displayName: "Steel",
     keyEnv: "STEEL_API_KEY",
     docs: "https://docs.steel.dev",
-    // Steel's connect URL alone starts a default session; sessionOptions may
-    // pin an existing session id instead.
+    // Launch still uses the connect URL (a default session per connection,
+    // or an existing one via sessionOptions.sessionId). Box management uses
+    // the Sessions API the official SDK maps to client.sessions.create() /
+    // .list() / .release(). Steel's own docs say to build the WebSocket URL
+    // rather than trust websocketUrl on the create response.
     staticEndpoint({ apiKey, sessionOptions = {} }: any = {}) {
       const url = new URL("wss://connect.steel.dev");
       url.searchParams.set("apiKey", apiKey);
@@ -242,6 +285,25 @@ const PROVIDERS = Object.freeze({
       if (sessionId) url.searchParams.set("sessionId", sessionId);
       return url.href;
     },
+    request: {
+      method: "POST",
+      url: "https://api.steel.dev/v1/sessions",
+      body: (sessionOptions) => sessionOptions,
+    },
+    headers: (apiKey) => ({ "steel-api-key": apiKey }),
+    pick: (data) => takeString(data?.websocketUrl, data?.websocket_url),
+    id: (data) => takeString(data?.id, data?.sessionId, data?.session_id),
+    liveView: (data) =>
+      takeString(data?.sessionViewerUrl, data?.session_viewer_url, data?.debugUrl),
+    list: "https://api.steel.dev/v1/sessions",
+    get: (id) => ({
+      method: "GET",
+      url: `https://api.steel.dev/v1/sessions/${encodeURIComponent(id)}`,
+    }),
+    end: (id) => ({
+      method: "POST",
+      url: `https://api.steel.dev/v1/sessions/${encodeURIComponent(id)}/release`,
+    }),
   },
   anchor: {
     displayName: "Anchor Browser",
@@ -253,8 +315,19 @@ const PROVIDERS = Object.freeze({
       body: (sessionOptions) => sessionOptions,
     },
     headers: (apiKey) => ({ "anchor-api-key": apiKey }),
-    pick: (data) => takeString(data?.data?.cdp_url, data?.cdp_url),
-    id: (data) => takeString(data?.data?.id, data?.id),
+    pick: (data) => takeString(data?.data?.cdp_url, data?.cdp_url, data?.data?.cdpUrl),
+    id: (data) => takeString(data?.data?.id, data?.id, data?.data?.session_id),
+    liveView: (data) =>
+      takeString(data?.data?.live_view_url, data?.live_view_url, data?.data?.liveViewUrl),
+    list: "https://api.anchorbrowser.io/api/v1/sessions",
+    get: (id) => ({
+      method: "GET",
+      url: `https://api.anchorbrowser.io/api/v1/sessions/${encodeURIComponent(id)}`,
+    }),
+    end: (id) => ({
+      method: "DELETE",
+      url: `https://api.anchorbrowser.io/api/v1/sessions/${encodeURIComponent(id)}`,
+    }),
   },
   hyperbrowser: {
     displayName: "Hyperbrowser",
@@ -266,8 +339,14 @@ const PROVIDERS = Object.freeze({
       body: (sessionOptions) => sessionOptions,
     },
     headers: (apiKey) => ({ "x-api-key": apiKey }),
-    pick: (data) => takeString(data?.wsEndpoint, data?.ws_endpoint),
+    pick: (data) => takeString(data?.wsEndpoint, data?.ws_endpoint, data?.wsUrl),
     id: (data) => takeString(data?.id, data?.sessionId),
+    liveView: (data) => takeString(data?.liveUrl, data?.live_url, data?.liveViewUrl),
+    list: "https://api.hyperbrowser.ai/api/sessions",
+    get: (id) => ({
+      method: "GET",
+      url: `https://api.hyperbrowser.ai/api/session/${encodeURIComponent(id)}`,
+    }),
     end: (id) => ({
       method: "POST",
       url: `https://api.hyperbrowser.ai/api/session/${encodeURIComponent(id)}/stop`,
@@ -335,10 +414,23 @@ const PROVIDERS = Object.freeze({
 
 export const BROWSER_PROVIDER_NAMES = Object.freeze(Object.keys(PROVIDERS));
 
+export const REST_BROWSER_PROVIDER_NAMES = Object.freeze(
+  BROWSER_PROVIDER_NAMES.filter((name) => providerLifecycleKind(PROVIDERS[name]) === "rest"),
+);
+
+function providerLifecycleKind(descriptor): "rest" | "connect" {
+  return descriptor.list && descriptor.get && descriptor.end ? "rest" : "connect";
+}
+
 export function browserProviderInfo(name) {
   const descriptor = PROVIDERS[String(name || "").trim().toLowerCase()];
   return descriptor
-    ? { name: descriptor.displayName, docs: descriptor.docs, keyEnv: descriptor.keyEnv }
+    ? {
+        name: descriptor.displayName,
+        docs: descriptor.docs,
+        keyEnv: descriptor.keyEnv,
+        lifecycle: providerLifecycleKind(descriptor),
+      }
     : null;
 }
 
@@ -470,6 +562,41 @@ function resolveNamedProvider(descriptor, name, provider, env) {
   const sessionOptions = isSessionOptionsObject(provider.sessionOptions)
     ? provider.sessionOptions
     : {};
+  const sessionId = takeString(
+    untrustedField(sessionOptions, "sessionId"),
+    untrustedField(sessionOptions, "id"),
+  );
+  // Pinning an already-created box: GET the session and attach, so launch
+  // does not mint a second billed browser. Steel's connect URL can also
+  // carry sessionId; REST attach is used when the provider has a get
+  // endpoint so a missing id fails here instead of at the WebSocket.
+  if (sessionId && descriptor.get) {
+    return {
+      kind: "remote",
+      provider: name,
+      apiKey,
+      create: ({ fetchJson }: any = {}) =>
+        attachNamedSession(descriptor, name, apiKey, sessionId, fetchJson),
+      warnings: remoteWarnings(descriptor.displayName, Boolean(descriptor.end)),
+    };
+  }
+  if (descriptor.staticEndpoint) {
+    const endpoint = wssUrl(
+      descriptor.staticEndpoint({ apiKey, sessionOptions }),
+      `the ${name} provider endpoint`,
+    );
+    return {
+      kind: "remote",
+      provider: name,
+      apiKey,
+      cdpUrl: endpoint.href,
+      endpointLabel: describeCdpUrl(endpoint),
+      headers: {},
+      sessionId: sessionId,
+      end: null,
+      warnings: remoteWarnings(descriptor.displayName, null),
+    };
+  }
   if (descriptor.request) {
     // Deferred: the session is minted when the browser actually launches, so
     // a failed client construction never leaves a billed session behind.
@@ -482,21 +609,7 @@ function resolveNamedProvider(descriptor, name, provider, env) {
       warnings: remoteWarnings(descriptor.displayName, Boolean(descriptor.end)),
     };
   }
-  const endpoint = wssUrl(
-    descriptor.staticEndpoint({ apiKey, sessionOptions }),
-    `the ${name} provider endpoint`,
-  );
-  return {
-    kind: "remote",
-    provider: name,
-    apiKey,
-    cdpUrl: endpoint.href,
-    endpointLabel: describeCdpUrl(endpoint),
-    headers: {},
-    sessionId: "",
-    end: null,
-    warnings: remoteWarnings(descriptor.displayName, null),
-  };
+  throw new TypeError(`The ${descriptor.displayName} provider has no connect URL or session API.`);
 }
 
 // A descriptor's request.body is either a literal payload or a builder fed
@@ -516,15 +629,39 @@ async function createNamedSession(descriptor, name, apiKey, sessionOptions, fetc
     headers,
     body,
   });
+  return sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson);
+}
+
+async function attachNamedSession(descriptor, name, apiKey, sessionId, fetchJson) {
+  const data = await fetchProviderRecord(descriptor, name, apiKey, sessionId, fetchJson);
+  const plan = await sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson);
+  if (!plan.sessionId) plan.sessionId = sessionId;
+  return plan;
+}
+
+async function fetchProviderRecord(descriptor, name, apiKey, sessionId, fetchJson) {
+  if (!descriptor.get) {
+    throw new Error(`${descriptor.displayName} has no session-lookup API.`);
+  }
+  const headers = descriptor.headers ? descriptor.headers(apiKey) : {};
+  const request = descriptor.get(sessionId);
+  return httpJson(fetchJson, request.method, request.url, {
+    headers,
+    body: request.body,
+  });
+}
+
+async function sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson) {
+  const box = providerBoxFromPayload(descriptor, name, apiKey, data);
   const endpoint = wssUrl(
-    requireStringField(descriptor.pick(data), "a CDP WebSocket URL", descriptor.displayName),
+    requireStringField(box.cdpUrl, "a CDP WebSocket URL", descriptor.displayName),
     `the ${name} CDP URL`,
   );
-  const sessionId = descriptor.id ? takeString(descriptor.id(data)) : "";
+  const headers = descriptor.headers ? descriptor.headers(apiKey) : {};
   const end =
-    descriptor.end && sessionId
+    descriptor.end && box.id
       ? async () => {
-          const stop = descriptor.end(sessionId);
+          const stop = descriptor.end(box.id);
           await httpJson(fetchJson, stop.method, stop.url, {
             headers,
             body: stop.body,
@@ -538,10 +675,184 @@ async function createNamedSession(descriptor, name, apiKey, sessionOptions, fetc
     cdpUrl: endpoint.href,
     endpointLabel: describeCdpUrl(endpoint),
     headers: {},
-    sessionId,
+    sessionId: box.id,
     end,
     warnings: remoteWarnings(descriptor.displayName, Boolean(end)),
   };
+}
+
+function namedProvider(name) {
+  const key = String(name || "").trim().toLowerCase();
+  const descriptor = PROVIDERS[key];
+  if (!descriptor) {
+    throw new TypeError(
+      `Unknown browser provider ${JSON.stringify(name)}. Supported: ` +
+        `${BROWSER_PROVIDER_NAMES.join(", ")}.`,
+    );
+  }
+  return { name: key, descriptor };
+}
+
+function requireRestProvider(name) {
+  const { name: key, descriptor } = namedProvider(name);
+  if (providerLifecycleKind(descriptor) !== "rest") {
+    throw new Error(connectOnlyLifecycleMessage(descriptor, key));
+  }
+  return { name: key, descriptor };
+}
+
+function connectOnlyLifecycleMessage(descriptor, name) {
+  return (
+    `${descriptor.displayName} has no managed sessions to start or stop. ` +
+    "Its browsers exist only for the duration of a WebSocket connection " +
+    `(connect with \`betterwright run --browser ${name}\` after saving the ` +
+    `key via \`betterwright configure --connect ${name}\`).`
+  );
+}
+
+function listSessionRecords(data: UntrustedValue): UntrustedValue[] {
+  if (Array.isArray(data)) return data;
+  if (!isRecord(data)) return [];
+  for (const key of ["sessions", "browsers", "data", "items"]) {
+    const value = untrustedField(data, key);
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+function withStatusQuery(url, status) {
+  const wanted = takeString(status);
+  if (!wanted) return url;
+  const parsed = new URL(url);
+  parsed.searchParams.set("status", wanted);
+  return parsed.href;
+}
+
+function boxCdpUrl(descriptor, name, apiKey, data, id) {
+  if (name === "steel" && id && descriptor.staticEndpoint) {
+    return takeString(descriptor.staticEndpoint({ apiKey, sessionOptions: { sessionId: id } }));
+  }
+  return descriptor.pick ? takeString(descriptor.pick(data)) : "";
+}
+
+function boxStatus(data) {
+  const nested = isRecord(untrustedField(data, "data")) ? untrustedField(data, "data") : data;
+  return takeString(untrustedField(nested, "status"), untrustedField(nested, "state"));
+}
+
+/** One cloud browser box, parsed from a provider create/list/get payload. */
+export interface ProviderBox {
+  provider: string;
+  id: string;
+  status: string;
+  cdpUrl: string;
+  liveViewUrl: string;
+  endpointLabel: string;
+}
+
+function providerBoxFromPayload(descriptor, name, apiKey, data): ProviderBox {
+  const id = descriptor.id ? takeString(descriptor.id(data)) : "";
+  const cdpUrl = boxCdpUrl(descriptor, name, apiKey, data, id);
+  const liveViewUrl = descriptor.liveView ? takeString(descriptor.liveView(data)) : "";
+  let endpointLabel = "";
+  if (cdpUrl) {
+    try {
+      endpointLabel = describeCdpUrl(wssUrl(cdpUrl, `the ${name} CDP URL`));
+    } catch {
+      endpointLabel = describeCdpUrl(cdpUrl);
+    }
+  }
+  return {
+    provider: name,
+    id,
+    status: boxStatus(data),
+    cdpUrl,
+    liveViewUrl,
+    endpointLabel,
+  };
+}
+
+function authHeaders(descriptor, apiKey) {
+  return descriptor.headers ? descriptor.headers(apiKey) : {};
+}
+
+/**
+ * Create a managed box on a REST-lifecycle provider. Steel and Browser Use
+ * launch via a connect URL; this is the Sessions/browsers API used by
+ * `betterwright boxes start`.
+ */
+export async function createProviderSession(
+  name,
+  { apiKey, sessionOptions = {}, fetchJson }: any = {},
+): Promise<ProviderBox> {
+  const { name: key, descriptor } = requireRestProvider(name);
+  if (!descriptor.request) {
+    throw new Error(connectOnlyLifecycleMessage(descriptor, key));
+  }
+  const request = descriptor.request;
+  const headers = authHeaders(descriptor, apiKey);
+  const body = isSessionBodyBuilder(request.body) ? request.body(sessionOptions) : request.body;
+  const data = await httpJson(fetchJson, request.method, request.url, { headers, body });
+  const box = providerBoxFromPayload(descriptor, key, apiKey, data);
+  if (!box.id) {
+    throw new Error(`The ${descriptor.displayName} create-browser response did not include a session id.`);
+  }
+  return box;
+}
+
+/** List boxes on a REST-lifecycle provider. */
+export async function listProviderSessions(
+  name,
+  { apiKey, status, fetchJson }: any = {},
+): Promise<ProviderBox[]> {
+  const { name: key, descriptor } = requireRestProvider(name);
+  const headers = authHeaders(descriptor, apiKey);
+  const data = await httpJson(fetchJson, "GET", withStatusQuery(descriptor.list, status), {
+    headers,
+    body: undefined,
+  });
+  return listSessionRecords(data)
+    .map((entry) => providerBoxFromPayload(descriptor, key, apiKey, entry))
+    .filter((box) => box.id);
+}
+
+/** Fetch one box by id. */
+export async function getProviderSession(
+  name,
+  id,
+  { apiKey, fetchJson }: any = {},
+): Promise<ProviderBox> {
+  const { name: key, descriptor } = requireRestProvider(name);
+  const sessionId = takeString(id);
+  if (!sessionId) {
+    throw new TypeError("A session id is required.");
+  }
+  const data = await fetchProviderRecord(descriptor, key, apiKey, sessionId, fetchJson);
+  const box = providerBoxFromPayload(descriptor, key, apiKey, data);
+  if (!box.id) box.id = sessionId;
+  return box;
+}
+
+/** Stop/release a box so the provider stops billing it. */
+export async function stopProviderSession(
+  name,
+  id,
+  { apiKey, fetchJson }: any = {},
+): Promise<{ provider: string; id: string }> {
+  const { name: key, descriptor } = requireRestProvider(name);
+  const sessionId = takeString(id);
+  if (!sessionId) {
+    throw new TypeError("A session id is required.");
+  }
+  if (!descriptor.end) {
+    throw new Error(connectOnlyLifecycleMessage(descriptor, key));
+  }
+  const stop = descriptor.end(sessionId);
+  await httpJson(fetchJson, stop.method, stop.url, {
+    headers: authHeaders(descriptor, apiKey),
+    body: stop.body,
+  });
+  return { provider: key, id: sessionId };
 }
 
 /**

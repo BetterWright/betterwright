@@ -13,8 +13,13 @@ import { isCallable } from "./untrusted-value.js";
 export { resolveModel, resolveModelSelection, runAgentTask } from "./agent.js";
 export {
   BROWSER_PROVIDER_NAMES,
+  REST_BROWSER_PROVIDER_NAMES,
   browserProviderInfo,
+  createProviderSession,
   describeCdpUrl,
+  getProviderSession,
+  listProviderSessions,
+  stopProviderSession,
 } from "./browser-providers.js";
 export {
   BetterWright,

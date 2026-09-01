@@ -246,7 +246,7 @@ step from what it sees, in a browser that must still be there next turn:
 | [**WebMCP page tools**](docs/browser-api.md#page-published-webmcp-tools) | Discover and invoke typed first-party page capabilities; fresh frame-aware lookup, bounded input/output, explicit autosubmit opt-in, and automatic timeout cancellation |
 | [**Launch identity**](docs/launch-identity.md) | Coherent native identity: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; the two public reCAPTCHA v3 score-detector demos in the stealth report return a server-verified 0.9 headed and headless |
 | [**BetterChromium**](docs/chromium-fork.md) | Default browser on supported macOS arm64, Linux x64, and Windows x64 hosts: per-profile-stable canvas/audio farbling, no OS masquerade (Linux runs as Linux). Bring your own executable, CDP endpoint, or cloud browser via the [provider option](docs/browser-providers.md) |
-| [**Browser providers**](docs/browser-providers.md) | Managed fork by default; attach a local executable, a raw CDP endpoint, or a named cloud browser (Kernel, Browserbase, Steel, Anchor, Bright Data, Hyperbrowser, Browserless, Oxylabs, Browser Use) |
+| [**Browser providers**](docs/browser-providers.md) | Managed fork by default; attach a local executable, a raw CDP endpoint, or a named cloud browser. `configure --connect` saves API keys; `betterwright boxes` starts/lists/stops sessions on the six SDK-backed providers |
 | [**Skill packs**](docs/skills.md) | Per-site and per-password-manager guidance the driving agent reads on demand — your own or the built-in loop — surfaced automatically when an open page matches |
 | [**Download approval**](docs/browser-api.md) | Denied by default; a trusted host approves one download run at a time |
 | [**Operator guidance**](docs/agent-prompt.md) | `betterwright skill` / `agentSystemPrompt()` — decisive action on authorized tasks, with optional confirmation/spending guardrails |
@@ -271,6 +271,8 @@ are all available on their own:
 betterwright setup     # install the managed browser for this host
 betterwright update    # refresh the managed browser for this host
 betterwright doctor    # what is installed, what is missing, how to fix it
+betterwright configure # default browser, connected provider API keys
+betterwright boxes     # start / list / stop cloud browser sessions
 ```
 
 ## Getting a password back out

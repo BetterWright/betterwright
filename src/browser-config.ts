@@ -1,12 +1,16 @@
 // Persistent browser-provider settings: <home>/config.json, `browser` section.
 //
-// This is where `betterwright configure` writes and every launch reads. Two
+// This is where `betterwright configure` writes and every launch reads. Three
 // things live here:
 //
 //   - `default`: the provider a launch uses when nothing explicit was given —
 //     the same shapes the `provider` option accepts (a named cloud provider,
 //     a CDP endpoint, or a local Chromium binary), plus `keyEnv` so a config
 //     can point at an environment variable instead of storing the key.
+//   - `accounts`: saved API keys for built-in providers, so `boxes` can
+//     start/list/stop sessions without that provider having to be the launch
+//     default. `configure --connect` writes this; a named `--browser` default
+//     with a key writes it too.
 //   - `custom`: user-defined named providers. Each maps a name to a CDP
 //     connect-URL template (`${apiKey}` is substituted at launch), so any
 //     service that speaks CDP becomes `--browser <name>` without a
@@ -28,7 +32,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { BROWSER_PROVIDER_NAMES } from "./browser-providers.js";
+import { BROWSER_PROVIDER_NAMES, browserProviderInfo } from "./browser-providers.js";
 import { writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import {
@@ -82,6 +86,18 @@ export interface DefaultBrowserRef {
 export interface BrowserFileConfig {
   default?: DefaultBrowserRef;
   custom: Record<string, CustomProviderDefinition>;
+  /** Saved API keys for built-in providers, independent of the launch default. */
+  accounts: Record<string, ProviderAccount>;
+}
+
+/**
+ * A stored API-key source for one built-in provider. Used by `boxes` and by
+ * `configure --connect`, so a key can be saved without making that provider
+ * the launch default.
+ */
+export interface ProviderAccount {
+  keyEnv?: string;
+  apiKey?: string;
 }
 
 export function browserConfigPath(home = defaultHome()) {
@@ -131,6 +147,16 @@ function cleanCustomDefinition(value: UntrustedValue): CustomProviderDefinition 
   return definition;
 }
 
+function cleanAccount(value: UntrustedValue): ProviderAccount | null {
+  if (!isRecord(value)) return null;
+  const account: ProviderAccount = {};
+  const keyEnv = cleanString(untrustedField(value, "keyEnv"));
+  if (keyEnv) account.keyEnv = keyEnv;
+  const apiKey = cleanString(untrustedField(value, "apiKey"));
+  if (apiKey) account.apiKey = apiKey;
+  return account.keyEnv || account.apiKey ? account : null;
+}
+
 function cleanDefaultRef(value: UntrustedValue): DefaultBrowserRef | undefined {
   if (!isRecord(value)) return undefined;
   const ref: DefaultBrowserRef = {};
@@ -165,7 +191,7 @@ function cleanDefaultRef(value: UntrustedValue): DefaultBrowserRef | undefined {
  */
 export function loadBrowserConfig(home = defaultHome()): BrowserFileConfig {
   const section = untrustedField(readConfigFile(home), "browser");
-  const config: BrowserFileConfig = { custom: {} };
+  const config: BrowserFileConfig = { custom: {}, accounts: {} };
   if (!isRecord(section)) return config;
   const fallback = cleanDefaultRef(untrustedField(section, "default"));
   if (fallback) config.default = fallback;
@@ -175,6 +201,14 @@ export function loadBrowserConfig(home = defaultHome()): BrowserFileConfig {
       const key = String(name || "").trim().toLowerCase();
       const definition = cleanCustomDefinition(value);
       if (CUSTOM_NAME_PATTERN.test(key) && definition) config.custom[key] = definition;
+    }
+  }
+  const accounts = untrustedField(section, "accounts");
+  if (isRecord(accounts)) {
+    for (const [name, value] of untrustedEntries(accounts)) {
+      const key = String(name || "").trim().toLowerCase();
+      const account = cleanAccount(value);
+      if (BROWSER_PROVIDER_NAMES.includes(key) && account) config.accounts[key] = account;
     }
   }
   return config;
@@ -271,6 +305,140 @@ export function removeCustomProvider(name: string, home = defaultHome()) {
     else section.delete("custom");
   });
   return removed;
+}
+
+/** Persist (or replace) a built-in provider's saved API-key source. */
+export function saveProviderAccount(
+  name: string,
+  account: ProviderAccount,
+  home = defaultHome(),
+) {
+  const key = String(name || "").trim().toLowerCase();
+  if (!BROWSER_PROVIDER_NAMES.includes(key)) {
+    throw new TypeError(
+      `Unknown provider ${JSON.stringify(key)}. Built-in: ${BROWSER_PROVIDER_NAMES.join(", ")}.`,
+    );
+  }
+  const cleaned = cleanAccount(account);
+  if (!cleaned) {
+    throw new TypeError(
+      "A connected provider needs --browser-key (stored in the config file) or --key-env (read from the environment).",
+    );
+  }
+  return {
+    name: key,
+    file: writeBrowserSection(home, (section) => {
+      const existing = untrustedField(Object.fromEntries(section), "accounts");
+      const accounts = new Map(isRecord(existing) ? untrustedEntries(existing) : []);
+      accounts.set(key, cleaned);
+      section.set("accounts", Object.fromEntries(accounts));
+    }),
+  };
+}
+
+/** Remove a saved provider account; true when something was actually removed. */
+export function removeProviderAccount(name: string, home = defaultHome()) {
+  const key = String(name || "").trim().toLowerCase();
+  let removed = false;
+  writeBrowserSection(home, (section) => {
+    const existing = untrustedField(Object.fromEntries(section), "accounts");
+    const accounts = new Map(isRecord(existing) ? untrustedEntries(existing) : []);
+    removed = accounts.delete(key);
+    if (accounts.size) section.set("accounts", Object.fromEntries(accounts));
+    else section.delete("accounts");
+  });
+  return removed;
+}
+
+/** Where a resolved API key came from, for messages that must not print the key. */
+export type ProviderKeySource = "flag" | "account" | "default" | "env";
+
+export interface ResolvedProviderCredential {
+  provider: string;
+  apiKey: string;
+  source: ProviderKeySource;
+  keyEnv?: string;
+}
+
+/**
+ * Resolve an API key for a built-in provider: an explicit flag, then a saved
+ * account, then the launch default if it names this provider, then the
+ * provider's well-known environment variable.
+ */
+export function resolveConnectedProvider(
+  name: string,
+  {
+    home = defaultHome(),
+    env = process.env,
+    apiKey,
+    keyEnv,
+    config = null,
+  }: any = {},
+): ResolvedProviderCredential {
+  const key = String(name || "").trim().toLowerCase();
+  if (!BROWSER_PROVIDER_NAMES.includes(key)) {
+    throw new TypeError(
+      `Unknown provider ${JSON.stringify(name)}. Built-in: ${BROWSER_PROVIDER_NAMES.join(", ")}.`,
+    );
+  }
+  const browserConfig: BrowserFileConfig = config ?? loadBrowserConfig(home);
+  const explicitKey = cleanString(apiKey);
+  if (explicitKey) return { provider: key, apiKey: explicitKey, source: "flag" };
+  const explicitEnv = cleanString(keyEnv);
+  if (explicitEnv) {
+    const fromEnv = cleanString(env?.[explicitEnv]);
+    if (!fromEnv) {
+      throw new TypeError(
+        `The ${key} provider reads its API key from ${explicitEnv}, which is not set.`,
+      );
+    }
+    return { provider: key, apiKey: fromEnv, source: "flag", keyEnv: explicitEnv };
+  }
+  const account = browserConfig.accounts[key];
+  if (account) {
+    const resolved = resolveKey(undefined, account.keyEnv, account.apiKey, env, key);
+    if (resolved.key) {
+      return {
+        provider: key,
+        apiKey: resolved.key,
+        source: "account",
+        keyEnv: account.keyEnv,
+      };
+    }
+    if (account.keyEnv) {
+      throw new TypeError(
+        `The ${key} provider reads its API key from ${account.keyEnv}, which is not set. ` +
+          "Set it, or re-run `betterwright configure --connect`.",
+      );
+    }
+  }
+  const fallback = browserConfig.default;
+  if (fallback?.provider === key) {
+    const resolved = resolveKey(fallback.apiKey, fallback.keyEnv, undefined, env, key);
+    if (resolved.key) {
+      return {
+        provider: key,
+        apiKey: resolved.key,
+        source: "default",
+        keyEnv: fallback.keyEnv,
+      };
+    }
+    if (fallback.keyEnv) {
+      throw new TypeError(
+        `The configured browser reads its API key from ${fallback.keyEnv}, which is not set.`,
+      );
+    }
+  }
+  const info = browserProviderInfo(key);
+  const fromWellKnown = info?.keyEnv ? cleanString(env?.[info.keyEnv]) : "";
+  if (fromWellKnown) {
+    return { provider: key, apiKey: fromWellKnown, source: "env", keyEnv: info.keyEnv };
+  }
+  throw new TypeError(
+    `No API key for ${info?.name || key}. Pass --browser-key, --key-env, ` +
+      `or run \`betterwright configure --connect ${key}\`.` +
+      (info?.keyEnv ? ` The default environment variable is ${info.keyEnv}.` : ""),
+  );
 }
 
 // A template must parse as a ws(s) URL once the key is substituted; checked

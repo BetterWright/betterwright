@@ -54,6 +54,7 @@ test("--browser <provider> --key-env round-trips through the config file", async
   });
   assert.equal(code, 0);
   assert.deepEqual(loadBrowserConfig(home).default, { provider: "steel", keyEnv: "MY_STEEL" });
+  assert.deepEqual(loadBrowserConfig(home).accounts.steel, { keyEnv: "MY_STEEL" });
   assert.match(io.stdout(), /Default browser: Steel \(steel\), API key from MY_STEEL \(set\)/);
 });
 
@@ -139,6 +140,7 @@ test("--managed clears the default", async () => {
   assert.equal(loadBrowserConfig(home).default?.provider, "steel");
   assert.equal(await runConfigure(["--reset"], { home, env: {}, ...io }), 0);
   assert.equal(loadBrowserConfig(home).default, undefined);
+  assert.deepEqual(loadBrowserConfig(home).accounts.steel, { apiKey: "sk-live" });
   assert.match(io.stdout(), /managed BetterChromium fork/);
 });
 
@@ -155,6 +157,11 @@ test("--show --json masks stored keys and names env vars", async () => {
   assert.equal(await runConfigure(["--show", "--json"], { home, env: { MY_STEEL: "sk-live" }, ...io }), 0);
   const report = JSON.parse(io.stdout());
   assert.deepEqual(report.default, {
+    provider: "steel",
+    keyEnv: "MY_STEEL",
+    keyEnvSet: true,
+  });
+  assert.deepEqual(report.accounts.steel, {
     provider: "steel",
     keyEnv: "MY_STEEL",
     keyEnvSet: true,
@@ -247,6 +254,7 @@ test("the menu saves a built-in provider with an environment variable", async ()
     provider: "steel",
     keyEnv: "STEEL_API_KEY",
   });
+  assert.deepEqual(loadBrowserConfig(home).accounts.steel, { keyEnv: "STEEL_API_KEY" });
   assert.match(io.stdout(), /Default browser: Steel \(steel\)/);
   // The key was never echoed, the unset variable was called out, and --no-test
   // means nothing was offered.

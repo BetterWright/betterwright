@@ -49,6 +49,18 @@ import createBetterWrightPiExtension, {
 import type { NetworkDecision } from "betterwright/policy";
 import type { Guardrails as PromptGuardrails } from "betterwright/prompt";
 import {
+  BROWSER_PROVIDER_NAMES,
+  REST_BROWSER_PROVIDER_NAMES,
+  browserProviderInfo,
+  createProviderSession,
+  describeCdpUrl,
+  getProviderSession,
+  listProviderSessions,
+  type ProviderBox,
+  type ProviderLifecycleKind,
+  stopProviderSession,
+} from "betterwright/sdk";
+import {
   createLocalCredentialVault,
   type VaultAuditEntry,
   type VaultOwnerListResult,
@@ -169,6 +181,29 @@ new BetterWright({ connectOverCdp: "http://127.0.0.1:9222" });
 // the built-in union (which keeps its completions via the string intersection).
 new BetterWright({ provider: { provider: "driverdotnet" } });
 new BetterWright({ provider: { provider: "steel" } });
+
+const restLifecycle: ProviderLifecycleKind = "rest";
+const kernelInfo = browserProviderInfo("kernel");
+const kernelBoxes: Promise<ProviderBox> = createProviderSession("kernel", { apiKey: "k" });
+const kernelList: Promise<ProviderBox[]> = listProviderSessions("kernel", { apiKey: "k" });
+const kernelShown: Promise<ProviderBox> = getProviderSession("kernel", "s1", { apiKey: "k" });
+const kernelStopped: Promise<{ provider: string; id: string }> = stopProviderSession(
+  "kernel",
+  "s1",
+  { apiKey: "k" },
+);
+const maskedCdp: string = describeCdpUrl("wss://host?apiKey=SECRET");
+void [
+  restLifecycle,
+  kernelInfo,
+  kernelBoxes,
+  kernelList,
+  kernelShown,
+  kernelStopped,
+  maskedCdp,
+  BROWSER_PROVIDER_NAMES,
+  REST_BROWSER_PROVIDER_NAMES,
+];
 
 void [
   run,

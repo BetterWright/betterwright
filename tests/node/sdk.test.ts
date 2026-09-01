@@ -51,7 +51,12 @@ test("the SDK entrypoint re-exports the root export's bindings, not copies", () 
   assert.equal(sdk.validateCredentialMatchMode, client.validateCredentialMatchMode);
   assert.equal(sdk.browserProviderInfo, providers.browserProviderInfo);
   assert.equal(sdk.BROWSER_PROVIDER_NAMES, providers.BROWSER_PROVIDER_NAMES);
+  assert.equal(sdk.REST_BROWSER_PROVIDER_NAMES, providers.REST_BROWSER_PROVIDER_NAMES);
   assert.equal(sdk.describeCdpUrl, providers.describeCdpUrl);
+  assert.equal(sdk.createProviderSession, providers.createProviderSession);
+  assert.equal(sdk.listProviderSessions, providers.listProviderSessions);
+  assert.equal(sdk.getProviderSession, providers.getProviderSession);
+  assert.equal(sdk.stopProviderSession, providers.stopProviderSession);
 });
 
 test("withBrowser is the only export the root export does not have", () => {
@@ -60,8 +65,13 @@ test("withBrowser is the only export the root export does not have", () => {
   const added = Object.keys(sdk).filter((name) => !(name in index));
   assert.deepEqual(added.sort(), [
     "BROWSER_PROVIDER_NAMES",
+    "REST_BROWSER_PROVIDER_NAMES",
     "browserProviderInfo",
+    "createProviderSession",
     "describeCdpUrl",
+    "getProviderSession",
+    "listProviderSessions",
+    "stopProviderSession",
     "validateCredentialMatchMode",
     "withBrowser",
   ]);
