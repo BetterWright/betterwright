@@ -108,10 +108,13 @@ function isLoopbackHost(hostname) {
 
 // Test seam: a fetchJson hook stands in for global fetch, receiving the same
 // request and resolving with the parsed body, so tests never touch the network.
-type FetchJsonHook = (
-  url: string,
-  request: { method: string; headers: Record<string, string>; body?: UntrustedValue },
-) => Promise<UntrustedValue>;
+interface ProviderHttpRequest {
+  method: string;
+  headers: Record<string, string>;
+  body?: UntrustedValue;
+}
+
+type FetchJsonHook = (url: string, request: ProviderHttpRequest) => Promise<UntrustedValue>;
 
 function isFetchJsonHook(value: UntrustedValue): value is FetchJsonHook {
   return isCallable(value);
@@ -119,11 +122,7 @@ function isFetchJsonHook(value: UntrustedValue): value is FetchJsonHook {
 
 async function httpJson(fetchJson, method, url, { headers, body }) {
   if (isFetchJsonHook(fetchJson)) {
-    const request: {
-      method: string;
-      headers: Record<string, string>;
-      body?: UntrustedValue;
-    } = { method, headers };
+    const request: ProviderHttpRequest = { method, headers };
     if (body !== undefined) request.body = body;
     return fetchJson(url, request);
   }
@@ -633,13 +632,13 @@ async function createNamedSession(descriptor, name, apiKey, sessionOptions, fetc
 }
 
 async function attachNamedSession(descriptor, name, apiKey, sessionId, fetchJson) {
-  const data = await fetchProviderRecord(descriptor, name, apiKey, sessionId, fetchJson);
+  const data = await fetchProviderRecord(descriptor, apiKey, sessionId, fetchJson);
   const plan = await sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson);
   if (!plan.sessionId) plan.sessionId = sessionId;
   return plan;
 }
 
-async function fetchProviderRecord(descriptor, name, apiKey, sessionId, fetchJson) {
+async function fetchProviderRecord(descriptor, apiKey, sessionId, fetchJson) {
   if (!descriptor.get) {
     throw new Error(`${descriptor.displayName} has no session-lookup API.`);
   }
@@ -827,7 +826,7 @@ export async function getProviderSession(
   if (!sessionId) {
     throw new TypeError("A session id is required.");
   }
-  const data = await fetchProviderRecord(descriptor, key, apiKey, sessionId, fetchJson);
+  const data = await fetchProviderRecord(descriptor, apiKey, sessionId, fetchJson);
   const box = providerBoxFromPayload(descriptor, key, apiKey, data);
   if (!box.id) box.id = sessionId;
   return box;

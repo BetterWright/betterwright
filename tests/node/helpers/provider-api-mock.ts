@@ -13,11 +13,11 @@ const KEYS = {
   "browser-use": "bu_live_test",
 };
 
-function unauthorized(method, url) {
+function unauthorized(method, url): never {
   throw new Error(`Cloud browser API ${method} ${url} failed with HTTP 401: invalid API key`);
 }
 
-function notFound(method, url) {
+function notFound(method, url): never {
   throw new Error(`Cloud browser API ${method} ${url} failed with HTTP 404: session not found`);
 }
 
@@ -34,22 +34,46 @@ function bearer(request) {
   return header(request, "authorization").replace(/^bearer\s+/i, "");
 }
 
+interface MockSessionRecord {
+  id: string;
+  status: string;
+  provider: string;
+  cdp_url?: string;
+  live_view_url?: string;
+  cdp_ws_url?: string;
+  browser_live_view_url?: string;
+  connectUrl?: string;
+  debuggerFullscreenUrl?: string;
+  sessionViewerUrl?: string;
+  wsEndpoint?: string;
+  liveUrl?: string;
+  cdpUrl?: string;
+}
+
 export function createProviderApiMock(options: { keys?: Record<string, string> } = {}) {
-  const keys = { ...KEYS, ...(options.keys || {}) };
-  const boxes = new Map();
+  const keys = { ...KEYS, ...options.keys };
+  const boxes = new Map<string, Map<string, MockSessionRecord>>();
   let seq = 0;
   const calls = [];
 
-  function store(provider) {
-    if (!boxes.has(provider)) boxes.set(provider, new Map());
-    return boxes.get(provider);
+  function store(provider): Map<string, MockSessionRecord> {
+    const existing = boxes.get(provider);
+    if (existing) return existing;
+    const created = new Map<string, MockSessionRecord>();
+    boxes.set(provider, created);
+    return created;
   }
 
-  function mint(provider, extra = {}) {
+  function mint(provider, extra: Partial<MockSessionRecord> = {}): MockSessionRecord {
     seq += 1;
-    const id = `${provider.replace(/[^a-z]/g, "").slice(0, 6)}_${seq}`;
-    const record = { id, status: extra.status || "running", provider, ...extra };
-    store(provider).set(id, record);
+    const id = extra.id || `${provider.replace(/[^a-z]/g, "").slice(0, 6)}_${seq}`;
+    const record: MockSessionRecord = {
+      id,
+      status: extra.status || "running",
+      provider,
+      ...extra,
+    };
+    store(provider).set(record.id, record);
     return record;
   }
 

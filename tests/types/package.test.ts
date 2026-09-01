@@ -50,7 +50,6 @@ import type { NetworkDecision } from "betterwright/policy";
 import type { Guardrails as PromptGuardrails } from "betterwright/prompt";
 import {
   BROWSER_PROVIDER_NAMES,
-  REST_BROWSER_PROVIDER_NAMES,
   browserProviderInfo,
   createProviderSession,
   describeCdpUrl,
@@ -58,6 +57,7 @@ import {
   listProviderSessions,
   type ProviderBox,
   type ProviderLifecycleKind,
+  REST_BROWSER_PROVIDER_NAMES,
   stopProviderSession,
 } from "betterwright/sdk";
 import {

@@ -106,14 +106,16 @@ function printBox(log, box, { json }) {
   else if (box.cdpUrl) log(`  cdp       ${describeCdpUrl(box.cdpUrl)}`);
 }
 
-function jsonBox(box) {
-  const row: {
-    provider: string;
-    id: string;
-    status?: string;
-    liveViewUrl?: string;
-    cdpUrl?: string;
-  } = { provider: box.provider, id: box.id };
+interface BoxesJsonRow {
+  provider: string;
+  id: string;
+  status?: string;
+  liveViewUrl?: string;
+  cdpUrl?: string;
+}
+
+function jsonBox(box): BoxesJsonRow {
+  const row: BoxesJsonRow = { provider: box.provider, id: box.id };
   if (box.status) row.status = box.status;
   if (box.liveViewUrl) row.liveViewUrl = box.liveViewUrl;
   if (box.endpointLabel) row.cdpUrl = box.endpointLabel;

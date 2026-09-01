@@ -5,17 +5,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { runBoxesCommand } from "../../dist/src/boxes-cli.js";
 import { loadBrowserConfig } from "../../dist/src/browser-config.js";
 import {
-  REST_BROWSER_PROVIDER_NAMES,
   browserProviderInfo,
   createProviderSession,
   getProviderSession,
   listProviderSessions,
+  REST_BROWSER_PROVIDER_NAMES,
   resolveBrowserProvider,
   stopProviderSession,
 } from "../../dist/src/browser-providers.js";
-import { runBoxesCommand } from "../../dist/src/boxes-cli.js";
 import { runConfigure } from "../../dist/src/configure.js";
 import {
   createProviderApiMock,
