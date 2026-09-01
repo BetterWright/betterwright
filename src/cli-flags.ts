@@ -45,6 +45,8 @@ export const VALUE_FLAGS = new Set([
   // steel: the browser choice and its key are values, never positionals.
   "--browser",
   "--browser-key",
+  "--connect",
+  "--disconnect",
   "--category",
   "--delay",
   "--effort",
@@ -65,6 +67,14 @@ export const VALUE_FLAGS = new Set([
   "--query",
   "--reasoning",
   "--session",
+  "--session-id",
+  "--status",
+  "--key-env",
+  "--add",
+  "--remove",
+  "--cdp-url",
+  "--docs",
+  "--display-name",
   "--timezone",
   "--upstream-proxy",
 ]);

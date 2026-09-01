@@ -134,6 +134,15 @@ test("main usage lists every command exactly once", () => {
   }
 });
 
+test("boxes help names REST providers and the connect-only ones", () => {
+  const text = helpFor("boxes");
+  assert.match(text, /betterwright boxes/);
+  assert.match(text, /kernel/);
+  assert.match(text, /browser-use/);
+  assert.match(text, /Browserless, Bright Data, and Oxylabs/);
+  assert.match(text, /configure --connect/);
+});
+
 test("wantsHelp only matches flag forms, so task text is never swallowed", () => {
   assert.equal(wantsHelp(["--help"]), true);
   assert.equal(wantsHelp(["-h"]), true);

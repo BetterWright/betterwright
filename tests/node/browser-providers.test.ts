@@ -119,6 +119,7 @@ test("named providers need a key, from the option or their env var", () => {
     name: "Kernel",
     docs: "https://www.kernel.sh/docs",
     keyEnv: "KERNEL_API_KEY",
+    lifecycle: "rest",
   });
   assert.equal(browserProviderInfo("nope"), null);
 });
@@ -147,6 +148,11 @@ test("REST providers mint the session lazily at launch time", async () => {
   ]);
   assert.equal(plan.cdpUrl, "wss://connect.browserbase.com/devtools/abc");
   assert.equal(plan.sessionId, "sess_1");
+  assert.ok(isCallable(plan.end), "a minted Browserbase session is released on close");
+  assert.equal(
+    plan.warnings.some((warning) => /keep running \(and billing\)/.test(warning)),
+    false,
+  );
   // Releasing the session releases it on the provider, too.
   await plan.end();
   assert.equal(
@@ -178,6 +184,7 @@ test("kernel and hyperbrowser mint CDP endpoints from their APIs", async () => {
     },
   });
   assert.equal(kernelPlan.cdpUrl, "wss://onkernel.com/devtools/s9");
+  assert.ok(isCallable(kernelPlan.end), "a minted Kernel session is released on close");
   await kernelPlan.end();
   assert.equal(kernelCalls[1].url, "https://api.onkernel.com/browsers/s9");
   assert.equal(kernelCalls[1].init.method, "DELETE");
@@ -196,6 +203,7 @@ test("kernel and hyperbrowser mint CDP endpoints from their APIs", async () => {
   assert.equal(hyperCalls[0].url, "https://api.hyperbrowser.ai/api/session");
   assert.deepEqual(hyperCalls[0].init.headers, { "x-api-key": "h" });
   assert.equal(hyperPlan.cdpUrl, "wss://hyper/x");
+  assert.ok(isCallable(hyperPlan.end), "a minted Hyperbrowser session is stopped on close");
   await hyperPlan.end();
   assert.equal(
     hyperCalls[1].url,
@@ -203,21 +211,25 @@ test("kernel and hyperbrowser mint CDP endpoints from their APIs", async () => {
   );
 });
 
-test("anchor reports the nested session fields", async () => {
+test("anchor reports the nested session fields and ends the session", async () => {
   const resolved = resolveBrowserProvider(
     { provider: "anchor", apiKey: "a" },
     { env: {} },
   );
+  const calls = [];
   const plan = await resolved.plan.create({
     fetchJson: async (url, init) => {
-      assert.equal(url, "https://api.anchorbrowser.io/api/v1/sessions");
-      assert.deepEqual(init.headers, { "anchor-api-key": "a" });
+      calls.push({ url, init });
       return { data: { id: "anch_1", cdp_url: "wss://anchor/x" } };
     },
   });
   assert.equal(plan.cdpUrl, "wss://anchor/x");
   assert.equal(plan.sessionId, "anch_1");
-  assert.equal(plan.end, null); // Anchor sessions end on disconnect.
+  assert.deepEqual(calls[0].init.headers, { "anchor-api-key": "a" });
+  assert.ok(isCallable(plan.end), "a minted Anchor session is deleted on close");
+  await plan.end();
+  assert.equal(calls[1].url, "https://api.anchorbrowser.io/api/v1/sessions/anch_1");
+  assert.equal(calls[1].init.method, "DELETE");
 });
 
 test("a provider whose response lacks a CDP URL fails clearly", async () => {
@@ -243,13 +255,11 @@ test("browser-use, steel, and browserless mint the endpoint with no REST call", 
   assert.equal(bu.plan.create, undefined);
 
   const steel = resolveBrowserProvider(
-    { provider: "steel", apiKey: "st", sessionOptions: { sessionId: "s1" } },
+    { provider: "steel", apiKey: "st" },
     { env: {} },
   );
-  assert.equal(
-    steel.plan.cdpUrl,
-    "wss://connect.steel.dev/?apiKey=st&sessionId=s1",
-  );
+  assert.equal(steel.plan.cdpUrl, "wss://connect.steel.dev/?apiKey=st");
+  assert.equal(steel.plan.create, undefined);
 
   const bl = resolveBrowserProvider(
     { provider: "browserless", apiKey: "tok", sessionOptions: { blockAds: true } },
@@ -259,6 +269,29 @@ test("browser-use, steel, and browserless mint the endpoint with no REST call", 
     bl.plan.cdpUrl,
     "wss://production-sfo.browserless.io/chromium?token=tok&blockAds=true",
   );
+});
+
+test("steel sessionId attaches via GET then reconstructs the connect URL", async () => {
+  const resolved = resolveBrowserProvider(
+    { provider: "steel", apiKey: "st", sessionOptions: { sessionId: "s1" } },
+    { env: {} },
+  );
+  assert.ok(isCallable(resolved.plan.create));
+  const calls = [];
+  const plan = await resolved.plan.create({
+    fetchJson: async (url, init) => {
+      calls.push({ url, init });
+      return { id: "s1", status: "live", sessionViewerUrl: "https://app.steel.dev/sessions/s1" };
+    },
+  });
+  assert.equal(calls[0].url, "https://api.steel.dev/v1/sessions/s1");
+  assert.equal(calls[0].init.method, "GET");
+  assert.equal(plan.cdpUrl, "wss://connect.steel.dev/?apiKey=st&sessionId=s1");
+  assert.equal(plan.sessionId, "s1");
+  assert.equal(plan.end, null);
+  assert.match(plan.warnings.join("\n"), /keep running \(and billing\)/);
+  if (plan.end) await plan.end();
+  assert.equal(calls.length, 1, "attach must not POST /release when the browser closes");
 });
 
 test("brightdata and oxylabs take userinfo credentials", () => {

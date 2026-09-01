@@ -9,6 +9,34 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- **Connected provider accounts.** `betterwright configure --connect <name>`
+  saves a built-in provider's API key (or `--key-env`) in
+  `browser.accounts` without changing the launch default, so the managed fork
+  can stay the default while `boxes` talks to Kernel, Browserbase, Steel,
+  Anchor, Hyperbrowser, or Browser Use. `--browser <name>` with a key
+  connects the account as well. `--disconnect` forgets a saved key;
+  `--managed` / `--reset` still only clears the launch default.
+  `--show --json` reports connected accounts with stored keys masked.
+- **`betterwright boxes`.** `start`, `list`, `show`, and `stop` drive the six
+  SDK-backed providers' REST session APIs. Browserless, Bright Data, and
+  Oxylabs stay connect-only and are refused with a clear message. Keys resolve
+  from `--browser-key` / `--key-env`, then a saved account, then a matching
+  launch default, then the provider's well-known env var. `--session-id` on
+  `run` / `repl` / `exec` attaches to an existing box instead of minting,
+  and disconnect does not stop that box.
+- **SDK session helpers** on `betterwright/sdk`: `createProviderSession`,
+  `listProviderSessions`, `getProviderSession`, `stopProviderSession`,
+  `REST_BROWSER_PROVIDER_NAMES`, and `lifecycle` on `browserProviderInfo`.
+
+### Changed
+
+- Anchor sessions are released when the browser closes (`DELETE` on the
+  session), matching Kernel / Browserbase / Hyperbrowser. Steel and Browser
+  Use still launch through a connect URL; their REST APIs are used by
+  `boxes` (and by `--session-id` attach).
+
 ## [2.0.0] - 2026-08-31
 
 BetterWright 2.0 contains no breaking changes: every 1.x API, CLI command,
