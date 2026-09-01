@@ -13,6 +13,7 @@ export const COMMAND_SUMMARIES = [
   ["update", "download or refresh the managed browser for this host"],
   ["doctor", "check that everything needed is installed and reachable"],
   ["configure", "choose the browser backend: cloud provider, custom CDP, or managed"],
+  ["boxes", "start, list, and stop cloud browser boxes"],
   ["run", "run one Playwright snippet in the persistent session"],
   ["repl", "run blank-line-separated snippets from stdin"],
   ["exec", "hand a whole task to BetterWright's own browser agent"],
@@ -92,6 +93,7 @@ Exit code is 0 when ready, 1 otherwise.`,
 
   configure: `Usage: betterwright configure
        betterwright configure --browser <name|wss-url|path> [--browser-key <key> | --key-env <NAME>]
+       betterwright configure --connect <name> [--browser-key <key> | --key-env <NAME>]
        betterwright configure --show [--json]
 
 Choose the browser every launch uses: the managed BetterChromium fork, a cloud
@@ -99,6 +101,10 @@ provider, any CDP endpoint, or your own Chromium binary. With no options on a
 terminal it walks you through the choices and offers to connect once; the flags
 do the same things without prompting. The choice is stored in the browser
 section of <BETTERWRIGHT_HOME>/config.json, written owner-only.
+
+--connect saves a provider API key without changing the launch default, so
+\`betterwright boxes\` can start/list/stop sessions on that account. Setting
+--browser <name> with a key also connects the account.
 
 Options:
   --show                 print the current setting (the default with no terminal)
@@ -112,6 +118,9 @@ Options:
   --key-env <NAME>       read that provider's API key from this environment
                          variable instead, so it never enters the file
                          (mutually exclusive with --browser-key)
+  --connect <name>       save that built-in provider's key without making it
+                         the launch default (alias: \`configure connect <name>\`)
+  --disconnect <name>    forget a saved provider key (alias: disconnect)
   --managed, --reset     clear the default; launches use the managed fork again
   --add <name>           add a custom provider named <name>, with
     --cdp-url <template>   its connect URL, where \${apiKey} is replaced with
@@ -128,6 +137,27 @@ Precedence at launch: --browser / the provider option, then
 BETTERWRIGHT_CDP_URL, then this default, then the managed fork.
 Exit code is 0 on success, 1 on a bad value or a failed connection test.
 Details: docs/browser-providers.md`,
+
+  boxes: `Usage: betterwright boxes <command>
+
+  list [--browser <name>] [--status <s>]   boxes on a connected provider
+  start [--browser <name>]                 create a box (REST providers only)
+  show <id> [--browser <name>]             one box: status, live view, CDP
+  stop <id> [--browser <name>]             release a box so it stops billing
+
+Options:
+  --json                 machine-readable output
+  --browser <name>       which connected provider (kernel, browserbase, steel,
+                         anchor, hyperbrowser, browser-use)
+  --browser-key <key>    API key for this call only (not stored)
+  --key-env <NAME>       read the API key from this environment variable
+  --status <value>       passed through as the provider's list-status filter
+
+Connect a provider first:
+  betterwright configure --connect kernel --key-env KERNEL_API_KEY
+
+Browserless, Bright Data, and Oxylabs have no session lifecycle — they are
+connect-only. Details: docs/browser-providers.md`,
 
   run: `Usage: betterwright run -c "<javascript>"
        betterwright run <file>
@@ -161,6 +191,8 @@ Options:
   --browser-key <key>    provider API key (or its env var, e.g.
                          BROWSERBASE_API_KEY); BETTERWRIGHT_CDP_URL is the
                          env shorthand for --browser <url>
+  --session-id <id>      attach to an existing cloud box instead of minting a
+                         new one (REST providers and Steel)
 
 Network:
   --block-private-network   --block-loopback
@@ -279,6 +311,8 @@ environment; see SETUP.md §6.`,
 
   exec: null, // EXEC_USAGE lives in the bin entrypoint beside its flag parsing
 };
+
+export const BOXES_USAGE = COMMAND_HELP.boxes;
 
 /** Help text for a command, or the main usage when there is nothing specific. */
 export function helpFor(command) {

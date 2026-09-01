@@ -89,8 +89,13 @@ Browser providers:
 | Export | What it is |
 | --- | --- |
 | `BROWSER_PROVIDER_NAMES` | The named cloud providers `provider: { provider }` accepts. |
-| `browserProviderInfo(name)` | Display name, docs URL, and API-key environment variable for one of them, or `null`. |
+| `REST_BROWSER_PROVIDER_NAMES` | The six of those with create/list/get/stop session APIs. |
+| `browserProviderInfo(name)` | Display name, docs URL, API-key env var, and `lifecycle` (`rest` or `connect`), or `null`. |
 | `describeCdpUrl(value)` | A CDP URL with its credentials and key-like query values masked, for logging. |
+| `createProviderSession(name, options?)` | Start a managed box (`betterwright boxes start`). |
+| `listProviderSessions(name, options?)` | List boxes (`betterwright boxes list`). |
+| `getProviderSession(name, id, options?)` | Fetch one box. |
+| `stopProviderSession(name, id, options?)` | Release a box so the provider stops billing it. |
 
 Bringing your own browser, and what each provider changes about the guard
 proxy, is covered in [browser-providers.md](browser-providers.md).

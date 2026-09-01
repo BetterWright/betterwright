@@ -14,7 +14,12 @@ export { resolveModel, resolveModelSelection, runAgentTask } from "./agent.js";
 export {
   BROWSER_PROVIDER_NAMES,
   browserProviderInfo,
+  createProviderSession,
   describeCdpUrl,
+  getProviderSession,
+  listProviderSessions,
+  REST_BROWSER_PROVIDER_NAMES,
+  stopProviderSession,
 } from "./browser-providers.js";
 export {
   BetterWright,

@@ -23,9 +23,12 @@ import {
   type DefaultBrowserRef,
   expandProviderChoice,
   loadBrowserConfig,
+  type ProviderAccount,
   removeCustomProvider,
+  removeProviderAccount,
   saveCustomProvider,
   saveDefaultBrowser,
+  saveProviderAccount,
 } from "./browser-config.js";
 import {
   BROWSER_PROVIDER_NAMES,
@@ -33,7 +36,7 @@ import {
   describeCdpUrl,
   resolveBrowserProvider,
 } from "./browser-providers.js";
-import { flagValue } from "./cli-flags.js";
+import { flagValue, positionalArgs } from "./cli-flags.js";
 import { type CliPaint, cliPaint, paintedError, paintedLog } from "./cli-theme.js";
 import { defaultHome } from "./home.js";
 import { isCallable } from "./untrusted-value.js";
@@ -95,9 +98,29 @@ function describeCustomProvider(name, definition: CustomProviderDefinition, env)
   return `${label}: ${describeCdpUrl(definition.cdpUrl)}, ${key}`;
 }
 
+function describeAccount(name, account: ProviderAccount, env) {
+  const info = browserProviderInfo(name);
+  const label = info?.name || name;
+  const keyEnv = account.keyEnv || info?.keyEnv;
+  const key = account.apiKey
+    ? "API key stored in the config file"
+    : keyEnv
+      ? `API key from ${keyEnv} (${envKeyState(env, keyEnv)})`
+      : "no API key configured";
+  const lifecycle = info?.lifecycle === "rest" ? "boxes: start/list/stop" : "connect-only";
+  return `${label} (${name}): ${key} · ${lifecycle}`;
+}
+
 function summaryLines(config, env, home) {
   const lines = [`  Config file: ${browserConfigPath(home)}`];
   lines.push(`  Default:     ${describeDefaultBrowser(config.default, { env, custom: config.custom })}`);
+  const accountNames = Object.keys(config.accounts);
+  if (accountNames.length) {
+    lines.push("  Connected:");
+    for (const name of accountNames) {
+      lines.push(`    · ${describeAccount(name, config.accounts[name], env)}`);
+    }
+  }
   const names = Object.keys(config.custom);
   if (names.length) {
     lines.push("  Custom providers:");
@@ -146,11 +169,16 @@ function showConfig({ home, env, log, json, paint }) {
     for (const [name, definition] of Object.entries(config.custom)) {
       custom[name] = maskEntry(definition, env);
     }
+    const accounts: Record<string, MaskedBrowserEntry> = {};
+    for (const [name, account] of Object.entries(config.accounts)) {
+      accounts[name] = maskEntry({ provider: name, ...account }, env);
+    }
     log(
       JSON.stringify(
         {
           file: browserConfigPath(home),
           default: config.default ? maskEntry(config.default, env) : null,
+          accounts,
           custom,
         },
         null,
@@ -314,7 +342,12 @@ function menuChoices(config: BrowserFileConfig): ConfigureChoice[] {
   ];
   for (const name of BROWSER_PROVIDER_NAMES) {
     const info = browserProviderInfo(name);
-    choices.push({ kind: "provider", name, label: `${info.name} (${name})` });
+    if (!info) continue;
+    choices.push({
+      kind: "provider",
+      name,
+      label: `${info.name} (${name}) — ${info.lifecycle === "rest" ? "boxes" : "connect-only"}`,
+    });
   }
   for (const [name, definition] of Object.entries(config.custom)) {
     choices.push({
@@ -376,7 +409,9 @@ async function chooseBuiltInProvider(prompt, choice, { home, env, log }) {
     keyEnv: info.keyEnv,
   });
   saveDefaultBrowser({ provider: choice.name, ...source }, home);
+  saveProviderAccount(choice.name, source, home);
   log(`  ✓ Default browser: ${info.name} (${choice.name}).`);
+  log(`    Connected for \`betterwright boxes\` too.`);
   if (info.docs) log(`    Docs: ${info.docs}`);
   return true;
 }
@@ -519,13 +554,27 @@ export async function runConfigure(argv: string[] = [], options: any = {}) {
   const browser = flagValue(argv, "--browser");
   const add = flagValue(argv, "--add");
   const remove = flagValue(argv, "--remove");
+  const positionals = positionalArgs(argv);
+  const connectName = trimmed(
+    flagValue(argv, "--connect") ?? (positionals[0] === "connect" ? positionals[1] : undefined),
+  ).toLowerCase();
+  const disconnectName = trimmed(
+    flagValue(argv, "--disconnect") ??
+      (positionals[0] === "disconnect" ? positionals[1] : undefined),
+  ).toLowerCase();
   const managed = hasFlag(argv, "--managed") || hasFlag(argv, "--reset");
   const wantsTest = hasFlag(argv, "--test");
   const wantsJson = hasFlag(argv, "--json");
   const wantsShow = hasFlag(argv, "--show");
-  const acts = managed || [browser, add, remove].some((value) => value !== undefined);
+  const acts =
+    managed ||
+    Boolean(connectName) ||
+    Boolean(disconnectName) ||
+    [browser, add, remove].some((value) => value !== undefined);
   if (!acts && (apiKey !== undefined || keyEnv !== undefined)) {
-    fail("--browser-key and --key-env set the key for --browser or --add; neither was given.");
+    fail(
+      "--browser-key and --key-env set the key for --browser, --add, or --connect; none of those was given.",
+    );
     return 1;
   }
 
@@ -546,6 +595,29 @@ export async function runConfigure(argv: string[] = [], options: any = {}) {
   }
 
   try {
+    if (disconnectName) {
+      log(
+        removeProviderAccount(disconnectName, home)
+          ? `✓ Disconnected ${disconnectName}. The key is no longer in the config file.`
+          : `· No connected provider named "${disconnectName}".`,
+      );
+    }
+    if (connectName) {
+      const account: ProviderAccount = {};
+      if (keyEnv) account.keyEnv = keyEnv;
+      if (apiKey) account.apiKey = apiKey;
+      const saved = saveProviderAccount(connectName, account, home);
+      const info = browserProviderInfo(saved.name);
+      log(
+        `✓ Connected ${info?.name || saved.name} (${saved.name}). ` +
+          (account.apiKey
+            ? "API key stored in the config file."
+            : `API key from ${account.keyEnv}.`) +
+          (info?.lifecycle === "rest"
+            ? ` Manage boxes with \`betterwright boxes list --browser ${saved.name}\`.`
+            : " This provider is connect-only — there are no boxes to start or stop."),
+      );
+    }
     if (remove !== undefined) {
       const name = trimmed(remove).toLowerCase();
       log(
@@ -576,6 +648,9 @@ export async function runConfigure(argv: string[] = [], options: any = {}) {
     } else if (browser !== undefined) {
       const ref = defaultRefFromValue(browser, { apiKey, keyEnv });
       saveDefaultBrowser(ref, home);
+      if (ref.provider && BROWSER_PROVIDER_NAMES.includes(ref.provider) && (ref.apiKey || ref.keyEnv)) {
+        saveProviderAccount(ref.provider, { apiKey: ref.apiKey, keyEnv: ref.keyEnv }, home);
+      }
       log(`✓ Default browser: ${describeDefaultBrowser(ref, { env, custom: loadBrowserConfig(home).custom })}`);
     }
   } catch (error) {

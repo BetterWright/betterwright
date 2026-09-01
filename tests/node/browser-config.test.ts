@@ -9,8 +9,11 @@ import {
   expandProviderChoice,
   loadBrowserConfig,
   removeCustomProvider,
+  removeProviderAccount,
+  resolveConnectedProvider,
   saveCustomProvider,
   saveDefaultBrowser,
+  saveProviderAccount,
 } from "../../dist/src/browser-config.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -21,11 +24,11 @@ function writeConfig(home, config) {
 
 test("missing or malformed config reads as no defaults", () => {
   const home = makeTempDir("bw-config-");
-  assert.deepEqual(loadBrowserConfig(home), { custom: {} });
+  assert.deepEqual(loadBrowserConfig(home), { custom: {}, accounts: {} });
   fs.writeFileSync(browserConfigPath(home), "{not json");
-  assert.deepEqual(loadBrowserConfig(home), { custom: {} });
+  assert.deepEqual(loadBrowserConfig(home), { custom: {}, accounts: {} });
   fs.writeFileSync(browserConfigPath(home), JSON.stringify([1, 2]));
-  assert.deepEqual(loadBrowserConfig(home), { custom: {} });
+  assert.deepEqual(loadBrowserConfig(home), { custom: {}, accounts: {} });
 });
 
 test("load drops malformed defaults, bad names, and unknown keys", () => {
@@ -44,6 +47,78 @@ test("load drops malformed defaults, bad names, and unknown keys", () => {
   assert.equal(config.default, undefined);
   assert.deepEqual(Object.keys(config.custom), ["ok"]);
   assert.deepEqual(config.custom.ok, { cdpUrl: "wss://ok.example", keyEnv: "OK_KEY" });
+  assert.deepEqual(config.accounts, {});
+});
+
+test("load keeps well-formed accounts and drops unknown or empty ones", () => {
+  const home = makeTempDir("bw-config-accounts-");
+  writeConfig(home, {
+    browser: {
+      accounts: {
+        kernel: { apiKey: "kern_saved", surprise: true },
+        nope: { apiKey: "x" },
+        steel: {},
+        browserbase: { keyEnv: "BROWSERBASE_API_KEY" },
+      },
+    },
+  });
+  assert.deepEqual(loadBrowserConfig(home).accounts, {
+    kernel: { apiKey: "kern_saved" },
+    browserbase: { keyEnv: "BROWSERBASE_API_KEY" },
+  });
+});
+
+test("saveProviderAccount stores a key without changing the launch default", () => {
+  const home = makeTempDir("bw-config-save-account-");
+  saveProviderAccount("kernel", { apiKey: "kern_live_secret" }, home);
+  const loaded = loadBrowserConfig(home);
+  assert.equal(loaded.default, undefined);
+  assert.deepEqual(loaded.accounts, { kernel: { apiKey: "kern_live_secret" } });
+  const onDisk = JSON.parse(fs.readFileSync(browserConfigPath(home), "utf8"));
+  assert.equal(onDisk.browser.accounts.kernel.apiKey, "kern_live_secret");
+  const connected = resolveConnectedProvider("kernel", { home, env: {} });
+  assert.equal(connected.apiKey, "kern_live_secret");
+  assert.equal(connected.source, "account");
+  assert.equal(removeProviderAccount("kernel", home), true);
+  assert.deepEqual(loadBrowserConfig(home).accounts, {});
+  assert.equal(removeProviderAccount("kernel", home), false);
+});
+
+test("saveProviderAccount rejects unknown names and empty credentials", () => {
+  const home = makeTempDir("bw-config-account-validate-");
+  assert.throws(() => saveProviderAccount("nope", { apiKey: "x" }, home), /Unknown provider/);
+  assert.throws(() => saveProviderAccount("kernel", {}, home), /--browser-key/);
+});
+
+test("resolveConnectedProvider prefers --browser-key over a saved account and env", () => {
+  const home = makeTempDir("bw-config-resolve-");
+  saveProviderAccount("browserbase", { apiKey: "saved-bb" }, home);
+  const env = { BROWSERBASE_API_KEY: "env-bb" };
+  const fromFlag = resolveConnectedProvider("browserbase", {
+    home,
+    env,
+    apiKey: "flag-bb",
+  });
+  assert.equal(fromFlag.apiKey, "flag-bb");
+  assert.equal(fromFlag.source, "flag");
+  const fromSaved = resolveConnectedProvider("browserbase", { home, env: {} });
+  assert.equal(fromSaved.apiKey, "saved-bb");
+  assert.equal(fromSaved.source, "account");
+});
+
+test("resolveConnectedProvider reads the well-known env var when nothing is saved", () => {
+  const home = makeTempDir("bw-config-env-");
+  const connected = resolveConnectedProvider("hyperbrowser", {
+    home,
+    env: { HYPERBROWSER_API_KEY: "env-hb" },
+  });
+  assert.equal(connected.apiKey, "env-hb");
+  assert.equal(connected.source, "env");
+  assert.equal(connected.keyEnv, "HYPERBROWSER_API_KEY");
+  assert.throws(
+    () => resolveConnectedProvider("hyperbrowser", { home, env: {} }),
+    /No API key for Hyperbrowser/,
+  );
 });
 
 test("saveDefaultBrowser round-trips and preserves unrelated sections", () => {

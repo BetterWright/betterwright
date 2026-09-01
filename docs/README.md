@@ -47,7 +47,7 @@ whole path works by loading a real page.
 | --- | --- |
 | [Architecture & security model](architecture.md) | The worker process, the RPC loop, what is and isn't a security boundary |
 | [Launch identity](launch-identity.md) | The coherent locale/timezone/geo identity layer; launch modes and egress matching |
-| [Browser providers](browser-providers.md) | Managed fork, local executables, CDP endpoints, and named cloud browsers |
+| [Browser providers](browser-providers.md) | Managed fork, local executables, CDP endpoints, named cloud browsers, connected API keys, and `betterwright boxes` |
 | [Chromium fork](chromium-fork.md) | BetterWright's own Chromium build: farbling, discovery |
 | [Chromium fork patches](chromium-fork-patches.md) | What each source patch in the pinned Chromium 151 build changes, and why |
 | [Headed / headless](attach-mode.md) | Display modes over one persistent profile |

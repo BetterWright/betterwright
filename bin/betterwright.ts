@@ -8,6 +8,7 @@
 //   betterwright doctor           report runtime readiness
 //   betterwright configure        choose the browser backend (cloud provider,
 //                                 CDP endpoint, own binary, or the managed fork)
+//   betterwright boxes            start, list, and stop cloud browser boxes
 //   betterwright run <file|-|-c>  execute a Playwright snippet in the
 //                                 persistent session (tabs/state survive calls)
 //   betterwright repl             run blank-line-separated snippets from stdin
@@ -310,7 +311,11 @@ function browserOptionsFromFlags(flags) {
 // as a CDP endpoint; anything else names a cloud provider whose key comes
 // from --browser-key or that provider's env var (docs/browser-providers.md).
 // The name is an arbitrary flag string here; the provider layer validates it.
-type CliCloudProviderChoice = { provider: string; apiKey?: string };
+type CliCloudProviderChoice = {
+  provider: string;
+  apiKey?: string;
+  sessionOptions?: { sessionId: string };
+};
 
 function providerFromFlags(_flags) {
   const named = flagValue(process.argv, "--browser");
@@ -321,6 +326,8 @@ function providerFromFlags(_flags) {
     const key = flagValue(process.argv, "--browser-key");
     const provider: CliCloudProviderChoice = { provider: value };
     if (key) provider.apiKey = String(key);
+    const sessionId = flagValue(process.argv, "--session-id");
+    if (sessionId) provider.sessionOptions = { sessionId: String(sessionId) };
     return provider;
   }
   return undefined; // the client falls back to BETTERWRIGHT_CDP_URL
@@ -2039,6 +2046,10 @@ async function main() {
     case "configure": {
       const { runConfigure } = await import("../src/configure.js");
       return runConfigure(rest);
+    }
+    case "boxes": {
+      const { runBoxesCommand } = await import("../src/boxes-cli.js");
+      return runBoxesCommand(rest);
     }
     case "vault": {
       const { runVaultCommand } = await import("../src/vault-cli.js");

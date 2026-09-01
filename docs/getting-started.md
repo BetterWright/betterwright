@@ -76,8 +76,10 @@ Chromium binary (`provider: { executablePath }`, still on the guard proxy),
 any CDP endpoint (`provider: { cdpUrl }` / `BETTERWRIGHT_CDP_URL`), or a
 cloud browser from Browser Use, Kernel, Browserbase, Steel, Anchor,
 Hyperbrowser, Browserless, Bright Data, or Oxylabs. `betterwright configure`
-walks you through the choice and persists a default; custom CDP services can
-be added there by name. See [browser-providers.md](browser-providers.md).
+walks you through the choice and persists a default; `--connect` saves a key
+for `betterwright boxes` (start/list/stop on the six REST-backed providers)
+without changing that default. Custom CDP services can be added by name.
+See [browser-providers.md](browser-providers.md).
 
 ### BetterChromium backend (macOS arm64 / Linux x64 / Windows x64)
 
