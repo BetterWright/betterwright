@@ -9,6 +9,26 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-02
+
+### Added
+
+- **Cookie Sync.** The host SDK and `betterwright cookies` CLI can discover
+  mainstream Chromium, Firefox-family, and Safari profiles and copy scoped
+  cookies into local BetterChromium profiles on Windows, macOS, and Linux.
+  Remote Chromium providers and explicit CDP endpoints are supported with
+  exact per-call destination consent. Chromium partition, source-scheme, and
+  source-port scope is preserved; unsupported Firefox isolation is skipped.
+  Target quota preflight and readback verification prevent silent eviction and
+  false success counts.
+
+### Security
+
+- Cookie values stay off command arguments and the profile-daemon socket.
+  Raw Cookie and Set-Cookie header access and browser-context cookie mutation
+  are absent from model snippets, while known synced values
+  are redacted from result envelopes across profile restarts.
+
 ## [2.0.1] - 2026-09-01
 
 A stability release for the SDK. A worker restart no longer surfaces as a
@@ -1327,7 +1347,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/BetterWright/betterwright/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/BetterWright/betterwright/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/BetterWright/betterwright/compare/v1.11.0...v2.0.0
 [1.11.0]: https://github.com/BetterWright/betterwright/compare/v1.10.3...v1.11.0

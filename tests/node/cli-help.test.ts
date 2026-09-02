@@ -143,6 +143,71 @@ test("boxes help names REST providers and the connect-only ones", () => {
   assert.match(text, /configure --connect/);
 });
 
+test("Cookie Sync help names its local and cloud security gates", () => {
+  const text = helpFor("cookies");
+  assert.match(text, /cookies browsers/);
+  assert.match(text, /cookies profiles/);
+  assert.match(text, /cookies sync/);
+  assert.match(text, /--allow-app-bound/);
+  assert.match(text, /--allow-cloud <target>/);
+  assert.match(text, /provider:browserbase/);
+});
+
+test("Cookie Sync CLI rejects unsafe selector shapes before opening a browser", () => {
+  const missingScope = runCli(["cookies", "sync", "chrome", "--json"]);
+  assert.equal(missingScope.status, 1);
+  assert.match(missingScope.stdout, /requires either --all or one or more --domain/);
+
+  const swallowedFlag = runCli([
+    "cookies",
+    "sync",
+    "chrome",
+    "--domain",
+    "--all",
+    "--json",
+  ]);
+  assert.equal(swallowedFlag.status, 1);
+  assert.match(swallowedFlag.stdout, /--domain requires a value/);
+
+  const missingProfile = runCli([
+    "cookies",
+    "sync",
+    "chrome",
+    "--all",
+    "--source-profile",
+    "--json",
+  ]);
+  assert.equal(missingProfile.status, 1);
+  assert.match(missingProfile.stdout, /--source-profile requires a value/);
+
+  const oneShotCloud = runCli([
+    "cookies",
+    "sync",
+    "chrome",
+    "--all",
+    "--browser",
+    "wss://cloud.example.test/devtools/browser/fixture",
+    "--allow-cloud",
+    "cdp:cloud.example.test",
+    "--no-daemon",
+    "--json",
+  ]);
+  assert.equal(oneShotCloud.status, 1);
+  assert.match(oneShotCloud.stdout, /requires the session daemon/);
+
+  const oneShotSession = runCli([
+    "cookies",
+    "sync",
+    "firefox",
+    "--all",
+    "--include-session",
+    "--no-daemon",
+    "--json",
+  ]);
+  assert.equal(oneShotSession.status, 1);
+  assert.match(oneShotSession.stdout, /session cookies remain usable/);
+});
+
 test("wantsHelp only matches flag forms, so task text is never swallowed", () => {
   assert.equal(wantsHelp(["--help"]), true);
   assert.equal(wantsHelp(["-h"]), true);

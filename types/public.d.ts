@@ -64,6 +64,57 @@ export type BrowserProviderOptions =
   | CdpEndpointProvider
   | CloudBrowserProvider;
 
+export interface CookieSyncSource {
+  /** Browser id from `listCookieSourceBrowsers()`, such as `chrome` or `firefox`. */
+  browser: string;
+  /** Profile id or name from `listCookieSourceProfiles()`. */
+  profile?: string;
+}
+
+export interface CookieSyncOptions {
+  source: CookieSyncSource;
+  /** Cookie-domain scopes. Omit to sync every compatible cookie. */
+  domains?: string[];
+  /** Include Firefox-family session-store cookies. Defaults to false. */
+  includeSession?: boolean;
+  /** Windows Chrome App-Bound recovery through unprivileged process injection. Defaults to disabled. */
+  windowsAppBound?: "disabled" | "injection";
+  /** Exact remote target consent, for example `provider:browserbase`. */
+  cloudConsent?: string;
+  /** Local extraction timeout in milliseconds. Defaults to 30000. */
+  timeoutMs?: number;
+}
+
+export interface CookieSyncWarning {
+  code: string;
+  count: number;
+}
+
+export type CookieSyncResult =
+  | {
+      ok: true;
+      synced: number;
+      selected: number;
+      skipped: number;
+      source: { browser: string; profile?: string };
+      target: string;
+      warnings?: CookieSyncWarning[];
+      profileMode?: "persistent" | "ephemeral";
+    }
+  | { ok: false; error: string };
+
+export interface CookieSourceBrowser {
+  id: string;
+  name: string;
+  engine: string;
+}
+
+export interface CookieSourceProfile {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
 export interface BetterWrightOptions {
   home?: string;  /**
    * Named persistent browser profile inside the home: a separate identity,

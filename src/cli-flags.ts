@@ -38,6 +38,7 @@ export const VALUE_FLAGS = new Set([
   // two parsers should agree rather than depend on that ordering.
   "-c",
   "--allow-host",
+  "--allow-cloud",
   "--api-key-env",
   "--base-url",
   "--block-host",
@@ -49,6 +50,7 @@ export const VALUE_FLAGS = new Set([
   "--disconnect",
   "--category",
   "--delay",
+  "--domain",
   "--effort",
   "--endpoint",
   "--expose",
@@ -69,6 +71,7 @@ export const VALUE_FLAGS = new Set([
   "--session",
   "--session-id",
   "--status",
+  "--source-profile",
   "--key-env",
   "--add",
   "--remove",

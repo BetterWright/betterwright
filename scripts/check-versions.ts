@@ -44,6 +44,36 @@ if (patchright !== pkg.dependencies["playwright-core"]) {
 if (lockRoot.optionalDependencies?.["patchright-core"] !== patchright) {
   failures.push("package-lock.json patchright-core pin does not match package.json");
 }
+// Cookie extraction handles authentication bearer material and ships native
+// binaries. Keep the audited facade and every platform package on one exact
+// version rather than accepting a newly published binary during install.
+const rookieCookies = pkg.optionalDependencies?.["rookie-cookies"];
+if (rookieCookies !== "0.6.0") {
+  failures.push(
+    `rookie-cookies must be pinned to the audited exact version 0.6.0; found ${rookieCookies ?? "nothing"}`,
+  );
+}
+if (lockRoot.optionalDependencies?.["rookie-cookies"] !== rookieCookies) {
+  failures.push("package-lock.json rookie-cookies pin does not match package.json");
+}
+expectMatch(
+  "Cookie Sync runtime reader pin",
+  read("src/cookie-sync.ts"),
+  /COOKIE_READER_VERSION = "([^"]+)"/,
+  rookieCookies,
+);
+for (const name of [
+  "rookie-cookies",
+  "rookie-cookies-darwin-arm64",
+  "rookie-cookies-darwin-x64",
+  "rookie-cookies-linux-arm64-gnu",
+  "rookie-cookies-linux-x64-gnu",
+  "rookie-cookies-win32-x64-msvc",
+]) {
+  if (lock.packages?.[`node_modules/${name}`]?.version !== rookieCookies) {
+    failures.push(`${name} lockfile version must be ${rookieCookies}`);
+  }
+}
 const npmVersion = String(pkg.packageManager || "").match(/^npm@(.+)$/)?.[1];
 if (!npmVersion) failures.push("packageManager must pin an exact npm version");
 else {

@@ -561,7 +561,14 @@ it escape the policy or read the host. These are absent by design and return
   properties, and CDP sessions stay inside the worker. Attach-mode endpoints
   are trusted host configuration and are not exposed as snippet globals.
 - **Context mutation** — `context.newPage`, `context.cookies`,
-  `context.storageState`, `context.close`, `context.tracing`. Use `openPage`.
+  `context.storageState`, `context.addCookies`, `context.clearCookies`,
+  `context.setStorageState`, `context.close`, `context.tracing`. Use `openPage`;
+  trusted host code can import an identity with
+  [Cookie Sync](cookie-sync.md).
+- **Raw network credentials** — full and name-addressed request/response header
+  methods are absent. Playwright's filtered `headers()` remains available, as
+  do request/response timing, status, URL, resource type, and request-body
+  inspection.
 - **`page.screenshot`** — use the `screenshot()` helper so captures are tracked
   as artifacts.
 - **Filesystem reach** — `setInputFiles`, `FileChooser.setFiles`,

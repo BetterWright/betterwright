@@ -29,6 +29,10 @@ function stubBrowser() {
       calls.push(["run", code, options]);
       return { ok: true, result: `ran:${code}`, session: options.session };
     },
+    syncCookies: async (options) => {
+      calls.push(["syncCookies", options]);
+      return { ok: true, synced: 4, target: "local" };
+    },
     closeSession: async (session) => {
       calls.push(["closeSession", session]);
       return { ok: true, closed: true, pagesClosed: 2 };
@@ -330,6 +334,27 @@ test("createDaemonBrowser proxies run and survives daemon death with an envelope
     const dead = await proxy.run("3+3", {});
     assert.equal(dead.ok, false);
     assert.match(dead.error, /session daemon/);
+    await proxy.close();
+  } finally {
+    await cleanup();
+  }
+});
+
+test("Cookie Sync crosses the daemon socket as source options, not cookie plaintext", async () => {
+  const { home, browser, cleanup } = await startTestDaemon();
+  try {
+    const outcome = await connectSessionDaemon({ home, spawnIfNeeded: false });
+    const proxy = createDaemonBrowser(outcome.channel, { session: "cookies" });
+    const options = {
+      source: { browser: "chrome", profile: "Work" },
+      domains: ["example.com"],
+      windowsAppBound: "disabled",
+    };
+    const result = await proxy.syncCookies(options);
+    assert.equal(result.ok, true);
+    assert.equal(result.synced, 4);
+    assert.deepEqual(browser.calls.at(-1), ["syncCookies", options]);
+    assert.equal(JSON.stringify(browser.calls.at(-1)).includes('"cookies"'), false);
     await proxy.close();
   } finally {
     await cleanup();

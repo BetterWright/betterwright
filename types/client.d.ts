@@ -1,6 +1,8 @@
 import type {
   AskResult,
   BetterWrightOptions,
+  CookieSyncOptions,
+  CookieSyncResult,
   CredentialFillResult,
   FillCredentialOptions,
   GenerateAndFillCredentialOptions,
@@ -67,6 +69,8 @@ export class BetterWright {
   liveView: Omit<LiveViewOptions, "expose"> & { expose?: string };
 
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;
+  /** Merge local browser cookies into this browser's persistent context. */
+  syncCookies(options: CookieSyncOptions): Promise<CookieSyncResult>;
   /**
    * Close one session's pages and forget its state (tabs, `state`, cursor)
    * without touching the browser, the profile, or other sessions.

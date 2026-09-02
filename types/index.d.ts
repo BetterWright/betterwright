@@ -53,6 +53,13 @@ export {
 } from "./captcha-solver.js";
 export { detectBotChallenge } from "./challenges.js";
 export { BetterWright, BrowserError } from "./client.js";
+export function listCookieSourceBrowsers(): Promise<
+  import("./public.js").CookieSourceBrowser[]
+>;
+export function listCookieSourceProfiles(
+  browser: string,
+  options?: { timeoutMs?: number },
+): Promise<import("./public.js").CookieSourceProfile[]>;
 export { METADATA_ADDRESSES, METADATA_HOSTNAMES, NetworkPolicy } from "./policy.js";
 export {
   piImageArtifacts,

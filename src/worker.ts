@@ -14,7 +14,9 @@ import path from "node:path";
 import readline from "node:readline";
 import { types as utilTypes } from "node:util";
 import vm from "node:vm";
+import { getDomain } from "tldts";
 import {
+  cookieSyncConsentTarget,
   redactProviderSecrets,
   resolveBrowserProvider,
 } from "./browser-providers.js";
@@ -74,11 +76,12 @@ import {
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
 import { compileCode } from "./compile-code.js";
+import { validateCookieSyncTargetCookies } from "./cookie-sync.js";
 import {
   assertRotationPreservesMatchMode,
+  createSecretsRedactor,
   MAX_PENDING_CREDENTIAL_ORIGINS,
   pendingCredentialRecovery,
-  redactSecretsDeep,
   validateCredentialMatchMode,
 } from "./credential-constants.js";
 import {
@@ -207,6 +210,14 @@ const DEFAULT_SCREENSHOT_TIMEOUT_MS = 15_000;
 const CAPTCHA_SCREENSHOT_TIMEOUT_MS = 8_000;
 const SAFE_SYNC_VM_TIMEOUT_MS = 1_000;
 const MAX_ACTIVE_SECRETS = 200;
+const MAX_ACTIVE_COOKIE_SECRETS = 20_000;
+const MAX_ACTIVE_COOKIE_SECRET_BYTES = 64 * 1024 * 1024;
+const MAX_COOKIE_REDACTION_IDENTITIES = 100_000;
+// Stay below Chromium's eviction triggers. The lower steady-state ceilings
+// leave room for an idle page to set cookies between preflight and commit.
+const COOKIE_SYNC_UNPARTITIONED_TOTAL_LIMIT = 3_000;
+const COOKIE_SYNC_DOMAIN_LIMIT = 150;
+const COOKIE_SYNC_PARTITION_BYTES_LIMIT = 10_240;
 
 // Guards for values that cross the vm/page bridges, alongside the shared ones
 // in untrusted-value.ts. The shared isRecord excludes arrays, which the call
@@ -242,6 +253,12 @@ let profileLock = null;
 let profileLockHeartbeat = null;
 let profileMode = "persistent";
 let profileWarning = "";
+let cookieSyncActive = false;
+
+interface CookieSyncResultSource {
+  browser: string;
+  profile?: string;
+}
 // Non-empty when caller-supplied Chromium switches were dropped as duplicates
 // of BetterWright's own, so the caller is told rather than left wondering why
 // a switch had no effect.
@@ -380,7 +397,12 @@ const pageIds = new WeakMap();
 const facadeToRaw = new WeakMap();
 const pendingRpc = new Map();
 const activeSecrets = new Set();
+const cookieSecrets = new Set();
+const syncedCookieIdentities = new Set();
+let redactKnownSecrets: ReturnType<typeof createSecretsRedactor> | null = null;
 let redactionCapacityExceeded = false;
+let cookieRedactionCapacityExceeded = false;
+let cookieSecretBytes = 0;
 
 // Last time model-driven code touched a page or origin, used by the vault
 // capture engine to tell model-typed logins (always saved silently) apart
@@ -402,6 +424,98 @@ function trackSecret(value) {
   }
   activeSecrets.delete(secret);
   activeSecrets.add(secret);
+  redactKnownSecrets = null;
+}
+
+function cookieRedactionIdentity(cookie) {
+  return crypto.createHash("sha256").update(cookieTargetIdentity(cookie)).digest("hex");
+}
+
+function cookieRedactionValues(cookie) {
+  const name = String(cookie?.name ?? "");
+  const value = String(cookie?.value ?? "");
+  if (!value) return [];
+  // Short preference values such as "0" and "1" are not useful bearer
+  // material and redacting them globally would corrupt ordinary output. The
+  // full name=value pair is still scrubbed from document.cookie strings.
+  return value.length >= 8 ? [value] : [`${name}=${value}`];
+}
+
+function trackCookieSecrets(cookies) {
+  let changed = false;
+  for (const cookie of cookies || []) {
+    for (const secret of cookieRedactionValues(cookie)) {
+      if (cookieSecrets.has(secret)) continue;
+      const bytes = Buffer.byteLength(secret, "utf8");
+      if (
+        cookieSecrets.size >= MAX_ACTIVE_COOKIE_SECRETS ||
+        cookieSecretBytes + bytes > MAX_ACTIVE_COOKIE_SECRET_BYTES
+      ) {
+        cookieRedactionCapacityExceeded = true;
+        const error = new Error(
+          "Cookie Sync redaction capacity was reached; the browser worker must restart.",
+        );
+        error.code = "BW_COOKIE_SYNC_SECRET_CAPACITY";
+        throw error;
+      }
+      cookieSecrets.add(secret);
+      cookieSecretBytes += bytes;
+      changed = true;
+    }
+  }
+  if (changed) redactKnownSecrets = null;
+}
+
+function cookieRedactionRegistryPath(profileDir) {
+  return path.join(profileDir, ".betterwright-cookie-sync-redaction.json");
+}
+
+function loadCookieRedactionRegistry(profileDir) {
+  const file = cookieRedactionRegistryPath(profileDir);
+  if (!fs.existsSync(file)) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    throw new Error("Cookie Sync redaction metadata is unreadable.");
+  }
+  if (
+    parsed?.version !== 1 ||
+    !Array.isArray(parsed.identities) ||
+    parsed.identities.length > MAX_COOKIE_REDACTION_IDENTITIES ||
+    parsed.identities.some((value) =>
+      !isString(value) || !/^[a-f0-9]{64}$/.test(value)
+    )
+  ) throw new Error("Cookie Sync redaction metadata is invalid.");
+  for (const identity of parsed.identities) syncedCookieIdentities.add(identity);
+}
+
+function rememberSyncedCookies(cookies, profileDir) {
+  const nextIdentities = new Set(syncedCookieIdentities);
+  for (const cookie of cookies) {
+    nextIdentities.add(cookieRedactionIdentity(cookie));
+  }
+  if (nextIdentities.size > MAX_COOKIE_REDACTION_IDENTITIES) {
+    throw new Error("Cookie Sync redaction metadata reached its profile limit.");
+  }
+  const file = cookieRedactionRegistryPath(profileDir);
+  const temporary = `${file}.${process.pid}.tmp`;
+  writePrivate(temporary, `${JSON.stringify({
+    version: 1,
+    identities: [...nextIdentities].sort(),
+  })}\n`);
+  fs.renameSync(temporary, file);
+  for (const identity of nextIdentities) syncedCookieIdentities.add(identity);
+}
+
+async function refreshCookieSecrets(context) {
+  if (!syncedCookieIdentities.size) return;
+  const cookies = await context.cookies();
+  trackCookieSecrets(
+    cookies.filter((cookie) =>
+      syncedCookieIdentities.has(cookieRedactionIdentity(cookie))
+    ),
+  );
 }
 
 function trackSecretValues(value, seen = new WeakSet()) {
@@ -434,6 +548,13 @@ function redactionCapacityError() {
 }
 
 function assertRedactionCapacity() {
+  if (cookieRedactionCapacityExceeded) {
+    const error = new Error(
+      "Cookie Sync redaction capacity was reached; the browser worker must restart.",
+    );
+    error.code = "BW_COOKIE_SYNC_SECRET_CAPACITY";
+    throw error;
+  }
   if (redactionCapacityExceeded) throw redactionCapacityError();
 }
 
@@ -450,7 +571,12 @@ function sendRedactionCapacityFailure(message) {
 function secretCapacityRequiresRestart(error) {
   return (
     redactionCapacityExceeded ||
-    ["BW_SECRET_CAPACITY", "VAULT_SECRET_CAPACITY"].includes(error?.code)
+    cookieRedactionCapacityExceeded ||
+    [
+      "BW_SECRET_CAPACITY",
+      "VAULT_SECRET_CAPACITY",
+      "BW_COOKIE_SYNC_SECRET_CAPACITY",
+    ].includes(error?.code)
   );
 }
 const pendingDownloadTasks = new Set();
@@ -702,15 +828,23 @@ async function closeDownloadGuard() {
   }
 }
 
-// Thin wrappers over the shared algorithm in credential-constants.ts, bound
-// to this worker's module-level secret set. redactText additionally coerces
-// null/undefined to "" because worker call sites pass raw error messages.
+// Browser cookie values remain usable by Chromium but never cross a result
+// envelope. The matcher is rebuilt only when a vault or cookie secret is
+// added, rather than once for every string in every result.
+function knownSecretRedactor() {
+  redactKnownSecrets ??= createSecretsRedactor([
+    ...activeSecrets,
+    ...cookieSecrets,
+  ]);
+  return redactKnownSecrets;
+}
+
 function redactText(value) {
-  return redactSecretsDeep(String(value ?? ""), activeSecrets);
+  return knownSecretRedactor()(String(value ?? ""));
 }
 
 function redactDeep(value) {
-  return redactSecretsDeep(value, activeSecrets);
+  return knownSecretRedactor()(value);
 }
 
 function sessionFor(id) {
@@ -1881,7 +2015,15 @@ async function installContextGuard(context) {
   // guard, which authorizes the host and each resolved address before dialing.
 }
 
-async function ensureBrowser(config) {
+function persistentCookieSyncTargetError() {
+  const error = new Error(
+    "Cookie Sync requires the selected BetterWright profile to be persistent. Close its other BetterWright process and try again.",
+  );
+  error.code = "BW_COOKIE_SYNC_EPHEMERAL_TARGET";
+  return error;
+}
+
+async function ensureBrowser(config, { requirePersistentProfile = false } = {}) {
   // BetterChromium is the only bundled browser; everything else is an
   // explicit provider (a caller-supplied local Chromium binary, or a remote
   // CDP endpoint minted by a cloud-browser service).
@@ -1893,11 +2035,26 @@ async function ensureBrowser(config) {
     throw new Error('publicSearchPolicy must be "block" or "allow".');
   }
   config = { ...config, publicSearchPolicy };
-  if (browserContext) {
-    launchConfig = { ...launchConfig, ...config };
-    return browserContext;
+  if (launchPromise) {
+    const context = await launchPromise;
+    if (requirePersistentProfile && profileMode !== "persistent") {
+      throw persistentCookieSyncTargetError();
+    }
+    return context;
   }
-  if (launchPromise) return launchPromise;
+  if (browserContext) {
+    if (requirePersistentProfile && profileMode !== "persistent") {
+      await closeDownloadGuard();
+      const ephemeralContext = browserContext;
+      browserContext = null;
+      await ephemeralContext.close();
+      disposeVaultCapture();
+      releaseProfileLock();
+    } else {
+      launchConfig = { ...launchConfig, ...config };
+      return browserContext;
+    }
+  }
   launchConfig = { ...config };
   launchPromise = (async () => {
     mkdirPrivate(launchConfig.artifactsDir);
@@ -1905,12 +2062,6 @@ async function ensureBrowser(config) {
     // Session-minting providers make their REST call here, at launch, so a
     // client that is constructed but never starts never bills a session.
     let providerPlan = providerResolution?.plan || null;
-    if (providerPlan?.create) {
-      providerPlan = await providerPlan.create();
-    }
-    redactProviderSecrets(trackSecret, providerPlan);
-    providerWarnings = providerPlan?.warnings || [];
-
     const remoteCdp = providerPlan?.kind === "remote";
     let forkBinary = null;
     let launchExecutable = null;
@@ -1957,8 +2108,18 @@ async function ensureBrowser(config) {
     startProfileLockHeartbeat();
     profileMode = profileLock.ephemeral ? "ephemeral" : "persistent";
     const browserProfileDir = profileLock.profileDir;
+    if (requirePersistentProfile && profileMode !== "persistent") {
+      throw persistentCookieSyncTargetError();
+    }
     mkdirPrivate(browserProfileDir);
+    loadCookieRedactionRegistry(browserProfileDir);
     profileWarning = profileLock.warning || "";
+    if (providerPlan?.create) {
+      providerPlan = await providerPlan.create();
+    }
+    redactProviderSecrets(trackSecret, providerPlan);
+    providerWarnings = providerPlan?.warnings || [];
+    if (remoteCdp) endRemoteSession = providerPlan?.end || null;
     // The guard proxy only bounds locally launched browsers. A remote CDP
     // browser runs on the provider's side of the WebSocket; its traffic never
     // touches this listener, so it is not even started (see the warnings).
@@ -2071,7 +2232,6 @@ async function ensureBrowser(config) {
       // rejection from connectOverCDP or newContext still releases the metered
       // session. On success the context's "close" handler disarms and consumes
       // this same reference, so the stop never runs twice.
-      endRemoteSession = providerPlan.end || null;
       try {
         const browser = await chromium.connectOverCDP(
           providerPlan.cdpUrl,
@@ -2139,6 +2299,7 @@ async function ensureBrowser(config) {
     });
     await installContextGuard(launchedContext);
     await installDownloadGuard(launchedContext);
+    await refreshCookieSecrets(launchedContext);
     if (launchConfig.credentialCapture !== false) {
       // CDP-level capture: the sensor runs in dedicated isolated worlds and
       // reports logins in-process; model-typed logins save silently, manual
@@ -2190,6 +2351,9 @@ async function ensureBrowser(config) {
     const launched = browserContext;
     browserContext = null;
     await launched?.close().catch(() => {});
+    const end = endRemoteSession;
+    endRemoteSession = null;
+    if (end) await end().catch(() => {});
     disposeVaultCapture();
     releaseProfileLock();
     throw error;
@@ -2255,10 +2419,13 @@ function propertyForbidden(value, property) {
   if (
     kind === "BrowserContext" &&
     [
+      "addCookies",
+      "clearCookies",
       "close",
       "cookies",
       "newPage",
       "pages",
+      "setStorageState",
       "storageState",
       "tracing",
     ].includes(property)
@@ -2269,7 +2436,35 @@ function propertyForbidden(value, property) {
     ["createReadStream", "path", "saveAs"].includes(property)
   )
     return true;
+  if (
+    kind === "Request" &&
+    [
+      "allHeaders",
+      "headerValue",
+      "headersArray",
+    ].includes(property)
+  )
+    return true;
+  if (
+    kind === "Response" &&
+    [
+      "allHeaders",
+      "headerValue",
+      "headerValues",
+      "headersArray",
+    ].includes(property)
+  )
+    return true;
   return false;
+}
+
+function filterModelHeaders(headers) {
+  const filtered = {};
+  for (const [name, value] of Object.entries(headers || {})) {
+    if (["cookie", "set-cookie"].includes(name.toLowerCase())) continue;
+    filtered[name] = value;
+  }
+  return filtered;
 }
 
 function isWithin(candidate, root) {
@@ -2667,6 +2862,14 @@ function wrap(value, realm) {
           result = setContentCompatible(value, prepared[0], prepared[1]);
         } else {
           result = member.apply(value, prepared);
+        }
+        if (
+          ["Request", "Response"].includes(kind) &&
+          property === "headers"
+        ) {
+          result = result && isCallable(untrustedField(result, "then"))
+            ? result.then(filterModelHeaders)
+            : filterModelHeaders(result);
         }
         if (result && isCallable(untrustedField(result, "then"))) {
           return result.then((item) => wrap(item, realm));
@@ -3832,10 +4035,29 @@ async function buildEnvelope(
     ...fields
   },
 ) {
+  try {
+    if (browserContext) await refreshCookieSecrets(browserContext);
+  } catch {
+    return {
+      type: "result",
+      id: message.id,
+      ok: false,
+      error: "Result withheld: Cookie Sync redaction refresh failed.",
+      restartWorker: true,
+      console: [],
+      events: [],
+      artifacts: [],
+      warnings: [],
+      challenges: [],
+      profileMode,
+      pages: [],
+      durationMs: Math.round((performance.now() - started) * 10) / 10,
+    };
+  }
   return {
     type: "result",
     id: message.id,
-    ...fields,
+    ...redactDeep(fields),
     console: redactDeep(consoleMessages),
     events: redactDeep(session.events.slice(firstEvent)),
     artifacts: redactDeep(artifacts),
@@ -3850,7 +4072,7 @@ async function buildEnvelope(
     ]),
     challenges: redactDeep(challenges),
     profileMode,
-    pages: pages ?? (await summarizeSessionPages(session)),
+    pages: redactDeep(pages ?? (await summarizeSessionPages(session))),
     durationMs: Math.round((performance.now() - started) * 10) / 10,
   };
 }
@@ -4069,6 +4291,10 @@ async function performCredentialFill(
 // generateAndFillCredential): wraps performCredentialFill in the usual result
 // envelope. The active redaction net still scrubs the secret from every field.
 async function credentialFill(message) {
+  if (cookieSyncActive) {
+    cookieSyncBusyResult(message);
+    return;
+  }
   const started = performance.now();
   const session = sessionFor(message.sessionId);
   session.awaitingAnswerSince = null;
@@ -4130,6 +4356,10 @@ async function credentialFill(message) {
 // Dedicated trusted host path for finalizing or discarding a staged generated
 // credential after the caller has verified the visible browser outcome.
 async function credentialPending(message) {
+  if (cookieSyncActive) {
+    cookieSyncBusyResult(message);
+    return;
+  }
   const started = performance.now();
   const session = sessionFor(message.sessionId);
   session.awaitingAnswerSince = null;
@@ -7046,7 +7276,332 @@ async function pumpPageEventQueue(session) {
   ]);
 }
 
+function sanitizedCookieSyncWarnings(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 100).flatMap((entry) => {
+    const code = String(untrustedField(entry, "code") || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "_")
+      .slice(0, 80);
+    const rawCount = untrustedField(entry, "count");
+    const count = isNumber(rawCount) && Number.isFinite(rawCount)
+      ? Math.max(0, Math.floor(rawCount))
+      : 0;
+    return code && count ? [{ code, count }] : [];
+  });
+}
+
+function cookieSyncBusyResult(message) {
+  sendResult({
+    type: "result",
+    id: message.id,
+    ok: false,
+    error: "Cookie Sync cannot run while browser work is active. Try again after the current call finishes.",
+  });
+}
+
+function cookiePartition(cookie) {
+  const value = cookie?.partitionKey;
+  if (isString(value)) {
+    return {
+      topLevelSite: value,
+      hasCrossSiteAncestor: cookie?.partitionCrossSiteAncestor === true,
+    };
+  }
+  if (!isObjectValue(value)) return null;
+  const topLevelSite = untrustedField(value, "topLevelSite");
+  if (!isString(topLevelSite) || !topLevelSite) return null;
+  return {
+    topLevelSite,
+    hasCrossSiteAncestor: untrustedField(value, "hasCrossSiteAncestor") === true,
+  };
+}
+
+function cookieTargetIdentity(cookie) {
+  const partition = cookiePartition(cookie);
+  return JSON.stringify([
+    String(cookie?.name || ""),
+    String(cookie?.domain || "").toLowerCase(),
+    String(cookie?.path || "/"),
+    partition?.topLevelSite || "",
+    partition?.hasCrossSiteAncestor ?? null,
+  ]);
+}
+
+function cookieQuotaDomain(cookie) {
+  const host = String(cookie?.domain || "")
+    .toLowerCase()
+    .replace(/^\./, "")
+    .replace(/^\[|\]$/g, "");
+  return getDomain(host, {
+    allowPrivateDomains: true,
+    extractHostname: false,
+  }) || host;
+}
+
+function cookieQuotaGroup(cookie) {
+  const partition = cookiePartition(cookie);
+  return partition
+    ? JSON.stringify([
+        partition.topLevelSite,
+        partition.hasCrossSiteAncestor,
+        cookieQuotaDomain(cookie),
+      ])
+    : cookieQuotaDomain(cookie);
+}
+
+function cookieQuotaStats(cookies) {
+  const unpartitioned = new Map();
+  const partitioned = new Map();
+  let unpartitionedTotal = 0;
+  for (const cookie of cookies) {
+    const partition = cookiePartition(cookie);
+    const group = cookieQuotaGroup(cookie);
+    if (!partition) {
+      unpartitionedTotal += 1;
+      unpartitioned.set(group, (unpartitioned.get(group) || 0) + 1);
+      continue;
+    }
+    const current = partitioned.get(group) || { count: 0, bytes: 0 };
+    current.count += 1;
+    current.bytes += Buffer.byteLength(
+      `${String(cookie?.name || "")}${String(cookie?.value || "")}`,
+      "utf8",
+    );
+    partitioned.set(group, current);
+  }
+  return { unpartitionedTotal, unpartitioned, partitioned };
+}
+
+function assertCookieSyncCapacity(beforeCookies, cookies) {
+  const beforeByIdentity = new Map(
+    beforeCookies.map((cookie) => [cookieTargetIdentity(cookie), cookie]),
+  );
+  const projectedByIdentity = new Map(beforeByIdentity);
+  for (const cookie of cookies) {
+    projectedByIdentity.set(cookieTargetIdentity(cookie), cookie);
+  }
+  const before = cookieQuotaStats(beforeByIdentity.values());
+  const projected = cookieQuotaStats(projectedByIdentity.values());
+  if (
+    projected.unpartitionedTotal > COOKIE_SYNC_UNPARTITIONED_TOTAL_LIMIT &&
+    projected.unpartitionedTotal > before.unpartitionedTotal
+  ) {
+    const error = new Error("Cookie Sync would exceed the target cookie capacity.");
+    error.code = "BW_COOKIE_SYNC_TARGET_CAPACITY";
+    throw error;
+  }
+  const touchedGroups = new Set(cookies.map(cookieQuotaGroup));
+  for (const group of touchedGroups) {
+    const beforeCount = before.unpartitioned.get(group) || 0;
+    const projectedCount = projected.unpartitioned.get(group) || 0;
+    if (
+      projectedCount > COOKIE_SYNC_DOMAIN_LIMIT &&
+      projectedCount > beforeCount
+    ) {
+      const error = new Error("Cookie Sync would exceed the target cookie capacity.");
+      error.code = "BW_COOKIE_SYNC_TARGET_CAPACITY";
+      throw error;
+    }
+    const beforePartition = before.partitioned.get(group) || { count: 0, bytes: 0 };
+    const projectedPartition = projected.partitioned.get(group) || { count: 0, bytes: 0 };
+    if (
+      (projectedPartition.count > COOKIE_SYNC_DOMAIN_LIMIT &&
+        projectedPartition.count > beforePartition.count) ||
+      (projectedPartition.bytes > COOKIE_SYNC_PARTITION_BYTES_LIMIT &&
+        projectedPartition.bytes > beforePartition.bytes)
+    ) {
+      const error = new Error("Cookie Sync would exceed the target cookie capacity.");
+      error.code = "BW_COOKIE_SYNC_TARGET_CAPACITY";
+      throw error;
+    }
+  }
+  return beforeByIdentity;
+}
+
+function cdpCookieParams(cookie) {
+  const { partitionKey, partitionCrossSiteAncestor, ...plain } = cookie;
+  return partitionKey
+    ? {
+        ...plain,
+        partitionKey: {
+          topLevelSite: partitionKey,
+          hasCrossSiteAncestor: partitionCrossSiteAncestor === true,
+        },
+      }
+    : plain;
+}
+
+async function setCookieSyncCookies(cookies, afterPreflight) {
+  const page = browserContext.pages()[0] || await browserContext.newPage();
+  const session = await browserContext.newCDPSession(page);
+  try {
+    // Network.getAllCookies is deprecated in favor of Storage.getCookies, but
+    // the latter needs a browserContextId. A page CDP session does not expose
+    // that id, and omitting it reads the default store instead of a remote
+    // provider's non-default context. BetterChromium is pinned and this call is
+    // covered against that exact build.
+    const beforeResult = await session.send("Network.getAllCookies");
+    if (!Array.isArray(beforeResult?.cookies)) {
+      throw new Error("Cookie Sync could not inspect the target cookie store.");
+    }
+    const beforeByIdentity = assertCookieSyncCapacity(beforeResult.cookies, cookies);
+    afterPreflight();
+    await session.send("Network.setCookies", {
+      cookies: cookies.map(cdpCookieParams),
+    });
+    const afterResult = await session.send("Network.getAllCookies");
+    if (!Array.isArray(afterResult?.cookies)) {
+      throw new Error("Cookie Sync could not verify the target cookie store.");
+    }
+    const afterByIdentity = new Map(
+      afterResult.cookies.map((cookie) => [cookieTargetIdentity(cookie), cookie]),
+    );
+    const importedIdentities = new Set(cookies.map(cookieTargetIdentity));
+    const evicted = [...beforeByIdentity.keys()].filter((identity) =>
+      !importedIdentities.has(identity) && !afterByIdentity.has(identity)
+    ).length;
+    if (evicted) {
+      const error = new Error(
+        "Cookie Sync detected that Chromium removed pre-existing target cookies.",
+      );
+      error.code = "BW_COOKIE_SYNC_TARGET_EVICTION";
+      throw error;
+    }
+    const stored = cookies.filter((cookie) => {
+      const candidate = afterByIdentity.get(cookieTargetIdentity(cookie));
+      return isObjectValue(candidate) &&
+        untrustedField(candidate, "value") === cookie.value;
+    });
+    return { stored, missing: cookies.length - stored.length };
+  } finally {
+    await session.detach().catch(() => {});
+  }
+}
+
+async function cookieSync(message) {
+  if (cookieSyncActive || activeExecutionCounts.size) {
+    cookieSyncBusyResult(message);
+    return;
+  }
+  cookieSyncActive = true;
+  try {
+    let target;
+    try {
+      target = cookieSyncConsentTarget(message.config?.provider);
+    } catch {
+      sendResult({
+        type: "result",
+        id: message.id,
+        ok: false,
+        error: "Cookie Sync could not validate the configured browser target.",
+      });
+      return;
+    }
+    if (target && String(message.cloudConsent || "").toLowerCase() !== target) {
+      sendResult({
+        type: "result",
+        id: message.id,
+        ok: false,
+        error: `Cookie Sync to ${target} requires consent for that exact target.`,
+      });
+      return;
+    }
+
+    let cookies;
+    try {
+      cookies = validateCookieSyncTargetCookies(message.cookies);
+    } catch {
+      sendResult({
+        type: "result",
+        id: message.id,
+        ok: false,
+        error: "Cookie Sync received an invalid cookie batch.",
+      });
+      return;
+    }
+
+    try {
+      await ensureBrowser(message.config, { requirePersistentProfile: true });
+    } catch (error) {
+      sendResult({
+        type: "result",
+        id: message.id,
+        ok: false,
+        error: error?.code === "BW_COOKIE_SYNC_EPHEMERAL_TARGET"
+          ? error.message
+          : "Cookie Sync could not open the target browser.",
+      });
+      return;
+    }
+
+    let storedCookies;
+    let missingCookies = 0;
+    try {
+      const stored = await setCookieSyncCookies(cookies, () => {
+        rememberSyncedCookies(cookies, launchConfig.profileDir);
+        trackCookieSecrets(cookies);
+      });
+      storedCookies = stored.stored;
+      missingCookies = stored.missing;
+    } catch (error) {
+      const capacity = error?.code === "BW_COOKIE_SYNC_SECRET_CAPACITY";
+      const targetCapacity = error?.code === "BW_COOKIE_SYNC_TARGET_CAPACITY";
+      const targetEviction = error?.code === "BW_COOKIE_SYNC_TARGET_EVICTION";
+      sendResult({
+        type: "result",
+        id: message.id,
+        ok: false,
+        error: capacity
+          ? "Cookie Sync redaction capacity was reached; the browser worker was restarted."
+          : targetCapacity
+            ? "Cookie Sync would exceed the target cookie capacity. Narrow the source domains and try again."
+            : targetEviction
+              ? "Cookie Sync stopped because Chromium removed pre-existing target cookies. The target profile may have changed."
+              : "Cookie Sync could not add the selected cookies to the target browser.",
+        restartWorker: capacity,
+      });
+      return;
+    }
+
+    const selected = isNumber(message.selected) && Number.isFinite(message.selected)
+      ? Math.max(0, Math.floor(message.selected))
+      : cookies.length;
+    const skipped = isNumber(message.skipped) && Number.isFinite(message.skipped)
+      ? Math.max(0, Math.floor(message.skipped))
+      : 0;
+    const source: CookieSyncResultSource = { browser: "" };
+    if (isObjectValue(message.source)) {
+      source.browser = String(untrustedField(message.source, "browser") || "").slice(0, 128);
+      if (isString(untrustedField(message.source, "profile"))) {
+        source.profile = "selected";
+      }
+    }
+    sendResult({
+      type: "result",
+      id: message.id,
+      ok: true,
+      synced: storedCookies.length,
+      selected,
+      skipped,
+      source,
+      target: target || "local",
+      warnings: [
+        ...sanitizedCookieSyncWarnings(message.warnings),
+        ...(missingCookies ? [{ code: "target_not_stored", count: missingCookies }] : []),
+      ],
+      profileMode,
+    });
+  } finally {
+    cookieSyncActive = false;
+  }
+}
+
 async function execute(message) {
+  if (cookieSyncActive) {
+    cookieSyncBusyResult(message);
+    return;
+  }
   const started = performance.now();
   const session = sessionFor(message.sessionId);
   session.awaitingAnswerSince = null;
@@ -7178,6 +7733,7 @@ async function execute(message) {
       message.config.outputLimit || DEFAULT_OUTPUT_LIMIT,
     );
     if (serialized.length > outputLimit) {
+      await refreshCookieSecrets(browserContext);
       const spillPath = makeArtifactPath(
         session,
         "browser-output.json",
@@ -7634,6 +8190,9 @@ input.on("line", (line) => {
   }
   if (message.type === "credential_pending") {
     void enqueueForSession(message.sessionId, () => credentialPending(message));
+  }
+  if (message.type === "cookie_sync") {
+    void cookieSync(message);
   }
   // Session teardown rides that session's queue so pages never close under an
   // in-flight execute on the same session.

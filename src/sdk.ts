@@ -27,6 +27,10 @@ export {
   validateCredentialMatchMode,
 } from "./client.js";
 export {
+  listCookieSourceBrowsers,
+  listCookieSourceProfiles,
+} from "./cookie-sync.js";
+export {
   METADATA_ADDRESSES,
   METADATA_HOSTNAMES,
   NetworkPolicy,

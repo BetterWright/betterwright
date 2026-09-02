@@ -20,44 +20,66 @@ function isContainer(value: UntrustedValue): value is object {
 }
 
 /**
- * Deep-scrub every occurrence of the given secret strings from a value,
- * returning a redacted copy without mutating the input. This is the one
- * redaction algorithm: the worker's envelope redaction and the host vault's
- * `redact()` both delegate here so the two defense layers can never drift.
- * The rules are deliberate and security-relevant:
- * - secrets are replaced longest-first, so a secret that contains another
- *   secret is scrubbed whole instead of leaving a recognizable remainder;
- * - replacement uses split/join, so secrets are matched literally rather
- *   than as regular expressions;
- * - object keys are redacted as well as values, because a secret can leak
- *   through either position;
- * - cycles collapse to "[Circular]" so redaction terminates on any input.
+ * Build one literal matcher for a stable secret set. Bucketing by the first
+ * four code units avoids rescanning every result string once per browser
+ * cookie while keeping arbitrary cookie values out of regular expressions.
  */
-export function redactSecretsDeep(value, secrets) {
-  const ordered = [...secrets]
-    .filter(Boolean)
-    .sort((left, right) => right.length - left.length);
+export function createSecretsRedactor(secrets) {
+  const short = new Map<string, string[]>();
+  const long = new Map<string, string[]>();
+  for (const secret of new Set([...secrets].map(String).filter(Boolean))) {
+    const bucket = secret.length < 4 ? short : long;
+    const key = secret.length < 4 ? secret[0] : secret.slice(0, 4);
+    const values = bucket.get(key) || [];
+    values.push(secret);
+    bucket.set(key, values);
+  }
+  for (const values of [...short.values(), ...long.values()]) {
+    values.sort((left, right) => right.length - left.length);
+  }
+
   const redactText = (input) => {
-    let output = String(input);
-    for (const secret of ordered) {
-      output = output.split(secret).join(REDACTED_PASSWORD_PLACEHOLDER);
+    const text = String(input);
+    let output = "";
+    let copiedThrough = 0;
+    let index = 0;
+    while (index < text.length) {
+      const longCandidates = long.get(text.slice(index, index + 4));
+      const shortCandidates = short.get(text[index]);
+      const match = longCandidates?.find((secret) => text.startsWith(secret, index)) ||
+        shortCandidates?.find((secret) => text.startsWith(secret, index));
+      if (!match) {
+        index += 1;
+        continue;
+      }
+      output += text.slice(copiedThrough, index) + REDACTED_PASSWORD_PLACEHOLDER;
+      index += match.length;
+      copiedThrough = index;
     }
-    return output;
+    return copiedThrough ? output + text.slice(copiedThrough) : text;
   };
-  const seen = new WeakSet();
-  const redactValue = (input) => {
-    if (isString(input)) return redactText(input);
-    if (!isContainer(input)) return input;
-    if (seen.has(input)) return "[Circular]";
-    seen.add(input);
-    if (Array.isArray(input)) return input.map(redactValue);
-    const output: Record<string, UntrustedValue> = {};
-    for (const [key, item] of Object.entries(input)) {
-      output[redactText(key)] = redactValue(item);
-    }
-    return output;
+
+  return (value) => {
+    const seen = new WeakSet();
+    const redactValue = (input) => {
+      if (isString(input)) return redactText(input);
+      if (!isContainer(input)) return input;
+      if (seen.has(input)) return "[Circular]";
+      seen.add(input);
+      if (Array.isArray(input)) return input.map(redactValue);
+      const output: Record<string, UntrustedValue> = {};
+      for (const [key, item] of Object.entries(input)) {
+        output[redactText(key)] = redactValue(item);
+      }
+      return output;
+    };
+    return redactValue(value);
   };
-  return redactValue(value);
+}
+
+/** Deep-scrub literal secret strings without mutating the input. */
+export function redactSecretsDeep(value, secrets) {
+  return createSecretsRedactor(secrets)(value);
 }
 
 export const VAULT_MATCH_MODES = Object.freeze([

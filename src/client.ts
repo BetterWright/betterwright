@@ -20,7 +20,14 @@ import {
   configuredDefaultProvider,
   expandProviderChoice,
 } from "./browser-config.js";
+import {
+  cookieSyncConsentTarget,
+} from "./browser-providers.js";
 import { resolveChromiumArgs } from "./chromium-args.js";
+import {
+  extractCookieSync,
+  normalizeCookieSyncOptions,
+} from "./cookie-sync.js";
 import {
   assertRotationPreservesMatchMode,
   MAX_PENDING_CREDENTIAL_ORIGINS,
@@ -324,6 +331,7 @@ export class BetterWright {
   declare _ready: any;
   declare _lastConfig: any;
   declare _queues: Map<any, any>;
+  declare _exclusiveGate: Promise<void>;
   declare _preparing: any;
   declare _stderrTail: any[];
   declare _closed: boolean;
@@ -533,6 +541,7 @@ export class BetterWright {
     // (live view) share the lane below, matching the worker, which also runs
     // them outside its per-session execute queues.
     this._queues = new Map();
+    this._exclusiveGate = Promise.resolve();
     this._preparing = null;
     this._stderrTail = [];
     this._closed = false;
@@ -609,6 +618,10 @@ export class BetterWright {
       ...process.env,
       NODE_NO_WARNINGS: "1",
     };
+    // Playwright's pw:protocol debug scope logs complete CDP payloads. The
+    // worker handles cookies and vault fills, so host DEBUG settings must not
+    // turn its stderr into a secret side channel.
+    delete env.DEBUG;
     const core = resolvePlaywrightCore();
     if (core) env.BETTERWRIGHT_PLAYWRIGHT_CORE_PATH = core;
 
@@ -1076,7 +1089,8 @@ export class BetterWright {
   _enqueue(session, job): Promise<any> {
     const lane = this._lane(session);
     const tail = this._queues.get(lane) || Promise.resolve();
-    const task = tail.then(job);
+    const gate = this._exclusiveGate;
+    const task = Promise.all([tail, gate]).then(job);
     // Keep the chain alive even if one run rejects, and drop the lane once it
     // drains so a long-lived browser does not accumulate one dead promise per
     // session name it has ever seen.
@@ -1089,6 +1103,89 @@ export class BetterWright {
       if (this._queues.get(lane) === chained) this._queues.delete(lane);
     });
     return task;
+  }
+
+  _enqueueExclusive(job): Promise<any> {
+    const priorGate = this._exclusiveGate;
+    const priorQueues = [...this._queues.values()];
+    let release: () => void = () => {};
+    this._exclusiveGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return Promise.all([priorGate, ...priorQueues])
+      .then(job)
+      .finally(release);
+  }
+
+  /**
+   * Copy cookies from a local browser profile into this browser's persistent
+   * context. Extraction and injection stay in trusted host code.
+   */
+  syncCookies(options: any = {}) {
+    return this._enqueueExclusive(() => this._syncCookiesNow(options));
+  }
+
+  async _syncCookiesNow(options) {
+    if (this._closed) {
+      return { ok: false, error: "This browser has been closed." };
+    }
+    let normalized;
+    let consentTarget;
+    try {
+      normalized = normalizeCookieSyncOptions(options);
+      consentTarget = cookieSyncConsentTarget(this.provider);
+      if (consentTarget && normalized.cloudConsent !== consentTarget) {
+        return {
+          ok: false,
+          error:
+            `Cookie Sync to ${consentTarget} requires cloudConsent set to that exact target.`,
+        };
+      }
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
+
+    let extracted;
+    try {
+      extracted = await this._extractCookieSync(normalized);
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
+    if (!extracted.cookies.length) {
+      return {
+        ok: true,
+        synced: 0,
+        selected: extracted.selected,
+        skipped: extracted.skipped,
+        source: extracted.source,
+        target: consentTarget || "local",
+        warnings: extracted.warnings,
+      };
+    }
+
+    const config = await this._prepare();
+    const timeoutSeconds = Math.max(
+      Math.ceil(normalized.timeoutMs / 1000),
+      this.defaultTimeout,
+      5,
+    );
+    return this._dispatch(
+      {
+        type: "cookie_sync",
+        config,
+        cookies: extracted.cookies,
+        source: extracted.source,
+        selected: extracted.selected,
+        skipped: extracted.skipped,
+        warnings: extracted.warnings,
+        cloudConsent: normalized.cloudConsent,
+      },
+      timeoutSeconds,
+    );
+  }
+
+  _extractCookieSync(options) {
+    return extractCookieSync(options);
   }
 
   /**

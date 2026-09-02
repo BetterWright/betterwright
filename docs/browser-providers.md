@@ -191,6 +191,12 @@ Provider credentials (the API key, and any credentials embedded in the CDP
 URL) are registered with the worker's redaction set at launch, so they appear
 as `[redacted]` in every result envelope, event, and artifact path.
 
+[Cookie Sync](cookie-sync.md) can merge local browser cookies into any of the
+remote contexts above. It requires exact per-call consent because the provider
+can read the resulting authenticated browser state. BetterWright sends the
+cookies through CDP after connection, not through provider REST or session
+configuration APIs.
+
 ## `sessionOptions`
 
 For REST-minting launches (Kernel, Browserbase, Anchor, Hyperbrowser) and for

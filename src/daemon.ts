@@ -458,6 +458,7 @@ const SESSION_OPTION_METHODS = new Set([
   "waitForAsk",
 ]);
 const PLAIN_METHODS = new Set([
+  "syncCookies",
   "stopLiveView",
   "liveViewStatus",
   "liveViewPostChat",

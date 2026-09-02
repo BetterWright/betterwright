@@ -3,7 +3,9 @@ import fs from "node:fs";
 import test from "node:test";
 
 import {
+  BROWSER_PROVIDER_NAMES,
   browserProviderInfo,
+  cookieSyncConsentTarget,
   describeCdpUrl,
   listProviderSessions,
   PROVIDER_HTTP_TIMEOUT_MS,
@@ -16,6 +18,27 @@ import { makeTempDir } from "./helpers/temp-dir.js";
 test("no provider means the managed BetterChromium fork", () => {
   assert.equal(resolveBrowserProvider(null, { env: {} }), null);
   assert.equal(resolveBrowserProvider(undefined, { env: {} }), null);
+});
+
+test("Cookie Sync consent identities cover every named provider and raw CDP", () => {
+  for (const name of BROWSER_PROVIDER_NAMES) {
+    const apiKey = ["brightdata", "oxylabs"].includes(name)
+      ? "user:password"
+      : "test-key";
+    assert.equal(
+      cookieSyncConsentTarget({ provider: name, apiKey }, { env: {} }),
+      `provider:${name}`,
+      name,
+    );
+  }
+  assert.equal(
+    cookieSyncConsentTarget(
+      { cdpUrl: "wss://user:secret@Cloud.Example:8443/devtools?token=x" },
+      { env: {} },
+    ),
+    "cdp:cloud.example:8443",
+  );
+  assert.equal(cookieSyncConsentTarget(null, { env: {} }), null);
 });
 
 test("BETTERWRIGHT_CDP_URL is the host-level CDP shorthand", () => {

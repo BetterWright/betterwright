@@ -161,6 +161,224 @@ test("provider options reach the worker config verbatim", async () => {
   }
 });
 
+test("Cookie Sync rejects cloud targets before extraction or session creation", async () => {
+  const browser = new BetterWright({
+    provider: { provider: "browserbase", apiKey: "bb_test" },
+    vault: false,
+  });
+  let extracted = 0;
+  let prepared = 0;
+  browser._extractCookieSync = async () => {
+    extracted += 1;
+    throw new Error("must not run");
+  };
+  browser._prepare = async () => {
+    prepared += 1;
+    throw new Error("must not run");
+  };
+  try {
+    const missing = await browser.syncCookies({ source: { browser: "chrome" } });
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /provider:browserbase/);
+    const mismatched = await browser.syncCookies({
+      source: { browser: "chrome" },
+      cloudConsent: "provider:kernel",
+    });
+    assert.equal(mismatched.ok, false);
+    assert.match(mismatched.error, /provider:browserbase/);
+    assert.equal(extracted, 0);
+    assert.equal(prepared, 0);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Cookie Sync resolves named-provider credentials from the environment during preflight", async () => {
+  const previous = process.env.BROWSERBASE_API_KEY;
+  process.env.BROWSERBASE_API_KEY = "bb_environment_test";
+  const browser = new BetterWright({
+    provider: { provider: "browserbase" },
+    vault: false,
+  });
+  browser._extractCookieSync = async () => {
+    throw new Error("extraction must not run before consent");
+  };
+  try {
+    const result = await browser.syncCookies({ source: { browser: "chrome" } });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /provider:browserbase/);
+    assert.doesNotMatch(result.error, /needs an API key/);
+  } finally {
+    await browser.close();
+    if (previous === undefined) delete process.env.BROWSERBASE_API_KEY;
+    else process.env.BROWSERBASE_API_KEY = previous;
+  }
+});
+
+test("Cookie Sync does not extract after the client is closed", async () => {
+  const browser = new BetterWright({ vault: false });
+  let extracted = false;
+  browser._extractCookieSync = async () => {
+    extracted = true;
+    return { cookies: [] };
+  };
+  await browser.close();
+  const result = await browser.syncCookies({ source: { browser: "chrome" } });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /closed/);
+  assert.equal(extracted, false);
+});
+
+test("Cookie Sync binds raw CDP consent to the endpoint host and sends cookies only to the worker", async () => {
+  const browser = new BetterWright({
+    provider: { cdpUrl: "wss://user:pass@cloud.example.test:8443/devtools?token=secret" },
+    vault: false,
+  });
+  let dispatched;
+  browser._extractCookieSync = async () => ({
+    cookies: [{
+      name: "session",
+      value: "COOKIE_SECRET_SENTINEL",
+      domain: "example.test",
+      path: "/",
+      secure: true,
+      httpOnly: true,
+    }],
+    selected: 1,
+    skipped: 0,
+    warnings: [],
+    source: { browser: "chrome" },
+  });
+  browser._prepare = async () => ({ provider: browser.provider });
+  browser._dispatch = async (message) => {
+    dispatched = message;
+    return { ok: true, synced: 1 };
+  };
+  try {
+    const result = await browser.syncCookies({
+      source: { browser: "chrome" },
+      cloudConsent: "cdp:cloud.example.test:8443",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(dispatched.cloudConsent, "cdp:cloud.example.test:8443");
+    assert.equal(dispatched.cookies[0].value, "COOKIE_SECRET_SENTINEL");
+    assert.equal(JSON.stringify(dispatched.config).includes("COOKIE_SECRET_SENTINEL"), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Cookie Sync exclusively waits for older calls and blocks newer calls", async () => {
+  const browser = new BetterWright({ vault: false });
+  const events: string[] = [];
+  let finishRun: () => void = () => {};
+  let finishSync: () => void = () => {};
+  let runCount = 0;
+  browser._runNow = async () => {
+    runCount += 1;
+    if (runCount > 1) {
+      events.push("new-run");
+      return { ok: true };
+    }
+    events.push("old-run-start");
+    await new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    events.push("old-run-end");
+    return { ok: true };
+  };
+  browser._syncCookiesNow = async () => {
+    events.push("sync-start");
+    await new Promise<void>((resolve) => {
+      finishSync = resolve;
+    });
+    events.push("sync-end");
+    return { ok: true, synced: 0 };
+  };
+  try {
+    const oldRun = browser.run("old");
+    const sync = browser.syncCookies({ source: { browser: "chrome" } });
+    const newRun = browser.run("new", { session: "other" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(events, ["old-run-start"]);
+    finishRun();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(events, ["old-run-start", "old-run-end", "sync-start"]);
+    finishSync();
+    await Promise.all([oldRun, sync, newRun]);
+    assert.deepEqual(events, [
+      "old-run-start",
+      "old-run-end",
+      "sync-start",
+      "sync-end",
+      "new-run",
+    ]);
+  } finally {
+    finishRun();
+    finishSync();
+    await browser.close();
+  }
+});
+
+test("the worker rechecks Cookie Sync consent before opening a remote CDP target", async () => {
+  const browser = new BetterWright({
+    provider: { cdpUrl: "ws://127.0.0.1:9/devtools/browser/unreachable" },
+    vault: false,
+  });
+  try {
+    const config = await browser._prepare();
+    const result = await browser._dispatch(
+      {
+        type: "cookie_sync",
+        config,
+        cookies: [{
+          name: "session",
+          value: "COOKIE_SECRET_SENTINEL",
+          domain: "example.test",
+          path: "/",
+          secure: true,
+          httpOnly: true,
+        }],
+        cloudConsent: "cdp:somewhere-else.test",
+      },
+      5,
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /cdp:127\.0\.0\.1:9/);
+    assert.doesNotMatch(result.error, /ECONNREFUSED|unreachable|COOKIE_SECRET_SENTINEL/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the worker rejects malformed Cookie Sync payloads without echoing values", async () => {
+  const browser = new BetterWright({ vault: false });
+  const sentinel = "COOKIE_SECRET_SENTINEL";
+  try {
+    const config = await browser._prepare();
+    const result = await browser._dispatch(
+      {
+        type: "cookie_sync",
+        config,
+        cookies: [{
+          name: "session",
+          value: `${sentinel}\n`,
+          domain: "example.test",
+          path: "/",
+          secure: true,
+          httpOnly: true,
+        }],
+      },
+      5,
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /invalid cookie batch/);
+    assert.equal(JSON.stringify(result).includes(sentinel), false);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("chromiumArgs reach the worker config and only security-sensitive switches fail", async () => {
   const defaults = new BetterWright();
   const tuned = new BetterWright({

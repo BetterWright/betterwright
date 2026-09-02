@@ -512,6 +512,23 @@ export function resolveBrowserProvider(provider, { env = process.env } = {}) {
   return { plan: resolveNamedProvider(descriptor, name, provider, env) };
 }
 
+/**
+ * Stable identity a Cookie Sync consent must name. Resolving is deliberately
+ * side-effect free here: deferred providers are not created until the worker
+ * launches, after both the client and worker have checked this value.
+ */
+export function cookieSyncConsentTarget(provider, { env = process.env } = {}) {
+  const resolution = resolveBrowserProvider(provider, { env });
+  const plan = resolution?.plan;
+  if (plan?.kind !== "remote") return null;
+  if (plan.provider !== "cdp") return `provider:${plan.provider}`;
+  try {
+    return `cdp:${new URL(plan.cdpUrl).host.toLowerCase()}`;
+  } catch {
+    throw new TypeError("Cookie Sync could not identify the CDP endpoint.");
+  }
+}
+
 function resolveLocalProvider(executablePath) {
   if (!path.isAbsolute(executablePath)) {
     throw new TypeError("provider.executablePath must be an absolute path.");

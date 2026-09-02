@@ -116,5 +116,9 @@ test("firstPositional skips value-flag arguments but not assigned or boolean fla
   // The browser choice is a value: `run --browser steel script.js` runs the file.
   assert.equal(firstPositional(["--browser", "steel", "script.js"]), "script.js");
   assert.equal(firstPositional(["--browser", "steel", "--browser-key", "sk-live"]), undefined);
+  assert.equal(
+    firstPositional(["sync", "chrome", "--domain", "example.com", "--source-profile", "Work"]),
+    "sync",
+  );
   assert.equal(firstPositional([]), undefined);
 });
