@@ -9,6 +9,7 @@
 //   betterwright configure        choose the browser backend (cloud provider,
 //                                 CDP endpoint, own binary, or the managed fork)
 //   betterwright boxes            start, list, and stop cloud browser boxes
+//   betterwright cookies          sync local browser cookies into a profile
 //   betterwright run <file|-|-c>  execute a Playwright snippet in the
 //                                 persistent session (tabs/state survive calls)
 //   betterwright repl             run blank-line-separated snippets from stdin
@@ -49,7 +50,12 @@ import { formatAgentUsage } from "../src/agent-usage.js";
 import { chromiumNeedsSoftwareGpu } from "../src/browser-runtime.js";
 import { configuredBrowserBackend } from "../src/chromium-fork.js";
 import { installChromiumFork } from "../src/chromium-fork-install.js";
-import { collectValues, firstPositional, flagValue } from "../src/cli-flags.js";
+import {
+  collectValues,
+  firstPositional,
+  flagValue,
+  positionalArgs,
+} from "../src/cli-flags.js";
 import { helpFor, MAIN_USAGE, wantsHelp } from "../src/cli-help.js";
 import {
   createInteractiveBrowserLifecycle,
@@ -616,6 +622,125 @@ async function cmdRun(arg, flags) {
     return result.ok ? 0 : 1;
   } finally {
     await acquired.cleanup({ closeSession: flags.has("--close") });
+  }
+}
+
+function cookieFlagValue(tokens, flag) {
+  const value = flagValue(tokens, flag);
+  if (value === undefined) return undefined;
+  const text = String(value).trim();
+  if (!text || text.startsWith("-")) {
+    throw new TypeError(`${flag} requires a value.`);
+  }
+  return text;
+}
+
+function cookieFlagValues(tokens, flag) {
+  const values = collectValues(tokens, flag).map((value) => String(value).trim());
+  if (values.some((value) => !value || value.startsWith("-"))) {
+    throw new TypeError(`${flag} requires a value each time it is used.`);
+  }
+  return values;
+}
+
+async function cmdCookies(tokens, flags) {
+  const [action, browser, ...extra] = positionalArgs(tokens);
+  const json = flags.has("--json");
+  const printFailure = (error) => {
+    const result = { ok: false, error: String(error) };
+    if (json) console.log(JSON.stringify(result, null, 2));
+    else console.error(result.error);
+    return 1;
+  };
+  try {
+    const {
+      listCookieSourceBrowsers,
+      listCookieSourceProfiles,
+    } = await import("../src/cookie-sync.js");
+    const { cookieSyncConsentTarget } = await import("../src/browser-providers.js");
+    if (action === "browsers") {
+      if (browser || extra.length) return printFailure("cookies browsers takes no positional arguments.");
+      const browsers = await listCookieSourceBrowsers();
+      if (json) console.log(JSON.stringify({ ok: true, browsers }, null, 2));
+      else if (!browsers.length) console.log("No supported browser families are registered on this host.");
+      else for (const item of browsers) console.log(`${item.id}\t${item.name}\t${item.engine}`);
+      return 0;
+    }
+    if (action === "profiles") {
+      if (!browser || extra.length) {
+        return printFailure("Usage: betterwright cookies profiles <browser> [--json]");
+      }
+      const profiles = await listCookieSourceProfiles(browser);
+      if (json) console.log(JSON.stringify({ ok: true, browser, profiles }, null, 2));
+      else if (!profiles.length) console.log(`No ${browser} profiles were found.`);
+      else {
+        for (const item of profiles) {
+          console.log(`${item.id}\t${item.name}${item.isDefault ? "\tdefault" : ""}`);
+        }
+      }
+      return 0;
+    }
+    if (action !== "sync" || !browser || extra.length) {
+      return printFailure("Usage: betterwright cookies sync <browser> (--domain <host>... | --all)");
+    }
+
+    const domains = cookieFlagValues(tokens, "--domain");
+    const all = flags.has("--all");
+    if (all === Boolean(domains.length)) {
+      return printFailure("cookies sync requires either --all or one or more --domain values.");
+    }
+    const sourceProfile = cookieFlagValue(tokens, "--source-profile");
+    const cloudConsent = cookieFlagValue(tokens, "--allow-cloud");
+    const source = { browser, profile: sourceProfile || undefined };
+    const options: any = {
+      source,
+      includeSession: flags.has("--include-session"),
+      windowsAppBound: flags.has("--allow-app-bound") ? "injection" : "disabled",
+    };
+    if (domains.length) options.domains = domains;
+    if (cloudConsent) options.cloudConsent = cloudConsent;
+
+    const acquired = await acquireRunBrowser(flags);
+    try {
+      if (!acquired.viaDaemon) {
+        if (options.includeSession) {
+          return printFailure(
+            "Cookie Sync with --include-session requires the session daemon so imported session cookies remain usable. Remove --no-daemon and retry." +
+              (acquired.warning ? ` ${acquired.warning}.` : ""),
+          );
+        }
+        const provider = "provider" in acquired.browser
+          ? acquired.browser.provider
+          : null;
+        const remoteTarget = cookieSyncConsentTarget(provider);
+        if (remoteTarget) {
+          return printFailure(
+            `Cookie Sync to ${remoteTarget} requires the session daemon so the imported browser remains usable. Remove --no-daemon and retry.` +
+              (acquired.warning ? ` ${acquired.warning}.` : ""),
+          );
+        }
+      }
+      const result = await acquired.browser.syncCookies(options);
+      const printable = acquired.warning
+        ? { ...result, runtimeWarnings: [acquired.warning] }
+        : result;
+      if (json) console.log(JSON.stringify(printable, null, 2));
+      else if (result.ok) {
+        console.log(
+          `Synced ${result.synced} cookie${result.synced === 1 ? "" : "s"} from ${browser} into ${result.target}.`,
+        );
+        if (result.skipped) console.log(`Skipped ${result.skipped} cookie rows.`);
+        for (const warning of result.warnings || []) {
+          console.log(`  ${warning.code}: ${warning.count}`);
+        }
+        if (acquired.warning) process.stderr.write(`  ! ${acquired.warning}\n`);
+      } else console.error(result.error || "Cookie Sync failed.");
+      return result.ok ? 0 : 1;
+    } finally {
+      await acquired.cleanup();
+    }
+  } catch (error) {
+    return printFailure(error?.message || "Cookie Sync failed.");
   }
 }
 
@@ -2051,6 +2176,8 @@ async function main() {
       const { runBoxesCommand } = await import("../src/boxes-cli.js");
       return runBoxesCommand(rest);
     }
+    case "cookies":
+      return cmdCookies(rest, flags);
     case "vault": {
       const { runVaultCommand } = await import("../src/vault-cli.js");
       return runVaultCommand(rest);

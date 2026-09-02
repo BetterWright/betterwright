@@ -14,6 +14,7 @@ export const COMMAND_SUMMARIES = [
   ["doctor", "check that everything needed is installed and reachable"],
   ["configure", "choose the browser backend: cloud provider, custom CDP, or managed"],
   ["boxes", "start, list, and stop cloud browser boxes"],
+  ["cookies", "sync local browser cookies into a BetterWright profile"],
   ["run", "run one Playwright snippet in the persistent session"],
   ["repl", "run blank-line-separated snippets from stdin"],
   ["exec", "hand a whole task to BetterWright's own browser agent"],
@@ -158,6 +159,34 @@ Connect a provider first:
 
 Browserless, Bright Data, and Oxylabs have no session lifecycle — they are
 connect-only. Details: docs/browser-providers.md`,
+
+  cookies: `Usage: betterwright cookies browsers [--json]
+       betterwright cookies profiles <browser> [--json]
+       betterwright cookies sync <browser> (--domain <host>... | --all) [options]
+
+Copy cookies from a local browser profile into the selected persistent
+BetterWright profile. Sync merges cookies and can be run again safely.
+
+Options for sync:
+  --domain <host>          sync this domain, its subdomains, and applicable
+                           parent-domain cookies. Repeat for more domains
+  --all                    sync every compatible cookie in the source profile
+  --source-profile <id>    source profile id or name from \`cookies profiles\`
+  --include-session        include Firefox-family session-store cookies
+  --allow-app-bound        on Windows, allow unprivileged browser-process
+                           injection for Chrome App-Bound cookie decryption
+  --profile <name>         target BetterWright identity
+  --browser <name|url>     target cloud provider or CDP endpoint
+  --browser-key <key>      target provider API key
+  --session-id <id>        attach to an existing cloud browser
+  --allow-cloud <target>   exact consent target printed by a refused attempt,
+                           such as provider:browserbase or cdp:host:port
+  --no-daemon              run without the target profile daemon
+  --json                   machine-readable result
+
+Cloud sync sends cookie plaintext through the encrypted CDP connection to the
+provider. It does not enable provider profile persistence. Details:
+docs/cookie-sync.md`,
 
   run: `Usage: betterwright run -c "<javascript>"
        betterwright run <file>

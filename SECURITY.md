@@ -19,6 +19,33 @@ threat model and the controls that enforce it are documented in
 Please read those sections before deploying BetterWright somewhere it can be
 driven by untrusted input.
 
+## Cookie Sync is a trusted transfer
+
+Cookie Sync reads authentication cookies from another local browser profile.
+It is exposed only through the host SDK and CLI, never as a model tool. Values
+do not enter configuration, command arguments, or the profile daemon socket,
+and the sync result contains metadata and counts only. Raw request/response
+header access is absent from model snippets. Synced bearer-like
+values and serialized short cookie pairs are redacted from later result
+envelopes, including after a local profile restart. Unsupported browser
+isolation is skipped rather than widened, and sync refuses an ephemeral
+destination profile.
+
+This output redaction is defense in depth, not a confidentiality boundary
+against hostile model code. A page can read its own non-HttpOnly cookies, and
+model-authored page code can transform a value before returning it, just as it
+can transform a password already filled into that page's DOM. Scope Cookie
+Sync to the origins and destination profile the task needs.
+
+Remote sync requires consent naming the exact provider or CDP host before
+extraction or provider session creation. The cookie then travels over the
+encrypted CDP WebSocket, but the provider necessarily receives it in its
+browser process and can observe subsequent authenticated traffic. Windows
+Chrome App-Bound recovery is a separate opt-in because it uses unprivileged
+process injection; BetterWright never enables the reader's elevated fallback.
+See [docs/cookie-sync.md](docs/cookie-sync.md) for the platform matrix and
+operational limits.
+
 ## The shell is a trusted channel
 
 `betterwright vault show --reveal`, `betterwright vault copy`, and

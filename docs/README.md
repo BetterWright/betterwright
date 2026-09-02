@@ -32,6 +32,7 @@ whole path works by loading a real page.
 | Page | What it covers |
 | --- | --- |
 | [Credential vault](credentials.md) | Encrypted storage, site matching, selector-free login, generated-password commits, and `betterwright vault` for reading your own saved passwords back |
+| [Cookie Sync](cookie-sync.md) | Copy selected local browser cookies into BetterChromium or an explicitly approved cloud browser |
 | [Live view & handoff](live-view.md) | Watch/coach/take over in a browser tab; hosting presets, password gate, security model |
 | [CAPTCHA helpers](captcha.md) | Local checkbox/Turnstile/slider/motion/drag-fit solving; numbered-crop vision loop for image grids |
 | [Network policy](network-policy.md) | What the browser may reach; the unliftable metadata floor |

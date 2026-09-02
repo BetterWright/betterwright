@@ -2492,6 +2492,9 @@ test("model code cannot reach CDP or Playwright private channels", opts, async (
         contextCdp: typeof context.newCDPSession,
         pageChannel: typeof page._channel,
         contextBrowser: typeof context.browser,
+        contextAddCookies: typeof context.addCookies,
+        contextClearCookies: typeof context.clearCookies,
+        contextSetStorageState: typeof context.setStorageState,
       };
     `);
     assert.equal(result.ok, true, result.error);
@@ -2500,6 +2503,9 @@ test("model code cannot reach CDP or Playwright private channels", opts, async (
       contextCdp: "undefined",
       pageChannel: "undefined",
       contextBrowser: "undefined",
+      contextAddCookies: "undefined",
+      contextClearCookies: "undefined",
+      contextSetStorageState: "undefined",
     });
   } finally {
     await bw.close();
@@ -2860,6 +2866,220 @@ test("cookies are per profile, and survive a restart of the same profile", opts,
   } finally {
     await Promise.all([social.close(), review.close()]);
     await server.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Cookie Sync installs an HttpOnly cookie and persists it across restart", opts, async () => {
+  const sentinel = `cookie-sync-${Date.now()}`;
+  const rotatedPrefix = `cookie-rotated-${Date.now()}`;
+  const rotatedValues: string[] = [];
+  const server = await listen((request, response) => {
+    const authenticated = String(request.headers.cookie || "")
+      .split(/;\s*/)
+      .includes(`bw_sync=${sentinel}`);
+    let setCookie: string[] | undefined;
+    if (request.url === "/") {
+      const rotated = `${rotatedPrefix}-${rotatedValues.length + 1}`;
+      rotatedValues.push(rotated);
+      setCookie = [
+        `bw_response=${sentinel}; HttpOnly; Path=/`,
+        `bw_public=${rotated}; Path=/`,
+      ];
+    }
+    if (setCookie) {
+      response.writeHead(200, {
+        "content-type": "text/plain",
+        "set-cookie": setCookie,
+      });
+    } else {
+      response.writeHead(200, { "content-type": "text/plain" });
+    }
+    response.end(authenticated ? "authenticated" : "signed out");
+  });
+  const home = tempHome();
+  const options = {
+    home,
+    profile: "cookie-sync",
+    headless: true,
+    vault: false,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  };
+  const browser = new BetterWright(options);
+  browser._extractCookieSync = async () => ({
+    cookies: [{
+      name: "bw_sync",
+      value: sentinel,
+      domain: "127.0.0.1",
+      path: "/",
+      expires: Date.now() / 1000 + 3_600,
+      httpOnly: true,
+      secure: false,
+      sameSite: "Lax",
+      sourceScheme: "NonSecure",
+      sourcePort: server.port,
+    }, {
+      name: "bw_public",
+      value: sentinel,
+      domain: "127.0.0.1",
+      path: "/",
+      expires: Date.now() / 1000 + 3_600,
+      httpOnly: false,
+      secure: false,
+      sameSite: "Lax",
+      sourceScheme: "NonSecure",
+      sourcePort: server.port,
+    }],
+    selected: 2,
+    skipped: 0,
+    warnings: [],
+    source: { browser: "fixture" },
+  });
+  try {
+    const previousDebug = process.env.DEBUG;
+    process.env.DEBUG = "pw:protocol";
+    let synced;
+    try {
+      synced = await browser.syncCookies({
+        source: { browser: "fixture" },
+        domains: ["127.0.0.1"],
+      });
+    } finally {
+      if (previousDebug === undefined) delete process.env.DEBUG;
+      else process.env.DEBUG = previousDebug;
+    }
+    assert.equal(synced.ok, true, synced.error);
+    assert.equal(synced.synced, 2);
+    assert.equal(JSON.stringify(synced).includes(sentinel), false);
+    assert.equal(browser._stderrTail.some((line) => line.includes(sentinel)), false);
+    const first = await browser.run(
+      `const requestPending = page.waitForRequest(${JSON.stringify(`${server.origin}/`)});
+       const responsePending = page.waitForResponse(${JSON.stringify(`${server.origin}/`)});
+       await page.goto(${JSON.stringify(server.origin)});
+       const request = await requestPending;
+       const response = await responsePending;
+       return {
+         body: await page.locator("body").innerText(),
+         visibleCookie: await page.evaluate(() => document.cookie),
+         requestMethods: ["allHeaders", "headersArray", "headerValue"].map((key) => typeof request[key]),
+         responseMethods: ["allHeaders", "headersArray", "headerValue", "headerValues"].map((key) => typeof response[key]),
+         filteredRequestHeaders: await request.headers(),
+         filteredResponseHeaders: await response.headers(),
+         postDataType: typeof request.postData,
+       }`,
+    );
+    assert.equal(first.ok, true, first.error);
+    assert.equal(first.result.body, "authenticated");
+    assert.equal(JSON.stringify(first).includes(sentinel), false);
+    assert.equal(JSON.stringify(first).includes(rotatedValues.at(-1)), false);
+    assert.match(first.result.visibleCookie, /REDACTED_PASSWORD/);
+    assert.deepEqual(first.result.requestMethods, Array(3).fill("undefined"));
+    assert.deepEqual(first.result.responseMethods, Array(4).fill("undefined"));
+    assert.equal(Object.hasOwn(first.result.filteredRequestHeaders, "cookie"), false);
+    assert.equal(Object.hasOwn(first.result.filteredResponseHeaders, "set-cookie"), false);
+    assert.equal(first.result.postDataType, "function");
+
+    const failed = await browser.run(
+      `await page.goto(${JSON.stringify(server.origin)});
+       throw new Error(await page.evaluate(() => document.cookie));`,
+    );
+    assert.equal(failed.ok, false);
+    assert.equal(JSON.stringify(failed).includes(rotatedValues.at(-1)), false);
+    assert.match(failed.error, /REDACTED_PASSWORD/);
+
+    await browser.close();
+    const again = new BetterWright(options);
+    try {
+      const persisted = await again.run(
+        `await page.goto(${JSON.stringify(server.origin)}); return {
+          body: await page.locator("body").innerText(),
+          visibleCookie: await page.evaluate(() => document.cookie),
+        }`,
+      );
+      assert.equal(persisted.ok, true, persisted.error);
+      assert.equal(persisted.result.body, "authenticated");
+      assert.equal(JSON.stringify(persisted).includes(sentinel), false);
+      assert.equal(JSON.stringify(persisted).includes(rotatedValues.at(-1)), false);
+      assert.match(persisted.result.visibleCookie, /REDACTED_PASSWORD/);
+    } finally {
+      await again.close();
+    }
+  } finally {
+    await browser.close();
+    await server.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Cookie Sync refuses a batch that could evict target cookies", opts, async () => {
+  const sentinel = `cookie-capacity-${Date.now()}`;
+  const home = tempHome();
+  const browser = new BetterWright({
+    home,
+    profile: "cookie-sync-capacity",
+    headless: true,
+    vault: false,
+  });
+  browser._extractCookieSync = async () => ({
+    cookies: Array.from({ length: 151 }, (_, index) => ({
+      name: `cookie_${index}`,
+      value: `${sentinel}_${index}`,
+      domain: `host-${index}.example.test`,
+      path: "/",
+      httpOnly: true,
+      secure: true,
+    })),
+    selected: 151,
+    skipped: 0,
+    warnings: [],
+    source: { browser: "fixture" },
+  });
+  try {
+    const result = await browser.syncCookies({ source: { browser: "fixture" } });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /exceed the target cookie capacity/);
+    assert.equal(JSON.stringify(result).includes(sentinel), false);
+  } finally {
+    await browser.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Cookie Sync refuses a local ephemeral target profile", opts, async () => {
+  const home = tempHome();
+  const options = { home, profile: "cookie-sync-lock", headless: true, vault: false };
+  const owner = new BetterWright(options);
+  const contender = new BetterWright(options);
+  contender._extractCookieSync = async () => ({
+    cookies: [{
+      name: "session",
+      value: "fixture-secret",
+      domain: "example.test",
+      path: "/",
+      httpOnly: true,
+      secure: true,
+    }],
+    selected: 1,
+    skipped: 0,
+    warnings: [],
+    source: { browser: "fixture" },
+  });
+  try {
+    const started = await owner.run("return true");
+    assert.equal(started.ok, true, started.error);
+    const temporary = await contender.run("return true");
+    assert.equal(temporary.ok, true, temporary.error);
+    assert.equal(temporary.profileMode, "ephemeral");
+    const synced = await contender.syncCookies({ source: { browser: "fixture" } });
+    assert.equal(synced.ok, false);
+    assert.match(synced.error, /requires the selected BetterWright profile to be persistent/);
+    assert.equal(JSON.stringify(synced).includes("fixture-secret"), false);
+    await owner.close();
+    const retried = await contender.syncCookies({ source: { browser: "fixture" } });
+    assert.equal(retried.ok, true, retried.error);
+    assert.equal(retried.profileMode, "persistent");
+  } finally {
+    await Promise.all([owner.close(), contender.close()]);
     fs.rmSync(home, { recursive: true, force: true });
   }
 });

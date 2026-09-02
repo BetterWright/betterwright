@@ -5,12 +5,16 @@ import {
   BrowserError,
   CAPTCHA_SOLVE_STATUSES,
   CAPTCHA_STAGES,
+  type CookieSyncOptions,
+  type CookieSyncResult,
   classifyChallengeStage,
   detectBotChallenge,
   type GenerateAndFillCredentialOptions,
   type Guardrails,
   LocalCredentialVault,
   type LocalCredentialVaultOptions,
+  listCookieSourceBrowsers,
+  listCookieSourceProfiles,
   METADATA_ADDRESSES,
   METADATA_HOSTNAMES,
   NetworkPolicy,
@@ -55,6 +59,8 @@ import {
   describeCdpUrl,
   getProviderSession,
   listProviderSessions,
+  listCookieSourceBrowsers as listSdkCookieSourceBrowsers,
+  listCookieSourceProfiles as listSdkCookieSourceProfiles,
   type ProviderBox,
   type ProviderLifecycleKind,
   REST_BROWSER_PROVIDER_NAMES,
@@ -88,6 +94,16 @@ const browser = new BetterWright(options);
 const vaultOptions: LocalCredentialVaultOptions = { home: "/tmp/betterwright-types" };
 const localVault = new LocalCredentialVault(vaultOptions);
 const browserWithoutVault = new BetterWright({ vault: false });
+const cookieSyncOptions: CookieSyncOptions = {
+  source: { browser: "chrome", profile: "Work" },
+  domains: ["example.com"],
+  includeSession: false,
+  windowsAppBound: "disabled",
+};
+const cookieSync: Promise<CookieSyncResult> = browser.syncCookies(cookieSyncOptions);
+const cookieBrowsers = listCookieSourceBrowsers();
+const cookieProfiles = listCookieSourceProfiles("chrome", { timeoutMs: 10_000 });
+void [cookieSync, cookieBrowsers, cookieProfiles];
 const run: Promise<RunResult<{ title: string }>> = browser.run<{ title: string }>(
   "return { title: await page.title() }",
   { session: "docs", note: "Reading the page" },
@@ -192,6 +208,8 @@ const kernelStopped: Promise<{ provider: string; id: string }> = stopProviderSes
   "s1",
   { apiKey: "k" },
 );
+const sdkCookieBrowsers = listSdkCookieSourceBrowsers();
+const sdkCookieProfiles = listSdkCookieSourceProfiles("firefox");
 const maskedCdp: string = describeCdpUrl("wss://host?apiKey=SECRET");
 void [
   restLifecycle,
@@ -200,6 +218,8 @@ void [
   kernelList,
   kernelShown,
   kernelStopped,
+  sdkCookieBrowsers,
+  sdkCookieProfiles,
   maskedCdp,
   BROWSER_PROVIDER_NAMES,
   REST_BROWSER_PROVIDER_NAMES,

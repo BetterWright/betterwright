@@ -46,6 +46,10 @@ export {
 export { detectBotChallenge } from "./challenges.js";
 export { BetterWright, BrowserError } from "./client.js";
 export {
+  listCookieSourceBrowsers,
+  listCookieSourceProfiles,
+} from "./cookie-sync.js";
+export {
   piImageArtifacts,
   piImageContent,
   piPrimaryImageArtifact,

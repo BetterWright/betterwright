@@ -365,6 +365,15 @@ export function createDaemonBrowser(channel, { session = "default" }: any = {}) 
   return {
     session: pinned,
     run: (code, options?: any) => call("run", [code, options]),
+    syncCookies: (options?: any) =>
+      call(
+        "syncCookies",
+        [options],
+        Math.min(
+          Math.max(Number(options?.timeoutMs) || 30_000, 1_000) + 45_000,
+          180_000,
+        ),
+      ),
     // Live view is host-side only (sealed from run snippets). Exposing these
     // on the daemon proxy lets `betterwright view` attach mid-session to the
     // same browser tabs that `run`/`exec` already use.

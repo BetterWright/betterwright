@@ -239,6 +239,7 @@ step from what it sees, in a browser that must still be there next turn:
 | [**Agent snapshots**](docs/browser-api.md#reading-the-page) | The token-efficiency core: compressed tree, `[ref=eN]` actions, diff and interactive-only modes, password redaction |
 | [**Built-in agent loop**](docs/agent.md) | `betterwright exec` / the interactive console / `runAgentTask()` — model-first selection across Claude, Codex, Grok, OpenRouter, Ollama, vLLM, and any OpenAI-compatible endpoint |
 | [**Credential vault**](docs/credentials.md) | AES-256-GCM outside the profile; PSL site matching, selector-free login detection, metadata-only account choice |
+| [**Cookie Sync**](docs/cookie-sync.md) | Merge selected cookies from local Chrome, Edge, Brave, Firefox, Safari, and other desktop browsers into BetterChromium or an explicitly approved cloud browser |
 | [**Live view & handoff**](docs/live-view.md) | Watch and coach the agent live; token + optional password gated; `handoff` pauses for human hands and resumes on Done |
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
@@ -337,7 +338,7 @@ server reads too. See
 | [The built-in agent](docs/agent.md) | [CAPTCHA helpers](docs/captcha.md) | [Chromium fork](docs/chromium-fork.md) |
 | [JavaScript API](docs/javascript.md) | [Network policy](docs/network-policy.md) | [Headed / headless](docs/attach-mode.md) |
 | [Browser API (snippet globals)](docs/browser-api.md) | [BetterChromium](docs/chromium-fork.md) | [Browser providers](docs/browser-providers.md) |
-| [CAPTCHA recipes](docs/browser-recipes.md) | | Benchmarks: [Online-Mind2Web, 92.7% self-judged](benchmarks/online-mind2web/REPORT.md) · [agent head-to-head](benchmarks/exec-headtohead/REPORT.md) |
+| [CAPTCHA recipes](docs/browser-recipes.md) | [Cookie Sync](docs/cookie-sync.md) | Benchmarks: [Online-Mind2Web, 92.7% self-judged](benchmarks/online-mind2web/REPORT.md) · [agent head-to-head](benchmarks/exec-headtohead/REPORT.md) |
 
 The Online-Mind2Web figure is 278/300 on the pinned 2025-11-23 snapshot, scored
 by BetterWright's own strict multimodal judge — **not** an official

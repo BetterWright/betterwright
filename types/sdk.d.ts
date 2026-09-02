@@ -8,6 +8,13 @@ import type { UntrustedValue } from "./untrusted-value.js";
 
 export { resolveModel, resolveModelSelection, runAgentTask } from "./agent.js";
 export { BetterWright, BrowserError, validateCredentialMatchMode } from "./client.js";
+export function listCookieSourceBrowsers(): Promise<
+  import("./public.js").CookieSourceBrowser[]
+>;
+export function listCookieSourceProfiles(
+  browser: string,
+  options?: { timeoutMs?: number },
+): Promise<import("./public.js").CookieSourceProfile[]>;
 export { METADATA_ADDRESSES, METADATA_HOSTNAMES, NetworkPolicy } from "./policy.js";
 export { agentSystemPrompt } from "./prompt.js";
 export {

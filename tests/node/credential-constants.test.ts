@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  createSecretsRedactor,
   REDACTED_PASSWORD_PLACEHOLDER,
   redactSecretsDeep,
 } from "../../dist/src/credential-constants.js";
@@ -25,6 +26,15 @@ test("redactSecretsDeep scrubs strings, keys, and nested values without mutating
   assert.equal(output[`key-${REDACTED_PASSWORD_PLACEHOLDER}`][1], 42);
   assert.equal(output[`key-${REDACTED_PASSWORD_PLACEHOLDER}`][2], null);
   assert.equal(input.message, "the password is hunter2!", "input must not be mutated");
+});
+
+test("a compiled redactor handles cookie pairs without corrupting short ordinary text", () => {
+  const redact = createSecretsRedactor(["preference=1", "long-cookie-secret"]);
+  assert.equal(redact("Example 1"), "Example 1");
+  assert.equal(
+    redact("preference=1; session=long-cookie-secret"),
+    `${REDACTED_PASSWORD_PLACEHOLDER}; session=${REDACTED_PASSWORD_PLACEHOLDER}`,
+  );
 });
 
 test("redactSecretsDeep replaces longest secrets first and terminates on cycles", () => {
