@@ -5,6 +5,8 @@ import test from "node:test";
 import {
   browserProviderInfo,
   describeCdpUrl,
+  listProviderSessions,
+  PROVIDER_HTTP_TIMEOUT_MS,
   redactProviderSecrets,
   resolveBrowserProvider,
 } from "../../dist/src/browser-providers.js";
@@ -338,4 +340,34 @@ test("provider secrets are registered for result-envelope redaction", () => {
   assert.ok(tracked2.includes("pass"));
   assert.ok(tracked2.includes("K"));
   assert.ok(tracked2.includes("hdr"));
+});
+
+test("provider API calls carry a timeout and name the network failure", async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  let seenSignal = null;
+  globalThis.fetch = async (_url, init) => {
+    seenSignal = init?.signal;
+    throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+  };
+  await assert.rejects(
+    () => listProviderSessions("kernel", { apiKey: "k_test" }),
+    new RegExp(`GET https://api\\.onkernel\\.com/browsers timed out after ${PROVIDER_HTTP_TIMEOUT_MS / 1000}s`),
+  );
+  assert.ok(seenSignal instanceof AbortSignal, "fetch must be given an abort signal");
+
+  // undici's bare "fetch failed" carries the real reason in `cause`.
+  globalThis.fetch = async () => {
+    throw Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("getaddrinfo ENOTFOUND api.onkernel.com"), {
+        code: "ENOTFOUND",
+      }),
+    });
+  };
+  await assert.rejects(
+    () => listProviderSessions("kernel", { apiKey: "k_test" }),
+    /GET https:\/\/api\.onkernel\.com\/browsers failed: getaddrinfo ENOTFOUND api\.onkernel\.com/,
+  );
 });

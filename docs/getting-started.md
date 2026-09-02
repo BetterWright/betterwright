@@ -200,6 +200,18 @@ export BETTERWRIGHT_PARK_BACKGROUND_PAGES=0
 
 or `new BetterWright({ parkBackgroundPages: false })`.
 
+### Slow hosts
+
+The client gives a freshly spawned worker 15 s to print its ready handshake
+before it gives up and kills it. A cold disk or a small ARM board can need
+longer on the first run:
+
+```bash
+export BETTERWRIGHT_WORKER_START_TIMEOUT_MS=60000
+```
+
+The error you would see otherwise names this variable.
+
 ## Your first run
 
 A snippet is a string of async Playwright JavaScript. The last expression is

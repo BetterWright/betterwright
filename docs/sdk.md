@@ -104,6 +104,49 @@ The entrypoint also exports the public types, so
 `import type { BetterWrightOptions, RunResult } from "betterwright/sdk"` works
 without a second import path.
 
+## Errors, timeouts, and the worker
+
+Knowing which failures come back as a value and which ones throw is most of
+what makes an integration robust.
+
+**Anything that happened inside the browser is a value.** `run()`,
+`fillCredential()`, and the live-view calls resolve with an envelope; when the
+snippet threw, the page navigated away, the call timed out, or the worker died
+mid-call, that envelope is `{ ok: false, error }`. Check `ok` and decide.
+Throwing `BrowserError(result.error)` is the conventional way to turn one into
+an exception.
+
+**The client throws only when it cannot work at all**, and always as a
+`BrowserError` (or a `TypeError` for a bad option at construction):
+
+- the client was closed with `close()` and is then used again;
+- the worker process could not start: the error says why, with the exit code
+  or signal and the worker's last stderr lines (a missing module, a syntax
+  error in a patched install, a permission problem), and it is raised as soon
+  as the process exits rather than after a timeout;
+- the worker started but never printed its ready handshake within the start
+  timeout, 15 s by default. Set `BETTERWRIGHT_WORKER_START_TIMEOUT_MS` higher
+  on a cold disk or a small ARM board; the hung process is killed either way.
+
+**Timeouts restart the worker, not the browser.** Each call takes a `timeout`
+in seconds (default `defaultTimeout`, 30). When it expires the worker is
+restarted, the call resolves `{ ok: false, error: "Execution timed out …" }`,
+and the next call spawns a replacement. Calls from other sessions that land
+during that restart wait for the replacement; they are not told the browser
+has been closed, because it has not. The browser profile, cookies, and
+logins are on disk and survive every restart.
+
+**Provider API calls are bounded.** A cloud-provider launch and every
+`createProviderSession` / `listProviderSessions` / `getProviderSession` /
+`stopProviderSession` call gives the provider 30 s and then fails with a
+message that says so. A network failure names its cause
+(`getaddrinfo ENOTFOUND …`, `ECONNREFUSED`).
+
+**`withBrowser` owns the lifetime.** It closes the client whether your
+function returns or throws. If your function throws and `close()` then fails
+as well, your function's error is the one you see. A missing callback or a
+non-object options bag is a `TypeError` before any client exists.
+
 ## Runnable example
 
 [examples/typescript/sdk.ts](../examples/typescript/sdk.ts) is the code above as

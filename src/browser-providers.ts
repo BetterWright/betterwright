@@ -120,6 +120,30 @@ function isFetchJsonHook(value: UntrustedValue): value is FetchJsonHook {
   return isCallable(value);
 }
 
+/**
+ * Upper bound on one provider API call, request and body together. A session
+ * API that stops answering must surface as an error, not as a `boxes` command
+ * or a browser launch that never returns.
+ */
+export const PROVIDER_HTTP_TIMEOUT_MS = 30_000;
+
+/** The one-line reason a provider API call never produced a response. */
+function describeFetchFailure(method, url, error) {
+  const name = untrustedField(error, "name");
+  if (name === "TimeoutError" || name === "AbortError") {
+    return `Cloud browser API ${method} ${url} timed out after ${PROVIDER_HTTP_TIMEOUT_MS / 1000}s.`;
+  }
+  // undici reports network failures as a bare "fetch failed" TypeError and
+  // keeps the useful part (ENOTFOUND, ECONNREFUSED, a TLS error) in `cause`.
+  const cause = untrustedField(error, "cause");
+  const detail = takeString(
+    untrustedField(cause, "message"),
+    untrustedField(cause, "code"),
+    untrustedField(error, "message"),
+  );
+  return `Cloud browser API ${method} ${url} failed: ${detail || String(error)}`;
+}
+
 async function httpJson(fetchJson, method, url, { headers, body }) {
   if (isFetchJsonHook(fetchJson)) {
     const request: ProviderHttpRequest = { method, headers };
@@ -129,10 +153,20 @@ async function httpJson(fetchJson, method, url, { headers, body }) {
   const requestHeaders: Record<string, string> = {};
   if (body !== undefined) requestHeaders["content-type"] = "application/json";
   Object.assign(requestHeaders, headers);
-  const init: RequestInit = { method, headers: requestHeaders };
+  const init: RequestInit = {
+    method,
+    headers: requestHeaders,
+    signal: AbortSignal.timeout(PROVIDER_HTTP_TIMEOUT_MS),
+  };
   if (body !== undefined) init.body = JSON.stringify(body);
-  const response = await fetch(url, init);
-  const text = await response.text();
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetch(url, init);
+    text = await response.text();
+  } catch (error) {
+    throw new Error(describeFetchFailure(method, url, error));
+  }
   let data = null;
   try {
     data = text ? JSON.parse(text) : null;

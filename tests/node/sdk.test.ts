@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 
 import * as providers from "../../dist/src/browser-providers.js";
@@ -123,4 +124,46 @@ test("withBrowser accepts a callback alone, with the default options", async () 
     delete process.env.BETTERWRIGHT_HOME;
   }
   assert.equal(closed.length, 1);
+});
+
+test("withBrowser rejects a bad call before a client exists", async () => {
+  const home = makeTempDir("bw-sdk-with-browser-bad-call-");
+  await assert.rejects(() => sdk.withBrowser({ home }), {
+    name: "TypeError",
+    message: /expects a callback/,
+  });
+  await assert.rejects(() => sdk.withBrowser("nope", async () => 1), {
+    name: "TypeError",
+    message: /options must be an object/,
+  });
+  // Nothing was constructed, so the home has not been touched.
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+test("withBrowser reports the callback's error even when close fails too", async () => {
+  const home = makeTempDir("bw-sdk-with-browser-close-fails-");
+  await assert.rejects(
+    () =>
+      sdk.withBrowser({ home }, async (bw) => {
+        bw.close = async () => {
+          throw new Error("close failed");
+        };
+        throw new Error("callback failed");
+      }),
+    /callback failed/,
+  );
+});
+
+test("withBrowser propagates a close failure when the callback succeeded", async () => {
+  const home = makeTempDir("bw-sdk-with-browser-close-only-fails-");
+  await assert.rejects(
+    () =>
+      sdk.withBrowser({ home }, async (bw) => {
+        bw.close = async () => {
+          throw new Error("close failed");
+        };
+        return 1;
+      }),
+    /close failed/,
+  );
 });
