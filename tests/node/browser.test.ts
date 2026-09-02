@@ -3122,6 +3122,9 @@ test("Cookie Sync cannot reuse an in-flight ephemeral browser launch", opts, asy
     assert.equal(result.ok, false);
     assert.match(result.error, /requires the selected BetterWright profile to be persistent/);
     assert.equal(JSON.stringify(result).includes(cookie.value), false);
+    const liveStatus = await contender._dispatch({ type: "live_view_status" }, 30);
+    assert.equal(liveStatus.ok, true, liveStatus.error);
+    assert.equal(liveStatus.running, true);
 
     await owner.close();
     const retried = await contender._dispatch(

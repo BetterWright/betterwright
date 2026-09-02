@@ -2035,6 +2035,13 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
     throw new Error('publicSearchPolicy must be "block" or "allow".');
   }
   config = { ...config, publicSearchPolicy };
+  if (launchPromise) {
+    const context = await launchPromise;
+    if (requirePersistentProfile && profileMode !== "persistent") {
+      throw persistentCookieSyncTargetError();
+    }
+    return context;
+  }
   if (browserContext) {
     if (requirePersistentProfile && profileMode !== "persistent") {
       await closeDownloadGuard();
@@ -2047,13 +2054,6 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
       launchConfig = { ...launchConfig, ...config };
       return browserContext;
     }
-  }
-  if (launchPromise) {
-    const context = await launchPromise;
-    if (requirePersistentProfile && profileMode !== "persistent") {
-      throw persistentCookieSyncTargetError();
-    }
-    return context;
   }
   launchConfig = { ...config };
   launchPromise = (async () => {
