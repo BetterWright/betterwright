@@ -49,7 +49,7 @@ const WORKER_PATH = fileURLToPath(new URL("./worker.js", import.meta.url));
 // never collide with it: session names are trimmed strings, and this is not.
 const HOST_LANE = Symbol("betterwright-host-lane");
 const DEFAULT_TIMEOUT_SECONDS = 30;
-const WORKER_START_TIMEOUT_MS = 15_000;
+const DEFAULT_WORKER_START_TIMEOUT_MS = 15_000;
 const WORKER_RPC_DRAIN_TIMEOUT_MS = 250;
 const PENDING_CREDENTIAL_FINALIZE_ACTIONS = new Set(["commit", "discard"]);
 const DEFINITIVE_GENERATE_FAILURE_CODES = new Set([
@@ -89,6 +89,16 @@ export function displayAvailable() {
 function resolveHeadless(headless) {
   if (headless === "auto" || headless === undefined) return !displayAvailable();
   return headless !== false;
+}
+
+/**
+ * How long a freshly spawned worker gets to print its ready handshake. The
+ * default covers a warm host; a cold disk or a small ARM board can need more,
+ * so `BETTERWRIGHT_WORKER_START_TIMEOUT_MS` raises (or lowers) it per host.
+ */
+function workerStartTimeoutMs() {
+  const raw = Number(process.env.BETTERWRIGHT_WORKER_START_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_WORKER_START_TIMEOUT_MS;
 }
 
 function resolveProviderOption(options, home) {
@@ -307,7 +317,9 @@ export class BetterWright {
   declare _pendingCredentialRecoveries: Map<any, any>;
   declare _workerClosePromises: WeakMap<any, any>;
   declare _workerClosePreservesPending: WeakSet<any>;
+  declare _workerCloseExpected: WeakSet<any>;
   declare _workerCloseBarrier: Promise<any>;
+  declare _dispatchSeq: number;
   declare _vaultRedactionOwner: any;
   declare _ready: any;
   declare _lastConfig: any;
@@ -506,7 +518,11 @@ export class BetterWright {
     this._pendingCredentialRecoveries = new Map();
     this._workerClosePromises = new WeakMap();
     this._workerClosePreservesPending = new WeakSet();
+    // Workers close() is taking down on purpose (final close or restart), so
+    // the exit handler can tell a deliberate teardown from a crash.
+    this._workerCloseExpected = new WeakSet();
     this._workerCloseBarrier = Promise.resolve();
+    this._dispatchSeq = 0;
     this._vaultRedactionOwner = null;
     this._ready = null;
     this._lastConfig = null;
@@ -638,8 +654,27 @@ export class BetterWright {
     );
     this._workerClosePromises.set(child, workerClosePromise);
     this._workerCloseBarrier = workerClosePromise;
+    let ready = false;
     let resolveReady;
-    this._ready = new Promise((resolve) => (resolveReady = resolve));
+    let rejectReady;
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    // Settled by the handshake, by an exit before it, or by a spawn failure.
+    // A rejection that lands after _start has already given up has no
+    // awaiter, so it is marked observed here rather than becoming an
+    // unhandled rejection in the host.
+    readyPromise.catch(() => {});
+    this._ready = readyPromise;
+    const failStart = (message) => rejectReady(new BrowserError(message));
+    // A write to a worker that is already going down raises EPIPE on its
+    // stdin stream. Without a listener that is an uncaught exception in the
+    // host process; the exit path below is what reports the worker as gone.
+    child.stdin.on("error", () => {});
+    child.on("error", (error) => {
+      failStart(`Could not start the BetterWright worker: ${error?.message || error}`);
+    });
     stdout.on("line", (line) => {
       let message;
       try {
@@ -647,8 +682,10 @@ export class BetterWright {
       } catch {
         return;
       }
-      if (message.type === "ready") resolveReady();
-      else if (message.type === "rpc_request") {
+      if (message.type === "ready") {
+        ready = true;
+        resolveReady();
+      } else if (message.type === "rpc_request") {
         const task = this._serviceRpc(message, child);
         rpcTasks.add(task);
         // Custom RPC providers cannot currently be aborted. Their settlement
@@ -675,7 +712,15 @@ export class BetterWright {
     child.on("exit", () => {
       if (this._process === child) this._process = null;
     });
-    child.on("close", () => {
+    child.on("close", (code, signal) => {
+      // A worker that died before its handshake: report it now, with the
+      // stderr that explains it, instead of letting the start timer run out.
+      if (!ready) {
+        const how = signal ? `signal ${signal}` : `exit code ${code}`;
+        failStart(
+          `The BetterWright worker exited before it was ready (${how}).\n${this._stderrTail.slice(-8).join("\n")}`,
+        );
+      }
       void (async () => {
         let drainTimer;
         try {
@@ -697,8 +742,16 @@ export class BetterWright {
           // Unexpected death (crash, OOM-kill) while a live view is up:
           // revive worker + view now, not at the host's next browser call —
           // viewers are already in their reconnect loop. Deliberate closes
-          // set _closed (or cleared the restore state) before this fires.
-          if (!this._closed && (this._process === child || this._process === null)) {
+          // (final or restart) are marked expected before this fires, and a
+          // worker that never came up cannot have hosted the view — reviving
+          // from here would only spawn the same failure in a loop; the next
+          // host call still retries once per generation.
+          if (
+            ready &&
+            !this._closed &&
+            !this._workerCloseExpected.has(child) &&
+            (this._process === child || this._process === null)
+          ) {
             this._scheduleLiveViewRevival();
           }
         }
@@ -706,14 +759,29 @@ export class BetterWright {
     });
 
     let startTimer;
-    const timer = new Promise((_, reject) => {
+    const startTimeoutMs = workerStartTimeoutMs();
+    const timer = new Promise<never>((_, reject) => {
       startTimer = setTimeout(
-        () => reject(new BrowserError(`Worker did not start.\n${this._stderrTail.slice(-8).join("\n")}`)),
-        WORKER_START_TIMEOUT_MS,
+        () =>
+          reject(
+            new BrowserError(
+              `The BetterWright worker did not start within ${Math.round(startTimeoutMs / 1000)}s ` +
+                "(raise BETTERWRIGHT_WORKER_START_TIMEOUT_MS on a slow host).\n" +
+                this._stderrTail.slice(-8).join("\n"),
+            ),
+          ),
+        startTimeoutMs,
       );
     });
     try {
-      await Promise.race([this._ready, timer]);
+      await Promise.race([readyPromise, timer]);
+    } catch (error) {
+      // A worker that never answered must not stay attached as if it were
+      // running: the next call would trust it and only learn otherwise after
+      // a full execution timeout. Drop it so the next call spawns afresh.
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      if (this._process === child) this._process = null;
+      throw error;
     } finally {
       clearTimeout(startTimer);
     }
@@ -1365,8 +1433,9 @@ export class BetterWright {
       this._process.exitCode === null &&
       JSON.stringify(this._lastConfig) !== JSON.stringify(config)
     ) {
-      await this.close();
-      this._closed = false;
+      // A changed config replaces the worker. The live view was bound to the
+      // old config, so it ends here; the browser itself is not closed.
+      await this.close({ restart: true, endLiveView: true });
     }
     await this._start();
     this._lastConfig = config;
@@ -1392,7 +1461,8 @@ export class BetterWright {
    * restarting the worker on timeout and applying vault redaction on the way
    * out. Shared by run() and fillCredential(). */
   async _dispatch(message, timeoutSeconds): Promise<any> {
-    const id = `${process.pid}-${Math.round(performance.now() * 1000)}-${this._pending.size}`;
+    this._dispatchSeq += 1;
+    const id = `${process.pid}-${this._dispatchSeq}`;
     const child = this._process;
     const response: any = await new Promise<any>((resolve) => {
       let settled = false;
@@ -1407,7 +1477,6 @@ export class BetterWright {
       this._pending.set(id, { child, done });
       timer = setTimeout(async () => {
         await this.close({ child, preservePending: true, restart: true });
-        this._closed = false;
         this._scheduleLiveViewRevival();
         done(
           this._attachPendingCredentialRecovery(id, {
@@ -1432,6 +1501,9 @@ export class BetterWright {
     if (isRedactingVault(vault)) {
       try {
         envelope = vault.redact(response);
+        // A vault that hands back something other than an envelope has not
+        // scrubbed anything; treat it exactly like a redaction that threw.
+        if (!isRecord(envelope)) throw new TypeError("redact() did not return an envelope");
       } catch {
         // Fail closed: if redaction itself breaks, the raw response may still
         // carry active secrets, so the whole envelope is withheld rather than
@@ -1456,7 +1528,6 @@ export class BetterWright {
     }
     if (restart) {
       await this.close({ restart: true });
-      this._closed = false;
       this._scheduleLiveViewRevival();
     }
     return envelope;
@@ -1476,9 +1547,15 @@ export class BetterWright {
       child: requestedChild = null,
       preservePending = false,
       restart = false,
+      endLiveView = !restart,
     }: any = {},
   ) {
-    this._closed = true;
+    // Only a final close marks the browser closed. A restart (execution
+    // timeout, worker-requested restart, reconfigure) takes the worker down
+    // and the next call brings a replacement up; a call from another session
+    // that lands in between must wait for that replacement, not be told the
+    // browser is gone.
+    if (!restart) this._closed = true;
     const child = requestedChild || this._process;
     const closesActiveWorker = !requestedChild || this._process === child;
     if (closesActiveWorker) {
@@ -1488,12 +1565,13 @@ export class BetterWright {
     // A final close ends the live view for good: tell viewers (worker
     // teardown alone stays silent so restart reconnects work) and drop the
     // revival state. Restart closes keep both so the view comes back.
-    const endsLiveView = !restart && this._liveViewRestore;
+    const endsLiveView = endLiveView && this._liveViewRestore;
     if (endsLiveView) this._liveViewRestore = null;
     if (!child) {
       await this._workerCloseBarrier;
       return;
     }
+    this._workerCloseExpected.add(child);
     if (preservePending) this._workerClosePreservesPending.add(child);
     if (child.exitCode === null && child.signalCode === null) {
       try {
