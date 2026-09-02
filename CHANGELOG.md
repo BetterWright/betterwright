@@ -9,6 +9,15 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-01
+
+A stability release for the SDK. A worker restart no longer surfaces as a
+false "This browser has been closed." in other sessions, a worker that
+cannot start is reported at once with the reason instead of after a timeout,
+a dying worker can no longer crash the host process, and cloud-provider API
+calls are bounded so `boxes` and provider launches cannot hang. The
+provider-account and `boxes` work queued since 2.0.0 ships here as well.
+
 ### Added
 
 - **Connected provider accounts.** `betterwright configure --connect <name>`
@@ -29,6 +38,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 - **SDK session helpers** on `betterwright/sdk`: `createProviderSession`,
   `listProviderSessions`, `getProviderSession`, `stopProviderSession`,
   `REST_BROWSER_PROVIDER_NAMES`, and `lifecycle` on `browserProviderInfo`.
+- **`BETTERWRIGHT_WORKER_START_TIMEOUT_MS`** sets how long the client gives a
+  freshly spawned worker to print its ready handshake (default 15 s). A cold
+  disk or a small ARM board can need more; the timeout error now names the
+  variable and carries the worker's last stderr lines.
 
 ### Changed
 
@@ -36,6 +49,45 @@ Releases before 1.1.3 predate this file; their notes live on the
   session), matching Kernel / Browserbase / Hyperbrowser. Steel and Browser
   Use still launch through a connect URL; their REST APIs are used by
   `boxes` (and by `--session-id` attach).
+- **Cloud-provider API calls are bounded.** Every REST call a provider launch
+  or `betterwright boxes` makes (create, list, get, stop) times out after 30 s
+  with a message that says so, instead of waiting on the provider forever. A
+  network failure is reported by its cause (`getaddrinfo ENOTFOUND …`,
+  `ECONNREFUSED`, a TLS error) rather than undici's bare `fetch failed`.
+
+### Fixed
+
+- **A worker restart no longer fails concurrent calls with "This browser has
+  been closed."** An execution timeout, a worker-requested restart, or a
+  reconfigure takes the worker down and the next call brings a replacement
+  up. A call from another session that landed during that teardown was told
+  the browser had been closed, although nothing had closed it. Only a final
+  `close()` marks the client closed now; a call that arrives mid-restart waits
+  for the replacement worker. Live-view revival after a crash is unchanged.
+- **A worker that dies at boot fails the call immediately, with its stderr.**
+  The client used to wait out the full start timeout before reporting
+  "Worker did not start", with nothing about why. The call now rejects as
+  soon as the process exits, and the `BrowserError` carries the exit code or
+  signal and the last stderr lines (the missing module, the syntax error, the
+  permission problem).
+- **A worker that hangs at boot is killed, not kept.** When the handshake
+  timed out, the unresponsive child stayed attached as the live worker, so the
+  next call trusted it and only failed after a full execution timeout. The
+  child is now killed at the start timeout and the next call spawns afresh.
+- **Writing to a dying worker cannot crash the host.** The worker's stdin had
+  no error listener, so a write that raced its exit raised EPIPE as an
+  uncaught exception in the host process. The stream now has a listener; the
+  exit path already reports the worker as gone. A spawn failure (`EAGAIN`,
+  `EMFILE`) is reported as a `BrowserError` for the same reason.
+- **`withBrowser` checks its arguments before constructing a client**, so a
+  missing callback or a non-object options bag is a `TypeError` naming the
+  fix, not a worker left behind. When the callback throws and `close()` then
+  fails too, the callback's error is the one reported; a close failure after
+  a successful callback still propagates.
+- **A vault whose `redact()` returns a non-envelope withholds the result.**
+  The client threw a `TypeError` out of `run()` while reading the returned
+  value; it now fails closed the same way a throwing `redact()` does,
+  returning `ok: false` with the redaction-failed error.
 
 ## [2.0.0] - 2026-08-31
 
@@ -1275,7 +1327,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/BetterWright/betterwright/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/BetterWright/betterwright/compare/v1.11.0...v2.0.0
 [1.11.0]: https://github.com/BetterWright/betterwright/compare/v1.10.3...v1.11.0
 [1.10.3]: https://github.com/BetterWright/betterwright/compare/v1.10.2...v1.10.3
