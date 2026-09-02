@@ -3084,6 +3084,66 @@ test("Cookie Sync refuses a local ephemeral target profile", opts, async () => {
   }
 });
 
+test("Cookie Sync cannot reuse an in-flight ephemeral browser launch", opts, async () => {
+  const home = tempHome();
+  const options = { home, profile: "cookie-sync-launch-race", headless: true, vault: false };
+  const owner = new BetterWright(options);
+  const contender = new BetterWright(options);
+  const cookie = {
+    name: "session",
+    value: "fixture-race-secret",
+    domain: "example.test",
+    path: "/",
+    httpOnly: true,
+    secure: true,
+  };
+  try {
+    const started = await owner.run("return true");
+    assert.equal(started.ok, true, started.error);
+    const config = await contender._prepare();
+    const liveView = contender._dispatch(
+      { type: "live_view_start", config, options: {} },
+      30,
+    );
+    const sync = contender._dispatch(
+      {
+        type: "cookie_sync",
+        config,
+        cookies: [cookie],
+        source: { browser: "fixture" },
+        selected: 1,
+        skipped: 0,
+        warnings: [],
+      },
+      30,
+    );
+    const [liveResult, result] = await Promise.all([liveView, sync]);
+    assert.equal(liveResult.ok, true, liveResult.error);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /requires the selected BetterWright profile to be persistent/);
+    assert.equal(JSON.stringify(result).includes(cookie.value), false);
+
+    await owner.close();
+    const retried = await contender._dispatch(
+      {
+        type: "cookie_sync",
+        config,
+        cookies: [cookie],
+        source: { browser: "fixture" },
+        selected: 1,
+        skipped: 0,
+        warnings: [],
+      },
+      30,
+    );
+    assert.equal(retried.ok, true, retried.error);
+    assert.equal(retried.profileMode, "persistent");
+  } finally {
+    await Promise.all([owner.close(), contender.close()]);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("a second browser on the SAME profile falls back to ephemeral", opts, async () => {
   const home = tempHome();
   const first = new BetterWright({ home, profile: "social", headless: true });

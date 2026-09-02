@@ -2048,7 +2048,13 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
       return browserContext;
     }
   }
-  if (launchPromise) return launchPromise;
+  if (launchPromise) {
+    const context = await launchPromise;
+    if (requirePersistentProfile && profileMode !== "persistent") {
+      throw persistentCookieSyncTargetError();
+    }
+    return context;
+  }
   launchConfig = { ...config };
   launchPromise = (async () => {
     mkdirPrivate(launchConfig.artifactsDir);
