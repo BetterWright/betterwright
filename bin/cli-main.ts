@@ -108,7 +108,11 @@ import type { AgentMessage, RunAgentTaskOptions } from "../types/agent.js";
 import type { BetterWrightOptions } from "../types/public.js";
 
 const require = createRequire(import.meta.url);
-const CLI_PATH = fileURLToPath(import.meta.url);
+// The session daemon is a detached child of this process. After the thin
+// router split, `import.meta.url` is cli-main, which only exports `runCli` and
+// does nothing when executed. Point at the public entry so `__daemon` still
+// dispatches.
+const CLI_PATH = fileURLToPath(new URL("./betterwright.js", import.meta.url));
 
 // What the CLI resolves from flags/env before the live-view layer validates
 // the expose preset and hashes the password. A type alias, so it keeps the
@@ -2243,5 +2247,22 @@ export async function runCli() {
       console.error(`Unknown command "${command}".\n\n${cliPaint({ stream: process.stderr }).help(MAIN_USAGE)}`);
       return 1;
   }
+}
+
+function invokedAsCliMain() {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  const base = path.basename(invoked);
+  return base === "cli-main.js" || base === "cli-main.ts";
+}
+
+if (invokedAsCliMain()) {
+  runCli().then(
+    (code) => process.exit(code),
+    (error) => {
+      console.error(error?.stack || String(error));
+      process.exit(1);
+    },
+  );
 }
 

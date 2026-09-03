@@ -224,3 +224,24 @@ test("mcp help registers the server with bunx, not npx", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /bunx betterwright mcp/);
 });
+
+test("the daemon child is the thin CLI router, not a silent cli-main export", () => {
+  const source = fs.readFileSync(path.join(root, "bin", "cli-main.ts"), "utf8");
+  assert.match(source, /new URL\("\.\/betterwright\.js", import\.meta\.url\)/);
+  assert.doesNotMatch(
+    source,
+    /const CLI_PATH = fileURLToPath\(import\.meta\.url\)/,
+  );
+});
+
+test("cli-main.js still dispatches when executed as the main module", () => {
+  const cliMain = path.join(root, "dist", "bin", "cli-main.js");
+  const result = spawnSync(process.execPath, [cliMain, "--version"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 20_000,
+    input: "",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+/);
+});

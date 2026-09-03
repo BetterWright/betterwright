@@ -19,6 +19,10 @@ Releases before 1.1.3 predate this file; their notes live on the
   filesystem path. Node's `pathToFileURL` percent-encodes `~`, and Bun then
   looks for a file that does not exist — Windows runners use the 8.3 home
   `RUNNER~1`.
+- The session daemon is spawned through the thin CLI router
+  (`dist/bin/betterwright.js`), not `cli-main`. After the router split,
+  `cli-main` only exported `runCli`, so a fresh daemon child exited without
+  creating its socket.
 
 ### Changed
 
