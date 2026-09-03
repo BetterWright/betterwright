@@ -16,7 +16,7 @@
 #   REFERENCE_CLI=<cli> benchmarks/browser-agent-headtohead/run.sh
 #   benchmarks/browser-agent-headtohead/run.sh --betterwright-only
 #
-# Requires `betterwright setup` and a built `dist/` (`npm run build`).
+# Requires `betterwright setup` and a built `dist/` (`bun run build`).
 
 set -euo pipefail
 
@@ -44,8 +44,8 @@ die() {
   exit 1
 }
 
-[ -f "$BW" ] || die "missing $BW — run 'npm run build' first"
-command -v node >/dev/null 2>&1 || die "node is required"
+[ -f "$BW" ] || die "missing $BW — run 'bun run build' first"
+command -v bun >/dev/null 2>&1 || die "bun is required"
 
 REFERENCE_CLI="${REFERENCE_CLI:-}"
 if [ "$BETTERWRIGHT_ONLY" -eq 0 ]; then
@@ -68,7 +68,7 @@ fi
 
 # Millisecond clock. Prefer bash 5's EPOCHREALTIME because it costs no
 # subprocess, and a subprocess spawn would land inside the interval being
-# measured. Fall back to GNU date, then to node.
+# measured. Fall back to GNU date, then to bun.
 if [ -n "${EPOCHREALTIME:-}" ]; then
   now_ms() {
     local t="${EPOCHREALTIME/,/.}"
@@ -77,10 +77,10 @@ if [ -n "${EPOCHREALTIME:-}" ]; then
 elif date +%s%3N 2>/dev/null | grep -Eq '^[0-9]+$'; then
   now_ms() { date +%s%3N; }
 else
-  now_ms() { node -e 'process.stdout.write(String(Date.now()))'; }
+  now_ms() { bun -e 'process.stdout.write(String(Date.now()))'; }
 fi
 
-bw() { BETTERWRIGHT_HEADLESS=1 node "$BW" "$@"; }
+bw() { BETTERWRIGHT_HEADLESS=1 bun "$BW" "$@"; }
 
 reference_available() { [ "$BETTERWRIGHT_ONLY" -eq 0 ]; }
 

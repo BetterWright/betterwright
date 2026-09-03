@@ -1,14 +1,15 @@
-// Everything that drives the built runtime: the Node test suite, the benchmark
+// Everything that drives the built runtime: the test suite, the benchmark
 // harnesses, and the probe scripts. All of it reaches `dist/src/*.js`, so this
-// project only compiles after `npm run build` — `npm run build:harness` chains
-// the two in the right order.
+// project only type-checks after `bun run build` — `bun run build:harness`
+// chains the two in the right order.
 //
 // `dist/` ships no declaration files, so those imports resolve as `any`, which
 // is exactly the checking these files had as JavaScript. Their own bodies are
 // fully checked, and `noEmitOnError` means a type error fails the test run.
 //
-// Emits in place, like tsconfig.tools.json, because the tests locate the built
-// runtime at `../../dist/src/*.js` and their fixtures at `../fixtures/*`.
+// Tests run as TypeScript under `bun test`, so this project is `--noEmit`
+// via the build:harness script. The compilerOptions here still describe an
+// in-place emit for anyone who wants the `.js` beside the `.ts`.
 {
   "compilerOptions": {
     "target": "ES2022",

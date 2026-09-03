@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // One Odysseys task through BetterWright's own agent harness (src/agent.ts).
 // The parent (exec-runner.ts) spawns one of these per task with an isolated home.
 

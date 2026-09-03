@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Head-to-head: BetterWright's built-in agent harness (`betterwright exec`) vs
 // a reference browser agent's own CLI, both plugged into the SAME model
 // (codex / gpt-5.6-sol) at the SAME reasoning effort (low). Matching the model
@@ -6,7 +6,7 @@
 // this benchmark measures. The browser runtime itself was already at parity in
 // benchmarks/browser-agent-headtohead.
 //
-//   REFERENCE_CLI=<cli> node benchmarks/exec-headtohead/run.js \
+//   REFERENCE_CLI=<cli> bun benchmarks/exec-headtohead/run.ts \
 //     [--only <substr>] [--timeout <ms>] [--raw <file>]
 //
 // The comparison CLI is not vendored and not named here. Set REFERENCE_CLI to a
@@ -52,7 +52,7 @@ if (!REFERENCE_CLI) {
       "This comparison needs a second agent CLI that this repository does not ship\n" +
       "and does not name. Set REFERENCE_CLI to one installed on your own machine\n" +
       'that accepts `<cli> exec -m <provider/model> --effort <e> "<task>"`:\n\n' +
-      "  REFERENCE_CLI=your-cli node benchmarks/exec-headtohead/run.js\n",
+      "  REFERENCE_CLI=your-cli bun benchmarks/exec-headtohead/run.ts\n",
   );
   process.exit(1);
 }

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 // The checked-in SKILL.md exists so custom agents can grab the instructions
 // straight from the repo or npm package without running the CLI. It must be
 // byte-identical to what `betterwright skill --claude` generates — regenerate
-// with `node dist/bin/betterwright.js skill --claude > SKILL.md` after editing
+// with `bun dist/bin/betterwright.js skill --claude > SKILL.md` after editing
 // SKILL_PREAMBLE or the operator guidance in src/prompt.ts.
 test("SKILL.md matches `betterwright skill --claude` output", () => {
   const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -27,6 +27,6 @@ test("SKILL.md matches `betterwright skill --claude` output", () => {
   assert.equal(
     checkedIn,
     generated,
-    "SKILL.md is stale — run: node dist/bin/betterwright.js skill --claude > SKILL.md",
+    "SKILL.md is stale — run: bun dist/bin/betterwright.js skill --claude > SKILL.md",
   );
 });

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 // Long-lived, Playwright-native browser worker for betterwright.
 //

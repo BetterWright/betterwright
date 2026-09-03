@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Online-Mind2Web over BetterWright's OWN agent harness (`betterwright exec`
 // shape, src/agent.ts) instead of the Pi coding agent. Reuses the Pi runner's
 // dataset/manifest loading, v2 submission builder, and validator so the same
 // strict local judge applies unchanged.
 //
-//   node benchmarks/online-mind2web/exec-runner.js run \
+//   bun benchmarks/online-mind2web/exec-runner.ts run \
 //     --tasks /path/to/Online-Mind2Web.json \
 //     --manifest benchmarks/online-mind2web/full-300-2026-07-23.json \
 //     --output benchmarks/online-mind2web/runs/exec-v1-300 \

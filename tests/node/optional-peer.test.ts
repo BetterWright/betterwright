@@ -57,7 +57,7 @@ test("a genuinely missing peer reports the install command and both search paths
   assert.match(message, /The Claude model needs bw-not-installed-anywhere, which is not installed/);
   // The old text said `npm install @anthropic-ai/sdk`, which can never work for
   // a globally installed CLI; the hint must track how BetterWright was invoked.
-  assert.match(message, /npm install -g bw-not-installed-anywhere/);
+  assert.match(message, /bun add -g bw-not-installed-anywhere/);
   assert.match(message, new RegExp(project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
@@ -75,18 +75,18 @@ test("a peer that fails to load surfaces its own error, not an install hint", as
 
 test("the install hint is global for a CLI outside the working directory and local otherwise", () => {
   const repoRoot = path.resolve(import.meta.dirname, "..", "..");
-  assert.equal(installHint("@anthropic-ai/sdk", repoRoot), "npm install @anthropic-ai/sdk");
+  assert.equal(installHint("@anthropic-ai/sdk", repoRoot), "bun add @anthropic-ai/sdk");
   assert.equal(
     installHint("@anthropic-ai/sdk", path.join(repoRoot, "..", "elsewhere")),
-    "npm install -g @anthropic-ai/sdk",
+    "bun add -g @anthropic-ai/sdk",
   );
   // Peers are declared on the package root, so a subpath import must not leak
   // into the suggested command.
   assert.equal(
     installHint("@modelcontextprotocol/sdk/server/index.js", repoRoot),
-    "npm install @modelcontextprotocol/sdk",
+    "bun add @modelcontextprotocol/sdk",
   );
-  assert.equal(installHint("some-peer/deep/path.js", repoRoot), "npm install some-peer");
+  assert.equal(installHint("some-peer/deep/path.js", repoRoot), "bun add some-peer");
 });
 
 // BetterWright must not count as "inside" a working directory that merely
@@ -96,5 +96,5 @@ test("a working directory sharing a name prefix is treated as a global install",
   const repoRoot = path.resolve(import.meta.dirname, "..", "..");
   const prefixOnly = repoRoot.slice(0, -3);
   assert.ok(`${repoRoot}${path.sep}src`.startsWith(prefixOnly), "test premise: raw prefix matches");
-  assert.equal(installHint("x", prefixOnly), "npm install -g x");
+  assert.equal(installHint("x", prefixOnly), "bun add -g x");
 });

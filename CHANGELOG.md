@@ -9,6 +9,16 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- The project runtime is Bun 1.4.0. CLI, worker, tests, CI, and Cloud Agent
+  install run on Bun. `betterwright doctor` reports Bun when that is the host.
+  The published library still loads under Node 22 if a consumer imports it
+  from Node; worker processes inherit the host's `process.execPath`.
+  MCP registration uses `bunx betterwright mcp`. Install hints from `doctor`
+  and missing optional peers suggest `bun add` when the host is Bun.
+
+
 ## [2.1.0] - 2026-09-02
 
 ### Added

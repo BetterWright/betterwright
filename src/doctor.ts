@@ -1,8 +1,8 @@
 // Runtime resolution and readiness reporting shared by the CLI (`betterwright
 // doctor`) and the MCP server's `browser_doctor` tool.
 //
-// The pinned versions here are the single Node-side source of truth;
-// scripts/check-versions.mjs verifies them against package.json in CI.
+// The pinned versions here are the single source of truth;
+// scripts/check-versions.ts verifies them against package.json in CI.
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -20,7 +20,13 @@ import {
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
 import { defaultHome } from "./home.js";
-import { optionalPeerAvailable } from "./optional-peer.js";
+import { installHint, optionalPeerAvailable } from "./optional-peer.js";
+import {
+  runtimeFix,
+  runtimeLabel,
+  runtimeSupported,
+  runtimeVersion,
+} from "./runtime.js";
 import { staleAgentSkillReport } from "./skill-install.js";
 
 const require = createRequire(import.meta.url);
@@ -104,6 +110,8 @@ export async function doctorReport() {
     (provider ? !providerError : browser === "chromium-fork" && !chromiumForkError);
   return {
     node: process.execPath,
+    runtime: runtimeLabel(),
+    runtime_version: runtimeVersion(),
     worker,
     worker_ok: workerOk,
     playwright_core: core,
@@ -238,7 +246,7 @@ export function modelSetupHint({ env = process.env, auth = null }: any = {}) {
     "No model backend is configured yet, so a task cannot run.\n" +
     "  Sign in:  betterwright auth --login codex     (a ChatGPT/Codex subscription)\n" +
     "        or:  betterwright auth --login grok\n" +
-    "        or:  export ANTHROPIC_API_KEY=… && npm install -g @anthropic-ai/sdk\n" +
+    `        or:  export ANTHROPIC_API_KEY=… && ${installHint("@anthropic-ai/sdk")}\n` +
     "  Local:    run Ollama, then --model ollama/<id>   (see `betterwright models`)"
   );
 }
@@ -265,13 +273,12 @@ export function doctorChecks(
     checks.push(check);
   };
 
-  const nodeMajor = Number(process.versions.node.split(".")[0]);
   add(
     "Runtime",
-    "Node",
-    nodeMajor >= 22 ? "ok" : "fail",
-    `v${process.versions.node}`,
-    nodeMajor >= 22 ? null : "BetterWright needs Node 22+. Install it from https://nodejs.org",
+    runtimeLabel(),
+    runtimeSupported() ? "ok" : "fail",
+    `v${runtimeVersion()}`,
+    runtimeFix() || undefined,
   );
   add(
     "Runtime",
@@ -356,7 +363,7 @@ export function doctorChecks(
     report.stealth_available
       ? `patchright-core ${report.stealth_driver} (enable with --stealth)`
       : "not installed — --stealth / stealthRuntimeFix unavailable",
-    report.stealth_available ? null : "Optional: npm install patchright-core",
+    report.stealth_available ? null : `Optional: ${installHint("patchright-core")}`,
   );
 
   const stale = staleAgentSkillReport({ home: os.homedir() });
@@ -400,7 +407,7 @@ export function doctorChecks(
       : "not installed (only needed for the MCP path)",
     moduleAvailable("@modelcontextprotocol/sdk/package.json")
       ? null
-      : "npm install -g @modelcontextprotocol/sdk",
+      : installHint("@modelcontextprotocol/sdk"),
   );
 
   const models = modelReadiness({ env });
@@ -419,7 +426,7 @@ export function doctorChecks(
       "Anthropic SDK",
       "warn",
       "ANTHROPIC_API_KEY is set but @anthropic-ai/sdk is not installed",
-      "npm install -g @anthropic-ai/sdk",
+      installHint("@anthropic-ai/sdk"),
     );
   }
 

@@ -14,6 +14,8 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { packageAddCommand } from "./runtime.js";
+
 const selfDir = path.dirname(fileURLToPath(import.meta.url));
 
 // A global install lives outside the project the user is standing in, so its
@@ -27,9 +29,7 @@ export function installHint(specifier, cwd = process.cwd()) {
   const packageName = specifier.startsWith("@")
     ? specifier.split("/").slice(0, 2).join("/")
     : specifier.split("/")[0];
-  return isGlobalInstall(cwd)
-    ? `npm install -g ${packageName}`
-    : `npm install ${packageName}`;
+  return packageAddCommand(packageName, isGlobalInstall(cwd));
 }
 
 /**

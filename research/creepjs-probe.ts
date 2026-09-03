@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // CreepJS evaluation of the managed BetterChromium fork.
 //
 // Launches the fork through the normal BetterWright stack (guard proxy,
@@ -7,8 +7,8 @@
 // screenshot of the verdict area.
 //
 // Usage:
-//   xvfb-run -a node research/creepjs-probe.js            # headed under Xvfb
-//   node research/creepjs-probe.js --headless             # headless
+//   xvfb-run -a bun research/creepjs-probe.ts            # headed under Xvfb
+//   bun research/creepjs-probe.ts --headless             # headless
 
 import fs from "node:fs";
 import os from "node:os";

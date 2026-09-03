@@ -89,25 +89,24 @@
     "TRADEMARKS.md"
   ],
   "scripts": {
-    "build:tools": "tsc -p tsconfig.tools.json",
-    "prebuild": "npm run build:tools",
-    "build": "node scripts/build.js",
-    "build:harness": "npm run build && tsc -p tsconfig.harness.json",
+    "build:tools": "tsc --noEmit -p tsconfig.tools.json",
+    "build": "bun scripts/build.ts",
+    "build:harness": "bun run build && tsc --noEmit -p tsconfig.harness.json",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json && tsc --noEmit -p tsconfig.examples.json",
-    "check:build": "npm run build && node scripts/check-build.js",
-    "test": "npm run build:harness && node --test tests/node/*.test.js",
-    "test:unit": "npm run build:harness && node scripts/run-unit-tests.js",
+    "check:build": "bun run build && bun scripts/check-build.ts",
+    "test": "bun run build && bun scripts/run-unit-tests.ts --all",
+    "test:unit": "bun run build:harness && bun scripts/run-unit-tests.ts",
     "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
     "lint": "biome ci src bin scripts research tests benchmarks examples && oxlint",
-    "check:versions": "npm run build:tools && node scripts/check-versions.js",
-    "check:package": "npm run build && node scripts/check-package.js",
-    "release:check": "npm run check:versions && npm run lint && npm run typecheck && npm run check:build && npm run test:unit && npm run test:types && npm run check:package",
-    "prepublishOnly": "npm run release:check"
+    "check:versions": "bun scripts/check-versions.ts",
+    "check:package": "bun run build && bun scripts/check-package.ts",
+    "release:check": "bun run check:versions && bun run lint && bun run typecheck && bun run check:build && bun run test:unit && bun run test:types && bun run check:package",
+    "prepublishOnly": "bun run release:check"
   },
   "engines": {
-    "node": ">=22.18.0"
+    "bun": ">=1.4.0"
   },
-  "packageManager": "npm@11.5.1",
+  "packageManager": "bun@1.4.0",
   "publishConfig": {
     "access": "public"
   },

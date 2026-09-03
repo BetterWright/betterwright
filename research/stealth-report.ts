@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Launch-identity stealth report.
 //
 // Serves tests/fixtures/stealth-probe.html on loopback, launches the managed
@@ -7,8 +7,8 @@
 // public bot-score pages and scrapes their headline verdicts.
 //
 // Usage:
-//   node research/stealth-report.js [--live] [--headed-only|--headless-only]
-//   node research/stealth-report.js --json > report.json
+//   bun research/stealth-report.ts [--live] [--headed-only|--headless-only]
+//   bun research/stealth-report.ts --json > report.json
 
 import fs from "node:fs";
 import http from "node:http";

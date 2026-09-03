@@ -1,4 +1,4 @@
-// The Node client for BetterWright.
+// The host client for BetterWright.
 //
 // It owns one long-lived worker process, answers the worker's `guard` (network
 // policy) and `vault` (credential) RPCs, and exposes `run()` for executing
@@ -40,6 +40,7 @@ import { defaultLiveViewListen } from "./live-view.js";
 import { loadLiveViewConfig } from "./live-view-config.js";
 import { NetworkPolicy } from "./policy.js";
 import { profileDirFor, resolveProfileName } from "./profile-name.js";
+import { bunInheritedExecArgv, packageAddCommand } from "./runtime.js";
 import { listSkills, skillHintsForPages } from "./skills.js";
 import {
   isBoolean,
@@ -642,14 +643,17 @@ export class BetterWright {
         throw new BrowserError(
           "stealthRuntimeFix is enabled but the optional 'patchright-core' " +
             "dependency is not installed. Install it with " +
-            "`npm install patchright-core`, or disable stealthRuntimeFix.",
+            `\`${packageAddCommand("patchright-core")}\`, or disable stealthRuntimeFix.",
         );
       }
       execArgv.push("--import", STEALTH_REGISTER_URL);
       env.BETTERWRIGHT_STEALTH_ACTIVE = "1";
     }
 
-    const child = spawn(process.execPath, [...execArgv, WORKER_PATH], {
+    const child = spawn(
+      process.execPath,
+      [...bunInheritedExecArgv(env), ...execArgv, WORKER_PATH],
+      {
       cwd: path.dirname(WORKER_PATH),
       stdio: ["pipe", "pipe", "pipe"],
       env,

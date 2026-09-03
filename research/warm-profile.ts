@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Organic profile warmer for BetterWright's persistent browser profile.
 //
 // Tools that attach to a real user's daily-driver Chrome get anti-bot strength
@@ -21,7 +21,7 @@
 //   - bounded dwells and hop counts; this is profile maintenance, not scraping
 //
 // Usage:
-//   node research/warm-profile.js [--minutes 20] [--session warm] [--max-hops 6]
+//   bun research/warm-profile.ts [--minutes 20] [--session warm] [--max-hops 6]
 //
 // Recommended cadence: 2×20 min on day 0 (plus the one-time headed manual
 // sign-in to your real accounts), then 15–30 min daily for ~2 weeks, then

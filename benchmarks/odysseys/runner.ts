@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Shared Odysseys dataset helpers + trajectory submission builder.
 // Rubric scoring lives in judge.ts.
 

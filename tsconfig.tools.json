@@ -1,14 +1,11 @@
 // Build and release tooling: the scripts that produce and verify `dist/`.
 //
 // This project is deliberately the half of the development sources that does
-// NOT import the built runtime, because `prebuild` compiles it — on a clean
-// checkout `dist/` does not exist yet. Anything that imports
-// `../dist/src/*.js` belongs in tsconfig.harness.json instead; adding such an
-// import here fails the build on a clean tree, which is the intended alarm.
-//
-// It compiles in place (no outDir): `scripts/build.ts` becomes
-// `scripts/build.js` beside it, so the scripts keep resolving the repo root as
-// `../`. The emitted `.js` is gitignored.
+// NOT import the built runtime. `bun` runs the `.ts` scripts directly;
+// `bun run build:tools` type-checks them without emitting. Anything that
+// imports `../dist/src/*.js` belongs in tsconfig.harness.json instead; adding
+// such an import here fails the typecheck on a clean tree, which is the
+// intended alarm.
 {
   "compilerOptions": {
     "target": "ES2022",
@@ -32,6 +29,7 @@
     "skipLibCheck": false
   },
   "files": [
+    "scripts/bench-runtime.ts",
     "scripts/build.ts",
     "scripts/check-build.ts",
     "scripts/check-package.ts",

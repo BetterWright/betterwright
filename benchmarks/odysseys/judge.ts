@@ -1,9 +1,9 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Rubric-based Odysseys judge (paper: arXiv:2604.24964).
 // Multimodal: same Pi + @screenshot pattern as Online-Mind2Web's judge.
 // Each rubric item is judged separately against the trajectory + final answer.
 //
-//   node benchmarks/odysseys/judge.js \
+//   bun benchmarks/odysseys/judge.ts \
 //     --tasks benchmarks/odysseys/odysseys.json \
 //     --manifest benchmarks/odysseys/full-200.json \
 //     --output benchmarks/odysseys/runs/full-200 \

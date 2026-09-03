@@ -216,3 +216,11 @@ test("wantsHelp only matches flag forms, so task text is never swallowed", () =>
   assert.equal(wantsHelp(["help me find a flight"]), false);
   assert.equal(wantsHelp(["show", "cred_1"]), false);
 });
+
+test("mcp help registers the server with bunx, not npx", () => {
+  assert.match(helpFor("mcp"), /bunx betterwright mcp/);
+  assert.doesNotMatch(helpFor("mcp"), /\bnpx betterwright\b/);
+  const result = runCli(["mcp", "--help"]);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /bunx betterwright mcp/);
+});

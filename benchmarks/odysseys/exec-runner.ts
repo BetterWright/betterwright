@@ -1,7 +1,7 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Odysseys full-campaign runner over BetterWright's own agent harness.
 //
-//   node benchmarks/odysseys/exec-runner.js run \
+//   bun benchmarks/odysseys/exec-runner.ts run \
 //     --tasks benchmarks/odysseys/odysseys.json \
 //     --manifest benchmarks/odysseys/full-200.json \
 //     --output benchmarks/odysseys/runs/full-200 \

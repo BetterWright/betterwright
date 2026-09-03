@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // BetterWright round-trip benchmark. Measures the three costs the perf plan
 // (docs: "eliminate per-request IPC and per-action CDP round-trips") targets,
 // against a purely LOCAL http fixture so the numbers describe BetterWright's
@@ -23,8 +23,8 @@
 //      `collectFrameMetadata`) so the scaling is data, not extrapolation.
 //
 // Run it:
-//     npm run build:harness
-//     node benchmarks/perf/run.js [--quick] [--label <name>] [--iframes 10,24]
+//     bun run build:harness
+//     bun benchmarks/perf/run.ts [--quick] [--label <name>] [--iframes 10,24]
 //
 // Results are merged into results.json under
 // `runs["<label>[-quick]-<short sha>"]`, so a baseline run and a post-PR run

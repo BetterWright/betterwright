@@ -8,14 +8,14 @@
 //
 // Run it directly (stdio transport):
 //
-//     npm install betterwright @modelcontextprotocol/sdk
-//     npx betterwright setup          # install native BetterChromium
-//     npx betterwright update         # refresh native BetterChromium
-//     npx betterwright mcp
+//     bun add betterwright @modelcontextprotocol/sdk
+//     bunx betterwright setup          # install native BetterChromium
+//     bunx betterwright update         # refresh native BetterChromium
+//     bunx betterwright mcp
 //
 // Then register it with your MCP client. For Claude Code:
 //
-//     claude mcp add betterwright -- npx betterwright mcp
+//     claude mcp add betterwright -- bunx betterwright mcp
 //
 // Configuration is read from the environment so the same command works
 // everywhere:

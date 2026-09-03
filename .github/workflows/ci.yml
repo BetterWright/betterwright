@@ -18,13 +18,10 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Node version policy. The two branch-protected jobs below and
-# publish-npm.yml pin the *same* exact version, so a release can never be built
-# on a runtime CI has not proven green (publish-npm.yml used to pin 22.14.0
-# against a floating "22" here). The pin is the package's engines floor, which
-# makes the published tarball provably buildable at the oldest Node we claim to
-# support; "Cross-platform unit tests" floats 22 and 24 so newer runtimes are
-# still covered. Keep this value in step with publish-npm.yml.
+# Bun version policy. The two branch-protected jobs below and publish-npm.yml
+# pin the same exact Bun 1.4.x patch (see .bun-version). The pin is the
+# package's engines floor. Cross-platform unit tests run that same pin on
+# Linux, macOS, and Windows.
 
 jobs:
   package-integrity:
@@ -34,22 +31,21 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: "22.18.0"
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run check:versions
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run check:build
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run check:versions
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run check:build
       # Coverage is report-only: it prints the table in the job log without
-      # gating, so an experimental Node feature can never fail the release.
-      - run: npm run test:unit
+      # gating, so an experimental runner feature can never fail the release.
+      - run: bun run test:unit
         env:
           BETTERWRIGHT_COVERAGE: "1"
-      - run: npm run test:types
-      - run: npm run check:package
+      - run: bun run test:types
+      - run: bun run check:package
 
   node:
     # Keep this display name stable because main branch protection requires it.
@@ -58,18 +54,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: "22.18.0"
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run build
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run build
       # BetterChromium is the only bundled browser backend.
       - name: Read the managed browser version
         id: browser_pins
         shell: bash
         run: |
-          echo "chromium=$(node -e 'import("./dist/src/chromium-fork.js").then(m => console.log(m.BETTERWRIGHT_CHROMIUM_VERSION))')" >> "$GITHUB_OUTPUT"
+          echo "chromium=$(bun -e 'import("./dist/src/chromium-fork.js").then(m => console.log(m.BETTERWRIGHT_CHROMIUM_VERSION))')" >> "$GITHUB_OUTPUT"
       - name: Cache the managed browser download
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -77,7 +72,7 @@ jobs:
             ~/.betterwright/chromium
           key: managed-browsers-${{ runner.os }}-chromium-${{ steps.browser_pins.outputs.chromium }}
       - name: Install managed browser
-        run: node dist/bin/betterwright.js setup
+        run: bun dist/bin/betterwright.js setup
       - name: Enable Chromium sandbox user namespaces
         shell: bash
         run: |
@@ -88,7 +83,7 @@ jobs:
           fi
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
       # broken BetterChromium install cannot report green by skipping tests.
-      - run: npm test
+      - run: bun run test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
 
@@ -96,52 +91,27 @@ jobs:
     # A NEW job, deliberately not a matrix over the two jobs above. Branch
     # protection on main requires the literal check names "Worker copies in
     # sync" and "Node tests"; GitHub appends matrix values to a job's display
-    # name ("Node tests (windows-latest, 24)"), so turning either of those into
-    # a matrix would make the required checks unmatchable and block every merge.
-    # Platform and version coverage therefore lives here, and the two protected
-    # jobs stay single-runner and untouched. All six matrix legs are themselves
-    # required checks now ("Cross-platform unit tests (<os>, <node>)"), so
-    # renaming this job or changing the matrix values means updating branch
-    # protection in the same breath — otherwise merges block on a check that
-    # can never report.
+    # name, so turning either of those into a matrix would make the required
+    # checks unmatchable and block every merge.
+    # Platform coverage therefore lives here. The previous Node 22/24 matrix
+    # names ("Cross-platform unit tests (<os>, <node>)") no longer apply;
+    # update branch protection to the os-only names this job reports.
     name: Cross-platform unit tests
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
-      # One red platform must not hide the state of the other five.
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: ["22", "24"]
-        # No `exclude`. Node 22 and 24 both ship prebuilt binaries for
-        # linux-x64, darwin-arm64 (macos-latest), and win32-x64, and every
-        # command below is browser-free, so all six combinations are expected
-        # to work. The browser-dependent suites stay on the Linux-only "Node
-        # tests" job on purpose: the managed browser is a ~200 MB download per
-        # runner and the headed test needs xvfb.
     steps:
-      # Line endings need no special handling here: .gitattributes pins
-      # `* text=auto eol=lf`, so Git for Windows checks out LF despite its
-      # default autocrlf, and tests/node/skill-md.test.ts (which compares the
-      # checked-in SKILL.md byte-for-byte against freshly generated LF output)
-      # sees the same bytes on every platform.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-      - run: npm ci --ignore-scripts
-      # Build first so a broken emit fails before the slower checks, then
-      # type-check (runtime, tools, and the shipped examples), then the unit
-      # suite. Only the deterministic, browser-free work runs here.
-      - run: npm run build
-      - run: npm run typecheck
-      # Windows gates like every other platform. When this job first ran it
-      # found ~50 failures there (the vault lock could not survive Windows's
-      # no-renaming-a-directory-with-open-handles rule); those are fixed —
-      # research/windows-fs-probe.mjs records the filesystem semantics the
-      # fixes are built on.
-      - run: npm run test:unit
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run build
+      - run: bun run typecheck
+      - run: bun run test:unit
 
   audit:
     name: Dependency audit
@@ -149,35 +119,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          node-version: "22.18.0"
-          cache: npm
-      - run: npm ci --ignore-scripts
-      # Report-only, deliberately, and split so the two halves can be read
-      # apart.
-      #
-      # Runtime dependencies are exact-pinned and Dependabot is configured to
-      # leave them alone (.github/dependabot.yml): playwright-core couples to
-      # a specific browser build, and tldts carries the Public Suffix List
-      # snapshot that decides credential base-domain scope. An advisory against one of those cannot be applied by bumping a
-      # caret — it needs a deliberate, browser-coupled release — so gating on it
-      # would block every unrelated pull request on work nobody can do that day.
-      # That same policy is why the audit exists at all: with Dependabot silent
-      # on runtime deps, this job is the only automated signal a human gets.
-      # `continue-on-error` keeps a finding loud (the step goes orange and the
-      # summary below names it) without letting a third-party publish take the
-      # repository offline. The job itself is a required check — that requires
-      # the audit to have *run* on every merge, not to be clean, because the
-      # job succeeds regardless of findings.
-      - name: Audit runtime dependencies
-        id: runtime
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # Report-only. Runtime dependencies are exact-pinned and Dependabot is
+      # configured to leave them alone (.github/dependabot.yml): playwright-core
+      # couples to a specific browser build, and tldts carries the Public Suffix
+      # List snapshot that decides credential base-domain scope. An advisory
+      # against one of those cannot be applied by bumping a caret. continue-on-error
+      # keeps a finding loud without letting a third-party publish take the
+      # repository offline.
+      - name: Audit dependencies
+        id: audit
         continue-on-error: true
-        run: npm audit --omit=dev --audit-level=high
-      - name: Audit development dependencies
-        id: dev
-        continue-on-error: true
-        run: npm audit --audit-level=high
+        run: bun audit --audit-level=high
       - name: Summarise
         run: |
           {
@@ -185,9 +141,8 @@ jobs:
             echo
             echo "| Scope | \`--audit-level=high\` |"
             echo "| --- | --- |"
-            echo "| Runtime (\`--omit=dev\`) | ${{ steps.runtime.outcome == 'success' && 'clean' || '**findings — see the step log**' }} |"
-            echo "| All dependencies | ${{ steps.dev.outcome == 'success' && 'clean' || '**findings — see the step log**' }} |"
+            echo "| All dependencies | ${{ steps.audit.outcome == 'success' && 'clean' || '**findings — see the step log**' }} |"
             echo
             echo "A runtime finding needs a deliberate pin bump across package.json,"
-            echo "\`src/doctor.ts\`, and publish-npm.yml — see \`npm run check:versions\`."
+            echo "\`src/doctor.ts\`, and publish-npm.yml — see \`bun run check:versions\`."
           } >> "$GITHUB_STEP_SUMMARY"

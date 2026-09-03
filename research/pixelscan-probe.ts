@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // PixelScan evaluation of the managed BetterChromium fork.
 //
 // Launches the fork through the normal BetterWright stack and opens
@@ -7,8 +7,8 @@
 // exact "inconsistent fingerprint" drivers are visible.
 //
 // Usage:
-//   DISPLAY=:99 node research/pixelscan-probe.js            # headed on Xorg
-//   node research/pixelscan-probe.js --headless             # headless
+//   DISPLAY=:99 bun research/pixelscan-probe.ts            # headed on Xorg
+//   bun research/pixelscan-probe.ts --headless             # headless
 
 import fs from "node:fs";
 import os from "node:os";

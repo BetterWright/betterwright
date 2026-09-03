@@ -1,8 +1,8 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Headless-tell diagnostic: dump the exact browser signals CreepJS's
 // headless-likeness heuristic reads, so we can see which ones are flagging.
 //
-//   xvfb-run -a node research/headless-tells.js
+//   xvfb-run -a bun research/headless-tells.ts
 
 import fs from "node:fs";
 import os from "node:os";
