@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { agentBatchCode } from "./agent-batch.js";
 import { BetterWright } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
 import {
@@ -9,11 +10,12 @@ import {
   piPrimaryImageArtifact,
 } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
-import { piBrowserToolParameters, piLoginToolParameters } from "./tool-schemas.js";
+import { piBatchToolParameters, piBrowserToolParameters, piLoginToolParameters } from "./tool-schemas.js";
 import { isCallable, isNumber, type UntrustedValue } from "./untrusted-value.js";
 
 const BROWSER_TOOL_NAMES = new Set([
   "browser",
+  "browser_batch",
   "browser_download",
   "browser_evidence",
   "browser_login",
@@ -26,6 +28,8 @@ const WEB_PROTOCOLS = new Set(["http:", "https:"]);
 // module is the single source of truth (see src/tool-schemas.ts). Pi layers
 // in strict validation (additionalProperties: false, minLength) there.
 export const PI_BROWSER_PARAMETERS = piBrowserToolParameters();
+
+export const PI_BATCH_PARAMETERS = piBatchToolParameters();
 
 export const PI_LOGIN_PARAMETERS = piLoginToolParameters();
 
@@ -79,8 +83,21 @@ export const PI_EVIDENCE_PARAMETERS = {
   required: ["operation"],
 };
 
+const BATCH_TOOL_DESCRIPTION =
+  "AgentBatch: the default way to browse, in two calls. Call 1 {url} opens the page and returns " +
+  "result.snapshot, its interactive spec with [ref=eN] targets. Call 2 {steps, allowWrites: " +
+  "true} runs every step back to back (auto-wait, no pacing) and returns per-step results, " +
+  "failed {index, id, error} if a step stopped the batch, and a fresh snapshot; resume from " +
+  "failed.index, never repeat a completed step. Targets come from the spec: ref, or role (+ " +
+  "name), label, text, placeholder, testId, css; ambiguity fails. Follow an asynchronous " +
+  "mutation with read {expect} or wait {text|url}. irreversible:true steps need " +
+  "allowIrreversible; a task-supplied password needs allowPasswords, stored ones use " +
+  "browser_login; optional:true steps may fail without stopping; proof=true screenshots after " +
+  "success. Use browser only for logic steps cannot express.";
+
 const TOOL_DESCRIPTION =
-  "Run async Playwright JavaScript in a persistent policy-guarded browser. page is active; " +
+  "Run async Playwright JavaScript in a persistent policy-guarded browser. Default to " +
+  "browser_batch; use this for what steps cannot express. page is active; " +
   "pages lists open tabs; usePage(indexOrPageId) selects one and must not receive a Page object. " +
   "page/context are restricted wrappers: routing is unavailable; for deterministic tests use " +
   "page.addInitScript before navigation, page.setContent, or a host-served local fixture. " +
@@ -540,7 +557,7 @@ export function createPiExtension(options: any = {}) {
       );
     }
 
-    async function executeBrowser(toolName, params, signal, approvedDownloads) {
+    async function executeBrowser(toolName, params, signal, approvedDownloads, code = params.code) {
       if (signal?.aborted) throw new Error("Browser call cancelled.");
       if (requireEvidence && !checklistInitialized) {
         throw new Error(
@@ -555,7 +572,7 @@ export function createPiExtension(options: any = {}) {
       }
       const step = ++stepCount;
       const instance = await getBrowser();
-      const result = await instance.run(`await overlays.dismiss();\n${params.code}`, {
+      const result = await instance.run(`await overlays.dismiss();\n${code}`, {
         session,
         note: params.note,
         approvedDownloads,
@@ -738,13 +755,32 @@ export function createPiExtension(options: any = {}) {
     }
 
     pi.registerTool({
+      name: "browser_batch",
+      label: "BetterWright AgentBatch",
+      description: BATCH_TOOL_DESCRIPTION,
+      promptSnippet:
+        "Open a page for its spec, then run every step of a browser task in one call",
+      promptGuidelines: [
+        "Default to browser_batch: call it with {url} to read a page's spec, then once more with every step the task needs; resume from failed.index instead of repeating completed steps.",
+      ],
+      parameters: PI_BATCH_PARAMETERS,
+      // Validation runs before the step budget is charged, so a malformed
+      // batch costs no step; async so the refusal is a rejection, never a
+      // synchronous throw out of Pi's tool dispatch.
+      execute: async (_id, params, signal) =>
+        executeBrowser("browser_batch", params, signal, false, agentBatchCode(params)),
+      renderCall: makeRenderCall("browser_batch"),
+      renderResult: summaryRenderResult,
+    });
+
+    pi.registerTool({
       name: "browser",
       label: "BetterWright Browser",
       description: TOOL_DESCRIPTION,
       promptSnippet:
         "Drive a persistent browser with policy-guarded Playwright JavaScript",
       promptGuidelines: [
-        "Use browser for web navigation, interaction, and multi-page research; keep one persistent session and verify visible outcomes before finishing.",
+        "Use browser for logic browser_batch steps cannot express; keep one persistent session and verify visible outcomes before finishing.",
       ],
       parameters: PI_BROWSER_PARAMETERS,
       execute: (_id, params, signal) =>

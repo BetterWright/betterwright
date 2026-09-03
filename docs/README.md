@@ -23,6 +23,7 @@ whole path works by loading a real page.
 | [The built-in agent](agent.md) | `betterwright exec`, the interactive console, model adapters, `runAgentTask()` |
 | [JavaScript API](javascript.md) | `BetterWright`, `NetworkPolicy`, the result envelope, vault API |
 | [SDK entrypoint](sdk.md) | `betterwright/sdk`: the curated export list and the `withBrowser` helper |
+| [AgentBatch](agent-batch.md) | The default two-call protocol: read a page's spec, then run every step of the task in one call |
 | [Browser API](browser-api.md) | Every sandboxed global inside a snippet: `page`, `snapshot`, `screenshot`, `human`, … |
 | [CAPTCHA recipes](browser-recipes.md) | Manual fallbacks for CAPTCHA interactions |
 | [Sessions & the daemon](sessions.md) | Persistence, concurrency, interrupting a run, reconnecting |

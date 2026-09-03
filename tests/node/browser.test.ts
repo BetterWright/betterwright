@@ -1087,6 +1087,372 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
   }
 });
 
+test("agentBatch runs a whole form task in one call and returns the spec of where it ended", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    await bw.run(`
+      await page.setContent(\`
+        <form id="signup">
+          <label>Display name <input name="name"></label>
+          <label>Plan <select name="plan"><option value="free">Free</option><option value="pro">Pro</option></select></label>
+          <label><input name="terms" type="checkbox"> Accept terms</label>
+          <button>Create account</button>
+        </form>
+        <div role="status" hidden></div>
+        <script>
+          document.querySelector('#signup').addEventListener('submit', (event) => {
+            event.preventDefault();
+            setTimeout(() => {
+              const status = document.querySelector('[role=status]');
+              status.hidden = false;
+              status.textContent = 'Created ' + event.target.elements.name.value + ' on ' + event.target.elements.plan.value;
+            }, 75);
+          });
+        </script>
+      \`);
+    `);
+    const result = await bw.batch(
+      [
+        { id: "name", action: "fill", target: { label: "Display name", exact: true }, value: "Ada" },
+        { id: "plan", action: "select", target: { label: "Plan" }, value: "pro" },
+        { id: "terms", action: "check", target: { label: "Accept terms", exact: true } },
+        { id: "submit", action: "click", target: { role: "button", name: "Create account", exact: true } },
+        { id: "verify", action: "read", target: { role: "status" }, expect: "Created Ada on pro" },
+        { id: "where", action: "url" },
+      ],
+      { allowWrites: true, proof: true, note: "Creating the account" },
+    );
+    assert.equal(result.ok, true, result.error);
+    const batch = result.result;
+    assert.equal(batch.protocol, "agent-batch/1");
+    assert.equal(batch.ok, true, JSON.stringify(batch.failed));
+    assert.equal(batch.completed, 6);
+    assert.equal(batch.total, 6);
+    assert.deepEqual(batch.steps.map((step) => step.id), ["name", "plan", "terms", "submit", "verify", "where"]);
+    assert.equal(batch.steps[0].filled, 3);
+    assert.deepEqual(batch.steps[1].selected, ["pro"]);
+    assert.equal(batch.steps[2].checked, true);
+    assert.equal(batch.steps[4].text, "Created Ada on pro");
+    assert.equal(batch.steps[5].url, "about:blank");
+    // The final observation is the next call's spec: an interactive snapshot
+    // with refs, redacted like any other snapshot.
+    assert.match(batch.snapshot, /^page page-\d+ about:blank/);
+    assert.match(batch.snapshot, /\[ref=e\d+\]/);
+    assert.match(batch.snapshot, /Create account/);
+    assert.equal(batch.proof.kind, "proof");
+    assert.ok(fs.existsSync(batch.proof.path), "the proof screenshot was written");
+    assert.equal(result.artifacts.filter((artifact) => artifact.kind === "proof").length, 1);
+    assert.ok(batch.durationMs >= 60, `the read waited for the asynchronous status (${batch.durationMs}ms)`);
+
+    // Steps run back to back: a five-step batch costs Playwright round trips,
+    // not pacing delays.
+    const quick = await bw.batch(
+      [
+        { action: "fill", target: { label: "Display name", exact: true }, value: "Bo" },
+        { action: "fill", target: { label: "Display name", exact: true }, value: "Cy" },
+        { action: "fill", target: { label: "Display name", exact: true }, value: "Di" },
+        { action: "uncheck", target: { label: "Accept terms", exact: true } },
+        { action: "read", target: { label: "Display name", exact: true } },
+      ],
+      { allowWrites: true, observe: "none", settleMs: 0 },
+    );
+    assert.equal(quick.ok, true, quick.error);
+    assert.equal(quick.result.ok, true, JSON.stringify(quick.result.failed));
+    assert.equal(quick.result.steps[4].value, "Di");
+    assert.equal(quick.result.snapshot, undefined);
+    assert.ok(quick.result.durationMs < 5_000, `five steps took ${quick.result.durationMs}ms`);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("agentBatch stops at a failed step, keeps completed work, and still observes the page", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    await bw.run(`
+      await page.setContent('<label>Name <input></label><button>Save</button><button>Save</button><div role="status">Idle</div>');
+    `);
+    const result = await bw.batch(
+      [
+        { id: "name", action: "fill", target: { label: "Name" }, value: "Ada" },
+        { id: "save", action: "click", target: { role: "button", name: "Save", exact: true } },
+        { id: "after", action: "read", target: { role: "status" } },
+      ],
+      { allowWrites: true, proof: true },
+    );
+    assert.equal(result.ok, true, result.error);
+    const batch = result.result;
+    assert.equal(batch.ok, false);
+    assert.equal(batch.completed, 1);
+    assert.equal(batch.total, 3);
+    assert.equal(batch.failed.index, 1);
+    assert.equal(batch.failed.id, "save");
+    assert.match(batch.failed.error, /matched 2 elements/);
+    assert.equal(batch.steps.length, 2);
+    assert.equal(batch.steps[0].ok, true);
+    assert.equal(batch.steps[1].ok, false);
+    assert.match(batch.snapshot, /button "Save"/);
+    assert.equal(batch.proof, undefined, "no proof of a task that did not finish");
+    assert.equal((result.artifacts || []).length, 0);
+
+    // Resume from failed.index with a precise target; nothing already done is repeated.
+    const resumed = await bw.batch(
+      [
+        { id: "save", action: "click", target: { role: "button", name: "Save", exact: true, nth: 0 } },
+        { id: "after", action: "read", target: { label: "Name" } },
+      ],
+      { allowWrites: true, observe: "diff" },
+    );
+    assert.equal(resumed.ok, true, resumed.error);
+    assert.equal(resumed.result.ok, true, JSON.stringify(resumed.result.failed));
+    assert.equal(resumed.result.steps[1].value, "Ada");
+    assert.match(resumed.result.snapshot, /no changes since previous snapshot|diff vs previous snapshot/);
+
+    // Optional steps may fail without stopping the batch.
+    const tolerant = await bw.batch(
+      [
+        { id: "banner", action: "click", target: { role: "button", name: "Accept cookies" }, optional: true, timeoutMs: 200 },
+        { id: "status", action: "read", target: { role: "status" } },
+      ],
+      { allowWrites: true, observe: "none" },
+    );
+    assert.equal(tolerant.ok, true, tolerant.error);
+    assert.equal(tolerant.result.ok, true);
+    assert.equal(tolerant.result.completed, 1);
+    assert.equal(tolerant.result.steps[0].ok, false);
+    assert.equal(tolerant.result.steps[1].text, "Idle");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("agentBatch keeps the worker's gates: navigation policy, password fills, and write opt-in", opts, async () => {
+  // Block public search so the google.com step is refused by the worker's
+  // navigation gate before any request leaves the machine.
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy(),
+    publicSearchPolicy: "block",
+  });
+  try {
+    const scheme = await bw.batch([{ id: "ftp", action: "goto", url: "ftp://files.example/" }], { observe: "none" });
+    assert.equal(scheme.ok, true, scheme.error);
+    assert.equal(scheme.result.ok, false);
+    assert.equal(scheme.result.failed.id, "ftp");
+    assert.match(scheme.result.failed.error, /scheme is not available/);
+
+    const search = await bw.batch([{ id: "google", action: "goto", url: "https://www.google.com/search?q=betterwright" }], { observe: "none" });
+    assert.equal(search.ok, true, search.error);
+    assert.equal(search.result.ok, false);
+    assert.match(search.result.failed.error, /search/i);
+
+    await bw.run(`await page.setContent('<label>Password <input type="password"></label><div role="status">Ready</div>')`);
+    const blocked = await bw.batch(
+      [{ id: "secret", action: "fill", target: { label: "Password" }, value: "must-not-leak" }],
+      { allowWrites: true, observe: "none" },
+    );
+    assert.equal(blocked.ok, true, blocked.error);
+    assert.equal(blocked.result.ok, false);
+    assert.match(blocked.result.failed.error, /cannot fill a password field/);
+    assert.ok(!JSON.stringify(blocked).includes("must-not-leak"));
+
+    const supplied = await bw.batch(
+      [
+        { id: "secret", action: "fill", target: { label: "Password" }, value: "task-supplied" },
+        { id: "check", action: "read", target: { label: "Password" }, attribute: "value" },
+      ],
+      { allowWrites: true, allowPasswords: true },
+    );
+    assert.equal(supplied.ok, true, supplied.error);
+    assert.equal(supplied.result.ok, true, JSON.stringify(supplied.result.failed));
+    assert.equal(supplied.result.steps[0].filled, 13);
+    assert.equal(supplied.result.steps[1].value, "[redacted]");
+    assert.ok(!JSON.stringify(supplied).includes("task-supplied"), "the typed password never reaches the result or the snapshot");
+
+    const gated = await bw.batch([{ action: "click", target: { role: "status" } }]);
+    assert.equal(gated.ok, false);
+    assert.match(gated.error, /allowWrites:true/);
+
+    const irreversible = await bw.batch(
+      [{ action: "click", target: { role: "status" }, irreversible: true }],
+      { allowWrites: true },
+    );
+    assert.equal(irreversible.ok, false);
+    assert.match(irreversible.error, /allowIrreversible:true/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("agentBatch {url} is the spec call: one navigation, one snapshot, no duplicate directory", opts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url === "/webagents.md" || request.url === "/.well-known/webagents.json") {
+      response.statusCode = 404;
+      response.end("missing");
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end('<title>Search</title><label>Query <input value="compact"></label><button>Go</button><p>Results appear here.</p>');
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const spec = await bw.batch({ url: `${site.origin}/search` });
+    assert.equal(spec.ok, true, spec.error);
+    assert.equal(spec.result.ok, true, JSON.stringify(spec.result.failed));
+    assert.equal(spec.result.steps[0].action, "goto");
+    assert.equal(spec.result.steps[0].status, 200);
+    assert.equal(spec.result.page.url, `${site.origin}/search`);
+    assert.equal(spec.result.page.title, "Search");
+    assert.match(spec.result.snapshot, /textbox "Query" \[ref=e\d+\]/);
+    assert.match(spec.result.snapshot, /button "Go" \[ref=e\d+\]/);
+    // The interactive spec omits static text, and the compact directory that
+    // ordinary navigation attaches would only repeat the spec.
+    assert.doesNotMatch(spec.result.snapshot, /Results appear here/);
+    assert.equal(spec.ui, undefined);
+    assert.equal(spec.webagents, undefined);
+
+    const later = await bw.run("return page.title()");
+    assert.equal(later.ok, true, later.error);
+    assert.equal(later.ui, undefined, "the spec counts as the one-time directory announcement");
+
+    // Refs from the spec are valid targets for the next batch.
+    const ref = /textbox "Query" \[ref=(e\d+)\]/.exec(spec.result.snapshot)[1];
+    const next = await bw.batch(
+      [
+        { action: "fill", target: { ref }, value: "batches" },
+        { action: "read", target: { ref } },
+      ],
+      { allowWrites: true, observe: "none" },
+    );
+    assert.equal(next.ok, true, next.error);
+    assert.equal(next.result.ok, true, JSON.stringify(next.result.failed));
+    assert.equal(next.result.steps[1].value, "batches");
+
+    // An over-limit spec is reported beside the outcome, never truncated.
+    const huge = await bw.batch(
+      [{ action: "snapshot", maxChars: 1_000 }],
+      { observe: "none" },
+    );
+    assert.equal(huge.ok, true, huge.error);
+    assert.equal(huge.result.ok, true);
+    assert.match(huge.result.steps[0].snapshot, /page page-\d+/);
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("agentBatch waits, dialogs, tabs, and scrolling run inside one call", opts, async () => {
+  const site = await listen((_request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end(`
+        <button id="run" onclick="setTimeout(() => { document.querySelector('#status').textContent = 'Finished'; location.hash = 'done'; }, 120)">Run</button>
+        <button id="ask" onclick="document.querySelector('#answer').textContent = confirm('Proceed?') ? 'yes' : 'no'">Ask</button>
+        <div id="status">Waiting</div><div id="answer"></div>
+        <div style="height: 3000px"></div><p id="bottom">Bottom</p>`);
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  try {
+    const result = await bw.batch(
+      [
+        { id: "open", action: "goto", url: `${site.origin}/tools` },
+        { id: "run", action: "click", target: { role: "button", name: "Run", exact: true } },
+        { id: "text", action: "wait", text: "Finished" },
+        { id: "hash", action: "wait", url: "#done" },
+        { id: "arm", action: "dialog", response: "accept" },
+        { id: "ask", action: "click", target: { role: "button", name: "Ask", exact: true } },
+        { id: "answer", action: "read", target: { css: "#answer" }, expect: "yes" },
+        { id: "bottom", action: "scroll", target: { css: "#bottom" } },
+        { id: "wheel", action: "scroll", dy: -200 },
+        { id: "pause", action: "wait", ms: 10 },
+        { id: "tab", action: "openPage" },
+        { id: "first", action: "usePage", page: 0 },
+        { id: "close", action: "closePage", page: 1 },
+        { id: "here", action: "url", expect: "#done" },
+      ],
+      { allowWrites: true, observe: "none" },
+    );
+    assert.equal(result.ok, true, result.error);
+    const batch = result.result;
+    assert.equal(batch.ok, true, JSON.stringify(batch.failed));
+    assert.equal(batch.steps[2].waited, "text");
+    assert.equal(batch.steps[3].waited, "url");
+    assert.equal(batch.steps[4].prepared, "accept");
+    assert.equal(batch.steps[6].text, "yes");
+    assert.equal(batch.steps[7].scrolled, "target");
+    assert.deepEqual(batch.steps[8].scrolled, { dx: 0, dy: -200 });
+    assert.equal(batch.steps[9].waited, "ms");
+    assert.match(batch.steps[10].pageId, /^page-\d+$/);
+    assert.equal(batch.steps[12].closed, true);
+    assert.equal(batch.steps[12].pageId, batch.steps[10].pageId);
+    assert.match(batch.steps[13].url, /#done$/);
+    assert.equal(result.pages.length, 1, "the extra tab was closed inside the batch");
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("MCP browser_batch drives the spec-then-steps protocol end to end", opts, async () => {
+  const site = await listen((_request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end(`<title>Sign in</title><form onsubmit="event.preventDefault(); document.querySelector('h1').textContent = 'Welcome ' + this.email.value">
+      <label>Email <input name="email"></label><button>Continue</button></form><h1>Sign in</h1>`);
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    policy: new NetworkPolicy({ allowLoopback: true }),
+  });
+  const handlers = _createMcpHandlersForTest({ browser: bw, downloadPolicy: "deny" });
+  try {
+    const spec = await handlers.callTool({
+      params: { name: "browser_batch", arguments: { url: `${site.origin}/login`, note: "Opening sign-in" } },
+    });
+    assert.equal(spec.isError, undefined, spec.content[0].text);
+    const specBody = JSON.parse(spec.content[0].text);
+    assert.equal(specBody.ok, true);
+    assert.equal(specBody.result.protocol, "agent-batch/1");
+    assert.match(specBody.result.snapshot, /textbox "Email" \[ref=e\d+\]/);
+    assert.equal(specBody.ui, undefined);
+
+    const run = await handlers.callTool({
+      params: {
+        name: "browser_batch",
+        arguments: {
+          allowWrites: true,
+          proof: true,
+          steps: [
+            { action: "fill", target: { label: "Email" }, value: "ada@example.com" },
+            { action: "click", target: { role: "button", name: "Continue" } },
+            { action: "read", target: { role: "heading" }, expect: "Welcome ada@example.com" },
+          ],
+        },
+      },
+    });
+    assert.equal(run.isError, undefined, run.content[0].text);
+    const runBody = JSON.parse(run.content[0].text);
+    assert.equal(runBody.result.ok, true, JSON.stringify(runBody.result.failed));
+    assert.equal(runBody.result.completed, 3);
+    assert.equal(runBody.result.steps[2].text, "Welcome ada@example.com");
+    assert.equal(runBody.result.proof.kind, "proof");
+    // Screenshots ride as native image content, never as paths.
+    assert.equal(run.content[1].type, "image");
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
 test("ordinary navigation attaches one compact UI directory automatically", opts, async () => {
   let probes = 0;
   const site = await listen((request, response) => {

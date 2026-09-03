@@ -392,6 +392,7 @@ plain JSON; frames with nothing to report are omitted.
 | `controls.inspect()` | Report the exact state of every form control — inputs, selects, textareas, and ARIA checkbox/combobox/listbox/radio/slider/spinbutton/switch roles. Returns `{frames: [{url, controls}]}`; each control carries `type`, `label`, `value` (`[redacted]` for passwords), `checked`, `selected`/`pressed`/`ariaChecked`, `min`/`max`/`step`, `disabled`, `visible`, and `options` for selects. Use it to prove a required filter or facet is actually active rather than inferring that from the results. |
 | `controls.directory()` | Return the token-small semantic action directory BetterWright automatically attaches as `result.ui` after first navigation on a site without a first-party workflow. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
 | `controls.batch()` | Execute one guarded semantic UI transaction on a site without a first-party batch protocol. Targets use ARIA ref, role/name, label, text, placeholder, test id, or CSS; an optional unique frame name/URL fragment scopes an iframe. Interactions auto-wait and ambiguous targets fail closed. |
+| `agentBatch(steps, options?)` | Run an [AgentBatch](agent-batch.md) from inside a snippet: the same steps, targets, gates, and result as `bw.batch()`, the MCP `browser_batch` tool, and `betterwright batch`. Also accepts `agentBatch({steps, ...options})`. |
 | `media.inspect()` | Report every `<video>` and `<audio>` element with its playback state. Returns `{frames: [{url, media}]}`; each item carries `kind`, `title` (aria-label, title attribute, or nearby caption/heading), `source`, `paused`, `ended`, `currentTime`, `duration`, `readyState`, `visible`, plus the frame's `documentTitle` and visible `headings`. Use it to match what is actually playing against the requested item before claiming playback. |
 
 ### Semantic UI batches for ordinary sites
@@ -454,6 +455,12 @@ This helper removes extra model/tool turns, not network or application time.
 For a target omitted by the bounded directory, take one
 `snapshot({interactive:true})`, then compile the observed ref or accessible
 name into the batch. Do not guess targets.
+
+`controls.batch()` is the guarded transaction for a directory a site
+published or BetterWright synthesized. For everyday browsing — navigation,
+forms, waiting, reading, tabs — the default is [AgentBatch](agent-batch.md),
+whose `agentBatch()` global shares these targets and gates and adds the rest
+of the vocabulary plus a structured, resumable result.
 
 ## Credentials
 

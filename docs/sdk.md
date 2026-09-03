@@ -54,7 +54,8 @@ Browser client:
 | Export | What it is |
 | --- | --- |
 | `withBrowser(options?, fn)` | Run `fn` with a client and close that client afterwards. |
-| `BetterWright` | The client itself: `run()`, sessions, live view, downloads, credential filling. Full reference in [javascript.md](javascript.md). |
+| `BetterWright` | The client itself: `run()`, `batch()`, sessions, live view, downloads, credential filling. Full reference in [javascript.md](javascript.md). |
+| `agentBatchCode(args)` | The snippet `batch()` sends for an [AgentBatch](agent-batch.md), validated first — for a host that drives the worker through `run()` itself. |
 | `BrowserError` | The error type to throw when a result envelope comes back with `ok: false`. |
 | `validateCredentialMatchMode(value)` | Returns the value when it is one of the four credential URL scopes, and throws a `TypeError` otherwise. |
 

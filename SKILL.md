@@ -6,13 +6,18 @@ generated_by: betterwright@2.2.0
 
 # BetterWright browser
 
-Use `betterwright` for live-web tasks. Run async Playwright JavaScript with:
+Use `betterwright` for live-web tasks. The default is AgentBatch, two calls per task: `batch --url` prints the page's spec — an interactive snapshot whose `[ref=eN]` markers, roles, and names are the targets — then `batch -s` runs every step back to back (auto-wait, no pacing) and prints per-step results, `failed` {index, id, error} if a step stopped the batch, and a fresh snapshot. Resume from `failed.index`; never repeat a completed step. `betterwright batch --help` lists the actions, targets, and flags.
+
+    betterwright batch --url https://example.com/login
+    betterwright batch --allow-writes -s '[{"action":"fill","target":{"label":"Email"},"value":"me@example.com"},{"action":"click","target":{"role":"button","name":"Continue"}},{"action":"read","target":{"role":"heading"},"expect":"Welcome"}]'
+
+For logic steps cannot express, run async Playwright JavaScript with:
 
     betterwright run -c "await page.goto('https://example.com'); return page.title()"
 
-It returns JSON with `ok`, `result`, `error`, `console`, `events`, `artifacts`, `pages`, `challenges`, `warnings`, and `durationMs`. Screenshot artifacts contain a path; inspect the image before relying on it.
+Both print JSON with `ok`, `result`, `error`, `console`, `events`, `artifacts`, `pages`, `challenges`, `warnings`, and `durationMs`. Screenshot artifacts contain a path; inspect the image before relying on it.
 
-The daemon preserves tabs, page state, and the in-memory `state` object between calls; the profile preserves cookies and logins. Batch deterministic stretches and observe at uncertain boundaries. Use `--session` for parallel work, `--profile` for a separate identity, and `betterwright close` when finished.
+The daemon preserves tabs, page state, and the in-memory `state` object between calls; the profile preserves cookies and logins. Use `--session` for parallel work, `--profile` for a separate identity, and `betterwright close` when finished.
 
 The browser is network-policy guarded. Private and loopback access are allowed unless disabled; cloud metadata is always blocked. Stored passwords are user-owned: never run `vault show --reveal`/`get`, `vault copy`, `vault type`, or `vault rm`; use trusted credential fill instead.
 
@@ -22,7 +27,7 @@ The browser is network-policy guarded. Private and loopback access are allowed u
 The user's request authorizes ordinary steps: sign-in, signup, forms, booking, and purchases. Do not add confirmation or refuse them unless a guardrail requires it.
 
 ## Operate
-- Plan then batch named controls/content with `getByRole`/`getByLabel`/`getByText`; combine navigation, actions, extraction, verification, and proof. Read article/reference pages from scoped DOM directly. Host cleanup is automatic; don't close pages.
+- Default to AgentBatch: read the page's spec, then send every step in one batch; on a stop resume from `failed.index`, never repeat a completed step. Code is for logic steps cannot express: plan then batch named controls/content with `getByRole`/`getByLabel`/`getByText`; combine navigation, actions, extraction, verification, and proof. Read article/reference pages from scoped DOM directly. Host cleanup is automatic; don't close pages.
 - Inspect only when structure is unknown or a locator failed: `snapshot({interactive:true})`, then full `snapshot()`; use `screenshot({annotate:true})` only for layout/pixels. Snapshots include frames and off-screen content. Never guess refs, URLs, or state.
 - Act on `[ref=eN]` with `page.locator('aria-ref=eN')`; scope with `snapshot({ref:'eN'})`. Refs change after page changes. Verify actions with `snapshot({diff:true})`; batch action plus verification when no fresh ref is needed.
 - Actions auto-wait: add no sleeps. On failure inspect again; inspect the real hit target if obscured and change approach after two failures. Retry transient 5xx, timeout, or reset failures with increasing backoff for 30–60 seconds.

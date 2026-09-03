@@ -18,6 +18,7 @@ export const COMMAND_SUMMARIES = [
   ["configure", "choose the browser backend: cloud provider, custom CDP, or managed"],
   ["boxes", "start, list, and stop cloud browser boxes"],
   ["cookies", "sync local browser cookies into a BetterWright profile"],
+  ["batch", "AgentBatch: open a page for its spec, then run a whole task in one call"],
   ["run", "run one Playwright snippet in the persistent session"],
   ["repl", "run blank-line-separated snippets from stdin"],
   ["exec", "hand a whole task to BetterWright's own browser agent"],
@@ -191,6 +192,51 @@ Cloud sync sends cookie plaintext through the encrypted CDP connection to the
 provider. It does not enable provider profile persistence. Details:
 docs/cookie-sync.md`,
 
+  batch: `Usage: betterwright batch --url <url>
+       betterwright batch -s '<json steps>' [--allow-writes]
+       betterwright batch <file.json> [--allow-writes]
+       betterwright batch -            read the JSON from stdin
+
+AgentBatch, the default two-call way for an agent to browse. The first form
+opens a page and prints its spec: an interactive snapshot whose [ref=eN]
+markers, roles, and names are the targets to plan with. The other forms run
+every step of a task in one call — back to back, auto-waiting, no pacing —
+and print one JSON object: per-step results, \`failed\` {index, id, error}
+when a step stopped the batch, and a fresh snapshot of where the page ended
+up. Resume from failed.index; never repeat a completed step.
+
+The JSON is an array of steps, or an object {steps, allowWrites, ...} that
+carries the options too. A step is {action, target?, ...}: actions are goto,
+back, forward, reload, click, dblclick, hover, fill, type, press, select,
+check, uncheck, scroll, wait, read, url, snapshot, screenshot, openPage,
+usePage, closePage, dialog, and overlays; a target is one of ref, role
+(+name), label, text, placeholder, testId, or css. docs/agent-batch.md has
+the full vocabulary.
+
+Options:
+  --url <url>            spec call: open the page and print its snapshot
+  -s <json>              the steps (or {steps, ...options}) inline
+  --allow-writes         steps that change page state (click, fill, …)
+  --allow-irreversible   steps marked irreversible:true
+  --allow-passwords      fill a password the task itself supplied
+  --observe <mode>       final observation: snapshot (default), diff, none
+  --proof                capture a proof screenshot after success
+  --session <name>       which persistent session to use (default "default")
+  --profile <name>       browser profile to act as (see \`run --help\`)
+  --headed               show the browser window
+  --close                close the session after this call
+  --no-daemon            do not use the background session daemon
+
+Takes the same network and browser flags as \`betterwright run\`. Exit code is
+0 when every step succeeded, 1 otherwise.
+
+Example:
+  betterwright batch --url https://example.com/login
+  betterwright batch --allow-writes -s '[
+    {"action":"fill","target":{"label":"Email"},"value":"me@example.com"},
+    {"action":"click","target":{"role":"button","name":"Continue"}},
+    {"action":"read","target":{"role":"heading"},"expect":"Welcome"}]'`,
+
   run: `Usage: betterwright run -c "<javascript>"
        betterwright run <file>
        betterwright run -            read the snippet from stdin
@@ -198,7 +244,9 @@ docs/cookie-sync.md`,
 Run one snippet of async Playwright JavaScript in the persistent browser and
 print one JSON object. A trailing expression, or an explicit \`return\`, is the
 result. Globals include page, snapshot, screenshot, credentials, human, controls
-(including one-call UI batches), site, webagents, and webmcp.
+(including one-call UI batches), site, webagents, webmcp, and agentBatch.
+\`betterwright batch\` is the default way to browse; use run for logic its
+steps cannot express.
 
 Options:
   --session <name>       which persistent session to use (default "default")

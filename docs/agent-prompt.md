@@ -22,6 +22,10 @@ With no guardrails, the guidance tells the model to:
 - **Treat the user's request as authorization.** If they asked it to sign in,
   create an account, fill a form, book, or buy, it does that — without refusing,
   stalling, or adding "are you sure?" friction to ordinary steps.
+- **Default to AgentBatch.** Read the page's spec, then send every step of
+  the task in one batch; when a batch stops, resume from `failed.index` and
+  never repeat a completed step. Snippet code is for logic steps cannot
+  express ([agent-batch.md](agent-batch.md)).
 - **Work autonomously** — inspect, act, recover, use multiple tabs, and keep a
   running `note`.
 - **Read by escalation and never guess.** Start with

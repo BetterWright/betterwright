@@ -1,4 +1,7 @@
 import type {
+  AgentBatchInput,
+  AgentBatchResult,
+  AgentBatchRunOptions,
   AskResult,
   BetterWrightOptions,
   CookieSyncOptions,
@@ -69,6 +72,13 @@ export class BetterWright {
   liveView: Omit<LiveViewOptions, "expose"> & { expose?: string };
 
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;
+  /**
+   * Run an AgentBatch in one worker round trip: `batch({url})` opens a page
+   * and returns its spec, `batch(steps, {allowWrites: true})` runs the steps
+   * and returns per-step results plus a fresh snapshot. A malformed batch
+   * resolves to an `ok: false` envelope.
+   */
+  batch(input: AgentBatchInput, options?: AgentBatchRunOptions): Promise<RunResult<AgentBatchResult>>;
   /** Merge local browser cookies into this browser's persistent context. */
   syncCookies(options: CookieSyncOptions): Promise<CookieSyncResult>;
   /**

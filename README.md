@@ -29,8 +29,9 @@ machine, and proves it works by loading a real page. One command, no choices to
 make up front.
 
 **Compressed snapshots** instead of raw HTML or a full accessibility dump ·
-read-only tasks finish in **one model turn** · persistent sessions so you
-don't re-pay login and navigation cost every step.
+**AgentBatch**: read a page's spec, then finish the whole task in **one more
+call** · persistent sessions so you don't re-pay login and navigation cost
+every step.
 
 ---
 
@@ -64,7 +65,7 @@ betterwright skill >> ~/.codex/AGENTS.md   # Codex reads an instructions file
 # and the npm package (node_modules/betterwright/SKILL.md); copy it wherever
 # your agent reads skills, or print it with `betterwright skill`.
 
-# MCP (stdio server: browser, browser_login, browser_download, browser_handoff, browser_doctor)
+# MCP (stdio server: browser_batch, browser, browser_login, browser_download, browser_handoff, browser_doctor)
 bun add -g betterwright @modelcontextprotocol/sdk
 claude mcp add betterwright -- bunx betterwright mcp
 betterwright mcp --check           # why does my client show no tools?
@@ -90,7 +91,8 @@ await bw.close();
 
 `run()` takes a string of async Playwright JavaScript with sandboxed globals —
 `page`, `snapshot`, `screenshot`, `human`, `credentials`, and friends — and
-returns one result envelope. Full API: [docs/javascript.md](docs/javascript.md)
+returns one result envelope; `bw.batch()` runs an [AgentBatch](docs/agent-batch.md)
+through the same envelope. Full API: [docs/javascript.md](docs/javascript.md)
 · [docs/browser-api.md](docs/browser-api.md).
 
 `betterwright/sdk` is the same API as a curated entrypoint, with a
@@ -177,6 +179,39 @@ sub-agent. A 30-turn checkout costs your main agent **one tool call**, not
 30 pages of context. Programmatic equivalent: `runAgentTask()` from
 `betterwright/agent`.
 
+## AgentBatch: two calls per task
+
+However your agent is wired in, the default way it browses is **AgentBatch**.
+Call one opens a page and returns its *spec* — an interactive snapshot whose
+`[ref=eN]` markers, roles, and names are the targets. Call two sends every
+step the task needs; the worker runs them back to back with auto-waiting and
+no pacing, then returns per-step results, the step that stopped the batch (if
+one did), and a fresh snapshot to plan the next call from.
+
+```bash
+betterwright batch --url https://shop.example/checkout
+betterwright batch --allow-writes -s '[
+  {"action":"fill","target":{"ref":"e3"},"value":"ada@example.com"},
+  {"action":"fill","target":{"label":"Promo code"},"value":"SAVE10"},
+  {"action":"click","target":{"role":"button","name":"Apply"}},
+  {"action":"read","target":{"role":"status"},"expect":"applied"},
+  {"action":"click","target":{"role":"button","name":"Place order"},"irreversible":true},
+  {"action":"read","target":{"role":"heading","name":"Order confirmed"}}]' --allow-irreversible --proof
+```
+
+```js
+const spec = await bw.batch({ url: "https://shop.example/checkout" });
+const done = await bw.batch(steps, { allowWrites: true, allowIrreversible: true, proof: true });
+console.log(done.result.ok, done.result.failed, done.result.snapshot);
+```
+
+A form that used to cost eight model turns costs two. When a step fails, the
+result keeps everything that completed and says where to resume, so a
+recovery is one more call, never a restart. The same protocol is the MCP
+`browser_batch` tool, the built-in agent's `batch` tool, the Pi
+`browser_batch` tool, and the `agentBatch()` global inside `run()` code:
+[docs/agent-batch.md](docs/agent-batch.md).
+
 ## Tokens are the bottleneck
 
 An agent's browser loop is *observe → decide → act*, and the observe step is
@@ -192,6 +227,7 @@ BetterWright's whole observation stack is built around that problem:
 | **Diff mode** | After an action, return **only what changed** — not the page again |
 | **Interactive-only filter** | Drop static text nodes; keep what the agent can click, fill, or read |
 | **Scoped truncation** | Hints about *where* to look next instead of a silently clipped wall |
+| **AgentBatch** | A whole task in **two calls**: the page's spec, then every step back to back — no model turn per click, and a failed step returns the state to resume from |
 | **Single-call finish** | Read-only tasks complete in **one model turn** — the code returns `{finalAnswer}` and the loop ends, no confirmation round-trip |
 | **Persistent session** | One long-lived browser: no re-login, no re-navigation, no re-paying the token cost of getting back to where you were |
 | **Sub-agent delegation** | `betterwright exec` keeps the entire browsing transcript out of your main agent's context — a whole task costs it one tool call |
@@ -237,6 +273,7 @@ step from what it sees, in a browser that must still be there next turn:
 | Piece | What it gives you |
 | --- | --- |
 | [**Agent snapshots**](docs/browser-api.md#reading-the-page) | The token-efficiency core: compressed tree, `[ref=eN]` actions, diff and interactive-only modes, password redaction |
+| [**AgentBatch**](docs/agent-batch.md) | The default two-call protocol: spec, then every step of the task in one call with auto-waiting, no pacing, structured per-step results, and resume-from-failure |
 | [**Built-in agent loop**](docs/agent.md) | `betterwright exec` / the interactive console / `runAgentTask()` — model-first selection across Claude, Codex, Grok, OpenRouter, Ollama, vLLM, and any OpenAI-compatible endpoint |
 | [**Credential vault**](docs/credentials.md) | AES-256-GCM outside the profile; PSL site matching, selector-free login detection, metadata-only account choice |
 | [**Cookie Sync**](docs/cookie-sync.md) | Merge selected cookies from local Chrome, Edge, Brave, Firefox, Safari, and other desktop browsers into BetterChromium or an explicitly approved cloud browser |

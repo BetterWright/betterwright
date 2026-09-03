@@ -17,10 +17,14 @@ test("SKILL.md matches `betterwright skill --claude` output", () => {
     { cwd: root, encoding: "utf8" },
   );
   const checkedIn = readFileSync(new URL("../../SKILL.md", import.meta.url), "utf8");
+  // Budgets raised from 750 words / 6,000 bytes on 2026-09-03, when the skill
+  // gained the AgentBatch two-call protocol as its default.
   const words = checkedIn.trim().split(/\s+/).length;
-  assert.ok(words < 750, `generated browser skill grew to ${words} words`);
-  assert.ok(checkedIn.length < 6_000, `generated browser skill grew to ${checkedIn.length} bytes`);
+  assert.ok(words < 850, `generated browser skill grew to ${words} words`);
+  assert.ok(checkedIn.length < 6_500, `generated browser skill grew to ${checkedIn.length} bytes`);
   assert.match(checkedIn, /never run `vault show --reveal`/i);
+  assert.match(checkedIn, /betterwright batch --url/);
+  assert.match(checkedIn, /Resume from `failed\.index`; never repeat a completed step/);
   assert.match(checkedIn, /Never claim a view is running without its URL/);
   assert.doesNotMatch(checkedIn, /prefer the site's own machinery/);
   assert.doesNotMatch(checkedIn, /# Full-stack end-to-end review/);

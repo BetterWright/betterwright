@@ -1,7 +1,15 @@
 import { setTimeout as hostDelay } from "node:timers/promises";
 
+import {
+  boundedString,
+  isPasswordField,
+  readLocator,
+  type TargetLabels,
+  targetLocator,
+  uniqueLocator,
+} from "./batch-targets.js";
 import { inspectActionDirectory } from "./page-inspect.js";
-import { isBoolean, isNumber, isRecord, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
+import { isNumber, isRecord, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 const MAX_OPERATIONS = 32;
 const MAX_JSON_CHARS = 128_000;
@@ -10,7 +18,6 @@ const MAX_PACING_MS = 1_000;
 const MAX_DIRECTORY_WAIT_MS = 5_000;
 const EXPECTATION_TIMEOUT_MS = 10_000;
 const ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
-const REF_PATTERN = /^(?:aria-ref=)?e\d+$/;
 const READ_ACTIONS = new Set(["read", "readUrl"]);
 const ACTIONS = new Set([
   "click",
@@ -44,14 +51,6 @@ interface BatchActivity {
   pending: Set<unknown>;
 }
 
-function boundedString(value: UntrustedValue, label: string, maximum: number) {
-  if (!isString(value)) throw new TypeError(`${label} must be a string.`);
-  const text = value.trim();
-  if (!text) throw new TypeError(`${label} must not be empty.`);
-  if (text.length > maximum) throw new RangeError(`${label} exceeds ${maximum} characters.`);
-  return text;
-}
-
 function cloneJson(value: UntrustedValue, label: string) {
   let encoded;
   try {
@@ -65,130 +64,13 @@ function cloneJson(value: UntrustedValue, label: string) {
   return JSON.parse(encoded);
 }
 
-function targetLocator(page, targetValue, operationId) {
-  if (!isRecord(targetValue)) {
-    throw new TypeError(`UI batch operation ${JSON.stringify(operationId)} target must be an object.`);
-  }
-  const methods = ["ref", "role", "label", "text", "placeholder", "testId", "css"]
-    .filter((key) => untrustedField(targetValue, key) !== undefined);
-  if (methods.length !== 1) {
-    throw new Error(
-      `UI batch operation ${JSON.stringify(operationId)} target must use exactly one of ref, role, label, text, placeholder, testId, or css.`,
-    );
-  }
-  const method = methods[0];
-  const exactValue = untrustedField(targetValue, "exact");
-  if (exactValue !== undefined && !isBoolean(exactValue)) {
-    throw new TypeError(`UI batch operation ${JSON.stringify(operationId)} target exact must be boolean.`);
-  }
-  const exact = exactValue === true;
-  const nameValue = untrustedField(targetValue, "name");
-  const frameUrlValue = untrustedField(targetValue, "frameUrlIncludes");
-  const frameNameValue = untrustedField(targetValue, "frameName");
-  if (frameUrlValue !== undefined && frameNameValue !== undefined) {
-    throw new Error(`UI batch operation ${JSON.stringify(operationId)} target cannot combine frameUrlIncludes and frameName.`);
-  }
-  let root = page;
-  if (frameUrlValue !== undefined || frameNameValue !== undefined) {
-    const frameUrl = frameUrlValue === undefined
-      ? ""
-      : boundedString(frameUrlValue, "UI batch frameUrlIncludes", 1_000);
-    const frameName = frameNameValue === undefined
-      ? ""
-      : boundedString(frameNameValue, "UI batch frameName", 500);
-    const frames = page.frames().filter((frame) =>
-      (frameUrl && frame.url().includes(frameUrl)) || (frameName && frame.name() === frameName));
-    if (frames.length !== 1) {
-      throw new Error(
-        `UI batch operation ${JSON.stringify(operationId)} frame matched ${frames.length} frames; use a unique frame URL fragment or name.`,
-      );
-    }
-    root = frames[0];
-  }
-  let locator;
-  if (method === "ref") {
-    const ref = boundedString(untrustedField(targetValue, "ref"), "UI batch ref", 64);
-    if (!REF_PATTERN.test(ref)) throw new Error(`UI batch operation ${JSON.stringify(operationId)} has an invalid aria ref.`);
-    locator = root.locator(ref.startsWith("aria-ref=") ? ref : `aria-ref=${ref}`);
-  } else if (method === "role") {
-    const role = boundedString(untrustedField(targetValue, "role"), "UI batch role", 64);
-    const options: any = { exact };
-    if (nameValue !== undefined) options.name = boundedString(nameValue, "UI batch accessible name", 500);
-    locator = root.getByRole(role, options);
-  } else if (method === "label") {
-    locator = root.getByLabel(
-      boundedString(untrustedField(targetValue, "label"), "UI batch label", 500),
-      { exact },
-    );
-  } else if (method === "text") {
-    locator = root.getByText(
-      boundedString(untrustedField(targetValue, "text"), "UI batch text", 500),
-      { exact },
-    );
-  } else if (method === "placeholder") {
-    locator = root.getByPlaceholder(
-      boundedString(untrustedField(targetValue, "placeholder"), "UI batch placeholder", 500),
-      { exact },
-    );
-  } else if (method === "testId") {
-    locator = root.getByTestId(
-      boundedString(untrustedField(targetValue, "testId"), "UI batch test id", 500),
-    );
-  } else {
-    locator = root.locator(boundedString(untrustedField(targetValue, "css"), "UI batch CSS", 2_000));
-  }
-  const nthValue = untrustedField(targetValue, "nth");
-  if (nthValue !== undefined) {
-    if (!isNumber(nthValue) || !Number.isInteger(nthValue) || nthValue < 0 || nthValue > 99) {
-      throw new RangeError(`UI batch operation ${JSON.stringify(operationId)} target nth must be an integer from 0 to 99.`);
-    }
-    locator = locator.nth(nthValue);
-  }
-  return locator;
+function operationLabels(operationId): TargetLabels {
+  return { subject: `UI batch operation ${JSON.stringify(operationId)}`, fields: "UI batch" };
 }
 
 async function exactLocator(page, target, operationId) {
-  const locator = targetLocator(page, target, operationId);
-  // Role/text engines intentionally omit hidden controls. Waiting for one
-  // match before enforcing uniqueness lets a delayed result become visible
-  // while still refusing an ambiguous target once it is actionable.
-  await locator.first().waitFor({ state: "attached" });
-  const count = await locator.count();
-  if (count !== 1) {
-    throw new Error(
-      `UI batch operation ${JSON.stringify(operationId)} target matched ${count} elements; use a more precise target or nth.`,
-    );
-  }
-  return locator;
-}
-
-async function readLocator(locator) {
-  await locator.waitFor({ state: "visible" });
-  return locator.evaluate((element) => {
-    const input = element instanceof HTMLInputElement ? element : null;
-    const valueControl = element instanceof HTMLInputElement ||
-        element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement
-      ? element
-      : null;
-    const disableable = valueControl || element instanceof HTMLButtonElement
-      ? element
-      : null;
-    const text = element instanceof HTMLElement
-      ? (element.innerText || element.textContent || "").trim()
-      : (element.textContent || "").trim();
-    return {
-      tag: element.tagName.toLowerCase(),
-      text: text.slice(0, 4_000),
-      value: input?.type === "password"
-        ? "[redacted]"
-        : valueControl
-          ? String(valueControl.value ?? "").slice(0, 4_000)
-          : undefined,
-      checked: input && ["checkbox", "radio"].includes(input.type) ? input.checked : undefined,
-      disabled: disableable ? disableable.matches(":disabled") : undefined,
-      ariaLabel: element.getAttribute("aria-label") || undefined,
-    };
-  });
+  const labels = operationLabels(operationId);
+  return uniqueLocator(targetLocator(page, target, labels), labels);
 }
 
 async function readLocatorWhen(locator, expected, operationId) {
@@ -230,9 +112,7 @@ async function readUrlWhen(page, expected, operationId) {
 }
 
 async function assertNotPassword(locator, operationId, allowPasswordFill) {
-  const password = await locator.evaluate((element) =>
-    element instanceof HTMLInputElement && element.type.toLowerCase() === "password");
-  if (password && !allowPasswordFill) {
+  if ((await isPasswordField(locator)) && !allowPasswordFill) {
     throw new Error(
       `UI batch operation ${JSON.stringify(operationId)} cannot fill a password. Use credentials.fill(), credentials.generateAndFill(), or an explicitly task-supplied credential in ordinary browser code.`,
     );
