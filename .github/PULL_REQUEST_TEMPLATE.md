@@ -10,7 +10,7 @@ line only if it is genuinely unrelated to your change, and say so.
 
 ## Checklist
 
-- [ ] `npm run release:check` passes locally (versions, lint, typecheck, build,
+- [ ] `bun run release:check` passes locally (versions, lint, typecheck, build,
       unit tests, published declarations, tarball).
 - [ ] **Every browser connection still goes through the guard proxy.** No new
       launch path, transport, or fetch bypasses the worker's SOCKS guard
@@ -21,10 +21,10 @@ line only if it is genuinely unrelated to your change, and say so.
 - [ ] **Dependency pins are still mirrored everywhere.** playwright-core,
       tldts, and patchright-core are exact-pinned in
       `package.json`, restated in `src/doctor.ts`, and referenced in
-      `.github/workflows/publish-npm.yml`. `npm run check:versions` is green.
+      `.github/workflows/publish-npm.yml`. `bun run check:versions` is green.
 - [ ] **Public API changes update `types/*.d.ts` in this same commit.** The
       published declarations are hand-written, not generated —
-      `npm run test:types` compiles against them.
+      `bun run test:types` compiles against them.
 - [ ] The two branch-protected CI job names, "Worker copies in sync" and
       "Node tests", are unchanged, and any new action is SHA-pinned with a
       trailing `# vX.Y.Z` comment.
@@ -35,13 +35,13 @@ line only if it is genuinely unrelated to your change, and say so.
       `src/cli-help.ts`.
 - [ ] Nothing private is being committed: no handoff or `internal/` notes, no
       profile, vault, or artifact directory, no routable IP addresses in prose
-      (`npm run check:package` enforces the last two for the tarball).
+      (`bun run check:package` enforces the last two for the tarball).
 
 ## How it was verified
 
 <!--
 Beyond release:check. Name the commands you ran — for example the managed
 browser suite (`BETTERWRIGHT_REQUIRE_BROWSER=1 BETTERWRIGHT_CHROMIUM_ROOT=off
-npm test`), a `betterwright doctor` before/after, or the platform you tested on
+bun run test`), a `betterwright doctor` before/after, or the platform you tested on
 if the change is platform-specific.
 -->

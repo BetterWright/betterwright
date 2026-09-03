@@ -3,7 +3,7 @@
 // capability token.
 //
 // Design concept: the viewer IS a browser window wearing BetterWright
-// brand chrome — the brand orange (#FF7A1A from favicon.svg) on layered
+// brand chrome — the brand orange (#FF7A1A from docs/assets/logo.svg) on layered
 // near-blacks, executed with T3 Code's surface craft: surfaces separated
 // by 2–4% luminance steps, hairline warm-white borders (7%/12%), buttons
 // with an inset top highlight and a soft colored drop shadow, and a bare

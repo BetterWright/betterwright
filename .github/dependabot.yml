@@ -13,7 +13,7 @@ updates:
   # full rationale lives in scripts/check-versions.ts). Those bumps must be
   # deliberate, so Dependabot only proposes devDependency updates, and the
   # ignore list restates the pinned three in case the allow scope ever widens.
-  - package-ecosystem: npm
+  - package-ecosystem: bun
     directory: /
     schedule:
       interval: weekly

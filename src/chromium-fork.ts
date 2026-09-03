@@ -5,7 +5,6 @@ import path from "node:path";
 import { isCallable } from "./untrusted-value.js";
 
 export const BETTERWRIGHT_CHROMIUM_VERSION = "151.0.7922.108";
-export const BETTERCHROMIUM_PRODUCT_NAME = "BetterChromium";
 
 /**
  * Chromium's Windows launcher uses a private side-by-side assembly to locate

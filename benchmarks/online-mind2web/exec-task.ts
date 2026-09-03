@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // One Online-Mind2Web task through BetterWright's OWN agent harness (the exec
 // shape, src/agent.ts) — no Pi. The parent (exec-runner.ts) spawns one of
 // these per task with an isolated BetterWright home.

@@ -26,6 +26,7 @@ import {
   sessionName,
 } from "./daemon.js";
 import { profileLabel, resolveProfileName } from "./profile-name.js";
+import { bunInheritedExecArgv } from "./runtime.js";
 import type { UntrustedValue } from "./untrusted-value.js";
 
 const CONNECT_TIMEOUT_MS = 1_000;
@@ -180,7 +181,7 @@ function spawnDaemon({ home, cliPath, config, profile }) {
   }
   const child = spawn(
     process.execPath,
-    [cliPath, "__daemon", "--config", payload],
+    [...bunInheritedExecArgv(), cliPath, "__daemon", "--config", payload],
     {
       detached: true,
       stdio: ["ignore", "ignore", logFd],

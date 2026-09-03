@@ -10,9 +10,8 @@ normal `NetworkPolicy` and SOCKS guard remain enabled.
 ## Run
 
 ```bash
-npm run build:tools
-npx tsc -p tsconfig.harness.json
-node benchmarks/browser-process/run.js \
+bun run build
+bun benchmarks/browser-process/run.ts \
   --baseline /path/to/built/baseline \
   --candidate /path/to/built/candidate \
   --output /tmp/browser-process.json

@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/betterwright?color=cb3837&logo=npm)](https://www.npmjs.com/package/betterwright)
 [![CI](https://github.com/BetterWright/betterwright/actions/workflows/ci.yml/badge.svg)](https://github.com/BetterWright/betterwright/actions/workflows/ci.yml)
-[![node](https://img.shields.io/node/v/betterwright?color=339933&logo=node.js&logoColor=white)](#install)
+[![bun](https://img.shields.io/badge/bun-1.4-fbf0df?logo=bun&logoColor=black)](#install)
 [![license](https://img.shields.io/npm/l/betterwright)](LICENSE)
 
 One persistent, policy-guarded browser your agent returns to turn after turn.
@@ -18,7 +18,7 @@ its built-in browser agent and just read the answer.
 </div>
 
 ```bash
-npm install -g betterwright && betterwright init
+bun install -g betterwright && betterwright init
 
 betterwright run -c "await page.goto('https://example.com'); return page.title()"
 # {"ok": true, "result": "Example Domain", ...}
@@ -65,15 +65,15 @@ betterwright skill >> ~/.codex/AGENTS.md   # Codex reads an instructions file
 # your agent reads skills, or print it with `betterwright skill`.
 
 # MCP (stdio server: browser, browser_login, browser_download, browser_handoff, browser_doctor)
-npm install -g betterwright @modelcontextprotocol/sdk
-claude mcp add betterwright -- npx betterwright mcp
+bun add -g betterwright @modelcontextprotocol/sdk
+claude mcp add betterwright -- bunx betterwright mcp
 betterwright mcp --check           # why does my client show no tools?
 
 # Pi Coding Agent (native persistent tools, trusted login, approval-gated downloads)
 pi install npm:betterwright
 ```
 
-After an npm upgrade, `setup` / `update` refresh already-installed skill files,
+After a package upgrade, `setup` / `update` refresh already-installed skill files,
 and `doctor` says so if one is still stale.
 
 Or drive it from your own code:
@@ -254,14 +254,14 @@ step from what it sees, in a browser that must still be there next turn:
 
 ## Install
 
-Requires **Node.js 22+**. Setup downloads the pinned native BetterChromium
+Requires **Bun 1.4**. Setup downloads the pinned native BetterChromium
 browser for this host; GPU-less Linux runs it with the SwiftShader software
 renderer.
 Nothing is downloaded as an npm lifecycle side effect, so installs stay
 predictable with `--ignore-scripts`.
 
 ```bash
-npm install -g betterwright
+bun install -g betterwright
 betterwright init      # guided: browser + agent wiring + a real page load
 ```
 
@@ -298,7 +298,7 @@ and does not protect.
 
 ## How it works
 
-The CLI (or your JS host) owns one long-lived Node worker. The worker holds
+The CLI (or your JS host) owns one long-lived worker process. The worker holds
 the persistent browser context and exposes sandboxed globals to model code; it
 calls back to the host to authorize requests and resolve credentials without
 putting secrets in results. CDP and raw browser handles stay worker-internal.

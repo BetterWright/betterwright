@@ -36,11 +36,11 @@ body:
       required: true
 
   - type: input
-    id: node
+    id: bun
     attributes:
-      label: Node version
-      description: Output of `node --version`. BetterWright needs Node 22.18 or newer.
-      placeholder: "v22.18.0"
+      label: Bun version
+      description: Output of `bun --version`. BetterWright needs Bun 1.4.0 or newer.
+      placeholder: "1.4.0"
     validations:
       required: true
 

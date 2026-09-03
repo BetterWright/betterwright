@@ -1,7 +1,7 @@
 // Argv parsing shared by the BetterWright CLI (bin/betterwright.ts). Pure
 // functions with no side effects, kept out of the bin entrypoint because that
-// file runs main() on import — anything tests (or future callers) need to
-// import lives here instead.
+// file is a thin help/version router — anything tests (or future callers) need
+// to import lives here instead.
 
 // Every value given for a repeatable flag, in argv order, accepting both
 // `--flag value` and `--flag=value`. Single source of truth for value-flag

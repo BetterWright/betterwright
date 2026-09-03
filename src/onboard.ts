@@ -21,8 +21,17 @@ import path from "node:path";
 import readline from "node:readline";
 import { promisify } from "node:util";
 
+import { MCP_REGISTER_COMMAND } from "./cli-help.js";
 import { cliPaint, paintedLog } from "./cli-theme.js";
 import { defaultHome } from "./home.js";
+import { installHint } from "./optional-peer.js";
+import {
+  PINNED_BUN_VERSION,
+  runtimeFix,
+  runtimeLabel,
+  runtimeSupported,
+  runtimeVersion,
+} from "./runtime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -368,13 +377,12 @@ export async function runInit({
 
     // 1. Runtime. Nothing below can work without it, and the failure is much
     // clearer here than as a syntax error three layers down.
-    const major = Number(process.versions.node.split(".")[0]);
-    if (major < 22) {
-      log(`  ✗ Node ${process.versions.node} — BetterWright needs Node 22 or newer.`);
-      log("    Install it from https://nodejs.org and run `betterwright init` again.");
+    if (!runtimeSupported()) {
+      log(`  ✗ ${runtimeLabel()} ${runtimeVersion()} — ${runtimeFix()}`);
+      log(`    Install Bun ${PINNED_BUN_VERSION} from https://bun.com and run \`betterwright init\` again.`);
       return 1;
     }
-    log(`  ✓ Node ${process.versions.node}`);
+    log(`  ✓ ${runtimeLabel()} ${runtimeVersion()}`);
 
     // 2. Browser.
     if (flags.has("--skip-browser")) {
@@ -480,20 +488,20 @@ export async function runInit({
             : false;
           if (wantMcp) {
             try {
-              await execFileAsync("claude", ["mcp", "add", "betterwright", "--", "npx", "betterwright", "mcp"], {
+              await execFileAsync("claude", ["mcp", "add", "betterwright", "--", "bunx", "betterwright", "mcp"], {
                 timeout: 30_000,
               });
               log("  ✓ MCP server registered with Claude Code");
               done.push("MCP registration");
             } catch (error) {
               log(`  ! Could not register the MCP server: ${error?.message || error}`);
-              notes.push("Register MCP manually: claude mcp add betterwright -- npx betterwright mcp");
+              notes.push(`Register MCP manually: ${MCP_REGISTER_COMMAND}`);
             }
           }
         } else {
           notes.push(
-            "MCP is available but needs its SDK: `npm install -g @modelcontextprotocol/sdk`, " +
-              "then `claude mcp add betterwright -- npx betterwright mcp`. The skill works without it.",
+            `MCP is available but needs its SDK: \`${installHint("@modelcontextprotocol/sdk")}\`, ` +
+              `then \`${MCP_REGISTER_COMMAND}\`. The skill works without it.`,
           );
         }
       }

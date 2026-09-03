@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // CDP-free premise probe.
 //
 // Launches a browser binary DIRECTLY (no Playwright, no DevTools protocol —
@@ -8,8 +8,8 @@
 // comparison probe, not the production BetterWright runtime.
 //
 // Usage:
-//   node research/cdpfree-probe.js [--browser /path/to/binary] [--headed]
-//   node research/cdpfree-probe.js --url https://example.com --selector h1
+//   bun research/cdpfree-probe.ts [--browser /path/to/binary] [--headed]
+//   bun research/cdpfree-probe.ts --url https://example.com --selector h1
 
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
@@ -262,7 +262,7 @@ const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "bw-cdpfree-"));
 const extDir = path.join(tmpHome, "ext");
 fs.mkdirSync(extDir, { recursive: true });
 if (!fs.existsSync(path.join(EXT_BUILD, "background.js"))) {
-  throw new Error("CDP-free extension is not built; run `npm run build` first");
+  throw new Error("CDP-free extension is not built; run `bun run build` first");
 }
 for (const file of ["manifest.json", "background.js"]) {
   fs.copyFileSync(path.join(EXT_BUILD, file), path.join(extDir, file));

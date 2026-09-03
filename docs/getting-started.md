@@ -26,14 +26,14 @@ install once and use either — or both.
 ## Install and set up
 
 BetterWright drives a managed browser through Playwright, so it needs
-**Node.js 22+** on your `PATH`. The browser itself is downloaded once.
+**Bun 1.4** on your `PATH`. The browser itself is downloaded once.
 
 ```bash
-npm install -g betterwright
+bun install -g betterwright
 betterwright init
 ```
 
-`init` is the whole of setup: it checks Node, downloads the browser, installs
+`init` is the whole of setup: it checks Bun, downloads the browser, installs
 the agent skill into whichever hosts it finds on this machine, and then loads a
 real page to confirm the path works end to end. It is safe to re-run — it
 reports what is already done and changes only what is not. Add `--yes` to skip
@@ -43,9 +43,9 @@ alone.
 The individual steps remain available when you want them:
 
 ```bash
-npx betterwright setup     # install native BetterChromium
-npx betterwright update    # download/refresh BetterChromium
-npx betterwright doctor    # grouped readiness report; every ✗ names its fix
+betterwright setup     # install native BetterChromium
+betterwright update    # download/refresh BetterChromium
+betterwright doctor    # grouped readiness report; every ✗ names its fix
 ```
 
 `doctor` groups its output by what the check is about — runtime, browser, agent
@@ -54,11 +54,10 @@ the command that fixes it; a `!` is something optional you have not set up.
 `doctor --json` prints the raw report for scripts, and `--quiet` prints only
 the lines that need attention.
 
-Upgrade the npm package with `npm install -g betterwright@latest` (or
-`npm update -g betterwright`), then run `betterwright update` so the
-pinned BetterChromium release matches that package. Package updates are intentional
-rather than automatic, so application lockfiles continue to control when a
-new BetterWright version is adopted.
+Upgrade with `bun install -g betterwright@latest`, then run `betterwright update`
+so the pinned BetterChromium release matches that package. Package updates are
+intentional rather than automatic, so application lockfiles continue to control
+when a new BetterWright version is adopted.
 
 ### BetterChromium, and bringing your own browser
 
@@ -93,8 +92,8 @@ no OS is masked as another). The npm package is only the JS/runtime; the
 Details: [chromium-fork.md](chromium-fork.md).
 
 ```bash
-npx betterwright setup           # install native BetterChromium
-npx betterwright setup --force   # re-download BetterChromium
+betterwright setup           # install native BetterChromium
+betterwright setup --force   # re-download BetterChromium
 ```
 
 Resolution order:

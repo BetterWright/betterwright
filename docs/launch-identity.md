@@ -72,12 +72,12 @@ const browser = new BetterWright({
 
 ## Verification
 
-Compile the harness first with `npm run build:harness`.
+Compile the harness first with `bun run build`.
 
 ```bash
-node research/stealth-report.js
-node research/stealth-report.js --live
-node research/stealth-report.js --live --site recaptcha-v3-score
+bun research/stealth-report.ts
+bun research/stealth-report.ts --live
+bun research/stealth-report.ts --live --site recaptcha-v3-score
 ```
 
 The local fixture checks roughly 30 browser surfaces against stock-Chrome

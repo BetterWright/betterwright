@@ -332,7 +332,7 @@ test("doctor output groups checks and marks each status", () => {
   const text = formatDoctorChecks(doctorChecks(READY_REPORT));
   assert.match(text, /^Runtime$/m);
   assert.match(text, /^Browser$/m);
-  assert.match(text, /✓ Node:/);
+  assert.match(text, /✓ (?:Bun|Node):/);
 
   const quiet = formatDoctorChecks(doctorChecks(READY_REPORT), { quiet: true });
   assert.doesNotMatch(quiet, /✓/);

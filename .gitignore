@@ -1,12 +1,14 @@
 # Node
 node_modules/
 npm-debug.log*
+# npm lockfile. This repo installs with bun.lock.
+package-lock.json
+bun-debug.log*
 
-# Compiled development sources. tsconfig.tools.json and tsconfig.harness.json
-# emit next to their .ts input on purpose: scripts resolve the repo root as
-# `../`, the tests import the built runtime as `../../dist/src/*.js` and read
-# `../fixtures/*`, and moving the output would break every one of those
-# relative contracts.
+# Compiled leftover JavaScript next to TypeScript sources. bun runs the `.ts`
+# files directly; tsconfig.tools.json and tsconfig.harness.json are type-check
+# only. The ignore list still catches an accidental `tsc` emit. Tests import
+# the built runtime as `../../dist/src/*.js` and read `../fixtures/*`.
 scripts/*.js
 research/*.js
 tests/node/**/*.js

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 // Long-lived, Playwright-native browser worker for betterwright.
 //
@@ -170,11 +170,6 @@ import {
   listWebMCPTools,
   WEBMCP_FEATURE_SWITCH,
 } from "./webmcp.js";
-
-// Re-exported for source compatibility: the `betterwright/worker` subpath now
-// resolves to worker-constants.js, but direct imports of this file keep the
-// constant they had before the extraction.
-export { METADATA_RESOLVER_RULES } from "./worker-constants.js";
 
 const WORKER_VERSION = 1;
 const MAX_EVENTS = 40;

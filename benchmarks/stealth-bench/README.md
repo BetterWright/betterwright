@@ -1,6 +1,6 @@
 # Stealth Bench V1
 
-> Compile the harness first: `npm run build:harness` (emits the `.js` next to each `.ts`).
+> Run after `bun run build`. Bun executes the TypeScript harness directly.
 
 This runner applies Browser Use's encrypted Stealth Bench task set to
 BetterWright without copying or publishing its plaintext tasks. It decrypts the
@@ -13,7 +13,7 @@ That differs from the original 71-task blog post, so reports must retain the
 dataset hash.
 
 ```bash
-node benchmarks/stealth-bench/runner.js \
+bun benchmarks/stealth-bench/runner.ts \
   --dataset /path/to/browser-use-benchmark/Stealth_Bench_V1.enc \
   --binary /absolute/path/to/betterchromium \
   --mode headless \

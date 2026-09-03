@@ -29,10 +29,10 @@ that the distinction is visible rather than implied by a filename.
 | `assemble-mac-fonts.sh` | Build-host utility for the macOS-metric font set used by the Linux fork artifact. **See the licensing note below.** |
 
 The three TypeScript files are compiled alongside the benchmark harnesses, so
-run `npm run build:harness` first and invoke the emitted `.js`:
+run `bun run build` first, then run the TypeScript probe:
 
 ```bash
-node research/stealth-report.js
+bun research/stealth-report.ts
 ```
 
 ## Licensing note: `assemble-mac-fonts.sh`

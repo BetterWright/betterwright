@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Candidate-vs-baseline browser process benchmark. The controller starts only
 // loopback fixtures and runs each sample in a fresh Node process/profile.
 
@@ -363,7 +363,7 @@ function targetSummary(samples: any[]) {
 async function main() {
   if (has("--probe")) return probe();
   if (has("--help")) {
-    console.log("Usage: node benchmarks/browser-process/run.js --baseline PATH [--candidate PATH] [--repeats 5] [--long-turns 100] [--output FILE] [--quick]");
+    console.log("Usage: bun benchmarks/browser-process/run.ts --baseline PATH [--candidate PATH] [--repeats 5] [--long-turns 100] [--output FILE] [--quick]");
     return;
   }
   if (!flag("--baseline")) throw new Error("Pass --baseline /path/to/a built BetterWright checkout");

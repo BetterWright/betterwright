@@ -1,34 +1,33 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testDir = path.join(root, "tests", "node");
+const includeBrowser = process.argv.includes("--all");
 const files = fs
   .readdirSync(testDir)
-  .filter((name) => name.endsWith(".test.js") && name !== "browser.test.js")
+  .filter((name) => name.endsWith(".test.ts") && (includeBrowser || name !== "browser.test.ts"))
   .sort()
   .map((name) => path.join("tests", "node", name));
 
 if (!files.length) {
-  console.error("No Node unit test files found.");
+  console.error("No unit test files found.");
   process.exit(1);
 }
 
-// Coverage is opt-in and report-only: it prints Node's coverage table without
-// enforcing thresholds, so this experimental feature can never turn a passing
-// suite red. CI sets BETTERWRIGHT_COVERAGE=1 to keep the number visible.
-// (--test-coverage-exclude needs Node >= 22.5; the flag is only added when
-// coverage is requested, so the default run works on any supported Node.)
-const coverageArgs =
-  process.env.BETTERWRIGHT_COVERAGE === "1"
-    ? ["--experimental-test-coverage", "--test-coverage-exclude=tests/**"]
-    : [];
-const result = spawnSync(process.execPath, [...coverageArgs, "--test", ...files], {
-  cwd: root,
-  stdio: "inherit",
-});
+const coverageArgs = process.env.BETTERWRIGHT_COVERAGE === "1" ? ["--coverage"] : [];
+const workers = String(os.availableParallelism?.() || os.cpus().length);
+const result = spawnSync(
+  process.execPath,
+  ["test", "--timeout", "120000", `--parallel=${workers}`, ...coverageArgs, ...files],
+  {
+    cwd: root,
+    stdio: "inherit",
+  },
+);
 process.exit(result.status ?? 1);

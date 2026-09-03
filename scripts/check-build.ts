@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import fs from "node:fs";
 import path from "node:path";
@@ -47,7 +47,7 @@ function runtimeTargets() {
   return [...new Set(targets.map((target) => String(target).replace(/^\.\//, "")))];
 }
 
-if (!fs.existsSync(dist)) failures.push("dist/ is missing; run npm run build");
+if (!fs.existsSync(dist)) failures.push("dist/ is missing; run bun run build");
 else {
   const sourceFiles = [
     ...walk(path.join(root, "src")),
@@ -98,8 +98,13 @@ else {
   }
 
   for (const executable of ["dist/bin/betterwright.js", "dist/src/worker.js"]) {
-    const mode = fs.statSync(path.join(root, executable)).mode;
+    const absolute = path.join(root, executable);
+    const mode = fs.statSync(absolute).mode;
     if ((mode & 0o111) === 0) failures.push(`${executable} is not executable`);
+    const shebang = fs.readFileSync(absolute, "utf8").split("\n", 1)[0];
+    if (shebang !== "#!/usr/bin/env bun") {
+      failures.push(`${executable} shebang must be #!/usr/bin/env bun (found ${shebang})`);
+    }
   }
 
   for (const standalone of [

@@ -1,6 +1,6 @@
 # Online-Mind2Web benchmark
 
-> Compile the harness first: `npm run build:harness` (emits the `.js` next to each `.ts`).
+> Run after `bun run build`. Bun executes the TypeScript harness directly.
 
 This directory contains BetterWright's reproducible 50-task
 [Online-Mind2Web](https://github.com/OSU-NLP-Group/Online-Mind2Web) harness. It
@@ -101,18 +101,18 @@ Set `TASKS` to an Online-Mind2Web JSON array (or `{ "tasks": [...] }`) with
 ```bash
 export TASKS=/absolute/path/to/Online-Mind2Web.json
 
-node benchmarks/online-mind2web/runner.js sample \
+bun benchmarks/online-mind2web/runner.ts sample \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/sample-50.json \
   --count 50 \
   --holdout-count 15
 
 # Or create a manifest containing every task in the pinned snapshot.
-node benchmarks/online-mind2web/runner.js full \
+bun benchmarks/online-mind2web/runner.ts full \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/full-300.json
 
-node benchmarks/online-mind2web/runner.js run \
+bun benchmarks/online-mind2web/runner.ts run \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/sample-50.json \
   --output benchmarks/online-mind2web/runs/development \
@@ -121,13 +121,13 @@ node benchmarks/online-mind2web/runner.js run \
   --timeout-minutes 45 \
   --concurrency 3
 
-node benchmarks/online-mind2web/runner.js validate \
+bun benchmarks/online-mind2web/runner.ts validate \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/sample-50.json \
   --output benchmarks/online-mind2web/runs/development \
   --partition development
 
-node benchmarks/online-mind2web/judge.js \
+bun benchmarks/online-mind2web/judge.ts \
   --tasks "$TASKS" \
   --manifest benchmarks/online-mind2web/sample-50.json \
   --output benchmarks/online-mind2web/runs/development \

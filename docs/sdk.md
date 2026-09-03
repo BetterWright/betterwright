@@ -12,11 +12,11 @@ skill loading), so existing code keeps working and nothing has to move.
 ## Install
 
 ```bash
-npm install betterwright
-npx betterwright setup    # downloads the managed BetterChromium build once
+bun add betterwright
+bunx betterwright setup    # downloads the managed BetterChromium build once
 ```
 
-Node 22.18 or newer. The package is ESM, so use `import`, or `await import()`
+Bun 1.4. The package is ESM, so use `import`, or `await import()`
 from CommonJS.
 
 ## A complete example

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -49,20 +49,29 @@ function isString(value: UntrustedValue): value is string {
   return typeof value === "string";
 }
 
-function npm(args, options = {}) {
-  if (process.env.npm_execpath) {
-    return run(process.execPath, [process.env.npm_execpath, ...args], options);
-  }
-  return run(process.platform === "win32" ? "npm.cmd" : "npm", args, options);
+function bun(args, options: { cwd?: string; capture?: boolean } = {}) {
+  return run(process.execPath, args, options);
 }
 
 try {
-  const output = npm(
-    ["pack", "--json", "--ignore-scripts", "--pack-destination", temp],
-    { capture: true },
+  const tarballName = `betterwright-${manifest.version}.tgz`;
+  bun(["pm", "pack", "--destination", temp, "--ignore-scripts"], {
+    capture: true,
+  });
+  const tarball = path.join(temp, tarballName);
+  const listing = run("tar", ["-tf", tarball], { capture: true });
+  const paths = new Set(
+    listing
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((entry) => entry.replace(/^package\//, "")),
   );
-  const packed = JSON.parse(output)[0];
-  const paths = new Set<string>(packed.files.map((entry) => entry.path));
+  const packed = {
+    filename: tarballName,
+    files: [...paths].map((filePath) => ({ path: filePath })),
+    size: fs.statSync(tarball).size,
+  };
   const required = [
     "LICENSE",
     "README.md",
@@ -113,8 +122,8 @@ try {
   // them out of the tarball is enforced here because `files` uses a docs glob.
   //
   // `examples/` is the one place shipped `.ts` is intentional: the examples are
-  // consumer-facing TypeScript, run directly by Node's type stripping. Our own
-  // sources must still never ship as TypeScript.
+  // consumer-facing TypeScript, run directly by Bun. Our own sources must still
+  // never ship as TypeScript.
   const forbidden = [...paths].filter((name) =>
     /(^|\/)(node_modules|tests|artifacts|internal|\.betterwright)(\/|$)/.test(name) ||
     /(^|\/)(HANDOFF-|.*-handoff\.md$)/.test(name) ||
@@ -140,15 +149,14 @@ try {
 
   if (packed.size > 1_000_000) throw new Error(`npm tarball is unexpectedly large: ${packed.size} bytes`);
 
-  const tarball = path.join(temp, packed.filename);
   const installRoot = path.join(temp, "install");
   fs.mkdirSync(installRoot);
   fs.writeFileSync(
     path.join(installRoot, "package.json"),
     JSON.stringify({ private: true, type: "module" }),
   );
-  npm(
-    ["install", tarball, "--ignore-scripts", "--no-audit", "--no-fund"],
+  bun(
+    ["add", tarball, "--ignore-scripts", "--no-summary"],
     { cwd: installRoot },
   );
 

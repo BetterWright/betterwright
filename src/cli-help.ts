@@ -7,6 +7,9 @@
 // should never be the thing that does it, so the router in bin/betterwright.ts
 // consults this table before dispatching.
 
+export const MCP_REGISTER_COMMAND =
+  "claude mcp add betterwright -- bunx betterwright mcp";
+
 export const COMMAND_SUMMARIES = [
   ["init", "guided first-time setup — browser, agent wiring, verification"],
   ["setup", "download the managed browser for this host"],
@@ -49,7 +52,7 @@ Docs: https://github.com/BetterWright/betterwright#readme`;
 export const COMMAND_HELP = {
   init: `Usage: betterwright init [options]
 
-Guided first-time setup. Checks Node, installs the managed browser if it is
+Guided first-time setup. Checks Bun, installs the managed browser if it is
 missing, wires up whichever agent hosts it finds on this machine, and verifies
 the whole path with a real page load.
 
@@ -333,7 +336,7 @@ browser_login, browser_download, browser_handoff, and browser_doctor.
             client that shows no BetterWright tools
 
 Register it with a client, for example:
-  claude mcp add betterwright -- npx betterwright mcp
+  ${MCP_REGISTER_COMMAND}
 
 Needs the @modelcontextprotocol/sdk peer dependency. Policy comes from the
 environment; see SETUP.md §6.`,

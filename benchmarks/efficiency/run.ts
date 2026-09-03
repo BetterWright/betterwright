@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Compare a built BetterWright checkout against this one on the three 1.7.1
 // efficiency paths. Both targets run in fresh child processes so module caches
 // and peak RSS do not bleed across samples.
 //
-//   npm run build:harness
-//   node benchmarks/efficiency/run.js --baseline /path/to/built/1.7.0
+//   bun run build:harness
+//   bun benchmarks/efficiency/run.ts --baseline /path/to/built/1.7.0
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
