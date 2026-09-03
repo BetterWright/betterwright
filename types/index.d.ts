@@ -52,15 +52,6 @@ export {
   unionClip,
 } from "./captcha-solver.js";
 export { detectBotChallenge } from "./challenges.js";
-/**
- * The browser snippet that runs an AgentBatch, for hosts that drive the
- * worker through `run()` themselves. Validates the batch first and throws a
- * TypeError, RangeError, or Error naming the offending step and field.
- */
-export function agentBatchCode(
-  args: { url?: string; steps?: import("./public.js").AgentBatchStepInput[] } &
-    import("./public.js").AgentBatchOptions,
-): string;
 export { BetterWright, BrowserError } from "./client.js";
 export function listCookieSourceBrowsers(): Promise<
   import("./public.js").CookieSourceBrowser[]

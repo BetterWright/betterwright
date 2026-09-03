@@ -12,7 +12,6 @@ export {
   resolveModelSelection,
   runAgentTask,
 } from "./agent.js";
-export { agentBatchCode } from "./agent-batch.js";
 export {
   codexAccessToken,
   grokAccessToken,

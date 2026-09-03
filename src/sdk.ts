@@ -11,7 +11,6 @@ import { BetterWright } from "./client.js";
 import { isCallable, isRecord, type UntrustedValue } from "./untrusted-value.js";
 
 export { resolveModel, resolveModelSelection, runAgentTask } from "./agent.js";
-export { agentBatchCode } from "./agent-batch.js";
 export {
   BROWSER_PROVIDER_NAMES,
   browserProviderInfo,

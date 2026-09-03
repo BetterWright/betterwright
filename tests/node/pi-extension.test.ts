@@ -150,14 +150,11 @@ test("native Pi extension registers persistent tools and records its supplied st
     })(pi);
 
     assert.deepEqual([...pi.tools.keys()], [
-      "browser_batch",
       "browser",
       "browser_login",
       "browser_evidence",
       "browser_download",
     ]);
-    assert.match(pi.tools.get("browser_batch").description, /the default way to browse\. Finish in the fewest calls/);
-    assert.match(pi.tools.get("browser").description, /Default to browser_batch/);
     for (const tool of pi.tools.values()) {
       assert.ok(isCallable(tool.renderCall));
       assert.ok(isCallable(tool.renderResult));
@@ -576,50 +573,6 @@ test("native Pi extension reports invalid configuration and recovers from start 
       .map((line) => JSON.parse(line));
     assert.equal(rows[0].ok, false);
     assert.equal((await fs.stat(rows[0].screenshot)).isFile(), true);
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-});
-
-
-test("Pi browser_batch charges one step and runs the batch snippet after overlay dismissal", async () => {
-  const { dir, screenshot } = await fixture();
-  const browser = new FakeBrowser({ screenshot });
-  const pi = new FakePi();
-  try {
-    createPiExtension({ browser, maxSteps: 4, traceDir: path.join(dir, "trace") })(pi);
-    const batch = pi.tools.get("browser_batch");
-    const signal = new AbortController().signal;
-
-    const spec = await batch.execute("call-1", { url: "https://example.com/form", note: "Opening the form" }, signal);
-    const specCall = browser.calls.find((call) => call.code.includes("agentBatch("));
-    assert.ok(specCall, "the batch snippet reached the browser");
-    assert.match(specCall.code, /^await overlays\.dismiss\(\);\nreturn agentBatch\(\[\{"action":"goto","url":"https:\/\/example\.com\/form"\}\], \{\}\);$/);
-    assert.equal(specCall.options.session, "pi");
-    assert.equal(specCall.options.note, "Opening the form");
-    // The batch budget rides on the run: one step keeps the 30 s floor.
-    assert.equal(specCall.options.timeout, 30);
-    assert.equal(spec.details.step, 1);
-    // Ordinary browser steps keep the client's own default.
-    await pi.tools.get("browser").execute("call-plain", { code: "return 1" }, signal);
-    assert.equal(browser.calls.at(-1).options.timeout, undefined);
-
-    await assert.rejects(
-      batch.execute("call-2", { steps: [{ action: "click", target: { css: "#go" } }] }, signal),
-      /allowWrites:true/,
-    );
-    // A refused batch never reached the browser and cost no step.
-    assert.equal(browser.calls.filter((call) => call.code.includes("agentBatch(")).length, 1);
-    const run = await batch.execute(
-      "call-3",
-      { steps: Array.from({ length: 4 }, () => ({ action: "click", target: { css: "#go" } })), allowWrites: true },
-      signal,
-    );
-    assert.equal(run.details.step, 3);
-    // Four steps: 15 s plus 10 s each, above the floor. The observation
-    // screenshot that follows a step is a separate, ordinary run.
-    const batchCalls = browser.calls.filter((call) => call.code.includes("agentBatch("));
-    assert.equal(batchCalls.at(-1).options.timeout, 55);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

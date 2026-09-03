@@ -8,19 +8,10 @@ test("default prompt is permissive", () => {
   const compact = prompt.replace(/\s+/g, " ");
   // Qwen 3.8 Max's winning prompt variant cut total task tokens by 23.1%.
   // Preserve that gain: critical behavior belongs below, not in explanation.
-  // The one addition since is the AgentBatch default (2026-09-03), which
-  // moved the ceiling from 4,000 to 4,300 characters.
-  assert.ok(prompt.length < 4_300, `default prompt grew to ${prompt.length} characters`);
+  assert.ok(prompt.length < 4_000, `default prompt grew to ${prompt.length} characters`);
   assert.ok(compact.includes("request authorizes ordinary steps"));
   assert.ok(compact.includes("Do not add confirmation or refuse them"));
-  assert.ok(compact.includes("Finish in the fewest model turns"));
-  assert.ok(compact.includes("Default to AgentBatch"));
-  assert.ok(compact.includes("one batch that starts with `goto` and ends with `answer`"));
-  assert.ok(compact.includes("read the page's spec first only when the page is unknown"));
-  assert.ok(compact.includes("resume from `failed.index`, never repeat a completed step"));
-  assert.ok(compact.includes("Code is for logic steps cannot express"));
-  assert.ok(compact.includes("plan then batch"));
-  assert.ok(compact.includes("in one snippet returning `{finalAnswer}`"));
+  assert.ok(compact.includes("Plan then batch"));
   assert.ok(compact.includes("Host cleanup is automatic"));
   assert.ok(compact.includes("getByRole"));
   assert.ok(compact.includes("article/reference pages"));

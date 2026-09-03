@@ -225,31 +225,6 @@ console.log(result.ok, result.result);   // true "Example Domain"
 await bw.close();
 ```
 
-## Your first batch
-
-Most tasks need more than one action. [AgentBatch](agent-batch.md) is the
-default way to run them: send every step in one call, with an `answer` to
-fill from what they read; read the page's spec first only when you do not
-know its controls. The worker runs the steps back to back and returns
-per-step results plus a fresh snapshot to plan from.
-
-```js
-const spec = await bw.batch({ url: "https://example.com" });
-console.log(spec.result.snapshot);   // page page-1 https://example.com/ "Example Domain"
-                                     // - link "More information..." [ref=e3]
-const done = await bw.batch(
-  [
-    { action: "click", target: { ref: "e3" } },
-    { id: "title", action: "read", target: { role: "heading" }, expect: "Example Domains" },
-  ],
-  { allowWrites: true, answer: "The linked page is titled: {title}" },
-);
-console.log(done.result.ok, done.result.finalAnswer);
-```
-
-The same two calls are the MCP `browser_batch` tool, the built-in agent's
-`batch` tool, and `betterwright batch` on the command line.
-
 ## Sessions
 
 A session is an independent set of pages and `state`. Use one per concurrent
@@ -290,8 +265,6 @@ await bw.run("await page.goto('https://example.com')");
 
 ## Where to go next
 
-- [AgentBatch](agent-batch.md) — the default two-call protocol: every step,
-  target, option, and result field.
 - [The browser API](browser-api.md) — every global available inside a snippet.
 - [The built-in agent](agent.md) — `betterwright exec`, the interactive
   console, and using BetterWright as a browser sub-agent.

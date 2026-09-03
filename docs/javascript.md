@@ -98,7 +98,6 @@ it from inside the sandbox.
 | `challenges` | Visible CAPTCHA/bot checks with page, provider, URL, and routing advice. |
 | `warnings` | Non-fatal notices. |
 | `webagents` | One-time compact action directory when the active origin supports WebAgents. |
-| `ui` | One-time compact semantic action directory synthesized from an ordinary page; skipped for a page an AgentBatch has already observed. |
 | `durationMs` | Time spent in the worker. |
 
 ```js
@@ -117,37 +116,6 @@ try {
 For broad discovery, use the host's web-search tool and open returned results in
 BetterWright instead of automating Google or Bing's public search UI. See
 [headed and headless browsing](attach-mode.md).
-
-### `batch()`
-
-`bw.batch(input, options?)` runs an [AgentBatch](agent-batch.md) in one
-worker round trip and resolves with the same envelope as `run()`, with the
-batch outcome as `result`:
-
-```js
-const spec = await bw.batch({ url: "https://example.com/login" });
-console.log(spec.result.snapshot); // the interactive spec with [ref=eN] targets
-
-const done = await bw.batch(
-  [
-    { action: "fill", target: { label: "Email" }, value: "ada@example.com" },
-    { action: "click", target: { role: "button", name: "Continue" } },
-    { action: "read", target: { role: "heading" }, expect: "Welcome" },
-  ],
-  { allowWrites: true, proof: true, session: "login" },
-);
-if (!done.result.ok) console.log("resume from step", done.result.failed.index);
-```
-
-`input` is the steps array, `{url}` for the spec call, or `{steps, ...}`.
-The options object carries both the batch options (`allowWrites`,
-`allowIrreversible`, `allowPasswords`, `observe`, `proof`, `settleMs`,
-`minIntervalMs`, `answer`) and the run options it forwards (`session`,
-`note`, `timeout`, `approvedDownloads`). With `answer`, a succeeded batch
-returns `result.finalAnswer` rendered from its steps. A malformed batch resolves to an
-`ok: false` envelope whose `error` names the step and field, without a
-worker round trip. `agentBatchCode(args)` returns the snippet `batch()`
-sends, for a host that drives the worker through `run()` itself.
 
 ### Pi tool-result images
 

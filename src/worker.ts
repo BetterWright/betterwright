@@ -15,7 +15,6 @@ import readline from "node:readline";
 import { types as utilTypes } from "node:util";
 import vm from "node:vm";
 import { getDomain } from "tldts";
-import { type AgentBatchHost, executeAgentBatch } from "./agent-batch.js";
 import {
   cookieSyncConsentTarget,
   redactProviderSecrets,
@@ -4607,30 +4606,18 @@ async function unannouncedWebAgentsDirectory(session) {
   return discovered.manifest ? publicWebAgentsManifest(discovered.manifest) : null;
 }
 
-// The origin+path key the one-time `result.ui` directory is announced under,
-// or null for a page whose URL has no http(s) origin to announce.
-function uiDirectoryKey(page) {
-  try {
-    const url = new URL(page.url());
-    if (!new Set(["http:", "https:"]).has(url.protocol)) return null;
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return null;
-  }
-}
-
-// An AgentBatch observation already carries every actionable control as a
-// snapshot, so the compact directory would only repeat it at extra token cost.
-function markUIDirectoryAnnounced(session, page) {
-  const key = uiDirectoryKey(page);
-  if (key) session.uiDirectoryAnnouncedOrigins.add(key);
-}
-
 async function unannouncedUIDirectory(session) {
   const page = session.pages.get(session.currentId);
   if (!page || page.isClosed()) return null;
-  const key = uiDirectoryKey(page);
-  if (!key || session.uiDirectoryAnnouncedOrigins.has(key)) return null;
+  let key;
+  try {
+    const url = new URL(page.url());
+    if (!new Set(["http:", "https:"]).has(url.protocol)) return null;
+    key = `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+  if (session.uiDirectoryAnnouncedOrigins.has(key)) return null;
   const discovered = pageWebAgentsDiscovery.get(page);
   if (!discovered || discovered.manifest) return null;
   session.uiDirectoryAnnouncedOrigins.add(key);
@@ -4716,9 +4703,7 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.context = wrap(browserContext, realm);
   sandbox.state = session.state;
   sandbox.pages = realm.makePages(getPages);
-  // Raw page operations, shared by the sandbox globals (which wrap the page
-  // for model code) and the AgentBatch host (which keeps the raw handle).
-  const openRawPage = async (url = null, options: any = {}) => {
+  sandbox.openPage = realm.safeFunction(async (url = null, options: any = {}) => {
     if (session.pages.size >= MAX_PAGES_PER_SESSION) {
       throw new Error(
         `Browser page limit (${MAX_PAGES_PER_SESSION}) reached for this session.`,
@@ -4730,9 +4715,9 @@ function buildSandbox(session, consoleMessages, execution) {
       assertModelNavigationUrl(url);
       await page.goto(String(url), options);
     }
-    return page;
-  };
-  const useRawPage = async (selector) => {
+    return wrap(page, realm);
+  });
+  sandbox.usePage = realm.safeFunction(async (selector) => {
     assertPageHandle(selector, "usePage");
     const entries = [...session.pages.entries()].filter(
       ([, page]) => !page.isClosed(),
@@ -4747,9 +4732,9 @@ function buildSandbox(session, consoleMessages, execution) {
       );
     session.currentId = entry[0];
     notifyLiveViewPreferred();
-    return entry[1];
-  };
-  const closeRawPage = async (selector) => {
+    return wrap(entry[1], realm);
+  });
+  sandbox.closePage = realm.safeFunction(async (selector) => {
     const target = selector === undefined ? session.currentId : selector;
     assertPageHandle(target, "closePage");
     const entries = [...session.pages.entries()];
@@ -4760,14 +4745,7 @@ function buildSandbox(session, consoleMessages, execution) {
     if (!entry) return { closed: false };
     await entry[1].close();
     return { closed: true, pageId: entry[0] };
-  };
-  sandbox.openPage = realm.safeFunction(async (url = null, options: any = {}) =>
-    wrap(await openRawPage(url, options), realm),
-  );
-  sandbox.usePage = realm.safeFunction(async (selector) =>
-    wrap(await useRawPage(selector), realm),
-  );
-  sandbox.closePage = realm.safeFunction(closeRawPage);
+  });
   sandbox.snapshot = realm.safeFunction(async (options) => {
     const page = await ensureSessionPage(session);
     return snapshotPage(page, options);
@@ -4775,7 +4753,7 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.artifactPath = realm.safeFunction((requested) =>
     makeArtifactPath(session, requested),
   );
-  const takeScreenshot = async (options) => {
+  sandbox.screenshot = realm.safeFunction(async (options) => {
     const settings =
       isString(options) ? { name: options } : options || {};
     const page = await ensureSessionPage(session);
@@ -4823,8 +4801,7 @@ function buildSandbox(session, consoleMessages, execution) {
     session.artifacts.push(artifact);
     if (kind === "question") session.awaitingAnswerSince = Date.now();
     return artifact;
-  };
-  sandbox.screenshot = realm.safeFunction(takeScreenshot);
+  });
   const dialogs = Object.create(null);
   dialogs.acceptNext = realm.safeFunction((promptText) => {
     session.nextDialog = { action: "accept", promptText };
@@ -5028,37 +5005,6 @@ function buildSandbox(session, consoleMessages, execution) {
       return executeUIBatch(page, operations, options);
     },
   );
-  // AgentBatch runs on the raw page with the worker's own helpers, so every
-  // model-supplied URL still passes the navigation policy and every
-  // observation goes through the same redacting snapshot as `snapshot()`.
-  const agentBatchHost: AgentBatchHost = {
-    currentPage: () => ensureSessionPage(session),
-    pageId,
-    snapshot: async (options) => snapshotPage(await ensureSessionPage(session), options),
-    screenshot: takeScreenshot,
-    assertNavigationUrl: assertModelNavigationUrl,
-    openPage: (url) => openRawPage(url),
-    usePage: useRawPage,
-    closePage: closeRawPage,
-    dismissOverlays: dismissObstructiveOverlays,
-    armDialog: (response, promptText) => {
-      session.nextDialog =
-        response === "accept" ? { action: "accept", promptText } : { action: "dismiss" };
-    },
-    disarmDialog: () => {
-      session.nextDialog = null;
-    },
-    observed: (page) => markUIDirectoryAnnounced(session, page),
-  };
-  sandbox.agentBatch = realm.safeFunction(async (stepsValue, optionsValue: any = {}) => {
-    let steps = stepsValue;
-    let options = optionsValue;
-    if (isObjectValue(stepsValue) && !Array.isArray(stepsValue)) {
-      steps = untrustedField(stepsValue, "steps");
-      options = stepsValue;
-    }
-    return executeAgentBatch(agentBatchHost, steps, options);
-  });
   const media = Object.create(null);
   media.inspect = realm.safeFunction(async () => {
     const page = await ensureSessionPage(session);
