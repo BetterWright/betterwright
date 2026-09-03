@@ -198,10 +198,12 @@ are surface options and are not part of the batch.
 - `proof` is the screenshot artifact when `proof: true` and the batch
   succeeded; it also appears in the envelope's `artifacts`.
 - `finalAnswer` is the rendered `answer`, present only when the batch
-  succeeded. A placeholder that names a step the batch did not run, or a
-  field that step produced no value for, leaves `finalAnswer` unset and
-  explains itself in `answerError`, so an answer never silently claims what
-  the page did not show; the model answers from the results instead.
+  succeeded. Every `{…}` group in the template must be a `{stepId}` or
+  `{stepId.field}` placeholder; a malformed group, a step the batch did not
+  run, or a field that step produced no value for leaves `finalAnswer` unset
+  and explains itself in `answerError`, so an answer never silently claims
+  what the page did not show or carries an unfilled token; the model answers
+  from the results instead.
 - The batch result is the `result` of an ordinary `run()` envelope, so
   `console`, `pages`, `challenges`, `skills`, and `warnings` arrive beside it.
   A bot challenge that appears mid-batch is reported the same way it is for

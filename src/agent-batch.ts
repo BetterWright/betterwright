@@ -58,7 +58,10 @@ const MAX_SETTLE_MS = 5_000;
 const MAX_PACING_MS = 1_000;
 const MAX_ERROR_CHARS = 600;
 const MAX_ANSWER_CHARS = 4_000;
-const ANSWER_PLACEHOLDER = /\{([A-Za-z][A-Za-z0-9_-]{0,63})(?:\.([A-Za-z]+))?\}/g;
+// Every brace group in an answer template is a placeholder and must fit the
+// grammar; a group that does not is refused rather than kept as literal text.
+const ANSWER_BRACES = /\{[^{}]*\}/g;
+const ANSWER_PLACEHOLDER = /^\{([A-Za-z][A-Za-z0-9_-]{0,63})(?:\.([A-Za-z]+))?\}$/;
 const POLL_MS = 50;
 const ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
@@ -961,12 +964,18 @@ async function runStep(
 /**
  * Fill an `answer` template from step results: `{id}` is the step's text,
  * value, or URL (whichever it produced first), `{id.field}` any scalar field
- * of its result. Throws when a placeholder names a step or field with no
- * value, so an answer never silently claims something the page did not show.
+ * of its result. Throws when a brace group is not a well-formed placeholder
+ * or names a step or field with no value, so an answer never silently
+ * claims something the page did not show — or carries an unfilled token.
  */
 export function renderAgentBatchAnswer(template: string, results: AgentBatchStepResult[]) {
   const byId = new Map(results.map((result) => [result.id, result]));
-  return template.replace(ANSWER_PLACEHOLDER, (placeholder, id: string, field: string | undefined) => {
+  return template.replace(ANSWER_BRACES, (placeholder) => {
+    const match = ANSWER_PLACEHOLDER.exec(placeholder);
+    if (!match) {
+      throw new Error(`answer placeholder ${placeholder} must be {stepId} or {stepId.field}.`);
+    }
+    const [, id, field] = match;
     const result = byId.get(id);
     if (!result) throw new Error(`answer placeholder ${placeholder} names a step this batch did not run.`);
     if (field !== undefined) {
