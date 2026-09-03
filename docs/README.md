@@ -12,7 +12,7 @@ pick; most pages apply to both.
 
 ## Start here
 
-New here: `npm install -g betterwright && betterwright init`. That one command
+New here: `bun install -g betterwright && betterwright init`. That one command
 installs the browser, wires up the agent hosts on your machine, and proves the
 whole path works by loading a real page.
 

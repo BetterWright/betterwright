@@ -29,11 +29,11 @@ If the host is one BetterWright can detect — Claude Code, Cursor, Codex, or
 anything reading `~/.agents/skills` — two commands do everything in this guide:
 
 ```bash
-npm install -g betterwright
+bun install -g betterwright
 betterwright init          # add --yes to skip every prompt
 ```
 
-`init` checks Node, downloads the browser if it is missing, installs the skill
+`init` checks Bun, downloads the browser if it is missing, installs the skill
 into each agent host it finds, offers MCP registration when the Claude CLI is
 present, and finishes by loading a real page to prove the whole path works. It
 is idempotent — re-run it after an upgrade. If it ends with
@@ -46,18 +46,18 @@ client it does not know), or when you want to do it deliberately.
 
 ## Step 0 — Prerequisites (do this for every path)
 
-1. **Node.js 22+ must be on `PATH`.** Check with `node --version`. If missing,
-   tell the user to install it from https://nodejs.org — you cannot proceed
-   without it.
+1. **Bun 1.4 must be on `PATH`.** Check with `bun --version`. If missing,
+   tell the user to install it from https://bun.com — you cannot proceed
+   without it. Do not install Bun from npm.
 2. **Install BetterWright:**
 
    ```bash
-   npm install -g betterwright
+   bun install -g betterwright
    ```
 
    (For the MCP path also install the SDK:
-   `npm install -g betterwright @modelcontextprotocol/sdk`. In a project rather
-   than globally, drop `-g` and prefix later commands with `npx`.)
+   `bun add -g betterwright @modelcontextprotocol/sdk`. In a project rather
+   than globally, drop `-g` and prefix later commands with `bunx`.)
 3. **Download the managed browser** (one-time):
 
    ```bash
@@ -173,15 +173,15 @@ pi
 For a local checkout under active development:
 
 ```bash
-npm install
-npm run build
-npx betterwright setup
+bun install
+bun run build
+bunx betterwright setup
 pi install /absolute/path/to/betterwright
 pi
 ```
 
 Use `-l` with `pi install` for project-local Pi settings. To try the source
-extension without installing the package, run `npm run build` and then
+extension without installing the package, run `bun run build` and then
 `pi --extension ./dist/src/pi-extension.js` from the BetterWright checkout.
 
 The extension supports these optional host environment variables:
@@ -213,12 +213,12 @@ tool: calling it grants that one run permission to save a remote file. The
 `browser` tool cannot download. Set `BETTERWRIGHT_DOWNLOAD_POLICY=deny` to disable
 downloads, or `allow` if the `browser` tool should be able to save files too.
 
-The MCP server is the Node package plus the `@modelcontextprotocol/sdk` peer
-dependency (`npm install betterwright @modelcontextprotocol/sdk`).
+The MCP server is the published package plus the `@modelcontextprotocol/sdk` peer
+dependency (`bun add betterwright @modelcontextprotocol/sdk`).
 
 **Claude Code:**
 ```bash
-claude mcp add betterwright -- npx betterwright mcp
+claude mcp add betterwright -- bunx betterwright mcp
 ```
 
 **Any other MCP client** (Cursor, Windsurf, Cline, …) — add this to the client's
@@ -228,7 +228,7 @@ documents):
 {
   "mcpServers": {
     "betterwright": {
-      "command": "npx",
+      "command": "bunx",
       "args": ["betterwright", "mcp"]
     }
   }

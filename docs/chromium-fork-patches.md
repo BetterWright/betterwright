@@ -248,7 +248,7 @@ checks against stock-Chrome behavior, plus the live score endpoints described in
 [launch-identity.md](launch-identity.md#verification):
 
 ```bash
-npm run build:harness
+bun run build
 BETTERWRIGHT_CHROMIUM_PATH=/path/to/linux-x64/betterchromium \
-  node research/stealth-report.js --live
+  bun research/stealth-report.ts --live
 ```

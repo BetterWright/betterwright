@@ -1,6 +1,6 @@
 # Odysseys benchmark harness
 
-> Compile the harness first: `npm run build:harness` (emits the `.js` next to each `.ts`).
+> Run after `bun run build`. Bun executes the TypeScript harness directly.
 
 Odysseys is a long-horizon, multi-site web agent benchmark: 200 tasks derived
 from real browsing sessions, evaluated on the live internet, each annotated with
@@ -42,7 +42,7 @@ The harness does not depend on the vendored copy. Every entry point takes
 this directory needs no task file at all:
 
 ```bash
-node benchmarks/odysseys/exec-runner.js run --tasks /path/to/your/odysseys.json …
+bun benchmarks/odysseys/exec-runner.ts run --tasks /path/to/your/odysseys.json …
 ```
 
 This mirrors [`../online-mind2web`](../online-mind2web/README.md), which ships
@@ -79,7 +79,7 @@ staggers browser starts by 600 ms to avoid a launch spike.
 
 ```bash
 # Agent campaign
-node benchmarks/odysseys/exec-runner.js run \
+bun benchmarks/odysseys/exec-runner.ts run \
   --tasks benchmarks/odysseys/odysseys.json \
   --manifest benchmarks/odysseys/full-200.json \
   --output benchmarks/odysseys/runs/full-200 \
@@ -90,7 +90,7 @@ node benchmarks/odysseys/exec-runner.js run \
   --timeout-minutes 100
 
 # Rubric judge — multimodal, screenshots + actions
-node benchmarks/odysseys/judge.js \
+bun benchmarks/odysseys/judge.ts \
   --tasks benchmarks/odysseys/odysseys.json \
   --manifest benchmarks/odysseys/full-200.json \
   --output benchmarks/odysseys/runs/full-200 \
