@@ -465,11 +465,11 @@ remains available when you need full control of the request shape.
 Each turn: the model sees the task, the operator guidance from
 [`agentSystemPrompt`](agent-prompt.md), and the tools (`batch`, `browser`,
 `done`, `login` when a vault is present, and `ask` when an `askUser` handler
-is present). `batch` is the default — [AgentBatch](agent-batch.md): one call
-opens a page and returns its spec, the next runs every step of the task and
-returns per-step results plus a fresh snapshot, so most tasks are two tool
-calls. `browser` runs async Playwright JavaScript for what steps cannot
-express. Either way BetterWright feeds back a compact JSON observation
+is present). `batch` is the default — [AgentBatch](agent-batch.md): when the task names
+its targets, one call runs every step and, with an `answer` template, ends
+the task in that same turn; when the page is unknown, a `{url}` call first
+returns its spec. `browser` runs async Playwright JavaScript for what steps
+cannot express. Either way BetterWright feeds back a compact JSON observation
 (`ok`, `result`, `console`, `pages`, `challenges`, `skills`, `warnings`,
 `screenshots`). The loop ends when the model calls `done` (or answers in
 prose) — there is no step cap. Screenshots are captured as artifacts and their
@@ -479,7 +479,9 @@ limit exactly like a snippet that keeps throwing.
 
 A `browser` call can also end the task in the *same* turn: when the model's
 code returns `{ finalAnswer: "…" }` (from an `ok` run), the harness records
-that as the answer and finishes without spending another model round-trip. The
-preamble teaches the model to use this single-call shape for read-only tasks —
-navigate, extract, compute, capture proof, and return `finalAnswer` in one
-call — which makes a simple lookup cost one model turn instead of two.
+that as the answer and finishes without spending another model round-trip. A
+`batch` call does the same through its `answer` template, rendered from the
+steps' own readings only when every step succeeded. The preamble teaches the
+model to use this single-call shape whenever the task names its targets —
+navigate, act, extract, verify, capture proof, and answer in one call — which
+makes a lookup or a form cost one model turn instead of two or more.

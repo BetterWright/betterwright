@@ -196,6 +196,12 @@ export interface AgentBatchOptions {
   settleMs?: number;
   /** Pause between steps (0–1000, default 0). */
   minIntervalMs?: number;
+  /**
+   * A final answer to render once every step succeeds: `{stepId}` is that
+   * step's text, value, or URL; `{stepId.field}` any scalar field of its
+   * result. The built-in agent finishes the task with it in the same turn.
+   */
+  answer?: string;
 }
 
 /** What `batch()` accepts: the steps, or `{url}` for the spec call, or `{steps}`. */
@@ -268,6 +274,10 @@ export interface AgentBatchResult {
   snapshot?: string;
   observeError?: string;
   proof?: AgentBatchArtifact;
+  /** The `answer` template rendered from step results (only when `ok`). */
+  finalAnswer?: string;
+  /** Why `answer` could not be rendered: a placeholder named a step or field with no value. */
+  answerError?: string;
   durationMs: number;
 }
 

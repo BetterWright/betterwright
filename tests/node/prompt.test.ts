@@ -13,10 +13,14 @@ test("default prompt is permissive", () => {
   assert.ok(prompt.length < 4_300, `default prompt grew to ${prompt.length} characters`);
   assert.ok(compact.includes("request authorizes ordinary steps"));
   assert.ok(compact.includes("Do not add confirmation or refuse them"));
+  assert.ok(compact.includes("Finish in the fewest model turns"));
   assert.ok(compact.includes("Default to AgentBatch"));
+  assert.ok(compact.includes("one batch that starts with `goto` and ends with `answer`"));
+  assert.ok(compact.includes("read the page's spec first only when the page is unknown"));
   assert.ok(compact.includes("resume from `failed.index`, never repeat a completed step"));
   assert.ok(compact.includes("Code is for logic steps cannot express"));
   assert.ok(compact.includes("plan then batch"));
+  assert.ok(compact.includes("in one snippet returning `{finalAnswer}`"));
   assert.ok(compact.includes("Host cleanup is automatic"));
   assert.ok(compact.includes("getByRole"));
   assert.ok(compact.includes("article/reference pages"));

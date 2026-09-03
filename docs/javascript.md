@@ -142,8 +142,9 @@ if (!done.result.ok) console.log("resume from step", done.result.failed.index);
 `input` is the steps array, `{url}` for the spec call, or `{steps, ...}`.
 The options object carries both the batch options (`allowWrites`,
 `allowIrreversible`, `allowPasswords`, `observe`, `proof`, `settleMs`,
-`minIntervalMs`) and the run options it forwards (`session`, `note`,
-`timeout`, `approvedDownloads`). A malformed batch resolves to an
+`minIntervalMs`, `answer`) and the run options it forwards (`session`,
+`note`, `timeout`, `approvedDownloads`). With `answer`, a succeeded batch
+returns `result.finalAnswer` rendered from its steps. A malformed batch resolves to an
 `ok: false` envelope whose `error` names the step and field, without a
 worker round trip. `agentBatchCode(args)` returns the snippet `batch()`
 sends, for a host that drives the worker through `run()` itself.
