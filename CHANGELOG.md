@@ -24,6 +24,8 @@ install run on Bun. The published library still loads under Node 22.
   and missing optional peers suggest `bun add` when the host is Bun.
 - `--version` and `--help` load a thin CLI router and skip `cli-main`.
   `bun test` runs the unit files in parallel.
+- Cross-platform CI still reports the branch-protected
+  `Cross-platform unit tests (<os>, 22|24)` names. Those jobs run Bun 1.4.
 
 ### Fixed
 
