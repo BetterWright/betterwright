@@ -46,7 +46,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { agentBatchCode, agentBatchTimeoutSeconds } from "../src/agent-batch.js";
+import { agentBatchCode, agentBatchRunTimeoutSeconds } from "../src/agent-batch.js";
 import { formatAgentUsage } from "../src/agent-usage.js";
 import { chromiumNeedsSoftwareGpu } from "../src/browser-runtime.js";
 import { configuredBrowserBackend } from "../src/chromium-fork.js";
@@ -653,21 +653,18 @@ async function readBatchArgs(arg, flags) {
 
 async function cmdBatch(arg, flags) {
   let code;
-  let stepCount = 1;
+  let timeout = DEFAULT_BATCH_TIMEOUT_SECONDS;
   try {
     const args = await readBatchArgs(arg, flags);
     code = agentBatchCode(args);
-    if (Array.isArray(args.steps)) stepCount = args.steps.length;
+    timeout = agentBatchRunTimeoutSeconds(args, DEFAULT_BATCH_TIMEOUT_SECONDS);
   } catch (error) {
     console.log(JSON.stringify({ ok: false, error: String(error?.message || error) }, null, 2));
     return 1;
   }
   const acquired = await acquireRunBrowser(flags);
   try {
-    const result = await acquired.browser.run(code, {
-      session: acquired.session,
-      timeout: agentBatchTimeoutSeconds(stepCount, DEFAULT_BATCH_TIMEOUT_SECONDS),
-    });
+    const result = await acquired.browser.run(code, { session: acquired.session, timeout });
     if (acquired.viaDaemon) result.session = acquired.session;
     if (acquired.warning)
       result.warnings = [...(result.warnings || []), acquired.warning];

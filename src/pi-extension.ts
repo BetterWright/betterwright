@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { agentBatchCode } from "./agent-batch.js";
+import { agentBatchCode, agentBatchRunTimeoutSeconds } from "./agent-batch.js";
 import { BetterWright } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
 import {
@@ -20,6 +20,17 @@ const BROWSER_TOOL_NAMES = new Set([
   "browser_evidence",
   "browser_login",
 ]);
+// The BetterWright client's own per-snippet default, the floor for a batch.
+const DEFAULT_RUN_TIMEOUT_SECONDS = 30;
+
+/** What one Pi browser step hands to `BetterWright.run`. */
+interface PiRunOptions {
+  session: string;
+  note?: string;
+  approvedDownloads: boolean;
+  timeout?: number;
+}
+
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const WEB_PROTOCOLS = new Set(["http:", "https:"]);
@@ -557,7 +568,7 @@ export function createPiExtension(options: any = {}) {
       );
     }
 
-    async function executeBrowser(toolName, params, signal, approvedDownloads, code = params.code) {
+    async function executeBrowser(toolName, params, signal, approvedDownloads, batch = null) {
       if (signal?.aborted) throw new Error("Browser call cancelled.");
       if (requireEvidence && !checklistInitialized) {
         throw new Error(
@@ -572,11 +583,16 @@ export function createPiExtension(options: any = {}) {
       }
       const step = ++stepCount;
       const instance = await getBrowser();
-      const result = await instance.run(`await overlays.dismiss();\n${code}`, {
-        session,
-        note: params.note,
-        approvedDownloads,
-      });
+      const runOptions: PiRunOptions = { session, note: params.note, approvedDownloads };
+      // A batch's run budget grows with its steps; the client's per-snippet
+      // default is the floor.
+      if (batch) {
+        runOptions.timeout = agentBatchRunTimeoutSeconds(
+          params,
+          Number(instance.defaultTimeout) || DEFAULT_RUN_TIMEOUT_SECONDS,
+        );
+      }
+      const result = await instance.run(`await overlays.dismiss();\n${batch ? batch.code : params.code}`, runOptions);
       let observation = null;
       if (autoScreenshot && piImageArtifacts(result).length === 0) {
         observation = await instance.run(
@@ -768,7 +784,7 @@ export function createPiExtension(options: any = {}) {
       // batch costs no step; async so the refusal is a rejection, never a
       // synchronous throw out of Pi's tool dispatch.
       execute: async (_id, params, signal) =>
-        executeBrowser("browser_batch", params, signal, false, agentBatchCode(params)),
+        executeBrowser("browser_batch", params, signal, false, { code: agentBatchCode(params) }),
       renderCall: makeRenderCall("browser_batch"),
       renderResult: summaryRenderResult,
     });

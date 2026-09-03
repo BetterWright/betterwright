@@ -8,6 +8,7 @@ import {
   AGENT_BATCH_ACTIONS,
   AGENT_BATCH_PROTOCOL,
   agentBatchCode,
+  agentBatchRunTimeoutSeconds,
   agentBatchTimeoutSeconds,
   executeAgentBatch,
   MAX_AGENT_BATCH_STEPS,
@@ -135,6 +136,10 @@ test("a batch's default run timeout grows with its steps and stays bounded", () 
   assert.equal(agentBatchTimeoutSeconds(100, 30), 600);
   assert.equal(agentBatchTimeoutSeconds(0, 30), 30);
   assert.equal(agentBatchTimeoutSeconds(Number.NaN, 45), 45);
+  // Read off tool arguments, a spec call counts as one step.
+  assert.equal(agentBatchRunTimeoutSeconds({ url: "https://a.test/" }, 120), 120);
+  assert.equal(agentBatchRunTimeoutSeconds({ steps: new Array(12).fill({ action: "reload" }) }, 120), 135);
+  assert.equal(agentBatchRunTimeoutSeconds({ steps: "junk" }, 30), 30);
 });
 
 test("goto and openPage refuse a URL that does not parse", () => {
@@ -299,6 +304,7 @@ function fakeHost(page) {
     closePage: async () => ({ closed: true, pageId: "page-1" }),
     dismissOverlays: async () => ({ dismissed: [{ kind: "cookie", label: "Reject all" }] }),
     armDialog: (response, promptText) => host.dialogs.push([response, promptText]),
+    disarmDialog: () => host.dialogs.push(["disarm"]),
     observed: (observedPage) => host.observedPages.push(observedPage),
   };
   return host;
@@ -485,7 +491,8 @@ test("page, dialog, overlay, scroll, and select steps route through the host and
     { allowWrites: true, observe: "diff", minIntervalMs: 1 },
   );
   assert.equal(result.ok, true, JSON.stringify(result.failed));
-  assert.deepEqual(host.dialogs, [["accept", "ok"]]);
+  // The arm is dropped when the batch ends, so no later dialog inherits it.
+  assert.deepEqual(host.dialogs, [["accept", "ok"], ["disarm"]]);
   assert.deepEqual(result.steps[1].dismissed, [{ kind: "cookie", label: "Reject all" }]);
   assert.deepEqual(result.steps[2].selected, ["pro"]);
   assert.equal(result.steps[3].scrolled, "target");
@@ -499,6 +506,27 @@ test("page, dialog, overlay, scroll, and select steps route through the host and
   assert.ok(page.calls.some((call) => call[0] === "wheel" && call[2] === 800));
   assert.ok(page.calls.some((call) => call[0] === "back"));
   assert.deepEqual(host.snapshots, [{ interactive: true, diff: true }]);
+});
+
+test("an armed dialog response is cleared when the batch ends, even after a failure", async () => {
+  const page = fakePage({ "role:button:Missing": [] });
+  const host = fakeHost(page);
+  const stopped = await executeAgentBatch(
+    host,
+    [
+      { action: "dialog", response: "dismiss" },
+      { action: "click", target: { role: "button", name: "Missing" }, timeoutMs: 100 },
+    ],
+    { allowWrites: true, observe: "none" },
+  );
+  assert.equal(stopped.ok, false);
+  assert.deepEqual(host.dialogs, [["dismiss", undefined], ["disarm"]]);
+
+  // A batch that armed nothing leaves the session's dialog state alone: a
+  // response a snippet armed before calling the batch is still the snippet's.
+  const untouched = fakeHost(page);
+  await executeAgentBatch(untouched, [{ action: "reload" }], { observe: "none" });
+  assert.deepEqual(untouched.dialogs, []);
 });
 
 test("a read with expect polls until the text arrives and fails with the last text seen", async () => {

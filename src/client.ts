@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 // implementation against them turns a drift between the two into a compile
 // error instead of something only a consumer would notice.
 import type { BetterWrightOptions, LiveViewOptions } from "../types/public.js";
-import { agentBatchCode, agentBatchTimeoutSeconds } from "./agent-batch.js";
+import { agentBatchCode, agentBatchRunTimeoutSeconds } from "./agent-batch.js";
 import {
   configuredDefaultProvider,
   expandProviderChoice,
@@ -1117,8 +1117,7 @@ export class BetterWright {
     // A batch is as long as its steps: give an unspecified timeout room for
     // every step's own budget, so a long batch is not cut off (and the
     // worker restarted) by the per-snippet default sized for one action.
-    const stepCount = Array.isArray(args.steps) ? args.steps.length : 1;
-    const budget = timeout ?? agentBatchTimeoutSeconds(stepCount, this.defaultTimeout);
+    const budget = timeout ?? agentBatchRunTimeoutSeconds(args, this.defaultTimeout);
     return this.run(code, { session, note, timeout: budget, approvedDownloads });
   }
 

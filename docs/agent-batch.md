@@ -94,7 +94,7 @@ message naming the step and the field.
 | `openPage` | `url?` | `pageId`, `url`. The new page becomes current. |
 | `usePage` | `page` (id or index) | `pageId`, `url` |
 | `closePage` | `page?` | `closed`, `pageId` |
-| `dialog` | `response` (`accept` or `dismiss`), `promptText?` | `prepared`. Arms the next dialog. |
+| `dialog` | `response` (`accept` or `dismiss`), `promptText?` | `prepared`. Arms the answer for the next dialog this batch raises; an arm no dialog consumed is cleared when the batch ends. |
 | `overlays` | — | `dismissed`. Closes cookie and promotional overlays only. |
 
 Every step also accepts:
@@ -205,10 +205,10 @@ runs, since a first-party workflow is worth more than either.
 - **Downloads are not granted.** A batch runs under the session's download
   policy; a step that triggers a download needs the host's approval surface
   exactly as a snippet does.
-- **Timeouts are the run's.** The batch runs under an ordinary `run()`
-  timeout: 120 s over MCP, the remaining wall-clock budget inside the
-  built-in agent, and for `bw.batch()` and `betterwright batch` a budget
-  sized to the batch — the surface's default (30 s) or 15 s plus 10 s per
+- **Timeouts are the run's, sized to the batch.** The batch runs under an
+  ordinary `run()` timeout. Inside the built-in agent that is the remaining
+  wall-clock budget; everywhere else it is the surface's own default (120 s
+  over MCP, 30 s for Pi, the CLI, and the JS client) or 15 s plus 10 s per
   step, whichever is larger, capped at ten minutes. Pass `timeout` (seconds)
   to `bw.batch()` to choose your own.
 

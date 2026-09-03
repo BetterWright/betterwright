@@ -309,6 +309,8 @@ export interface AgentBatchHost {
   closePage(selector?: string | number): Promise<{ closed: boolean; pageId?: string }>;
   dismissOverlays(page): Promise<{ dismissed: Array<{ kind: string; label: string }> }>;
   armDialog(response: AgentBatchDialogResponse, promptText?: string): void;
+  /** Drop an armed response no dialog consumed, so it cannot answer a later, unrelated dialog. */
+  disarmDialog(): void;
   /** The batch observed this page's spec, so the envelope can skip the redundant `ui` directory. */
   observed?(page): void;
 }
@@ -673,6 +675,16 @@ export function agentBatchTimeoutSeconds(stepCount: number, defaultSeconds: numb
   return Math.min(600, Math.max(defaultSeconds, 15 + perStep * steps));
 }
 
+/**
+ * The same budget read off tool arguments: a `{url}` spec call is one step.
+ * Every surface that turns arguments into a `run()` uses this, so a long
+ * batch is never cut off (and the worker restarted) by a per-snippet default
+ * sized for one action.
+ */
+export function agentBatchRunTimeoutSeconds(args: AgentBatchToolArgs, defaultSeconds: number) {
+  return agentBatchTimeoutSeconds(Array.isArray(args.steps) ? args.steps.length : 1, defaultSeconds);
+}
+
 // --- Execution ---------------------------------------------------------------
 
 function describeError(error: UntrustedValue) {
@@ -951,6 +963,7 @@ export async function executeAgentBatch(
   let failed: AgentBatchFailure | undefined;
   let completed = 0;
   let unsettled = false;
+  let armedDialog = false;
   let page = await host.currentPage();
   try {
     for (const [index, step] of steps.entries()) {
@@ -965,6 +978,7 @@ export async function executeAgentBatch(
         const data = await runStep(host, page, step, options);
         results.push({ id: step.id, action: step.action, ok: true, ...data });
         completed += 1;
+        if (step.action === "dialog") armedDialog = true;
         if (UNSETTLING_ACTIONS.has(step.action)) unsettled = true;
       } catch (error) {
         const message = describeError(error);
@@ -980,6 +994,11 @@ export async function executeAgentBatch(
     if (unsettled && options.observe !== "none") await activity.settle(options.settleMs);
   } finally {
     activity.detach();
+    // A `dialog` step answers a dialog *this batch* raises. One that never
+    // appeared must not leave its response behind for the session's next,
+    // unrelated dialog; a response a snippet armed before calling the batch
+    // is the snippet's to keep.
+    if (armedDialog) host.disarmDialog();
   }
   const result: AgentBatchResult = {
     protocol: AGENT_BATCH_PROTOCOL,

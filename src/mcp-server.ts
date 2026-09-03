@@ -56,7 +56,7 @@
 import { createRequire } from "node:module";
 import type { DownloadPolicy } from "../types/common.js";
 import type { BetterWrightOptions } from "../types/public.js";
-import { agentBatchCode } from "./agent-batch.js";
+import { agentBatchCode, agentBatchRunTimeoutSeconds } from "./agent-batch.js";
 import {
   BetterWright,
   NetworkPolicy,
@@ -285,6 +285,7 @@ interface BrowserRunToolOptions {
   session: string;
   note: string | undefined;
   approvedDownloads?: boolean;
+  timeout?: number;
 }
 
 const HANDOFF_INPUT_SCHEMA = {
@@ -358,6 +359,9 @@ function mcpTools(withLogin) {
 
 function createMcpHandlers({ browser, downloadPolicy, liveView = liveViewFromEnv() }) {
   const withLogin = Boolean(browser.vault);
+  // A batch's run budget grows with its steps; the server's per-call
+  // timeout is the floor, as it is for every other tool.
+  const batchTimeoutFloor = Number(browser.defaultTimeout) || DEFAULT_MCP_TIMEOUT_SECONDS;
   // Chat plumbing between the live-view page and the MCP client's model. The
   // standalone agent harness drains viewer chat at its own turn boundaries;
   // over MCP the host's loop is opaque, so the boundary is each tool call:
@@ -462,6 +466,7 @@ function createMcpHandlers({ browser, downloadPolicy, liveView = liveViewFromEnv
           const options: BrowserRunToolOptions = {
             session: String(args.session || "default"),
             note: String(args.note || "") || undefined,
+            timeout: agentBatchRunTimeoutSeconds(args, batchTimeoutFloor),
           };
           if (liveViewActive && options.note) {
             await browser

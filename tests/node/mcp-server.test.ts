@@ -168,6 +168,9 @@ test("MCP browser_batch runs an AgentBatch in one worker round trip", async () =
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.session, "form");
   assert.equal(calls[0].options.note, "Submitting and verifying the form.");
+  // Three steps fit inside the server's 120 s floor; the budget still rides
+  // on the run so a long batch is never cut off by the per-call default.
+  assert.equal(calls[0].options.timeout, 120);
   assert.match(calls[0].code, /^return agentBatch\(\[/);
   assert.match(calls[0].code, /"allowWrites":true/);
   assert.match(calls[0].code, /"allowPasswords":true/);
@@ -176,6 +179,37 @@ test("MCP browser_batch runs an AgentBatch in one worker round trip", async () =
   assert.match(calls[0].code, /\\u2028/);
   assert.doesNotMatch(calls[0].code, /session|note/);
   assert.equal(JSON.parse(response.content[0].text).result.protocol, "agent-batch/1");
+});
+
+test("MCP browser_batch sizes the run timeout to the batch above the server floor", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({
+    browser: {
+      vault: false,
+      defaultTimeout: 20,
+      async run(code, options) {
+        calls.push({ code, options });
+        return { ok: true, result: { protocol: "agent-batch/1", ok: true } };
+      },
+    },
+    downloadPolicy: "deny",
+  });
+  const long = await handlers.callTool({
+    params: {
+      name: "browser_batch",
+      arguments: { steps: Array.from({ length: 30 }, () => ({ action: "reload" })) },
+    },
+  });
+  assert.equal(long.isError, undefined);
+  // 15 s plus 10 s per step, well above the 20 s configured floor.
+  assert.equal(calls[0].options.timeout, 315);
+
+  const spec = await handlers.callTool({
+    params: { name: "browser_batch", arguments: { url: "https://example.com/" } },
+  });
+  assert.equal(spec.isError, undefined);
+  // One step: the floor is the deployer's configured per-call timeout.
+  assert.equal(calls[1].options.timeout, 25);
 });
 
 test("MCP browser_batch refuses a malformed batch before the worker round trip", async () => {

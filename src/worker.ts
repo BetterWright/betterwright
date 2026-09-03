@@ -5045,6 +5045,9 @@ function buildSandbox(session, consoleMessages, execution) {
       session.nextDialog =
         response === "accept" ? { action: "accept", promptText } : { action: "dismiss" };
     },
+    disarmDialog: () => {
+      session.nextDialog = null;
+    },
     observed: (page) => markUIDirectoryAnnounced(session, page),
   };
   sandbox.agentBatch = realm.safeFunction(async (stepsValue, optionsValue: any = {}) => {

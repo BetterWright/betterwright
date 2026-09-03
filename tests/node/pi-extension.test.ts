@@ -587,7 +587,7 @@ test("Pi browser_batch charges one step and runs the batch snippet after overlay
   const browser = new FakeBrowser({ screenshot });
   const pi = new FakePi();
   try {
-    createPiExtension({ browser, maxSteps: 3, traceDir: path.join(dir, "trace") })(pi);
+    createPiExtension({ browser, maxSteps: 4, traceDir: path.join(dir, "trace") })(pi);
     const batch = pi.tools.get("browser_batch");
     const signal = new AbortController().signal;
 
@@ -597,7 +597,12 @@ test("Pi browser_batch charges one step and runs the batch snippet after overlay
     assert.match(specCall.code, /^await overlays\.dismiss\(\);\nreturn agentBatch\(\[\{"action":"goto","url":"https:\/\/example\.com\/form"\}\], \{\}\);$/);
     assert.equal(specCall.options.session, "pi");
     assert.equal(specCall.options.note, "Opening the form");
+    // The batch budget rides on the run: one step keeps the 30 s floor.
+    assert.equal(specCall.options.timeout, 30);
     assert.equal(spec.details.step, 1);
+    // Ordinary browser steps keep the client's own default.
+    await pi.tools.get("browser").execute("call-plain", { code: "return 1" }, signal);
+    assert.equal(browser.calls.at(-1).options.timeout, undefined);
 
     await assert.rejects(
       batch.execute("call-2", { steps: [{ action: "click", target: { css: "#go" } }] }, signal),
@@ -607,10 +612,14 @@ test("Pi browser_batch charges one step and runs the batch snippet after overlay
     assert.equal(browser.calls.filter((call) => call.code.includes("agentBatch(")).length, 1);
     const run = await batch.execute(
       "call-3",
-      { steps: [{ action: "click", target: { css: "#go" } }], allowWrites: true },
+      { steps: Array.from({ length: 4 }, () => ({ action: "click", target: { css: "#go" } })), allowWrites: true },
       signal,
     );
-    assert.equal(run.details.step, 2);
+    assert.equal(run.details.step, 3);
+    // Four steps: 15 s plus 10 s each, above the floor. The observation
+    // screenshot that follows a step is a separate, ordinary run.
+    const batchCalls = browser.calls.filter((call) => call.code.includes("agentBatch("));
+    assert.equal(batchCalls.at(-1).options.timeout, 55);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

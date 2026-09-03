@@ -1396,6 +1396,25 @@ test("agentBatch waits, dialogs, tabs, and scrolling run inside one call", opts,
     assert.equal(batch.steps[12].pageId, batch.steps[10].pageId);
     assert.match(batch.steps[13].url, /#done$/);
     assert.equal(result.pages.length, 1, "the extra tab was closed inside the batch");
+
+    // A dialog arm no dialog consumed dies with its batch: the next, unrelated
+    // dialog in the session gets the worker's default (dismiss), not a stale accept.
+    const armedOnly = await bw.batch(
+      [{ action: "dialog", response: "accept" }, { action: "read", target: { css: "#answer" } }],
+      { allowWrites: true, observe: "none" },
+    );
+    assert.equal(armedOnly.ok, true, armedOnly.error);
+    assert.equal(armedOnly.result.ok, true, JSON.stringify(armedOnly.result.failed));
+    const later = await bw.run(`
+      await page.click('#ask');
+      return page.locator('#answer').innerText();
+    `);
+    assert.equal(later.ok, true, later.error);
+    assert.equal(later.result, "no");
+    assert.deepEqual(
+      later.events.filter((event) => event.type === "dialog").map((event) => event.action),
+      ["dismiss"],
+    );
   } finally {
     await bw.close();
     await site.close();
