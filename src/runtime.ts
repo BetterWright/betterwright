@@ -3,6 +3,8 @@
 // Bun ignores NODE_OPTIONS, so worker/daemon spawns that used to inherit
 // `--import` through that env var have to put the flags on argv instead.
 
+import { fileURLToPath } from "node:url";
+
 export const PINNED_BUN_VERSION = "1.4.0";
 export const MIN_NODE_MAJOR = 22;
 
@@ -70,10 +72,36 @@ export function importFlagsFromNodeOptions(raw) {
   return flags;
 }
 
+/**
+ * Bun's `--import` resolver percent-encodes `~` in `file:` URLs, then looks
+ * for a path that does not exist. Node's `pathToFileURL` encodes that
+ * character, and Windows GitHub runners live under the 8.3 home `RUNNER~1`.
+ * Pass the filesystem path instead; Bun preloads those.
+ */
+function bunImportTarget(specifier) {
+  if (!specifier.startsWith("file:")) return specifier;
+  try {
+    const filePath = fileURLToPath(specifier);
+    return process.platform === "win32" ? filePath.replaceAll("\\", "/") : filePath;
+  } catch {
+    return specifier;
+  }
+}
+
 /** Extra execArgv Bun children need because they do not read NODE_OPTIONS. */
 export function bunInheritedExecArgv(env = process.env) {
   if (!runtimeIsBun()) return [];
-  return importFlagsFromNodeOptions(env.NODE_OPTIONS || "");
+  const flags = importFlagsFromNodeOptions(env.NODE_OPTIONS || "");
+  const mapped = [];
+  for (let i = 0; i < flags.length; i++) {
+    if (flags[i] === "--import" && i + 1 < flags.length) {
+      mapped.push("--import", bunImportTarget(flags[i + 1]));
+      i += 1;
+      continue;
+    }
+    mapped.push(flags[i]);
+  }
+  return mapped;
 }
 
 function tokenizeNodeOptions(raw) {

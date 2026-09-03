@@ -15,6 +15,10 @@ Releases before 1.1.3 predate this file; their notes live on the
   `127.0.0.1` then `::1` without OS DNS, then still policy-checks every
   loopback literal. Chromium site-isolation hosts such as
   `signup.acme.localhost` work on glibc that does not resolve `.localhost`.
+- Worker `--import` flags copied from `NODE_OPTIONS` under Bun now pass a
+  filesystem path. Node's `pathToFileURL` percent-encodes `~`, and Bun then
+  looks for a file that does not exist — Windows runners use the 8.3 home
+  `RUNNER~1`.
 
 ### Changed
 
