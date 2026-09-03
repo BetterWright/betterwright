@@ -31,15 +31,6 @@ Releases before 1.1.3 predate this file; their notes live on the
   inside `run()` code, all of which generate the same worker snippet
   (`agentBatchCode()` is exported for hosts that drive `run()` themselves).
   See docs/agent-batch.md.
-- **A batch can finish the task in the same call.** The `answer` option is a
-  final-answer template — `{stepId}` for a step's text, value, or URL,
-  `{stepId.field}` for any scalar field of its result — rendered as
-  `finalAnswer` once every step succeeded. The built-in agent ends the task
-  with it in that turn, exactly as a snippet returning `{finalAnswer}` does,
-  so a task whose targets are known costs one model turn: `goto`, the actions,
-  a verifying `read`, and the answer. A placeholder with no value leaves
-  `finalAnswer` unset and explains itself in `answerError`. The spec call is
-  for unknown pages, not a required first step.
 
 ### Changed
 
@@ -51,10 +42,8 @@ Releases before 1.1.3 predate this file; their notes live on the
   now shares its target resolution with AgentBatch, which also accepts
   frame-qualified refs such as `f1e3`.
 - Operator guidance, the `betterwright skill` text, and every tool
-  description now default to AgentBatch, tell the model to finish in the
-  fewest turns — one batch (or one snippet) when the task names its targets,
-  a spec or snapshot first only when the page is unknown — and reserve
-  snippet code for logic steps cannot express. The built-in agent lists `batch` before `browser`,
+  description now default to AgentBatch and reserve snippet code for logic
+  steps cannot express. The built-in agent lists `batch` before `browser`,
   counts a batch that keeps stopping at the same step toward its
   identical-failure limit, and answers a malformed batch without a browser
   round trip.

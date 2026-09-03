@@ -43,8 +43,6 @@ interface FakeBatchOutcome {
   total: number;
   snapshot?: string;
   failed?: { index: number; id: string; action: string; error: string };
-  finalAnswer?: string;
-  answerError?: string;
 }
 
 interface FakeEnvelope {
@@ -1818,11 +1816,10 @@ test("agent harness tools use the shared parameter schemas verbatim", async () =
 
   // The tool list is resent on every turn of the agent loop, so it is charged
   // once per step, not once per task. Budget set from the 2026-07-25 pass
-  // (6,211 → 5,588 collapsed characters); raised to 6,500 on 2026-09-03 for
-  // the AgentBatch tool and its one-call `answer`, which each save whole
-  // turns — the budget guards prose creep, not the tool that cuts turns.
+  // (6,211 → 5,588 collapsed characters) with room for one more field; the
+  // 2026-09-03 AgentBatch tool fit by shortening the browser description.
   const size = JSON.stringify(model.seen[0].tools).replace(/\s+/g, " ").length;
-  assert.ok(size < 6_500, `agent tool list grew to ${size} collapsed characters`);
+  assert.ok(size < 6_000, `agent tool list grew to ${size} collapsed characters`);
 });
 
 test("MCP tool input schemas match the shared schemas plus the session/default layer", async () => {
@@ -1948,76 +1945,6 @@ test("the batch tool runs an AgentBatch through browser.run and observes its out
   assert.equal(observations[0].name, "batch");
   assert.match(observations[0].content, /"protocol":"agent-batch\/1"/);
   assert.match(observations[0].content, /\[ref=e1\]/);
-});
-
-test("a batch that carries an answer finishes the task in the same turn", async () => {
-  const browser = fakeBrowser({
-    runs: [
-      {
-        ok: true,
-        result: {
-          protocol: "agent-batch/1",
-          ok: true,
-          completed: 3,
-          total: 3,
-          finalAnswer: "The success message is: You logged into a secure area!",
-        },
-        artifacts: [{ kind: "proof", path: "/tmp/login-proof.png" }],
-        durationMs: 80,
-      },
-    ],
-  });
-  const model = scriptedModel([
-    {
-      text: "",
-      toolCalls: [
-        {
-          id: "c1",
-          name: "batch",
-          input: {
-            steps: [
-              { action: "goto", url: "https://example.com/login" },
-              { action: "fill", target: { label: "Username" }, value: "tomsmith" },
-              { id: "flash", action: "read", target: { css: "#flash" }, expect: "secure area" },
-            ],
-            allowWrites: true,
-            proof: true,
-            answer: "The success message is: {flash}",
-          },
-        },
-      ],
-    },
-  ]);
-  const result = await runAgentTask({ task: "log in", model, browser });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.reason, "done");
-  assert.equal(result.answer, "The success message is: You logged into a secure area!");
-  assert.equal(result.proof, "/tmp/login-proof.png");
-  assert.equal(model.seen.length, 1, "no second model turn was needed");
-  assert.equal(browser.calls.run.length, 1);
-  assert.match(browser.calls.run[0].code, /"answer":"The success message is: \{flash\}"/);
-});
-
-test("a batch whose answer could not be rendered does not finish the task", async () => {
-  const browser = fakeBrowser({
-    runs: [
-      {
-        ok: true,
-        result: { protocol: "agent-batch/1", ok: true, completed: 1, total: 1, answerError: "answer placeholder {nope} names a step this batch did not run." },
-        artifacts: [],
-        durationMs: 5,
-      },
-    ],
-  });
-  const model = scriptedModel([
-    { text: "", toolCalls: [{ id: "c1", name: "batch", input: { steps: [{ action: "url" }], answer: "{nope}" } }] },
-    { text: "", toolCalls: [{ id: "d", name: "done", input: { answer: "recovered" } }] },
-  ]);
-  const result = await runAgentTask({ task: "x", model, browser });
-  assert.equal(result.answer, "recovered");
-  assert.equal(model.seen.length, 2);
-  assert.match(model.seen[1].messages.at(-1).results[0].content, /answerError/);
 });
 
 test("a malformed batch is answered without a browser round trip", async () => {

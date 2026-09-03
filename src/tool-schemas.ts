@@ -119,10 +119,6 @@ export function batchToolProperties() {
     allowPasswords: { type: "boolean" },
     observe: { type: "string", enum: ["snapshot", "diff", "none"] },
     proof: { type: "boolean" },
-    answer: {
-      type: "string",
-      description: "Final answer to finish in this call; {stepId} / {stepId.field} fill from step results.",
-    },
     note: {
       type: "string",
       description: "Present-tense status line.",

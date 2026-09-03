@@ -824,10 +824,10 @@ async function cmdCookies(tokens, flags) {
 // command.
 const SKILL_PREAMBLE = `# BetterWright browser
 
-Use \`betterwright\` for live-web tasks. The default is AgentBatch: finish in the fewest calls. When the task names its targets, one \`batch -s\` call runs every step back to back — start with goto, end with read — and prints per-step results, \`failed\` {index, id, error} when a step stopped it, and a fresh snapshot. Use \`batch --url\` first only when the page is unknown: it prints the spec, an interactive snapshot with \`[ref=eN]\` targets. Resume from \`failed.index\`; never repeat a completed step. \`betterwright batch --help\` lists the actions, targets, and flags.
+Use \`betterwright\` for live-web tasks. The default is AgentBatch, two calls per task: \`batch --url\` prints the page's spec — an interactive snapshot whose \`[ref=eN]\` markers, roles, and names are the targets — then \`batch -s\` runs every step back to back (auto-wait, no pacing) and prints per-step results, \`failed\` {index, id, error} if a step stopped the batch, and a fresh snapshot. Resume from \`failed.index\`; never repeat a completed step. \`betterwright batch --help\` lists the actions, targets, and flags.
 
-    betterwright batch --allow-writes -s '[{"action":"goto","url":"https://example.com/login"},{"action":"fill","target":{"label":"Email"},"value":"me@example.com"},{"action":"click","target":{"role":"button","name":"Continue"}},{"action":"read","target":{"role":"heading"},"expect":"Welcome"}]'
-    betterwright batch --url https://example.com/unknown-page
+    betterwright batch --url https://example.com/login
+    betterwright batch --allow-writes -s '[{"action":"fill","target":{"label":"Email"},"value":"me@example.com"},{"action":"click","target":{"role":"button","name":"Continue"}},{"action":"read","target":{"role":"heading"},"expect":"Welcome"}]'
 
 For logic steps cannot express, run async Playwright JavaScript with:
 

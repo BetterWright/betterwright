@@ -1,84 +1,70 @@
 # AgentBatch
 
-AgentBatch is the default way an agent drives BetterWright, built to finish a
-task in the fewest model turns:
+AgentBatch is the default way an agent drives BetterWright. A task takes two
+calls:
 
-1. **One call when the task names its targets.** Send every step — starting
-   with `goto`, ending with a `read` or `url` — and an `answer` template. The
-   worker runs the steps back to back with Playwright auto-waiting and no
-   pacing between actions, fills the answer from what the steps read, and the
-   built-in agent finishes the task in that same turn.
-2. **A spec call first when the page is unknown.** `{url}` opens the page and
-   returns its spec — an interactive snapshot whose `[ref=eN]` markers, roles,
-   and names are the targets — and the next call sends the steps.
+1. **Spec.** Open the page and read its spec — an interactive snapshot whose
+   `[ref=eN]` markers, roles, and names are the targets to plan with.
+2. **Batch.** Send every step the task needs. The worker runs them back to
+   back with Playwright auto-waiting and no pacing between actions, then
+   returns per-step results and a fresh snapshot of where the page ended up.
 
 A step that fails stops the batch. The result says which step, keeps the
-results of every step that completed, and still carries a fresh snapshot, so
-the next call resumes from `failed.index` instead of re-observing and
+results of every step that completed, and still carries the final snapshot,
+so the next call resumes from `failed.index` instead of re-observing and
 re-planning from scratch. Compared with one tool call per click, a form that
-used to cost eight model turns costs one or two, and the actions inside the
-batch are separated only by the browser's own round trips.
+used to cost eight model turns costs two, and the actions inside the batch
+are separated only by the browser's own round trips.
 
 The same protocol is exposed everywhere BetterWright is driven:
 
 | Surface | Spec call | Batch call |
 | --- | --- | --- |
-| MCP | `browser_batch {url}` | `browser_batch {steps, allowWrites, answer}` |
-| Built-in agent (`exec`) | `batch {url}` | `batch {steps, allowWrites, answer}` |
-| Pi | `browser_batch {url}` | `browser_batch {steps, allowWrites, answer}` |
+| MCP | `browser_batch {url}` | `browser_batch {steps, allowWrites}` |
+| Built-in agent (`exec`) | `batch {url}` | `batch {steps, allowWrites}` |
+| Pi | `browser_batch {url}` | `browser_batch {steps, allowWrites}` |
 | CLI / skill | `betterwright batch --url <url>` | `betterwright batch --allow-writes -s '<json>'` |
-| JS API | `bw.batch({url})` | `bw.batch(steps, {allowWrites: true, answer})` |
-| Inside `run()` code | `agentBatch([{action: "goto", url}])` | `agentBatch(steps, {allowWrites: true, answer})` |
+| JS API | `bw.batch({url})` | `bw.batch(steps, {allowWrites: true})` |
+| Inside `run()` code | `agentBatch([{action: "goto", url}])` | `agentBatch(steps, {allowWrites: true})` |
 
 Every surface generates the same worker snippet, `return agentBatch(steps,
 options)`, so a batch behaves identically wherever it is sent. The snippet
 runs through the ordinary `run()` path: the same session lane, timeout,
 redaction, artifact quota, and result envelope.
 
-## A complete task in one call
+## A complete task
 
 ```js
 import { BetterWright } from "betterwright";
 
 const bw = new BetterWright();
 try {
+  // Call 1: the spec.
+  const spec = await bw.batch({ url: "https://shop.example/checkout" });
+  console.log(spec.result.snapshot);
+  // page page-1 https://shop.example/checkout "Checkout"
+  // - textbox "Email" [ref=e3]
+  // - textbox "Promo code" [ref=e5]
+  // - button "Apply" [ref=e6]
+  // - button "Place order" [ref=e9]
+
+  // Call 2: the whole task.
   const done = await bw.batch(
     [
-      { action: "goto", url: "https://shop.example/checkout" },
-      { action: "fill", target: { label: "Email" }, value: "ada@example.com" },
-      { action: "fill", target: { label: "Promo code" }, value: "SAVE10" },
-      { action: "click", target: { role: "button", name: "Apply" } },
-      { id: "promo", action: "read", target: { role: "status" }, expect: "applied" },
+      { action: "fill", target: { ref: "e3" }, value: "ada@example.com" },
+      { action: "fill", target: { ref: "e5" }, value: "SAVE10" },
+      { action: "click", target: { ref: "e6" } },
+      { action: "read", target: { role: "status" }, expect: "applied" },
       { action: "click", target: { role: "button", name: "Place order" }, irreversible: true },
-      { id: "order", action: "url", expect: "/orders/" },
-      { id: "confirm", action: "read", target: { role: "heading" }, expect: "Order confirmed" },
+      { action: "url", expect: "/orders/" },
+      { action: "read", target: { role: "heading", name: "Order confirmed" } },
     ],
-    {
-      allowWrites: true,
-      allowIrreversible: true,
-      proof: true,
-      answer: "{confirm} — {promo}. Order page: {order.url}",
-    },
+    { allowWrites: true, allowIrreversible: true, proof: true },
   );
-  console.log(done.result.ok, done.result.finalAnswer, done.result.proof.path);
+  console.log(done.result.ok, done.result.steps.at(-1).text, done.result.proof.path);
 } finally {
   await bw.close();
 }
-```
-
-When the page is unknown, read its spec first and target the refs it shows:
-
-```js
-const spec = await bw.batch({ url: "https://shop.example/checkout" });
-console.log(spec.result.snapshot);
-// page page-1 https://shop.example/checkout "Checkout"
-// - textbox "Email" [ref=e3]
-// - textbox "Promo code" [ref=e5]
-// - button "Apply" [ref=e6]
-const next = await bw.batch(
-  [{ action: "fill", target: { ref: "e3" }, value: "ada@example.com" } /* … */],
-  { allowWrites: true },
-);
 ```
 
 ## Steps
@@ -160,7 +146,6 @@ text, or add a `snapshot` step and continue in the next call.
 | `proof` | `false` | Capture a `proof` screenshot after every step succeeded. A batch that stopped short takes none — the snapshot already shows where it stopped. |
 | `settleMs` | `1000` | Before an observation that follows a write or navigation, wait up to this long for the in-flight document, fetch, and XHR requests that step started. 0 disables it. |
 | `minIntervalMs` | `0` | Pause between steps, up to 1000 ms. |
-| `answer` | — | A final answer to render once every step succeeds. `{stepId}` is that step's text, value, or URL (whichever it produced first); `{stepId.field}` any scalar field of its result (`{order.url}`, `{items.count}`, `{terms.checked}`). The built-in agent finishes the task with the rendered `finalAnswer` in the same turn, exactly as a snippet returning `{finalAnswer}` does. |
 
 The gates are the same ones `controls.batch()` and `webagents.batch()`
 enforce, so switching between the three never changes what a model must opt
@@ -197,22 +182,13 @@ are surface options and are not part of the batch.
   the same scoping hints `snapshot()` gives).
 - `proof` is the screenshot artifact when `proof: true` and the batch
   succeeded; it also appears in the envelope's `artifacts`.
-- `finalAnswer` is the rendered `answer`, present only when the batch
-  succeeded. Braces are reserved in the template: every `{` opens a
-  `{stepId}` or `{stepId.field}` placeholder that ends at the next `}`. A
-  stray, nested, or malformed brace, a step the batch did not run, or a
-  field that step produced no value for leaves `finalAnswer` unset
-  and explains itself in `answerError`, so an answer never silently claims
-  what the page did not show or carries an unfilled token; the model answers
-  from the results instead.
 - The batch result is the `result` of an ordinary `run()` envelope, so
   `console`, `pages`, `challenges`, `skills`, and `warnings` arrive beside it.
   A bot challenge that appears mid-batch is reported the same way it is for
   any snippet.
 
 A spec call is one `goto` step plus the default observation, so its result
-has the same shape. A one-call task is a batch that starts with `goto` — no
-spec needed when the task already names the controls it touches. Because the spec already lists every actionable control,
+has the same shape. Because the spec already lists every actionable control,
 the compact `ui` directory that ordinary navigation attaches to a first visit
 is skipped for a page a batch has observed; `webagents` discovery still
 runs, since a first-party workflow is worth more than either.

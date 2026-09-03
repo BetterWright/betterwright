@@ -156,7 +156,7 @@ test("native Pi extension registers persistent tools and records its supplied st
       "browser_evidence",
       "browser_download",
     ]);
-    assert.match(pi.tools.get("browser_batch").description, /the default way to browse\. Finish in the fewest calls/);
+    assert.match(pi.tools.get("browser_batch").description, /the default way to browse, in two calls/);
     assert.match(pi.tools.get("browser").description, /Default to browser_batch/);
     for (const tool of pi.tools.values()) {
       assert.ok(isCallable(tool.renderCall));
