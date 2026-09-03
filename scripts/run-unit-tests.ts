@@ -2,6 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,9 +21,10 @@ if (!files.length) {
 }
 
 const coverageArgs = process.env.BETTERWRIGHT_COVERAGE === "1" ? ["--coverage"] : [];
+const workers = String(os.availableParallelism?.() || os.cpus().length);
 const result = spawnSync(
   process.execPath,
-  ["test", "--timeout", "120000", ...coverageArgs, ...files],
+  ["test", "--timeout", "120000", `--parallel=${workers}`, ...coverageArgs, ...files],
   {
     cwd: root,
     stdio: "inherit",
