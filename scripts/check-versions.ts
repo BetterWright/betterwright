@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { UntrustedValue } from "../types/untrusted-value.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (name) => fs.readFileSync(path.join(root, name), "utf8");
@@ -20,10 +21,15 @@ function expectMatch(label, text, expression, expected) {
   if (actual !== expected) failures.push(`${label}: expected ${expected}, found ${actual ?? "nothing"}`);
 }
 
+function isString(value: UntrustedValue): value is string {
+  return typeof value === "string";
+}
+
 function lockPackageVersion(name) {
   const entry = lock.packages?.[name];
-  if (!Array.isArray(entry) || typeof entry[0] !== "string") return null;
+  if (!Array.isArray(entry)) return null;
   const spec = entry[0];
+  if (!isString(spec)) return null;
   const at = spec.lastIndexOf("@");
   return at === -1 ? spec : spec.slice(at + 1);
 }

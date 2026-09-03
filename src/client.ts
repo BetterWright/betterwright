@@ -643,7 +643,7 @@ export class BetterWright {
         throw new BrowserError(
           "stealthRuntimeFix is enabled but the optional 'patchright-core' " +
             "dependency is not installed. Install it with " +
-            `\`${packageAddCommand("patchright-core")}\`, or disable stealthRuntimeFix.",
+            `\`${packageAddCommand("patchright-core")}\`, or disable stealthRuntimeFix.`,
         );
       }
       execArgv.push("--import", STEALTH_REGISTER_URL);

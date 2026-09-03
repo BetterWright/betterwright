@@ -78,9 +78,7 @@ export function bunInheritedExecArgv(env = process.env) {
 
 function tokenizeNodeOptions(raw) {
   const tokens = [];
-  const pattern = /(?:[^\s"]+|"[^"]*")+/g;
-  let match;
-  while ((match = pattern.exec(raw))) {
+  for (const match of String(raw).matchAll(/(?:[^\s"]+|"[^"]*")+/g)) {
     const token = match[0];
     tokens.push(
       token.startsWith('"') && token.endsWith('"') ? token.slice(1, -1) : token,
