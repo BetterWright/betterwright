@@ -1,8 +1,4 @@
 import {
-  type AgentBatchInput,
-  type AgentBatchResult,
-  type AgentBatchStepInput,
-  agentBatchCode,
   agentSystemPrompt,
   BetterWright,
   type BetterWrightOptions,
@@ -284,47 +280,3 @@ void ownerListed;
 void ownerRevealed;
 void ownerAudited;
 void ownerRemoved;
-
-// --- AgentBatch ---------------------------------------------------------------
-
-const batchSteps: AgentBatchStepInput[] = [
-  { action: "goto", url: "https://example.com/", waitUntil: "domcontentloaded" },
-  { id: "q", action: "fill", target: { label: "Search", exact: true }, value: "keyboard" },
-  { action: "press", key: "Enter", target: { ref: "e3" } },
-  { action: "wait", text: "Results" },
-  { action: "read", target: { role: "heading", name: "Results", nth: 0 }, expect: "Results", attribute: "id" },
-  { action: "select", target: { css: "#sort" }, value: ["price"] },
-  { action: "scroll", dy: 400 },
-  { action: "screenshot", kind: "proof", fullPage: true },
-  { action: "openPage", url: "https://example.org/" },
-  { action: "usePage", page: 0 },
-  { action: "closePage", page: "page-2" },
-  { action: "dialog", response: "accept", promptText: "yes" },
-  { action: "overlays", optional: true, timeoutMs: 2_000 },
-];
-const batchInput: AgentBatchInput = { steps: batchSteps, allowWrites: true, observe: "diff" };
-const specInput: AgentBatchInput = { url: "https://example.com/" };
-const batchCode: string = agentBatchCode({ url: "https://example.com/", proof: true });
-void batchCode;
-
-async function batchTypes(bw: BetterWright): Promise<void> {
-  const spec = await bw.batch(specInput, { session: "types", note: "spec" });
-  if (spec.ok) {
-    const outcome: AgentBatchResult = spec.result;
-    const snapshot: string | undefined = outcome.snapshot;
-    void snapshot;
-  }
-  const done = await bw.batch(batchSteps, { allowWrites: true, proof: true, timeout: 60 });
-  if (done.ok) {
-    const failedIndex: number | undefined = done.result.failed?.index;
-    const firstText: string | undefined = done.result.steps[0]?.text;
-    const proofPath: string | undefined = done.result.proof?.path;
-    void [failedIndex, firstText, proofPath];
-  } else {
-    const error: string = done.error;
-    void error;
-  }
-  const inline = await bw.batch(batchInput);
-  void inline;
-}
-void batchTypes;

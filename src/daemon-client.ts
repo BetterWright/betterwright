@@ -365,11 +365,7 @@ export function createDaemonBrowser(channel, { session = "default" }: any = {}) 
   };
   return {
     session: pinned,
-    // The IPC wait tracks the run's own timeout (seconds, 30 s when unset)
-    // plus the worker's restart margin, so a long batch is not abandoned by
-    // the CLI while the daemon is still running it.
-    run: (code, options?: any) =>
-      call("run", [code, options], Math.max(Number(options?.timeout) || 30, 5) * 1000 + 30_000),
+    run: (code, options?: any) => call("run", [code, options]),
     syncCookies: (options?: any) =>
       call(
         "syncCookies",

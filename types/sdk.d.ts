@@ -7,15 +7,6 @@ import type { BetterWrightOptions, CloudBrowserProviderName } from "./public.js"
 import type { UntrustedValue } from "./untrusted-value.js";
 
 export { resolveModel, resolveModelSelection, runAgentTask } from "./agent.js";
-/**
- * The browser snippet that runs an AgentBatch, for hosts that drive the
- * worker through `run()` themselves. Validates the batch first and throws a
- * TypeError, RangeError, or Error naming the offending step and field.
- */
-export function agentBatchCode(
-  args: { url?: string; steps?: import("./public.js").AgentBatchStepInput[] } &
-    import("./public.js").AgentBatchOptions,
-): string;
 export { BetterWright, BrowserError, validateCredentialMatchMode } from "./client.js";
 export function listCookieSourceBrowsers(): Promise<
   import("./public.js").CookieSourceBrowser[]

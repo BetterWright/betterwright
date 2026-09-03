@@ -12,4 +12,3 @@ bun examples/typescript/quickstart.ts
 
 - [`quickstart.ts`](typescript/quickstart.ts) — navigate, read, and capture proof.
 - [`multi_tab.ts`](typescript/multi_tab.ts) — drive two tabs concurrently.
-- [`agent_batch.ts`](typescript/agent_batch.ts) — a whole task in two calls with AgentBatch.

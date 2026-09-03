@@ -9,48 +9,6 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
-### Added
-
-- **AgentBatch** is the default way an agent drives the browser: two calls
-  per task. The spec call opens a page and returns its interactive snapshot;
-  the batch call runs every step of the task back to back with Playwright
-  auto-waiting and no pacing, then returns per-step results, the step that
-  stopped the batch (if one did) with `failed.index` to resume from, and a
-  fresh snapshot to plan the next call from. Steps cover navigation
-  (`goto`, `back`, `forward`, `reload`), pointer and input actions (`click`,
-  `dblclick`, `hover`, `fill`, `type`, `press`, `select`, `check`, `uncheck`,
-  `scroll`), bounded waiting (`wait` on a target, URL, text, or time),
-  observation (`read` with `expect`, `url`, `snapshot`, `screenshot`), tabs
-  (`openPage`, `usePage`, `closePage`), `dialog`, and `overlays`. Targets are
-  the spec's `[ref=eN]` markers or role (+ name), label, text, placeholder,
-  test id, or CSS, with `exact`, `nth`, and iframe scoping; an ambiguous
-  target fails the step. `optional: true` lets a step fail without stopping.
-  The protocol is exposed as the MCP `browser_batch` tool, the built-in
-  agent's `batch` tool, the Pi `browser_batch` tool, the `betterwright batch`
-  command, `bw.batch()` on the JS client, and the `agentBatch()` global
-  inside `run()` code, all of which generate the same worker snippet
-  (`agentBatchCode()` is exported for hosts that drive `run()` themselves).
-  See docs/agent-batch.md.
-
-### Changed
-
-- The MCP `browser_batch` tool is AgentBatch: it takes `steps` (or `url` for
-  the spec call) instead of the `ui-batch/1` `operations` shape, no longer
-  requires a mutation to end in `read`/`readUrl` with an expected value
-  (every batch returns a fresh snapshot instead), and is listed first. The
-  guarded `controls.batch()` transaction is unchanged for snippet code and
-  now shares its target resolution with AgentBatch, which also accepts
-  frame-qualified refs such as `f1e3`.
-- Operator guidance, the `betterwright skill` text, and every tool
-  description now default to AgentBatch and reserve snippet code for logic
-  steps cannot express. The built-in agent lists `batch` before `browser`,
-  counts a batch that keeps stopping at the same step toward its
-  identical-failure limit, and answers a malformed batch without a browser
-  round trip.
-- A page an AgentBatch has observed no longer receives the one-time compact
-  `ui` directory on that visit; the spec already carries every actionable
-  control.
-
 ## [2.2.0] - 2026-09-03
 
 The project runtime is Bun 1.4.0. CLI, worker, tests, CI, and Cloud Agent

@@ -463,19 +463,14 @@ remains available when you need full control of the request shape.
 ## What the loop does
 
 Each turn: the model sees the task, the operator guidance from
-[`agentSystemPrompt`](agent-prompt.md), and the tools (`batch`, `browser`,
-`done`, `login` when a vault is present, and `ask` when an `askUser` handler
-is present). `batch` is the default — [AgentBatch](agent-batch.md): one call
-opens a page and returns its spec, the next runs every step of the task and
-returns per-step results plus a fresh snapshot, so most tasks are two tool
-calls. `browser` runs async Playwright JavaScript for what steps cannot
-express. Either way BetterWright feeds back a compact JSON observation
+[`agentSystemPrompt`](agent-prompt.md), and the tools (`browser`, `done`,
+`login` when a vault is present, and `ask` when an `askUser` handler is present).
+It calls `browser` with async Playwright
+JavaScript; BetterWright runs it and feeds back a compact JSON observation
 (`ok`, `result`, `console`, `pages`, `challenges`, `skills`, `warnings`,
 `screenshots`). The loop ends when the model calls `done` (or answers in
 prose) — there is no step cap. Screenshots are captured as artifacts and their
-paths surfaced; the last `proof` screenshot is returned on the result. A
-batch that keeps stopping at the same step counts toward the identical-failure
-limit exactly like a snippet that keeps throwing.
+paths surfaced; the last `proof` screenshot is returned on the result.
 
 A `browser` call can also end the task in the *same* turn: when the model's
 code returns `{ finalAnswer: "…" }` (from an `ok` run), the harness records
