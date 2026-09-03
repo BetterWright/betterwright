@@ -301,9 +301,9 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   // costs a token per line, so raw length would understate a rewrap regression.
   // Raised from 7,250 on 2026-09-03 when browser_batch became AgentBatch: its
   // step schema names every action and field the executor accepts, which is
-  // what lets a model finish a task in two calls instead of one per click.
+  // what lets a model finish a task in one call instead of one per click.
   const size = JSON.stringify(tools).replace(/\s+/g, " ").length;
-  assert.ok(size < 9_000, `MCP tool list grew to ${size} collapsed characters`);
+  assert.ok(size < 9_250, `MCP tool list grew to ${size} collapsed characters`);
 
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
   const text = (name) => byName[name].description.replace(/\s+/g, " ");
@@ -342,10 +342,12 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser"), /what steps cannot express/);
   // AgentBatch is the default: the two-call protocol, the resume rule, the
   // target vocabulary, and every authorization gate must survive edits.
-  assert.match(text("browser_batch"), /the default way to browse, in two calls/);
-  assert.match(text("browser_batch"), /Call 1 \{url\}/);
-  assert.match(text("browser_batch"), /Call 2 \{steps, allowWrites: true\}/);
+  assert.match(text("browser_batch"), /the default way to browse\. Finish in the fewest calls/);
+  assert.match(text("browser_batch"), /send every step in ONE call/);
+  assert.match(text("browser_batch"), /set answer \(the final answer, with \{stepId\} or \{stepId\.field\} filled from step results, e\.g\. answer: "Price: \{price\}"\)/);
+  assert.match(text("browser_batch"), /Use \{url\} alone only when the page is unknown/);
   assert.match(text("browser_batch"), /resume from failed\.index, never repeat a completed step/);
+  assert.match(text("browser"), /Finish in the fewest calls/);
   assert.match(text("browser_batch"), /role \(\+ name\), label, text, placeholder, testId, css; ambiguity fails/);
   assert.match(text("browser_batch"), /read \{expect\} or wait \{text\|url\}/);
   assert.match(text("browser_batch"), /irreversible:true steps need allowIrreversible/);
@@ -356,6 +358,7 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.deepEqual(batchSchema.steps.items.required, ["action"]);
   assert.equal(batchSchema.steps.maxItems, MAX_AGENT_BATCH_STEPS);
   assert.equal(batchSchema.url.type, "string");
+  assert.match(batchSchema.answer.description, /\{stepId\}/);
   assert.equal(batchSchema.session.default, "default");
   assert.equal(batchSchema.allowWrites.default, false);
 

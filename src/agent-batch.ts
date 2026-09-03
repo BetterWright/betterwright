@@ -57,6 +57,11 @@ const DEFAULT_SETTLE_MS = 1_000;
 const MAX_SETTLE_MS = 5_000;
 const MAX_PACING_MS = 1_000;
 const MAX_ERROR_CHARS = 600;
+const MAX_ANSWER_CHARS = 4_000;
+// Braces are reserved in an answer template: every `{` opens a placeholder
+// that must fit this grammar and end at the next `}`. A stray, nested, or
+// malformed brace is refused rather than kept as literal answer text.
+const ANSWER_PLACEHOLDER = /^\{([A-Za-z][A-Za-z0-9_-]{0,63})(?:\.([A-Za-z]+))?\}$/;
 const POLL_MS = 50;
 const ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
@@ -220,6 +225,8 @@ export interface AgentBatchPlanOptions {
   proof: boolean;
   settleMs: number;
   minIntervalMs: number;
+  /** A final answer to render from step results once every step succeeds. */
+  answer?: string;
 }
 
 export interface AgentBatchPlan {
@@ -290,6 +297,10 @@ export interface AgentBatchResult {
   snapshot?: string;
   observeError?: string;
   proof?: AgentBatchArtifact;
+  /** The `answer` template rendered from step results; finishes the task in the harness. */
+  finalAnswer?: string;
+  /** Why `answer` could not be rendered, when it referenced a step or field that has no value. */
+  answerError?: string;
   durationMs: number;
 }
 
@@ -368,7 +379,8 @@ function normalizeOptions(value: UntrustedValue): AgentBatchPlanOptions {
   const observeValue = untrustedField(value, "observe");
   const settleValue = untrustedField(value, "settleMs");
   const pacingValue = untrustedField(value, "minIntervalMs");
-  return {
+  const answer = optionalText(untrustedField(value, "answer"), "AgentBatch answer", MAX_ANSWER_CHARS);
+  const options: AgentBatchPlanOptions = {
     allowWrites: optionalBoolean(untrustedField(value, "allowWrites"), "AgentBatch allowWrites"),
     allowIrreversible: optionalBoolean(untrustedField(value, "allowIrreversible"), "AgentBatch allowIrreversible"),
     allowPasswords: optionalBoolean(untrustedField(value, "allowPasswords"), "AgentBatch allowPasswords"),
@@ -383,6 +395,8 @@ function normalizeOptions(value: UntrustedValue): AgentBatchPlanOptions {
       ? 0
       : boundedInteger(pacingValue, "AgentBatch minIntervalMs", 0, MAX_PACING_MS),
   };
+  if (answer !== undefined) options.answer = answer;
+  return options;
 }
 
 function normalizeSnapshotOptions(value: UntrustedValue, label: string): AgentBatchSnapshotOptions {
@@ -621,6 +635,7 @@ const OPTION_FIELDS = [
   "proof",
   "settleMs",
   "minIntervalMs",
+  "answer",
 ];
 
 /**
@@ -638,6 +653,7 @@ export interface AgentBatchToolArgs {
   proof?: UntrustedValue;
   settleMs?: UntrustedValue;
   minIntervalMs?: UntrustedValue;
+  answer?: UntrustedValue;
 }
 
 /**
@@ -946,6 +962,61 @@ async function runStep(
 }
 
 /**
+ * Fill an `answer` template from step results: `{id}` is the step's text,
+ * value, or URL (whichever it produced first), `{id.field}` any scalar field
+ * of its result. Braces are reserved for placeholders, so a stray, nested,
+ * or malformed brace throws, as does a placeholder naming a step or field
+ * with no value — an answer never silently claims something the page did
+ * not show, and never carries an unfilled token.
+ */
+export function renderAgentBatchAnswer(template: string, results: AgentBatchStepResult[]) {
+  const byId = new Map(results.map((result) => [result.id, result]));
+  const resolve = (placeholder: string) => {
+    const match = ANSWER_PLACEHOLDER.exec(placeholder);
+    if (!match) {
+      throw new Error(`answer placeholder ${placeholder} must be {stepId} or {stepId.field}.`);
+    }
+    const [, id, field] = match;
+    const result = byId.get(id);
+    if (!result) throw new Error(`answer placeholder ${placeholder} names a step this batch did not run.`);
+    if (field !== undefined) {
+      const value = untrustedField(result, field);
+      if (isString(value)) return value;
+      if (isNumber(value) || isBoolean(value)) return String(value);
+    } else {
+      // The shorthand wants what the step showed: an empty text (a bare
+      // input reads as "") falls through to its value, then its URL.
+      const shown = ["text", "value", "url"].map((key) => untrustedField(result, key));
+      const first = shown.find((value) => isString(value) && value.length > 0);
+      if (isString(first)) return first;
+      if (shown.some(isString)) return "";
+    }
+    throw new Error(
+      `answer placeholder ${placeholder} has no value; step ${JSON.stringify(id)} (${result.action}) produced ${Object.keys(result).filter((key) => !["id", "action", "ok"].includes(key)).join(", ") || "nothing"}.`,
+    );
+  };
+  let rendered = "";
+  let index = 0;
+  while (index < template.length) {
+    const open = template.indexOf("{", index);
+    const close = template.indexOf("}", index);
+    if (open === -1 && close === -1) {
+      rendered += template.slice(index);
+      break;
+    }
+    if (close !== -1 && (open === -1 || close < open)) {
+      throw new Error(`answer has a stray "}" at offset ${close}; braces are reserved for {stepId} placeholders.`);
+    }
+    if (close === -1) {
+      throw new Error(`answer has an unclosed "{" at offset ${open}; braces are reserved for {stepId} placeholders.`);
+    }
+    rendered += template.slice(index, open) + resolve(template.slice(open, close + 1));
+    index = close + 1;
+  }
+  return rendered;
+}
+
+/**
  * Run a batch against the host's current page. Steps run in order with no
  * pacing unless `minIntervalMs` asks for some; a failed step stops the batch
  * (or is recorded and skipped when `optional`), and the result always carries
@@ -1021,6 +1092,15 @@ export async function executeAgentBatch(
   // Proof means "the task's visible end state"; a batch that stopped short
   // has none, and the snapshot already shows where it stopped.
   if (options.proof && result.ok) result.proof = await host.screenshot({ kind: "proof" });
+  // The answer is rendered only from a batch that fully succeeded: a stopped
+  // batch has no end state to report, and the model must recover first.
+  if (options.answer !== undefined && result.ok) {
+    try {
+      result.finalAnswer = renderAgentBatchAnswer(options.answer, results);
+    } catch (error) {
+      result.answerError = describeError(error);
+    }
+  }
   result.durationMs = Date.now() - startedAt;
   return result;
 }

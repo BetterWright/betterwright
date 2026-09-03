@@ -13,6 +13,7 @@ import {
   executeAgentBatch,
   MAX_AGENT_BATCH_STEPS,
   normalizeAgentBatch,
+  renderAgentBatchAnswer,
 } from "../../dist/src/agent-batch.js";
 import { locatorFor, parseTarget } from "../../dist/src/batch-targets.js";
 
@@ -76,6 +77,82 @@ test("normalizeAgentBatch rejects malformed batches with the step and field name
   rejects([{ action: "reload" }], { observe: "loudly" }, /observe must be one of/);
   rejects([{ action: "reload" }], { settleMs: 9_000 }, /settleMs must be an integer from 0 to 5000/);
   rejects([{ action: "reload" }], "fast", /options must be an object/);
+  rejects([{ action: "reload" }], { answer: "" }, /answer must not be empty/);
+  rejects([{ action: "reload" }], { answer: "x".repeat(4_001) }, /answer exceeds 4000 characters/);
+  assert.equal(normalizeAgentBatch([{ action: "reload" }], { answer: "Done: {s1.url}" }).options.answer, "Done: {s1.url}");
+});
+
+test("renderAgentBatchAnswer fills placeholders from step results and refuses unknown ones", () => {
+  const results: any = [
+    { id: "flash", action: "read", ok: true, tag: "div", text: "You logged in!", value: "" },
+    { id: "where", action: "url", ok: true, url: "https://a.test/secure", title: "Secure" },
+    { id: "count", action: "read", ok: true, tag: "span", text: "", value: "3", checked: true },
+    { id: "items", action: "read", ok: true, count: 2, items: [] },
+  ];
+  assert.equal(renderAgentBatchAnswer("Message: {flash}", results), "Message: You logged in!");
+  assert.equal(renderAgentBatchAnswer("At {where} ({where.title})", results), "At https://a.test/secure (Secure)");
+  // {id} falls through text → value → url; explicit fields reach any scalar.
+  assert.equal(renderAgentBatchAnswer("{count} / {count.checked} / {items.count}", results), "3 / true / 2");
+  assert.equal(renderAgentBatchAnswer("No placeholders", results), "No placeholders");
+  assert.throws(() => renderAgentBatchAnswer("{missing}", results), /names a step this batch did not run/);
+  // Malformed brace groups are refused, never kept as literal answer text —
+  // including nested ones, whose outer braces would otherwise survive.
+  for (const malformed of ["{1price}", "{step.1}", "{}", "{flash.text.tag}", "{ flash }", "{{flash}}", "{{flash}"]) {
+    assert.throws(() => renderAgentBatchAnswer(`Total: ${malformed}`, results), /must be \{stepId\} or \{stepId\.field\}/, malformed);
+  }
+  // Braces are reserved: a stray one is an error, not literal text.
+  assert.throws(() => renderAgentBatchAnswer("Set {flash} in {braces", results), /unclosed "\{" at offset 15/);
+  assert.throws(() => renderAgentBatchAnswer("Set {flash}} twice", results), /stray "\}" at offset 11/);
+  assert.throws(() => renderAgentBatchAnswer("} first", results), /stray "\}" at offset 0/);
+  assert.throws(() => renderAgentBatchAnswer("{items}", results), /has no value; step "items" \(read\) produced count, items/);
+  assert.throws(() => renderAgentBatchAnswer("{flash.items}", results), /has no value/);
+});
+
+test("a batch with answer finishes with finalAnswer only when every step succeeded", async () => {
+  const page = fakePage({
+    "role:status:": [{ tag: "div", text: "Created Ada" }],
+    "role:button:Missing": [],
+  });
+  const done = await executeAgentBatch(
+    fakeHost(page),
+    [{ id: "verify", action: "read", target: { role: "status" } }],
+    { observe: "none", answer: "Status now reads: {verify}" },
+  );
+  assert.equal(done.ok, true);
+  assert.equal(done.finalAnswer, "Status now reads: Created Ada");
+  assert.equal(done.answerError, undefined);
+
+  const broken = await executeAgentBatch(
+    fakeHost(page),
+    [{ id: "verify", action: "read", target: { role: "status" } }],
+    { observe: "none", answer: "{nope}" },
+  );
+  assert.equal(broken.ok, true);
+  assert.equal(broken.finalAnswer, undefined);
+  assert.match(broken.answerError, /names a step this batch did not run/);
+
+  for (const malformed of ["Price: {1price}", "{verify.1}", "{{verify}}", "{verify}}"]) {
+    const unfilled = await executeAgentBatch(
+      fakeHost(page),
+      [{ id: "verify", action: "read", target: { role: "status" } }],
+      { observe: "none", answer: malformed },
+    );
+    assert.equal(unfilled.ok, true);
+    assert.equal(unfilled.finalAnswer, undefined, `${malformed} must not become an answer`);
+    assert.match(unfilled.answerError, /must be \{stepId\} or \{stepId\.field\}|stray "\}"/);
+  }
+
+  const stopped = await executeAgentBatch(
+    fakeHost(page),
+    [
+      { id: "verify", action: "read", target: { role: "status" } },
+      { id: "go", action: "click", target: { role: "button", name: "Missing" }, timeoutMs: 100 },
+    ],
+    { allowWrites: true, observe: "none", answer: "Status: {verify}" },
+  );
+  assert.equal(stopped.ok, false);
+  assert.equal(stopped.finalAnswer, undefined, "a stopped batch never renders an answer");
+  assert.equal(stopped.answerError, undefined);
 });
 
 test("every advertised action has a field table and round-trips through validation", () => {
@@ -178,6 +255,10 @@ test("agentBatchCode turns {url} into a goto step and guards its JSON literal", 
   assert.match(code, /\\u2028/);
   assert.doesNotMatch(code, /\u2028/);
   assert.match(code, /\{"allowWrites":true,"observe":"diff","proof":true\}\);$/);
+  assert.match(
+    agentBatchCode({ steps: [{ action: "url" }], answer: "Landed on {s1}" }),
+    /\{"answer":"Landed on \{s1\}"\}\);$/,
+  );
   assert.doesNotMatch(code, /session/);
   assert.throws(() => agentBatchCode({ url: "https://a.test", steps: [] }), /either url or steps/);
   assert.throws(() => agentBatchCode({}), /requires url or a non-empty steps array/);

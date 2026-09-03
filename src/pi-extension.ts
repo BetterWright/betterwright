@@ -95,13 +95,15 @@ export const PI_EVIDENCE_PARAMETERS = {
 };
 
 const BATCH_TOOL_DESCRIPTION =
-  "AgentBatch: the default way to browse, in two calls. Call 1 {url} opens the page and returns " +
-  "result.snapshot, its interactive spec with [ref=eN] targets. Call 2 {steps, allowWrites: " +
-  "true} runs every step back to back (auto-wait, no pacing) and returns per-step results, " +
-  "failed {index, id, error} if a step stopped the batch, and a fresh snapshot; resume from " +
-  "failed.index, never repeat a completed step. Targets come from the spec: ref, or role (+ " +
-  "name), label, text, placeholder, testId, css; ambiguity fails. Follow an asynchronous " +
-  "mutation with read {expect} or wait {text|url}. irreversible:true steps need " +
+  "AgentBatch: the default way to browse. Finish in the fewest calls: when the task names its " +
+  "targets, send every step in ONE call — goto first, read/url last — and set answer (the final " +
+  "answer, with {stepId} or {stepId.field} filled from step results, e.g. answer: \"Price: " +
+  "{price}\") to complete the task in that call. Use {url} alone only when the page is unknown; " +
+  "it returns the spec snapshot with [ref=eN] targets. Steps auto-wait with no pacing; a " +
+  "stopped batch returns failed {index, id, error} and a fresh snapshot — resume from " +
+  "failed.index, never repeat a completed step. Targets: ref from the spec, or role (+ name), " +
+  "label, text, placeholder, testId, css; ambiguity fails. Follow an asynchronous mutation with " +
+  "read {expect} or wait {text|url}. Writes need allowWrites=true; irreversible:true steps need " +
   "allowIrreversible; a task-supplied password needs allowPasswords, stored ones use " +
   "browser_login; optional:true steps may fail without stopping; proof=true screenshots after " +
   "success. Use browser only for logic steps cannot express.";

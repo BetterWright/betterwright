@@ -1144,6 +1144,21 @@ test("agentBatch runs a whole form task in one call and returns the spec of wher
     assert.equal(result.artifacts.filter((artifact) => artifact.kind === "proof").length, 1);
     assert.ok(batch.durationMs >= 60, `the read waited for the asynchronous status (${batch.durationMs}ms)`);
 
+    // One call finishes the task: the answer template is filled from the
+    // steps' own readings, so the harness needs no further model turn.
+    const oneCall = await bw.batch(
+      [
+        { id: "name", action: "fill", target: { label: "Display name", exact: true }, value: "Grace" },
+        { id: "submit", action: "click", target: { role: "button", name: "Create account", exact: true } },
+        { id: "status", action: "read", target: { role: "status" }, expect: "Created Grace" },
+        { id: "where", action: "url" },
+      ],
+      { allowWrites: true, observe: "none", answer: "Signup result: {status} at {where.url}" },
+    );
+    assert.equal(oneCall.ok, true, oneCall.error);
+    assert.equal(oneCall.result.ok, true, JSON.stringify(oneCall.result.failed));
+    assert.equal(oneCall.result.finalAnswer, "Signup result: Created Grace on pro at about:blank");
+
     // Steps run back to back: a five-step batch costs Playwright round trips,
     // not pacing delays.
     const quick = await bw.batch(

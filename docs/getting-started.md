@@ -228,9 +228,10 @@ await bw.close();
 ## Your first batch
 
 Most tasks need more than one action. [AgentBatch](agent-batch.md) is the
-default way to run them: read the page's spec, then send every step in one
-call. The worker runs the steps back to back and returns per-step results
-plus a fresh snapshot to plan from.
+default way to run them: send every step in one call, with an `answer` to
+fill from what they read; read the page's spec first only when you do not
+know its controls. The worker runs the steps back to back and returns
+per-step results plus a fresh snapshot to plan from.
 
 ```js
 const spec = await bw.batch({ url: "https://example.com" });
@@ -239,11 +240,11 @@ console.log(spec.result.snapshot);   // page page-1 https://example.com/ "Exampl
 const done = await bw.batch(
   [
     { action: "click", target: { ref: "e3" } },
-    { action: "read", target: { role: "heading" }, expect: "Example Domains" },
+    { id: "title", action: "read", target: { role: "heading" }, expect: "Example Domains" },
   ],
-  { allowWrites: true },
+  { allowWrites: true, answer: "The linked page is titled: {title}" },
 );
-console.log(done.result.ok, done.result.steps[1].text);
+console.log(done.result.ok, done.result.finalAnswer);
 ```
 
 The same two calls are the MCP `browser_batch` tool, the built-in agent's

@@ -29,8 +29,8 @@ machine, and proves it works by loading a real page. One command, no choices to
 make up front.
 
 **Compressed snapshots** instead of raw HTML or a full accessibility dump ·
-**AgentBatch**: read a page's spec, then finish the whole task in **one more
-call** · persistent sessions so you don't re-pay login and navigation cost
+**AgentBatch**: a whole task in **one call** when you know the page, two when
+you don't · persistent sessions so you don't re-pay login and navigation cost
 every step.
 
 ---
@@ -179,38 +179,39 @@ sub-agent. A 30-turn checkout costs your main agent **one tool call**, not
 30 pages of context. Programmatic equivalent: `runAgentTask()` from
 `betterwright/agent`.
 
-## AgentBatch: two calls per task
+## AgentBatch: a task in one call
 
 However your agent is wired in, the default way it browses is **AgentBatch**.
-Call one opens a page and returns its *spec* — an interactive snapshot whose
-`[ref=eN]` markers, roles, and names are the targets. Call two sends every
-step the task needs; the worker runs them back to back with auto-waiting and
-no pacing, then returns per-step results, the step that stopped the batch (if
-one did), and a fresh snapshot to plan the next call from.
+When the task names its targets, one call sends every step; the worker runs
+them back to back with auto-waiting and no pacing, fills an `answer` from
+what the steps read, and the task is done — no model turn per click, no
+closing turn. When the page is unknown, a `{url}` call first returns its
+*spec*, an interactive snapshot whose `[ref=eN]` markers, roles, and names
+are the targets.
 
 ```bash
-betterwright batch --url https://shop.example/checkout
-betterwright batch --allow-writes -s '[
-  {"action":"fill","target":{"ref":"e3"},"value":"ada@example.com"},
+betterwright batch --allow-writes --allow-irreversible --proof -s '{"steps":[
+  {"action":"goto","url":"https://shop.example/checkout"},
+  {"action":"fill","target":{"label":"Email"},"value":"ada@example.com"},
   {"action":"fill","target":{"label":"Promo code"},"value":"SAVE10"},
   {"action":"click","target":{"role":"button","name":"Apply"}},
-  {"action":"read","target":{"role":"status"},"expect":"applied"},
+  {"id":"promo","action":"read","target":{"role":"status"},"expect":"applied"},
   {"action":"click","target":{"role":"button","name":"Place order"},"irreversible":true},
-  {"action":"read","target":{"role":"heading","name":"Order confirmed"}}]' --allow-irreversible --proof
+  {"id":"confirm","action":"read","target":{"role":"heading"},"expect":"Order confirmed"}],
+  "answer":"{confirm} — {promo}"}'
 ```
 
 ```js
-const spec = await bw.batch({ url: "https://shop.example/checkout" });
-const done = await bw.batch(steps, { allowWrites: true, allowIrreversible: true, proof: true });
-console.log(done.result.ok, done.result.failed, done.result.snapshot);
+const done = await bw.batch(steps, { allowWrites: true, proof: true, answer: "{confirm} — {promo}" });
+console.log(done.result.ok, done.result.finalAnswer, done.result.failed);
 ```
 
-A form that used to cost eight model turns costs two. When a step fails, the
-result keeps everything that completed and says where to resume, so a
-recovery is one more call, never a restart. The same protocol is the MCP
-`browser_batch` tool, the built-in agent's `batch` tool, the Pi
-`browser_batch` tool, and the `agentBatch()` global inside `run()` code:
-[docs/agent-batch.md](docs/agent-batch.md).
+A form that used to cost eight model turns costs one. When a step fails, the
+result keeps everything that completed, returns a fresh snapshot, and says
+where to resume, so a recovery is one more call, never a restart. The same
+protocol is the MCP `browser_batch` tool, the built-in agent's `batch` tool,
+the Pi `browser_batch` tool, and the `agentBatch()` global inside `run()`
+code: [docs/agent-batch.md](docs/agent-batch.md).
 
 ## Tokens are the bottleneck
 
@@ -227,7 +228,7 @@ BetterWright's whole observation stack is built around that problem:
 | **Diff mode** | After an action, return **only what changed** — not the page again |
 | **Interactive-only filter** | Drop static text nodes; keep what the agent can click, fill, or read |
 | **Scoped truncation** | Hints about *where* to look next instead of a silently clipped wall |
-| **AgentBatch** | A whole task in **two calls**: the page's spec, then every step back to back — no model turn per click, and a failed step returns the state to resume from |
+| **AgentBatch** | A whole task in **one call** when the page is known (two when it is not): every step back to back with an `answer` filled from what they read — no model turn per click, no closing turn, and a failed step returns the state to resume from |
 | **Single-call finish** | Read-only tasks complete in **one model turn** — the code returns `{finalAnswer}` and the loop ends, no confirmation round-trip |
 | **Persistent session** | One long-lived browser: no re-login, no re-navigation, no re-paying the token cost of getting back to where you were |
 | **Sub-agent delegation** | `betterwright exec` keeps the entire browsing transcript out of your main agent's context — a whole task costs it one tool call |
@@ -273,7 +274,7 @@ step from what it sees, in a browser that must still be there next turn:
 | Piece | What it gives you |
 | --- | --- |
 | [**Agent snapshots**](docs/browser-api.md#reading-the-page) | The token-efficiency core: compressed tree, `[ref=eN]` actions, diff and interactive-only modes, password redaction |
-| [**AgentBatch**](docs/agent-batch.md) | The default two-call protocol: spec, then every step of the task in one call with auto-waiting, no pacing, structured per-step results, and resume-from-failure |
+| [**AgentBatch**](docs/agent-batch.md) | The default protocol: every step of a task in one call with auto-waiting, no pacing, an answer filled from step results, structured per-step results, resume-from-failure, and a spec call for unknown pages |
 | [**Built-in agent loop**](docs/agent.md) | `betterwright exec` / the interactive console / `runAgentTask()` — model-first selection across Claude, Codex, Grok, OpenRouter, Ollama, vLLM, and any OpenAI-compatible endpoint |
 | [**Credential vault**](docs/credentials.md) | AES-256-GCM outside the profile; PSL site matching, selector-free login detection, metadata-only account choice |
 | [**Cookie Sync**](docs/cookie-sync.md) | Merge selected cookies from local Chrome, Edge, Brave, Firefox, Safari, and other desktop browsers into BetterChromium or an explicitly approved cloud browser |

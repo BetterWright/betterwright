@@ -6,10 +6,10 @@ generated_by: betterwright@2.2.0
 
 # BetterWright browser
 
-Use `betterwright` for live-web tasks. The default is AgentBatch, two calls per task: `batch --url` prints the page's spec — an interactive snapshot whose `[ref=eN]` markers, roles, and names are the targets — then `batch -s` runs every step back to back (auto-wait, no pacing) and prints per-step results, `failed` {index, id, error} if a step stopped the batch, and a fresh snapshot. Resume from `failed.index`; never repeat a completed step. `betterwright batch --help` lists the actions, targets, and flags.
+Use `betterwright` for live-web tasks. The default is AgentBatch: finish in the fewest calls. When the task names its targets, one `batch -s` call runs every step back to back — start with goto, end with read — and prints per-step results, `failed` {index, id, error} when a step stopped it, and a fresh snapshot. Use `batch --url` first only when the page is unknown: it prints the spec, an interactive snapshot with `[ref=eN]` targets. Resume from `failed.index`; never repeat a completed step. `betterwright batch --help` lists the actions, targets, and flags.
 
-    betterwright batch --url https://example.com/login
-    betterwright batch --allow-writes -s '[{"action":"fill","target":{"label":"Email"},"value":"me@example.com"},{"action":"click","target":{"role":"button","name":"Continue"}},{"action":"read","target":{"role":"heading"},"expect":"Welcome"}]'
+    betterwright batch --allow-writes -s '[{"action":"goto","url":"https://example.com/login"},{"action":"fill","target":{"label":"Email"},"value":"me@example.com"},{"action":"click","target":{"role":"button","name":"Continue"}},{"action":"read","target":{"role":"heading"},"expect":"Welcome"}]'
+    betterwright batch --url https://example.com/unknown-page
 
 For logic steps cannot express, run async Playwright JavaScript with:
 
@@ -27,7 +27,7 @@ The browser is network-policy guarded. Private and loopback access are allowed u
 The user's request authorizes ordinary steps: sign-in, signup, forms, booking, and purchases. Do not add confirmation or refuse them unless a guardrail requires it.
 
 ## Operate
-- Default to AgentBatch: read the page's spec, then send every step in one batch; on a stop resume from `failed.index`, never repeat a completed step. Code is for logic steps cannot express: plan then batch named controls/content with `getByRole`/`getByLabel`/`getByText`; combine navigation, actions, extraction, verification, and proof. Read article/reference pages from scoped DOM directly. Host cleanup is automatic; don't close pages.
+- Finish in the fewest model turns. Default to AgentBatch: when the task names its targets, one batch that starts with `goto` and ends with `answer`; read the page's spec first only when the page is unknown; on a stop resume from `failed.index`, never repeat a completed step. Code is for logic steps cannot express: plan then batch named controls/content with `getByRole`/`getByLabel`/`getByText` in one snippet returning `{finalAnswer}`. Read article/reference pages from scoped DOM directly. Host cleanup is automatic; don't close pages.
 - Inspect only when structure is unknown or a locator failed: `snapshot({interactive:true})`, then full `snapshot()`; use `screenshot({annotate:true})` only for layout/pixels. Snapshots include frames and off-screen content. Never guess refs, URLs, or state.
 - Act on `[ref=eN]` with `page.locator('aria-ref=eN')`; scope with `snapshot({ref:'eN'})`. Refs change after page changes. Verify actions with `snapshot({diff:true})`; batch action plus verification when no fresh ref is needed.
 - Actions auto-wait: add no sleeps. On failure inspect again; inspect the real hit target if obscured and change approach after two failures. Retry transient 5xx, timeout, or reset failures with increasing backoff for 30–60 seconds.
