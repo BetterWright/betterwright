@@ -95,12 +95,15 @@ test("renderAgentBatchAnswer fills placeholders from step results and refuses un
   assert.equal(renderAgentBatchAnswer("{count} / {count.checked} / {items.count}", results), "3 / true / 2");
   assert.equal(renderAgentBatchAnswer("No placeholders", results), "No placeholders");
   assert.throws(() => renderAgentBatchAnswer("{missing}", results), /names a step this batch did not run/);
-  // Malformed brace groups are refused, never kept as literal answer text.
-  for (const malformed of ["{1price}", "{step.1}", "{}", "{flash.text.tag}", "{ flash }"]) {
+  // Malformed brace groups are refused, never kept as literal answer text —
+  // including nested ones, whose outer braces would otherwise survive.
+  for (const malformed of ["{1price}", "{step.1}", "{}", "{flash.text.tag}", "{ flash }", "{{flash}}", "{{flash}"]) {
     assert.throws(() => renderAgentBatchAnswer(`Total: ${malformed}`, results), /must be \{stepId\} or \{stepId\.field\}/, malformed);
   }
-  // A lone brace is not a placeholder and stays literal.
-  assert.equal(renderAgentBatchAnswer("Set {flash} in {braces", results), "Set You logged in! in {braces");
+  // Braces are reserved: a stray one is an error, not literal text.
+  assert.throws(() => renderAgentBatchAnswer("Set {flash} in {braces", results), /unclosed "\{" at offset 15/);
+  assert.throws(() => renderAgentBatchAnswer("Set {flash}} twice", results), /stray "\}" at offset 11/);
+  assert.throws(() => renderAgentBatchAnswer("} first", results), /stray "\}" at offset 0/);
   assert.throws(() => renderAgentBatchAnswer("{items}", results), /has no value; step "items" \(read\) produced count, items/);
   assert.throws(() => renderAgentBatchAnswer("{flash.items}", results), /has no value/);
 });
@@ -128,7 +131,7 @@ test("a batch with answer finishes with finalAnswer only when every step succeed
   assert.equal(broken.finalAnswer, undefined);
   assert.match(broken.answerError, /names a step this batch did not run/);
 
-  for (const malformed of ["Price: {1price}", "{verify.1}"]) {
+  for (const malformed of ["Price: {1price}", "{verify.1}", "{{verify}}", "{verify}}"]) {
     const unfilled = await executeAgentBatch(
       fakeHost(page),
       [{ id: "verify", action: "read", target: { role: "status" } }],
@@ -136,7 +139,7 @@ test("a batch with answer finishes with finalAnswer only when every step succeed
     );
     assert.equal(unfilled.ok, true);
     assert.equal(unfilled.finalAnswer, undefined, `${malformed} must not become an answer`);
-    assert.match(unfilled.answerError, /must be \{stepId\} or \{stepId\.field\}/);
+    assert.match(unfilled.answerError, /must be \{stepId\} or \{stepId\.field\}|stray "\}"/);
   }
 
   const stopped = await executeAgentBatch(

@@ -198,9 +198,10 @@ are surface options and are not part of the batch.
 - `proof` is the screenshot artifact when `proof: true` and the batch
   succeeded; it also appears in the envelope's `artifacts`.
 - `finalAnswer` is the rendered `answer`, present only when the batch
-  succeeded. Every `{…}` group in the template must be a `{stepId}` or
-  `{stepId.field}` placeholder; a malformed group, a step the batch did not
-  run, or a field that step produced no value for leaves `finalAnswer` unset
+  succeeded. Braces are reserved in the template: every `{` opens a
+  `{stepId}` or `{stepId.field}` placeholder that ends at the next `}`. A
+  stray, nested, or malformed brace, a step the batch did not run, or a
+  field that step produced no value for leaves `finalAnswer` unset
   and explains itself in `answerError`, so an answer never silently claims
   what the page did not show or carries an unfilled token; the model answers
   from the results instead.
