@@ -251,9 +251,12 @@ It reports the two things that actually fail: a missing
 usually swallow the error), and a missing browser.
 
 The server keeps one browser alive for its lifetime, so pages and logins persist
-across tool calls. Each `browser`, `browser_batch`, `browser_download`, and
-`browser_login` snippet has two minutes before the worker restarts. Set
-`BETTERWRIGHT_TIMEOUT_SECONDS` to change that (minimum 5).
+across tool calls. `browser_batch` is the default tool — AgentBatch, two calls
+per task: `{url}` for the page's spec, then `{steps}` for the whole task
+([docs/agent-batch.md](docs/agent-batch.md)); `browser` runs a snippet for
+what steps cannot express. Each `browser_batch`, `browser`,
+`browser_download`, and `browser_login` call has two minutes before the worker
+restarts. Set `BETTERWRIGHT_TIMEOUT_SECONDS` to change that (minimum 5).
 
 BetterChromium (`~/.betterwright/chromium/`) is the default backend on
 supported macOS arm64, Linux x64, and Windows x64 hosts. Linux hosts without

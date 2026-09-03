@@ -20,8 +20,8 @@ import {
 } from "../../dist/src/agent.js";
 import { formatAgentUsage, uncachedInputTokens } from "../../dist/src/agent-usage.js";
 import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
-import { PI_BROWSER_PARAMETERS, PI_LOGIN_PARAMETERS } from "../../dist/src/pi-extension.js";
-import { browserToolProperties, loginToolProperties } from "../../dist/src/tool-schemas.js";
+import { PI_BATCH_PARAMETERS, PI_BROWSER_PARAMETERS, PI_LOGIN_PARAMETERS } from "../../dist/src/pi-extension.js";
+import { batchToolProperties, browserToolProperties, loginToolProperties } from "../../dist/src/tool-schemas.js";
 import { isNumber } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -35,9 +35,19 @@ function futureJwt(extra = {}) {
 
 // A fake browser standing in for BetterWright — records run() calls and returns
 // canned result envelopes. `vault` toggles the login tool.
+/** The batch outcome a fake run returns, as the batch tool reads it. */
+interface FakeBatchOutcome {
+  protocol: string;
+  ok: boolean;
+  completed: number;
+  total: number;
+  snapshot?: string;
+  failed?: { index: number; id: string; action: string; error: string };
+}
+
 interface FakeEnvelope {
   ok: boolean;
-  result?: string | Record<string, string | number>;
+  result?: string | Record<string, string | number> | FakeBatchOutcome;
   error?: string;
   artifacts?: Array<{ kind: string; path: string }>;
   durationMs?: number;
@@ -63,7 +73,7 @@ interface FakeLoginCall {
 }
 
 interface FakeBrowserCalls {
-  run: Array<{ code: string; options: { session?: string } }>;
+  run: Array<{ code: string; options: { session?: string; note?: string } }>;
   fill: FakeLoginCall[];
   closed: boolean;
   liveView?: Array<{ session?: string }>;
@@ -83,7 +93,7 @@ interface FakeBrowserOptions {
 interface FakeBrowser {
   vault: Record<string, never> | null;
   calls: FakeBrowserCalls;
-  run(code: string, options: { session?: string }): Promise<FakeEnvelope>;
+  run(code: string, options: { session?: string; note?: string }): Promise<FakeEnvelope>;
   fillCredential(options: FakeLoginCall): Promise<FakeEnvelope>;
   close(): Promise<void>;
   _inbox?: Array<{ text: string }>;
@@ -515,7 +525,7 @@ function observationsFrom(transcript) {
     .filter((message) => message.role === "tool")
     .flatMap((message) =>
       message.results
-        .filter((result) => result.name === "browser")
+        .filter((result) => result.name === "browser" || result.name === "batch")
         .map((result) => JSON.parse(result.content)),
     );
 }
@@ -1794,16 +1804,20 @@ test("agent harness tools use the shared parameter schemas verbatim", async () =
   await runAgentTask({ task: "x", model, browser: fakeBrowser({ vault: {} }) });
   const tools = Object.fromEntries(model.seen[0].tools.map((tool) => [tool.name, tool.parameters]));
 
+  assert.deepEqual(tools.batch, { type: "object", properties: batchToolProperties() });
   assert.deepEqual(tools.browser, {
     type: "object",
     properties: browserToolProperties(),
     required: ["code"],
   });
   assert.deepEqual(tools.login, { type: "object", properties: loginToolProperties() });
+  // AgentBatch is the default, so it is the first tool the model reads.
+  assert.deepEqual(model.seen[0].tools.map((tool) => tool.name), ["batch", "browser", "done", "login"]);
 
   // The tool list is resent on every turn of the agent loop, so it is charged
   // once per step, not once per task. Budget set from the 2026-07-25 pass
-  // (6,211 → 5,588 collapsed characters) with room for one more field.
+  // (6,211 → 5,588 collapsed characters) with room for one more field; the
+  // 2026-09-03 AgentBatch tool fit by shortening the browser description.
   const size = JSON.stringify(model.seen[0].tools).replace(/\s+/g, " ").length;
   assert.ok(size < 6_000, `agent tool list grew to ${size} collapsed characters`);
 });
@@ -1830,6 +1844,16 @@ test("MCP tool input schemas match the shared schemas plus the session/default l
   assert.equal(loginSession.default, "default");
   assert.equal(loginProps.submit.default, false);
   assert.equal(loginProps.generate.default, false);
+
+  // browser_batch tool: shared fields + session, gate and observe defaults.
+  const { session: batchSession, ...batchProps } = byName.browser_batch.properties;
+  assert.deepEqual(stripKey(batchProps, "default"), batchToolProperties());
+  assert.equal(batchSession.default, "default");
+  assert.equal(batchProps.allowWrites.default, false);
+  assert.equal(batchProps.allowIrreversible.default, false);
+  assert.equal(batchProps.allowPasswords.default, false);
+  assert.equal(batchProps.observe.default, "snapshot");
+  assert.equal(batchProps.proof.default, false);
 });
 
 test("Pi tool parameters match the shared schemas plus the strict-validation layer", () => {
@@ -1842,6 +1866,146 @@ test("Pi tool parameters match the shared schemas plus the strict-validation lay
   assert.deepEqual(stripKey(PI_LOGIN_PARAMETERS.properties, "minLength"), loginToolProperties());
   assert.equal(PI_LOGIN_PARAMETERS.properties.passwordSelector.minLength, 1);
   assert.ok(!PI_LOGIN_PARAMETERS.required?.includes("passwordSelector"));
+
+  // Pi pins every step's fields too, which is only safe because the shared
+  // step schema names every field the executor accepts.
+  assert.equal(PI_BATCH_PARAMETERS.additionalProperties, false);
+  assert.equal(PI_BATCH_PARAMETERS.properties.steps.items.additionalProperties, false);
+  assert.equal(PI_BATCH_PARAMETERS.properties.url.minLength, 1);
+  const { steps: piSteps, ...piBatchProps } = stripKey(PI_BATCH_PARAMETERS.properties, "minLength");
+  const { steps: sharedSteps, ...sharedBatchProps } = batchToolProperties();
+  assert.deepEqual(piBatchProps, sharedBatchProps);
+  const { additionalProperties: _strict, ...piItems } = piSteps.items;
+  assert.deepEqual({ ...piSteps, items: piItems }, sharedSteps);
+});
+
+// --- the batch tool --------------------------------------------------------
+
+test("the batch tool runs an AgentBatch through browser.run and observes its outcome", async () => {
+  const browser = fakeBrowser({
+    runs: [
+      {
+        ok: true,
+        result: {
+          protocol: "agent-batch/1",
+          ok: true,
+          completed: 1,
+          total: 1,
+          snapshot: 'page page-1 https://example.com/ "Example"\n- button "Go" [ref=e1]',
+        },
+        artifacts: [],
+        durationMs: 40,
+      },
+      {
+        ok: true,
+        result: { protocol: "agent-batch/1", ok: true, completed: 2, total: 2 },
+        artifacts: [{ kind: "proof", path: "/tmp/proof.png" }],
+        durationMs: 60,
+      },
+    ],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "batch", input: { url: "https://example.com/", note: "Opening the page" } }] },
+    {
+      text: "",
+      toolCalls: [
+        {
+          id: "c2",
+          name: "batch",
+          input: {
+            steps: [
+              { action: "click", target: { ref: "e1" } },
+              { action: "read", target: { role: "status" }, expect: "Done" },
+            ],
+            allowWrites: true,
+            proof: true,
+            note: "Clicking Go",
+          },
+        },
+      ],
+    },
+    { text: "", toolCalls: [{ id: "d", name: "done", input: { answer: "Clicked Go." } }] },
+  ]);
+  const steps = [];
+  const result = await runAgentTask({ task: "click go", model, browser, onStep: (event) => steps.push(event) });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, "Clicked Go.");
+  assert.equal(result.proof, "/tmp/proof.png");
+  assert.equal(browser.calls.run.length, 2);
+  assert.equal(browser.calls.run[0].code, 'return agentBatch([{"action":"goto","url":"https://example.com/"}], {});');
+  assert.equal(browser.calls.run[0].options.note, "Opening the page");
+  assert.match(browser.calls.run[1].code, /^return agentBatch\(\[\{"action":"click"/);
+  assert.match(browser.calls.run[1].code, /"allowWrites":true,"proof":true\}\);$/);
+  assert.deepEqual(steps.map((event) => [event.tool, event.note]), [
+    ["batch", "Opening the page"],
+    ["batch", "Clicking Go"],
+  ]);
+  const observations = model.seen[1].messages.at(-1).results;
+  assert.equal(observations[0].name, "batch");
+  assert.match(observations[0].content, /"protocol":"agent-batch\/1"/);
+  assert.match(observations[0].content, /\[ref=e1\]/);
+});
+
+test("a malformed batch is answered without a browser round trip", async () => {
+  const browser = fakeBrowser();
+  const model = scriptedModel([
+    {
+      text: "",
+      toolCalls: [
+        { id: "c1", name: "batch", input: { steps: [{ action: "click", target: { css: "#go" } }] } },
+      ],
+    },
+    { text: "", toolCalls: [{ id: "d", name: "done", input: { answer: "gave up" } }] },
+  ]);
+  const result = await runAgentTask({ task: "click go", model, browser });
+
+  assert.equal(result.ok, true);
+  assert.equal(browser.calls.run.length, 0);
+  const observation = model.seen[1].messages.at(-1).results[0];
+  assert.equal(observation.name, "batch");
+  assert.match(observation.content, /^batch error: AgentBatch step "s1" \(click\) changes page state; pass allowWrites:true/);
+});
+
+test("a batch that keeps stopping at the same step counts as no progress", async () => {
+  const stopped = {
+    ok: true,
+    result: {
+      protocol: "agent-batch/1",
+      ok: false,
+      completed: 0,
+      total: 2,
+      failed: { index: 0, id: "s1", action: "click", error: 'AgentBatch step "s1" target matched 0 elements' },
+    },
+    artifacts: [],
+    durationMs: 5,
+  };
+  const browser = fakeBrowser({ runs: Array.from({ length: 20 }, () => ({ ...stopped })) });
+  let turn = 0;
+  const model = {
+    name: "batching",
+    async complete() {
+      turn += 1;
+      return {
+        text: "",
+        toolCalls: [
+          {
+            id: `c${turn}`,
+            name: "batch",
+            input: { steps: [{ action: "click", target: { css: "#go" } }, { action: "url" }], allowWrites: true },
+          },
+        ],
+      };
+    },
+  };
+  const result = await runAgentTask({ task: "click go", model, browser });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "no_progress");
+  assert.equal(browser.calls.run.length, 5, "the loop stopped at the identical-failure limit");
+  const warnings = observationsFrom(result.transcript).flatMap((o) => o.warnings || []);
+  assert.equal(warnings.length, 3);
+  assert.match(warnings[0], /failed the same way 3 times in a row/);
 });
 
 // --- stopReason handling ---------------------------------------------------

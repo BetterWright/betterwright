@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 // implementation against them turns a drift between the two into a compile
 // error instead of something only a consumer would notice.
 import type { BetterWrightOptions, LiveViewOptions } from "../types/public.js";
+import { agentBatchCode, agentBatchRunTimeoutSeconds } from "./agent-batch.js";
 import {
   configuredDefaultProvider,
   expandProviderChoice,
@@ -1083,6 +1084,41 @@ export class BetterWright {
    */
   run(code, options: any = {}) {
     return this._enqueue(options?.session, () => this._runNow(code, options));
+  }
+
+  /**
+   * Run an AgentBatch in one worker round trip: `batch({url})` opens a page
+   * and returns its spec, `batch(steps, {allowWrites: true})` runs the steps
+   * and returns per-step results plus a fresh snapshot. Batch options
+   * (`allowWrites`, `allowIrreversible`, `allowPasswords`, `observe`,
+   * `proof`, `settleMs`, `minIntervalMs`) and run options (`session`,
+   * `note`, `timeout`, `approvedDownloads`) share the one options object.
+   * A malformed batch resolves to an `ok: false` envelope, like a bad snippet.
+   */
+  batch(input, options: any = {}) {
+    if (!isOptionsRecord(options)) {
+      return Promise.resolve({ ok: false, error: "batch options must be an object" });
+    }
+    const { session, note, timeout, approvedDownloads, ...batchOptions } = options;
+    const args = Array.isArray(input)
+      ? { ...batchOptions, steps: input }
+      : isOptionsRecord(input)
+        ? { ...input, ...batchOptions }
+        : null;
+    if (!args) {
+      return Promise.resolve({ ok: false, error: "batch expects a steps array or {url} / {steps}" });
+    }
+    let code;
+    try {
+      code = agentBatchCode(args);
+    } catch (error) {
+      return Promise.resolve({ ok: false, error: String(error?.message || error) });
+    }
+    // A batch is as long as its steps: give an unspecified timeout room for
+    // every step's own budget, so a long batch is not cut off (and the
+    // worker restarted) by the per-snippet default sized for one action.
+    const budget = timeout ?? agentBatchRunTimeoutSeconds(args, this.defaultTimeout);
+    return this.run(code, { session, note, timeout: budget, approvedDownloads });
   }
 
   /** The lane a call belongs to; `HOST_LANE` for browser-wide operations. */

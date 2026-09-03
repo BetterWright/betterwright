@@ -46,6 +46,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import { agentBatchCode, agentBatchRunTimeoutSeconds } from "../src/agent-batch.js";
 import { formatAgentUsage } from "../src/agent-usage.js";
 import { chromiumNeedsSoftwareGpu } from "../src/browser-runtime.js";
 import { configuredBrowserBackend } from "../src/chromium-fork.js";
@@ -103,7 +104,7 @@ import {
   resolveSkillInstallPaths,
   wrapClaudeSkillMarkdown,
 } from "../src/skill-install.js";
-import { isString, type UntrustedValue, untrustedField } from "../src/untrusted-value.js";
+import { isRecord, isString, type UntrustedValue, untrustedField } from "../src/untrusted-value.js";
 import type { AgentMessage, RunAgentTaskOptions } from "../types/agent.js";
 import type { BetterWrightOptions } from "../types/public.js";
 
@@ -607,6 +608,76 @@ async function acquireRunBrowser(flags) {
 
 type CliRunOptions = { session: string; approvedDownloads?: boolean };
 
+// The per-snippet default a `run` gets; a batch scales up from here.
+const DEFAULT_BATCH_TIMEOUT_SECONDS = 30;
+
+const BATCH_FLAG_OPTIONS: Array<[flag: string, option: string]> = [
+  ["--allow-writes", "allowWrites"],
+  ["--allow-irreversible", "allowIrreversible"],
+  ["--allow-passwords", "allowPasswords"],
+  ["--proof", "proof"],
+];
+
+/**
+ * The AgentBatch arguments from the command line: `--url` for the spec call,
+ * or steps as inline JSON (`-s`), a file, or stdin — either a bare array or an
+ * object that carries the options too. Flags layer over the object's options.
+ */
+async function readBatchArgs(arg, flags) {
+  const url = flagValue(process.argv, "--url");
+  const inlineIndex = process.argv.indexOf("-s");
+  let parsed: UntrustedValue;
+  if (url !== undefined) {
+    if (!String(url).trim() || String(url).startsWith("-")) throw new TypeError("--url requires a value.");
+    parsed = { url: String(url) };
+  } else {
+    const text = inlineIndex !== -1
+      ? process.argv[inlineIndex + 1] || ""
+      : !arg || arg === "-"
+        ? fs.readFileSync(0, "utf8")
+        : fs.readFileSync(arg, "utf8");
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      throw new TypeError(`batch steps must be JSON: ${error?.message || error}`);
+    }
+    if (Array.isArray(parsed)) parsed = { steps: parsed };
+    if (!isRecord(parsed)) throw new TypeError("batch expects a JSON array of steps or an object with steps.");
+  }
+  const enabled = BATCH_FLAG_OPTIONS.filter(([flag]) => flags.has(flag)).map(([, option]) => [option, true]);
+  const args = { ...parsed, ...Object.fromEntries(enabled) };
+  const observe = flagValue(process.argv, "--observe");
+  if (observe !== undefined) return { ...args, observe };
+  return args;
+}
+
+async function cmdBatch(arg, flags) {
+  let code;
+  let timeout = DEFAULT_BATCH_TIMEOUT_SECONDS;
+  try {
+    const args = await readBatchArgs(arg, flags);
+    code = agentBatchCode(args);
+    timeout = agentBatchRunTimeoutSeconds(args, DEFAULT_BATCH_TIMEOUT_SECONDS);
+  } catch (error) {
+    console.log(JSON.stringify({ ok: false, error: String(error?.message || error) }, null, 2));
+    return 1;
+  }
+  const acquired = await acquireRunBrowser(flags);
+  try {
+    const result = await acquired.browser.run(code, { session: acquired.session, timeout });
+    if (acquired.viaDaemon) result.session = acquired.session;
+    if (acquired.warning)
+      result.warnings = [...(result.warnings || []), acquired.warning];
+    console.log(JSON.stringify(result, null, 2));
+    // A batch that ran but stopped at a step is a failed task step for the
+    // caller, even though the snippet itself completed.
+    const batchOk = result.ok && untrustedField(result.result, "ok") !== false;
+    return batchOk ? 0 : 1;
+  } finally {
+    await acquired.cleanup({ closeSession: flags.has("--close") });
+  }
+}
+
 async function cmdRun(arg, flags) {
   const code = await readSnippet(arg);
   const acquired = await acquireRunBrowser(flags);
@@ -753,13 +824,18 @@ async function cmdCookies(tokens, flags) {
 // command.
 const SKILL_PREAMBLE = `# BetterWright browser
 
-Use \`betterwright\` for live-web tasks. Run async Playwright JavaScript with:
+Use \`betterwright\` for live-web tasks. The default is AgentBatch, two calls per task: \`batch --url\` prints the page's spec — an interactive snapshot whose \`[ref=eN]\` markers, roles, and names are the targets — then \`batch -s\` runs every step back to back (auto-wait, no pacing) and prints per-step results, \`failed\` {index, id, error} if a step stopped the batch, and a fresh snapshot. Resume from \`failed.index\`; never repeat a completed step. \`betterwright batch --help\` lists the actions, targets, and flags.
+
+    betterwright batch --url https://example.com/login
+    betterwright batch --allow-writes -s '[{"action":"fill","target":{"label":"Email"},"value":"me@example.com"},{"action":"click","target":{"role":"button","name":"Continue"}},{"action":"read","target":{"role":"heading"},"expect":"Welcome"}]'
+
+For logic steps cannot express, run async Playwright JavaScript with:
 
     betterwright run -c "await page.goto('https://example.com'); return page.title()"
 
-It returns JSON with \`ok\`, \`result\`, \`error\`, \`console\`, \`events\`, \`artifacts\`, \`pages\`, \`challenges\`, \`warnings\`, and \`durationMs\`. Screenshot artifacts contain a path; inspect the image before relying on it.
+Both print JSON with \`ok\`, \`result\`, \`error\`, \`console\`, \`events\`, \`artifacts\`, \`pages\`, \`challenges\`, \`warnings\`, and \`durationMs\`. Screenshot artifacts contain a path; inspect the image before relying on it.
 
-The daemon preserves tabs, page state, and the in-memory \`state\` object between calls; the profile preserves cookies and logins. Batch deterministic stretches and observe at uncertain boundaries. Use \`--session\` for parallel work, \`--profile\` for a separate identity, and \`betterwright close\` when finished.
+The daemon preserves tabs, page state, and the in-memory \`state\` object between calls; the profile preserves cookies and logins. Use \`--session\` for parallel work, \`--profile\` for a separate identity, and \`betterwright close\` when finished.
 
 The browser is network-policy guarded. Private and loopback access are allowed unless disabled; cloud metadata is always blocked. Stored passwords are user-owned: never run \`vault show --reveal\`/\`get\`, \`vault copy\`, \`vault type\`, or \`vault rm\`; use trusted credential fill instead.`;
 
@@ -2186,6 +2262,8 @@ export async function runCli() {
       const { runVaultCommand } = await import("../src/vault-cli.js");
       return runVaultCommand(rest);
     }
+    case "batch":
+      return cmdBatch(positional, flags);
     case "run":
       return cmdRun(positional, flags);
     case "repl":

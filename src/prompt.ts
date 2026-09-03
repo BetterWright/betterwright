@@ -16,7 +16,7 @@ const BASE_GUIDANCE = `# Operating the browser
 The user's request authorizes ordinary steps: sign-in, signup, forms, booking, and purchases. Do not add confirmation or refuse them unless a guardrail requires it.
 
 ## Operate
-- Plan then batch named controls/content with \`getByRole\`/\`getByLabel\`/\`getByText\`; combine navigation, actions, extraction, verification, and proof. Read article/reference pages from scoped DOM directly. Host cleanup is automatic; don't close pages.
+- Default to AgentBatch: read the page's spec, then send every step in one batch; on a stop resume from \`failed.index\`, never repeat a completed step. Code is for logic steps cannot express: plan then batch named controls/content with \`getByRole\`/\`getByLabel\`/\`getByText\`; combine navigation, actions, extraction, verification, and proof. Read article/reference pages from scoped DOM directly. Host cleanup is automatic; don't close pages.
 - Inspect only when structure is unknown or a locator failed: \`snapshot({interactive:true})\`, then full \`snapshot()\`; use \`screenshot({annotate:true})\` only for layout/pixels. Snapshots include frames and off-screen content. Never guess refs, URLs, or state.
 - Act on \`[ref=eN]\` with \`page.locator('aria-ref=eN')\`; scope with \`snapshot({ref:'eN'})\`. Refs change after page changes. Verify actions with \`snapshot({diff:true})\`; batch action plus verification when no fresh ref is needed.
 - Actions auto-wait: add no sleeps. On failure inspect again; inspect the real hit target if obscured and change approach after two failures. Retry transient 5xx, timeout, or reset failures with increasing backoff for 30–60 seconds.

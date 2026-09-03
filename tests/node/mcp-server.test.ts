@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
+import { AGENT_BATCH_ACTIONS, MAX_AGENT_BATCH_STEPS } from "../../dist/src/agent-batch.js";
 import { BetterWright } from "../../dist/src/client.js";
 import {
   _createMcpHandlersForTest,
@@ -33,7 +34,7 @@ test("MCP omits and rejects browser_login when the vault is disabled", async () 
     const listed = await handlers.listTools();
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
-      ["browser", "browser_batch", "browser_download", "browser_handoff", "browser_doctor"],
+      ["browser_batch", "browser", "browser_download", "browser_handoff", "browser_doctor"],
     );
 
     const response = await handlers.callTool({
@@ -132,14 +133,14 @@ test("loginOptionsFromArgs keeps recognized keys and drops the rest", () => {
   );
 });
 
-test("MCP browser_batch dispatches one guarded worker transaction", async () => {
+test("MCP browser_batch runs an AgentBatch in one worker round trip", async () => {
   const calls = [];
   const handlers = _createMcpHandlersForTest({
     browser: {
       vault: false,
       async run(code, options) {
         calls.push({ code, options });
-        return { ok: true, result: { protocol: "ui-batch/1", pageUpdated: true } };
+        return { ok: true, result: { protocol: "agent-batch/1", ok: true, completed: 3, total: 3 } };
       },
     },
     downloadPolicy: "deny",
@@ -153,12 +154,11 @@ test("MCP browser_batch dispatches one guarded worker transaction", async () => 
         note: "Submitting and verifying the form.",
         allowWrites: true,
         allowPasswords: true,
-        minIntervalMs: 25,
         proof: true,
-        operations: [
+        steps: [
           { id: "name", action: "fill", target: { label: "Name" }, value: "Ada\u2028Lovelace" },
           { id: "submit", action: "click", target: { role: "button", name: "Submit" } },
-          { id: "verify", action: "read", target: { text: "Received!", exact: true }, value: "Received!" },
+          { id: "verify", action: "read", target: { text: "Received!", exact: true }, expect: "Received!" },
         ],
       },
     },
@@ -168,17 +168,86 @@ test("MCP browser_batch dispatches one guarded worker transaction", async () => 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.session, "form");
   assert.equal(calls[0].options.note, "Submitting and verifying the form.");
-  assert.match(calls[0].code, /controls\.batch/);
-  assert.match(calls[0].code, /allowWrites/);
-  assert.match(calls[0].code, /"allowPasswordFill":true/);
-  assert.match(calls[0].code, /minIntervalMs/);
+  // Three steps fit inside the server's 120 s floor; the budget still rides
+  // on the run so a long batch is never cut off by the per-call default.
+  assert.equal(calls[0].options.timeout, 120);
+  assert.match(calls[0].code, /^return agentBatch\(\[/);
+  assert.match(calls[0].code, /"allowWrites":true/);
+  assert.match(calls[0].code, /"allowPasswords":true/);
+  assert.match(calls[0].code, /"proof":true/);
+  // The snippet is JavaScript source: line separators must stay escaped.
   assert.match(calls[0].code, /\\u2028/);
-  assert.match(calls[0].code, /const \{ui, \.\.\.batch\} = outcome/);
-  assert.match(calls[0].code, /screenshot\(\{kind:'proof'\}\)/);
-  assert.equal(JSON.parse(response.content[0].text).result.protocol, "ui-batch/1");
+  assert.doesNotMatch(calls[0].code, /session|note/);
+  assert.equal(JSON.parse(response.content[0].text).result.protocol, "agent-batch/1");
 });
 
-test("MCP browser_batch rejects a mutation without asserted final state", async () => {
+test("MCP browser_batch sizes the run timeout to the batch above the server floor", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({
+    browser: {
+      vault: false,
+      defaultTimeout: 20,
+      async run(code, options) {
+        calls.push({ code, options });
+        return { ok: true, result: { protocol: "agent-batch/1", ok: true } };
+      },
+    },
+    downloadPolicy: "deny",
+  });
+  const long = await handlers.callTool({
+    params: {
+      name: "browser_batch",
+      arguments: { steps: Array.from({ length: 30 }, () => ({ action: "reload" })) },
+    },
+  });
+  assert.equal(long.isError, undefined);
+  // 15 s plus 10 s per step, well above the 20 s configured floor.
+  assert.equal(calls[0].options.timeout, 315);
+
+  const spec = await handlers.callTool({
+    params: { name: "browser_batch", arguments: { url: "https://example.com/" } },
+  });
+  assert.equal(spec.isError, undefined);
+  // One step: the floor is the deployer's configured per-call timeout.
+  assert.equal(calls[1].options.timeout, 25);
+});
+
+test("MCP browser_batch refuses a malformed batch before the worker round trip", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({
+    browser: {
+      vault: false,
+      async run(code) {
+        calls.push(code);
+        return { ok: true, result: { protocol: "agent-batch/1", ok: true } };
+      },
+    },
+    downloadPolicy: "deny",
+  });
+  const attempt = (args) => handlers.callTool({ params: { name: "browser_batch", arguments: args } });
+
+  const unauthorized = await attempt({
+    steps: [{ id: "submit", action: "click", target: { role: "button", name: "Submit" } }],
+  });
+  assert.equal(unauthorized.isError, true);
+  assert.match(unauthorized.content[0].text, /step "submit" \(click\) changes page state; pass allowWrites:true/);
+
+  const unknownAction = await attempt({ steps: [{ action: "teleport" }] });
+  assert.equal(unknownAction.isError, true);
+  assert.match(unknownAction.content[0].text, /unsupported action "teleport"/);
+
+  const both = await attempt({ url: "https://example.com/", steps: [{ action: "reload" }] });
+  assert.equal(both.isError, true);
+  assert.match(both.content[0].text, /either url or steps/);
+
+  const neither = await attempt({ note: "nothing to do" });
+  assert.equal(neither.isError, true);
+  assert.match(neither.content[0].text, /requires url or a non-empty steps array/);
+
+  assert.equal(calls.length, 0);
+});
+
+test("MCP browser_batch opens a URL as the spec call, without model-authored inspection", async () => {
   const calls = [];
   const handlers = _createMcpHandlersForTest({
     browser: {
@@ -188,71 +257,11 @@ test("MCP browser_batch rejects a mutation without asserted final state", async 
         return {
           ok: true,
           result: {
-            batch: { protocol: "ui-batch/1", pageUpdated: true },
-            ui: { protocol: "betterwright-ui/1", controls: [] },
+            protocol: "agent-batch/1",
+            ok: true,
+            snapshot: 'page page-1 https://example.com/form "Form"\n- textbox "Name" [ref=e1]',
           },
         };
-      },
-    },
-    downloadPolicy: "deny",
-  });
-
-  const response = await handlers.callTool({
-    params: {
-      name: "browser_batch",
-      arguments: {
-        allowWrites: true,
-        operations: [
-          { id: "submit", action: "click", target: { role: "button", name: "Submit" } },
-        ],
-      },
-    },
-  });
-
-  assert.equal(response.isError, true);
-  assert.equal(calls.length, 0);
-  assert.match(response.content[0].text, /non-empty expected value/);
-});
-
-test("MCP browser_batch rejects a final read without an expectation", async () => {
-  const calls = [];
-  const handlers = _createMcpHandlersForTest({
-    browser: {
-      vault: false,
-      async run(code) {
-        calls.push(code);
-        return { ok: true, result: { protocol: "ui-batch/1" } };
-      },
-    },
-    downloadPolicy: "deny",
-  });
-
-  const response = await handlers.callTool({
-    params: {
-      name: "browser_batch",
-      arguments: {
-        allowWrites: true,
-        operations: [
-          { id: "load", action: "click", target: { role: "button", name: "Load" } },
-          { id: "weak", action: "read", target: { css: "main" } },
-        ],
-      },
-    },
-  });
-
-  assert.equal(response.isError, true);
-  assert.equal(calls.length, 0);
-  assert.match(response.content[0].text, /non-empty expected value/);
-});
-
-test("MCP browser_batch opens a URL without model-authored inspection", async () => {
-  const calls = [];
-  const handlers = _createMcpHandlersForTest({
-    browser: {
-      vault: false,
-      async run(code, options) {
-        calls.push({ code, options });
-        return { ok: true, result: "https://example.com/form" };
       },
     },
     downloadPolicy: "deny",
@@ -270,9 +279,9 @@ test("MCP browser_batch opens a URL without model-authored inspection", async ()
   assert.equal(calls[0].options.session, "open");
   assert.equal(
     calls[0].code,
-    'await page.goto("https://example.com/form"); return page.url();',
+    'return agentBatch([{"action":"goto","url":"https://example.com/form"}], {});',
   );
-  assert.doesNotMatch(calls[0].code, /snapshot|innerText|content/);
+  assert.match(JSON.parse(response.content[0].text).result.snapshot, /\[ref=e1\]/);
 });
 
 // The MCP tool list is re-sent on every request, so its size is permanent
@@ -290,8 +299,11 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
 
   // Collapse runs of whitespace: line wrapping is nearly free in characters but
   // costs a token per line, so raw length would understate a rewrap regression.
+  // Raised from 7,250 on 2026-09-03 when browser_batch became AgentBatch: its
+  // step schema names every action and field the executor accepts, which is
+  // what lets a model finish a task in two calls instead of one per click.
   const size = JSON.stringify(tools).replace(/\s+/g, " ").length;
-  assert.ok(size < 7_250, `MCP tool list grew to ${size} collapsed characters`);
+  assert.ok(size < 9_000, `MCP tool list grew to ${size} collapsed characters`);
 
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
   const text = (name) => byName[name].description.replace(/\s+/g, " ");
@@ -299,7 +311,7 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   // Reading and acting: the ref protocol is unusable if any of these literals
   // is paraphrased away.
   for (const literal of [
-    "Plan then batch",
+    "Default to browser_batch",
     "Never add sleeps",
     "snapshot({interactive: true})",
     "page.locator('aria-ref=eN')",
@@ -327,17 +339,25 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser"), /allowWrites:true/);
   assert.match(text("browser"), /webmcp\.tools\(\)\/webmcp\.invoke\(\)/);
   assert.match(text("browser"), /autosubmit requires explicit opt-in/);
-  assert.match(text("browser"), /use browser_batch/i);
-  assert.match(text("browser"), /browser_batch \{url\}/i);
-  assert.match(text("browser_batch"), /Default for ordinary forms/);
-  assert.match(text("browser_batch"), /ordinary forms/);
-  assert.match(text("browser_batch"), /role \(\+ name\), label, text/);
-  assert.match(text("browser_batch"), /Mutating batches require allowWrites=true/);
-  assert.match(text("browser_batch"), /Task-supplied passwords need allowPasswords=true/);
-  assert.match(text("browser_batch"), /end in read\/readUrl with a non-empty expected value/);
-  assert.deepEqual(byName.browser_batch.inputSchema.properties.operations.items.properties.action.enum, [
-    "fill", "click", "select", "check", "uncheck", "press", "read", "readUrl",
-  ]);
+  assert.match(text("browser"), /what steps cannot express/);
+  // AgentBatch is the default: the two-call protocol, the resume rule, the
+  // target vocabulary, and every authorization gate must survive edits.
+  assert.match(text("browser_batch"), /the default way to browse, in two calls/);
+  assert.match(text("browser_batch"), /Call 1 \{url\}/);
+  assert.match(text("browser_batch"), /Call 2 \{steps, allowWrites: true\}/);
+  assert.match(text("browser_batch"), /resume from failed\.index, never repeat a completed step/);
+  assert.match(text("browser_batch"), /role \(\+ name\), label, text, placeholder, testId, css; ambiguity fails/);
+  assert.match(text("browser_batch"), /read \{expect\} or wait \{text\|url\}/);
+  assert.match(text("browser_batch"), /irreversible:true steps need allowIrreversible/);
+  assert.match(text("browser_batch"), /task-supplied password needs allowPasswords, stored ones use browser_login/);
+  assert.match(text("browser_batch"), /optional:true steps may fail without stopping/);
+  const batchSchema = byName.browser_batch.inputSchema.properties;
+  assert.deepEqual(batchSchema.steps.items.properties.action.enum, [...AGENT_BATCH_ACTIONS]);
+  assert.deepEqual(batchSchema.steps.items.required, ["action"]);
+  assert.equal(batchSchema.steps.maxItems, MAX_AGENT_BATCH_STEPS);
+  assert.equal(batchSchema.url.type, "string");
+  assert.equal(batchSchema.session.default, "default");
+  assert.equal(batchSchema.allowWrites.default, false);
 
   // Downloads are gated to this tool; deny must stay discoverable.
   assert.match(text("browser_download"), /the browser tool cannot/);
