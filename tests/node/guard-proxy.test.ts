@@ -1003,3 +1003,74 @@ test("an expired decision is re-asked before the next connection", async () => {
     await proxy.close();
   }
 });
+
+test("RFC 6761 localhost names map to loopback without OS DNS", async () => {
+  let lookupCount = 0;
+  const target = net.createServer((socket) => socket.end());
+  target.listen({ host: "127.0.0.1", port: 0 });
+  await once(target, "listening");
+  const targetPort = (target.address() as AddressInfo).port;
+  const calls = [];
+  const proxy = createGuardProxy(
+    proxyOptions(
+      {
+        lookup: async () => {
+          lookupCount += 1;
+          throw codedError("ENOTFOUND");
+        },
+        delay: async () => {},
+      },
+      async (url, details) => {
+        calls.push({ url, details });
+        return { allowed: true };
+      },
+    ),
+  );
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "signup.acme.localhost", targetPort), 0);
+    assert.equal(await socksConnect(port, "localhost", targetPort), 0);
+    assert.equal(lookupCount, 0);
+    assert.equal(await socksConnect(port, "example.test", targetPort), 4);
+    assert.equal(lookupCount, 1);
+    assert.ok(
+      calls.some(
+        ({ url, details }) =>
+          url.includes("127.0.0.1") && details?.resourceType === "transport-address",
+      ),
+      "resolved loopback addresses remain policy-checked",
+    );
+  } finally {
+    await proxy.close();
+    target.close();
+  }
+});
+
+test("RFC 6761 localhost still honors transport-address policy", async () => {
+  let dialed = false;
+  const proxy = createGuardProxy(
+    proxyOptions(
+      {
+        lookup: async () => {
+          throw new Error("OS DNS must not run for .localhost");
+        },
+        connect: async () => {
+          dialed = true;
+          return new PassThrough();
+        },
+        delay: async () => {},
+      },
+      async (url) => ({
+        allowed: !url.includes("127.0.0.1"),
+        reason: "test policy",
+      }),
+    ),
+  );
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "signup.acme.localhost"), 2);
+    assert.equal(dialed, false);
+  } finally {
+    await proxy.close();
+  }
+});
