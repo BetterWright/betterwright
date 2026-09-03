@@ -13,13 +13,21 @@ updates:
   # full rationale lives in scripts/check-versions.ts). Those bumps must be
   # deliberate, so Dependabot only proposes devDependency updates, and the
   # ignore list restates the pinned three in case the allow scope ever widens.
-  - package-ecosystem: bun
-    directory: /
-    schedule:
-      interval: weekly
-    allow:
-      - dependency-type: development
-    ignore:
-      - dependency-name: playwright-core
-      - dependency-name: tldts
-      - dependency-name: patchright-core
+  #
+  # The bun updater is paused. GitHub's image still ships Bun 1.3.14, which
+  # rejects bun.lock lockfileVersion 2 (Dependabot::DependencyFileNotSupported
+  # on every main push after 2.2.0). Bun 1.4.0 writes v2 by default. Track
+  # dependabot/dependabot-core#16026 and #16071. Restore the block below once
+  # that image can read v2. Do not switch this back to npm: CI installs with
+  # `bun install --frozen-lockfile`, so a package.json-only bump would fail.
+  #
+  # - package-ecosystem: bun
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
+  #   allow:
+  #     - dependency-type: development
+  #   ignore:
+  #     - dependency-name: playwright-core
+  #     - dependency-name: tldts
+  #     - dependency-name: patchright-core
