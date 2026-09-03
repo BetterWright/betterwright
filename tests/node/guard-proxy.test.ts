@@ -1009,6 +1009,8 @@ test("RFC 6761 localhost names map to loopback without OS DNS", async () => {
   const target = net.createServer((socket) => socket.end());
   target.listen({ host: "127.0.0.1", port: 0 });
   await once(target, "listening");
+  // SAFETY: `listening` was awaited on a TCP listen, so `address()` returns an
+  // AddressInfo — not the null of an unbound server or a pipe-name string.
   const targetPort = (target.address() as AddressInfo).port;
   const calls = [];
   const proxy = createGuardProxy(
