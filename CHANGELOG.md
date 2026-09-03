@@ -9,6 +9,22 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-03
+
+The project runtime is Bun 1.4.0. CLI, worker, tests, CI, and Cloud Agent
+install run on Bun. The published library still loads under Node 22.
+
+### Changed
+
+- The project runtime is Bun 1.4.0. CLI, worker, tests, CI, and Cloud Agent
+  install run on Bun. `betterwright doctor` reports Bun when that is the host.
+  The published library still loads under Node 22 if a consumer imports it
+  from Node; worker processes inherit the host's `process.execPath`.
+  MCP registration uses `bunx betterwright mcp`. Install hints from `doctor`
+  and missing optional peers suggest `bun add` when the host is Bun.
+- `--version` and `--help` load a thin CLI router and skip `cli-main`.
+  `bun test` runs the unit files in parallel.
+
 ### Fixed
 
 - The SOCKS guard maps RFC 6761 `localhost` / `*.localhost` names to
@@ -23,15 +39,6 @@ Releases before 1.1.3 predate this file; their notes live on the
   (`dist/bin/betterwright.js`), not `cli-main`. After the router split,
   `cli-main` only exported `runCli`, so a fresh daemon child exited without
   creating its socket.
-
-### Changed
-
-- The project runtime is Bun 1.4.0. CLI, worker, tests, CI, and Cloud Agent
-  install run on Bun. `betterwright doctor` reports Bun when that is the host.
-  The published library still loads under Node 22 if a consumer imports it
-  from Node; worker processes inherit the host's `process.execPath`.
-  MCP registration uses `bunx betterwright mcp`. Install hints from `doctor`
-  and missing optional peers suggest `bun add` when the host is Bun.
 
 
 ## [2.1.0] - 2026-09-02
@@ -1372,7 +1379,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/BetterWright/betterwright/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/BetterWright/betterwright/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/BetterWright/betterwright/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/BetterWright/betterwright/compare/v1.11.0...v2.0.0
