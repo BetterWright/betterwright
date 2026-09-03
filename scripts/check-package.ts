@@ -55,7 +55,7 @@ function bun(args, options: { cwd?: string; capture?: boolean } = {}) {
 
 try {
   const tarballName = `betterwright-${manifest.version}.tgz`;
-  bun(["pm", "pack", "--destination", temp, "--filename", tarballName, "--ignore-scripts"], {
+  bun(["pm", "pack", "--destination", temp, "--ignore-scripts"], {
     capture: true,
   });
   const tarball = path.join(temp, tarballName);
