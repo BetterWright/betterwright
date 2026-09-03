@@ -12,9 +12,9 @@ Releases before 1.1.3 predate this file; their notes live on the
 ### Fixed
 
 - The SOCKS guard maps RFC 6761 `localhost` / `*.localhost` names to
-  `127.0.0.1` without OS DNS, then still policy-checks the loopback literal.
-  Chromium site-isolation hosts such as `signup.acme.localhost` work on glibc
-  that does not resolve `.localhost`.
+  `127.0.0.1` then `::1` without OS DNS, then still policy-checks every
+  loopback literal. Chromium site-isolation hosts such as
+  `signup.acme.localhost` work on glibc that does not resolve `.localhost`.
 
 ### Changed
 

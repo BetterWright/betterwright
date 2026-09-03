@@ -1040,7 +1040,14 @@ test("RFC 6761 localhost names map to loopback without OS DNS", async () => {
         ({ url, details }) =>
           url.includes("127.0.0.1") && details?.resourceType === "transport-address",
       ),
-      "resolved loopback addresses remain policy-checked",
+      "resolved IPv4 loopback addresses remain policy-checked",
+    );
+    assert.ok(
+      calls.some(
+        ({ url, details }) =>
+          url.includes("[::1]") && details?.resourceType === "transport-address",
+      ),
+      "resolved IPv6 loopback addresses remain policy-checked",
     );
   } finally {
     await proxy.close();
@@ -1072,6 +1079,30 @@ test("RFC 6761 localhost still honors transport-address policy", async () => {
     const port = await proxy.ensure();
     assert.equal(await socksConnect(port, "signup.acme.localhost"), 2);
     assert.equal(dialed, false);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("RFC 6761 localhost falls through to IPv6 loopback when IPv4 is refused", async () => {
+  const dialed = [];
+  const proxy = createGuardProxy(
+    proxyOptions({
+      lookup: async () => {
+        throw new Error("OS DNS must not run for .localhost");
+      },
+      connect: async ({ host }) => {
+        dialed.push(host);
+        if (host === "127.0.0.1") throw codedError("ECONNREFUSED");
+        return new PassThrough();
+      },
+      delay: async () => {},
+    }),
+  );
+  try {
+    const port = await proxy.ensure();
+    assert.equal(await socksConnect(port, "localhost"), 0);
+    assert.deepEqual(dialed, ["127.0.0.1", "::1"]);
   } finally {
     await proxy.close();
   }

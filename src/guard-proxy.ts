@@ -26,7 +26,10 @@ const MAX_FAILURE_TARGETS = 256;
 const FAMILY_UNREACHABLE_CODES = new Set(["ENETUNREACH", "EAFNOSUPPORT"]);
 const UPSTREAM_HANDSHAKE_TIMEOUT_MS = 15_000;
 const MAX_UPSTREAM_RESPONSE_BYTES = 65_536;
-const RFC6761_LOCALHOST_ADDRESSES = [{ address: "127.0.0.1", family: 4 }];
+const RFC6761_LOCALHOST_ADDRESSES = [
+  { address: "127.0.0.1", family: 4 },
+  { address: "::1", family: 6 },
+];
 
 /**
  * Parse an upstream proxy URL for launch-identity egress chaining.
@@ -638,9 +641,11 @@ export function createGuardProxy(
     else if (isRfc6761LocalhostName(host)) {
       // glibc getaddrinfo does not implement RFC 6761 `.localhost`, so Chromium
       // site-isolation hosts such as signup.acme.localhost fail SOCKS with
-      // ERR_SOCKS_CONNECTION_FAILED. Map them to IPv4 loopback here, then still
-      // policy-check the literal. Skipping OS DNS also blocks rebinding these
-      // names to a public address.
+      // ERR_SOCKS_CONNECTION_FAILED. Map them to IPv4 then IPv6 loopback here,
+      // then still policy-check every literal. Skipping OS DNS also blocks
+      // rebinding these names to a public address. IPv4 is first so a server
+      // bound to 127.0.0.1 is reached before ::1; a server bound to localhost
+      // as ::1 is reached on the second try.
       addresses = RFC6761_LOCALHOST_ADDRESSES;
     } else {
       try {
