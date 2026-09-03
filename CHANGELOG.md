@@ -41,6 +41,9 @@ install run on Bun. The published library still loads under Node 22.
   (`dist/bin/betterwright.js`), not `cli-main`. After the router split,
   `cli-main` only exported `runCli`, so a fresh daemon child exited without
   creating its socket.
+- Guard-proxy unit tests wait on a wall-clock deadline instead of a
+  bounded `setImmediate` loop, so parallel `bun test` on a loaded macOS
+  runner cannot miss the backoff delay hook.
 
 
 ## [2.1.0] - 2026-09-02

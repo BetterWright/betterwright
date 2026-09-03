@@ -72,6 +72,9 @@ function readBytes(socket, minimum) {
 
 async function socksConnect(proxyPort, host, port = 443) {
   const client = net.createConnection({ host: "127.0.0.1", port: proxyPort });
+  // destroy() after a reply can still surface ECONNRESET on macOS once the
+  // read listener is gone. Swallow it so bun test does not fail the next case.
+  client.on("error", () => {});
   try {
     await once(client, "connect");
     client.write(Buffer.from([5, 1, 0]));
@@ -111,6 +114,7 @@ function readHttpHeader(socket) {
 
 async function httpConnect(proxyPort, authority) {
   const client = net.createConnection({ host: "127.0.0.1", port: proxyPort });
+  client.on("error", () => {});
   try {
     await once(client, "connect");
     client.write(
@@ -148,12 +152,15 @@ function proxyOptions(
   };
 }
 
-async function waitUntil(predicate) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+async function waitUntil(predicate, timeoutMs = 2_000) {
+  // Bounded setImmediate loops can finish before localhost SOCKS I/O under
+  // bun test's parallel workers. Wait on the clock so the delay hook can land.
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
     if (predicate()) return;
-    await new Promise((resolve) => setImmediate(resolve));
+    if (Date.now() >= deadline) throw new Error("condition was not reached");
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
-  throw new Error("condition was not reached");
 }
 
 function timedDelay(delays, paddingMs = 25) {
@@ -555,6 +562,7 @@ test("per-target backoff is asynchronous, exponential, and capped on suppressed 
       familyUnreachableTtlMs: 1_000,
     }),
   );
+  const inflight = [];
   try {
     const port = await proxy.ensure();
     for (const [timestamp, expectedDelay] of [
@@ -572,6 +580,7 @@ test("per-target backoff is asynchronous, exponential, and capped on suppressed 
         settled = true;
         return reply;
       });
+      inflight.push(request);
       await waitUntil(() => pendingDelays.length > 0);
       const pending = pendingDelays.shift();
       assert.equal(pending.milliseconds, expectedDelay);
@@ -584,6 +593,7 @@ test("per-target backoff is asynchronous, exponential, and capped on suppressed 
   } finally {
     for (const pending of pendingDelays) pending.resolve();
     await proxy.close();
+    await Promise.allSettled(inflight);
   }
 });
 
