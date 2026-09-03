@@ -47,9 +47,10 @@ test("NODE_OPTIONS --import flags become argv Bun will honor", () => {
 });
 
 test("bunInheritedExecArgv reads NODE_OPTIONS only on Bun", () => {
-  assert.deepEqual(bunInheritedExecArgv({ NODE_OPTIONS: "--import=file:///tmp/from-env.mjs" }), [
+  const dummy = pathToFileURL(path.join(os.tmpdir(), "from-env.mjs")).href;
+  assert.deepEqual(bunInheritedExecArgv({ NODE_OPTIONS: `--import=${dummy}` }), [
     "--import",
-    bunPreloadPath("file:///tmp/from-env.mjs"),
+    bunPreloadPath(dummy),
   ]);
 });
 
