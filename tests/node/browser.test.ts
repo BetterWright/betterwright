@@ -1,6 +1,7 @@
 // End-to-end Node tests. Skipped unless doctor reports a ready managed browser,
 // so the policy suite still runs on machines without BetterChromium installed.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
@@ -28,6 +29,13 @@ if (!ready && process.env.BETTERWRIGHT_REQUIRE_BROWSER) {
 const opts = {
   skip: ready ? false : `browser runtime not ready (doctor browser: ${browserStatus.browser})`,
 };
+const encoder = process.env.BETTERWRIGHT_FFMPEG_PATH || "ffmpeg";
+const encoderProbe = spawnSync(encoder, ["-encoders"], { encoding: "utf8", timeout: 5_000 });
+const recordingReady = ready && encoderProbe.status === 0 && /\blibvpx\b/.test(encoderProbe.stdout) && /\blibx264\b/.test(encoderProbe.stdout);
+if (!recordingReady && process.env.BETTERWRIGHT_REQUIRE_RECORDING) {
+  throw new Error("Recording tests require the managed browser and FFmpeg with libvpx and libx264.");
+}
+const recordingOpts = { skip: recordingReady ? false : "recording runtime is unavailable" };
 function tempHome() {
   return makeTempDir("betterwright-test-");
 }
@@ -262,6 +270,245 @@ test("page summaries identify the active tab", opts, async () => {
     assert.equal(selected.ok, true, selected.error);
     assert.equal(selected.pages.filter((page) => page.active).length, 1);
     assert.equal(selected.pages.find((page) => page.active).title, "First");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("page summaries reflect changed and empty titles without snippet listeners", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    for (const title of ["First title", "Changed title", ""]) {
+      const result = await bw.run(`
+        await page.setContent(${JSON.stringify(`<title>${title}</title><h1>Content</h1>`)});
+        return page;
+      `);
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result.title, title);
+      assert.equal(result.pages[0].title, title);
+      assert.equal(result.pages[0].active, true);
+    }
+    const result = await bw.run(`
+      const second = await openPage();
+      await second.setContent('<title>Closed tab</title>');
+      await closePage();
+      return page;
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.pages.length, 1);
+    assert.equal(result.pages[0].title, "");
+  } finally {
+    await bw.close();
+  }
+});
+
+test("recording preserves page state and animation between browser calls", recordingOpts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url !== "/") { response.writeHead(404).end(); return; }
+    response.end('<title>Recording fixture</title><input id="draft"><canvas width="640" height="360"></canvas>');
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false, parkBackgroundPages: true });
+  try {
+    const started = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      await page.locator('#draft').fill('unsent draft');
+      await page.evaluate(() => {
+        sessionStorage.setItem('draft', 'preserved');
+        document.cookie = 'recording=preserved; SameSite=Lax';
+        window.frameNumber = 0;
+        const canvas = document.querySelector('canvas');
+        const context = canvas.getContext('2d');
+        const draw = () => {
+          window.frameNumber += 1;
+          context.fillStyle = '#164e63';
+          context.fillRect(0, 0, 640, 360);
+          context.fillStyle = '#facc15';
+          context.fillRect(window.frameNumber % 580, 100, 60, 60);
+          requestAnimationFrame(draw);
+        };
+        requestAnimationFrame(draw);
+      });
+      state.recordingDraft = 'preserved';
+      const recordingState = await recording.start({ maxWidth: 640, maxHeight: 360 });
+      return { recordingState, frames: await page.evaluate(() => window.frameNumber) };
+    `);
+    assert.equal(started.ok, true, started.error);
+    assert.equal(started.result.recordingState.state, "recording");
+    assert.equal(started.result.recordingState.fps, 60);
+    assert.match(started.result.recordingState.path, /\.mp4$/);
+    assert.equal((started.artifacts || []).filter((artifact) => artifact.kind === "recording").length, 0);
+    await new Promise((resolve) => setTimeout(resolve, 1_300));
+    const stopped = await bw.run(`
+      const saved = await recording.stop();
+      const repeated = await recording.stop();
+      return {
+        saved, repeated, draft: await page.locator('#draft').inputValue(), state: state.recordingDraft,
+        pageState: await page.evaluate(() => ({ frames: window.frameNumber, storage: sessionStorage.getItem('draft'), cookie: document.cookie })),
+        prototype: Object.getPrototypeOf(await recording.status()),
+      };
+    `);
+    assert.equal(stopped.ok, true, stopped.error);
+    assert.equal(stopped.result.saved.state, "completed", JSON.stringify(stopped.result.saved));
+    assert.deepEqual(stopped.result.repeated, stopped.result.saved);
+    assert.equal(stopped.result.prototype, null);
+    assert.equal(stopped.result.draft, "unsent draft");
+    assert.equal(stopped.result.state, "preserved");
+    assert.equal(stopped.result.pageState.storage, "preserved");
+    assert.match(stopped.result.pageState.cookie, /recording=preserved/);
+    assert.ok(stopped.result.pageState.frames - started.result.frames >= 50, "recorded page stays awake between calls");
+    assert.ok(stopped.result.saved.outputFrames >= 60);
+    assert.ok(stopped.result.saved.capturedFrames >= 50);
+    assert.ok(stopped.result.saved.bytes > 0);
+    assert.equal(fs.statSync(stopped.result.saved.path).size, stopped.result.saved.bytes);
+    assert.ok(stopped.artifacts.some((artifact) => artifact.kind === "recording" && artifact.path === stopped.result.saved.path && artifact.mimeType === "video/mp4"));
+    const decoded = spawnSync(encoder, ["-v", "error", "-i", stopped.result.saved.path, "-f", "null", "-"], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(decoded.status, 0, decoded.stderr);
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("recordings are session-scoped and finalize on restart and session close", recordingOpts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    const started = await bw.run("await page.setContent('<h1>First recording</h1>'); return recording.start({name:'first.mp4'});", { session: "recorded" });
+    assert.equal(started.ok, true, started.error);
+    const other = await bw.run("return recording.status()", { session: "other" });
+    assert.deepEqual(other.result, { state: "idle" });
+    const duplicate = await bw.run("return recording.start()", { session: "recorded" });
+    assert.equal(duplicate.ok, false);
+    assert.match(duplicate.error, /already active/);
+    const restarted = await bw.run("return recording.restart({name:'second.webm'})", { session: "recorded" });
+    assert.equal(restarted.ok, true, restarted.error);
+    assert.equal(restarted.result.state, "recording");
+    assert.notEqual(restarted.result.path, started.result.path);
+    assert.ok(restarted.artifacts.some((artifact) => artifact.path === started.result.path && artifact.mimeType === "video/mp4"));
+    assert.equal((await bw.closeSession("recorded")).ok, true);
+    for (const file of [started.result.path, restarted.result.path]) {
+      assert.ok(fs.statSync(file).size > 0);
+      const decoded = spawnSync(encoder, ["-v", "error", "-i", file, "-f", "null", "-"], { encoding: "utf8", timeout: 10_000 });
+      assert.equal(decoded.status, 0, decoded.stderr);
+    }
+    const remaining = await bw.run("return page.title()", { session: "other" });
+    assert.equal(remaining.ok, true, remaining.error);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("recording stop waits for a concurrently starting recording", recordingOpts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<h1>Concurrent recording</h1>');
+      const [started, stopped] = await Promise.all([
+        recording.start({name:'concurrent.webm', maxWidth:320, maxHeight:180}),
+        recording.stop(),
+      ]);
+      return { started, stopped, status: await recording.status() };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.stopped.state, "completed", JSON.stringify(result.result));
+    assert.equal(result.result.stopped.path, result.result.started.path);
+    assert.deepEqual(result.result.status, result.result.stopped);
+    assert.ok(result.result.stopped.outputFrames > 0);
+    assert.equal(fs.statSync(result.result.stopped.path).size, result.result.stopped.bytes);
+    assert.equal(result.artifacts.filter((artifact) => artifact.kind === "recording").length, 1);
+    const decoded = spawnSync(encoder, ["-v", "error", "-i", result.result.stopped.path, "-f", "null", "-"], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(decoded.status, 0, decoded.stderr);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("parallel recording starts create only one active recording", recordingOpts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<h1>One recorder</h1>');
+      const attempts = await Promise.allSettled([
+        recording.start({name:'first.webm', maxWidth:320, maxHeight:180}),
+        recording.start({name:'second.webm', maxWidth:320, maxHeight:180}),
+      ]);
+      return {
+        attempts: attempts.map(attempt => attempt.status === 'fulfilled'
+          ? {state: 'started', path: attempt.value.path}
+          : {state: 'rejected', error: attempt.reason.message}),
+        stopped: await recording.stop(),
+        status: await recording.status(),
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    const started = result.result.attempts.filter((attempt) => attempt.state === "started");
+    const rejected = result.result.attempts.filter((attempt) => attempt.state === "rejected");
+    assert.equal(started.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.match(rejected[0].error, /already active/);
+    assert.equal(result.result.stopped.state, "completed");
+    assert.equal(result.result.stopped.path, started[0].path);
+    assert.deepEqual(result.result.status, result.result.stopped);
+    assert.equal(result.artifacts.filter((artifact) => artifact.kind === "recording").length, 1);
+    assert.ok(fs.statSync(started[0].path).size > 0);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("page.close and closePage finalize recordings before closing the target", recordingOpts, async () => {
+  for (const close of ["await page.close()", "await closePage()"]) {
+    const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+    try {
+      const result = await bw.run(`
+        await page.setContent('<h1>Save before closing</h1>');
+        const target = page;
+        const started = await recording.start({name:'close.webm', maxWidth:320, maxHeight:180});
+        ${close};
+        return { path: started.path, closed: target.isClosed(), status: await recording.status() };
+      `);
+      assert.equal(result.ok, true, `${close}: ${result.error}`);
+      assert.equal(result.result.closed, true, close);
+      assert.equal(result.result.status.state, "completed", `${close}: ${JSON.stringify(result.result.status)}`);
+      assert.equal(result.result.status.path, result.result.path);
+      assert.ok(result.result.status.bytes > 0);
+      assert.equal(fs.statSync(result.result.path).size, result.result.status.bytes);
+      assert.equal(result.artifacts.filter((artifact) => artifact.kind === "recording").length, 1);
+      const decoded = spawnSync(encoder, ["-v", "error", "-i", result.result.path, "-f", "null", "-"], { encoding: "utf8", timeout: 10_000 });
+      assert.equal(decoded.status, 0, `${close}: ${decoded.stderr}`);
+    } finally {
+      await bw.close();
+    }
+  }
+});
+
+test("invalid recording starts leave the session ready for a valid retry", recordingOpts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    const invalid = [null, [], { fps: 0 }, { maxWidth: 3.5 }, { maxDurationMs: 0 },
+      { name: "../escape.webm" }, { name: "folder\\escape.webm" }];
+    const result = await bw.run(`
+      await page.setContent('<h1>Retry recording</h1>');
+      const attempts = [];
+      for (const options of ${JSON.stringify(invalid)}) {
+        try {
+          await recording.start(options);
+          attempts.push({accepted: true});
+        } catch (error) {
+          attempts.push({error: error.message, status: await recording.status()});
+        }
+      }
+      await recording.start({name:'retry.webm', maxWidth:320, maxHeight:180});
+      return { attempts, stopped: await recording.stop() };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.attempts.length, invalid.length);
+    for (const attempt of result.result.attempts) {
+      assert.ok(attempt.error, JSON.stringify(attempt));
+      assert.deepEqual(attempt.status, { state: "idle" });
+    }
+    assert.equal(result.result.stopped.state, "completed");
+    assert.ok(result.result.stopped.bytes > 0);
+    assert.equal(result.artifacts.filter((artifact) => artifact.kind === "recording").length, 1);
   } finally {
     await bw.close();
   }
@@ -2432,6 +2679,63 @@ test("oversized snapshots return scoping hints instead of a cut-off tree", opts,
   }
 });
 
+test("snapshot retries compare only against trees delivered within the size limit", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    const result = await bw.run(`
+      await page.setContent(Array.from({ length: 60 }, (_, i) =>
+        '<button>Item ' + i + ' with a useful label</button>').join(''));
+      const refused = await snapshot({ diff: true, maxChars: 1000 });
+      const retried = await snapshot({ diff: true, maxChars: 20000 });
+      const unchanged = await snapshot({ diff: true, maxChars: 20000 });
+      await page.setContent('<button>Original</button>');
+      await snapshot();
+      await page.evaluate(() => {
+        const extra = document.createElement('section');
+        extra.id = 'extra';
+        extra.innerHTML = Array.from({ length: 60 }, (_, i) =>
+          '<button>Different ' + i + ' with a useful label</button>').join('');
+        document.body.append(extra);
+      });
+      const refusedDiff = await snapshot({ diff: true, maxChars: 1000 });
+      await page.locator('#extra').evaluate(element => element.remove());
+      const restored = await snapshot({ diff: true, maxChars: 20000 });
+      return { refused, retried, unchanged, refusedDiff, restored };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.match(result.result.refused, /over the 1000 limit/);
+    assert.match(result.result.retried, /button "Item 59 with a useful label"/);
+    assert.doesNotMatch(result.result.retried, /no changes|diff vs previous/);
+    assert.match(result.result.unchanged, /no changes since previous snapshot/);
+    assert.match(result.result.refusedDiff, /over the 1000 limit/);
+    assert.match(result.result.restored, /no changes since previous snapshot/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("snapshot diff keeps separate histories for URL visibility", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<a href="/docs">Docs</a>');
+      const plain = await snapshot({ diff: true });
+      const urls = await snapshot({ diff: true, urls: true });
+      const plainAgain = await snapshot({ diff: true });
+      const urlsAgain = await snapshot({ diff: true, urls: true });
+      return { plain, urls, plainAgain, urlsAgain };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.doesNotMatch(result.result.plain, /\/url/);
+    assert.match(result.result.urls, /\/url: \/docs/);
+    assert.doesNotMatch(result.result.urls, /diff vs previous/);
+    assert.match(result.result.plainAgain, /no changes since previous snapshot/);
+    assert.match(result.result.urlsAgain, /no changes since previous snapshot/);
+  } finally {
+    await bw.close();
+  }
+});
+
 test("snapshot diff returns only what changed", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
@@ -3161,5 +3465,119 @@ test("a second browser on the SAME profile falls back to ephemeral", opts, async
   } finally {
     await Promise.all([first.close(), second.close()]);
     fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("recording and live view keep independent capture lifetimes", recordingOpts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(), headless: true, vault: false,
+    liveView: { enabled: false, host: "127.0.0.1", port: 0 },
+  });
+  let viewer: WebSocket | undefined;
+  try {
+    const loaded = await bw.run(`
+      await page.setContent('<canvas width="640" height="360"></canvas>');
+      await page.evaluate(() => {
+        const ctx = document.querySelector('canvas').getContext('2d');
+        let frame = 0;
+        function draw() {
+          ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 640, 360);
+          ctx.fillStyle = 'blue'; ctx.fillRect(frame++ % 600, 30, 40, 100);
+          requestAnimationFrame(draw);
+        }
+        draw();
+      });
+    `);
+    assert.equal(loaded.ok, true, loaded.error);
+    for (const first of ["view", "recording"]) {
+      let viewerFrames = 0;
+      const openView = async () => {
+        const info = await bw.startLiveView({ host: "127.0.0.1", port: 0 });
+        assert.equal(info.ok, true, info.error);
+        const url = new URL(info.url);
+        viewer = new WebSocket(`ws://${url.host}/ws?t=${info.token}`);
+        viewer.binaryType = "arraybuffer";
+        viewer.addEventListener("message", (event) => {
+          if (!isString(event.data)) viewerFrames += 1;
+        });
+        await once(viewer, "open");
+      };
+      const start = async () => {
+        const result = await bw.run("return recording.start({maxWidth:640,maxHeight:360})");
+        assert.equal(result.ok, true, result.error);
+      };
+      if (first === "view") { await openView(); await start(); }
+      else { await start(); await openView(); }
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const active = await bw.run("return recording.status()");
+      assert.equal(active.ok, true, active.error);
+      assert.ok(active.result.capturedFrames > 5);
+      assert.ok(viewerFrames > 5);
+      if (first === "view") {
+        const stopped = await bw.run("return recording.stop()");
+        assert.equal(stopped.result.state, "completed", JSON.stringify(stopped));
+        const before = viewerFrames;
+        await new Promise(resolve => setTimeout(resolve, 300));
+        assert.ok(viewerFrames > before, "live view continues after recording stops");
+        viewer.close();
+        await bw.stopLiveView();
+      } else {
+        viewer.close();
+        await bw.stopLiveView();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const stopped = await bw.run("return recording.stop()");
+        assert.equal(stopped.result.state, "completed", JSON.stringify(stopped));
+        assert.ok(stopped.result.capturedFrames > active.result.capturedFrames,
+          "recording continues after live view stops");
+      }
+    }
+  } finally {
+    viewer?.close();
+    await bw.close();
+  }
+});
+
+test("failed recording startup does not prevent concurrent tab closure", recordingOpts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    for (const close of ["page.close()", "closePage()"] ) {
+      const result = await bw.run(`
+        const target = page;
+        const results = await Promise.allSettled([recording.start({fps:0}), ${close}]);
+        return { results: results.map(result => result.status), closed: target.isClosed(), status: await recording.status() };
+      `);
+      assert.equal(result.ok, true, result.error);
+      assert.deepEqual(result.result.results, ["rejected", "fulfilled"]);
+      assert.equal(result.result.closed, true);
+      assert.equal(result.result.status.state, "idle");
+    }
+  } finally {
+    await bw.close();
+  }
+});
+
+test("MCP recording selects MP4 by default and preserves explicit WebM artifacts", recordingOpts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  const handlers = _createMcpHandlersForTest({ browser: bw, downloadPolicy: "deny" });
+  try {
+    const ready = await bw.run("await page.setContent('<h1>Recording format</h1>')");
+    assert.equal(ready.ok, true, ready.error);
+    for (const [name, extension, mimeType] of [[undefined, "mp4", "video/mp4"], ["explicit.webm", "webm", "video/webm"]]) {
+      const start = await handlers.callTool({ params: {
+        name: "browser_record", arguments: { action: "start", name, maxWidth: 320, maxHeight: 180 },
+      } });
+      const started = JSON.parse(start.content[0].text);
+      assert.equal(started.ok, true, started.error);
+      assert.ok(started.result.path.endsWith(`.${extension}`));
+      const stop = await handlers.callTool({ params: { name: "browser_record", arguments: { action: "stop" } } });
+      const stopped = JSON.parse(stop.content[0].text);
+      assert.equal(stopped.result.state, "completed", JSON.stringify(stopped));
+      const artifact = stopped.files.find(file => file.path === started.result.path);
+      assert.equal(artifact.mimeType, mimeType);
+      const decoded = spawnSync(encoder, ["-v", "error", "-i", artifact.path, "-f", "null", "-"], { encoding: "utf8", timeout: 10_000 });
+      assert.equal(decoded.status, 0, decoded.stderr);
+    }
+  } finally {
+    await bw.close();
   }
 });

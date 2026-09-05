@@ -22,7 +22,10 @@ import {
   piImageArtifacts,
   piImageContent,
   piPrimaryImageArtifact,
+  type RecordingStats,
+  type RecordingStatus,
   type RunResult,
+  type SessionRecordingStatus,
   type VaultMatchMode,
 } from "betterwright";
 import {
@@ -280,3 +283,58 @@ void ownerListed;
 void ownerRevealed;
 void ownerAudited;
 void ownerRemoved;
+
+const recordingStats: RecordingStats = {
+  path: "/tmp/betterwright-types/recording.webm",
+  fps: 60,
+  capturedFrames: 45,
+  outputFrames: 60,
+  droppedFrames: 0,
+  durationMs: 1000,
+  bytes: 1024,
+};
+const encoderStatus: RecordingStatus = { ...recordingStats, state: "completed" };
+const completedRecording: SessionRecordingStatus = { ...encoderStatus, pageId: "page-1" };
+const idleRecording: SessionRecordingStatus = { state: "idle" };
+const failedRecording: SessionRecordingStatus = {
+  ...recordingStats,
+  state: "failed",
+  pageId: "page-1",
+  error: "Encoder exited",
+};
+const recordingRun: Promise<RunResult<SessionRecordingStatus>> =
+  browser.run<SessionRecordingStatus>("return recording.status()");
+function describeRecording(status: SessionRecordingStatus): string {
+  if (status.state === "idle") {
+    // @ts-expect-error Idle sessions have no recording file or page owner.
+    void status.path;
+    // @ts-expect-error Idle sessions have no page owner.
+    void status.pageId;
+    return status.state;
+  }
+  const file: string = status.path;
+  const page: string = status.pageId;
+  if (status.state === "failed") {
+    const error: string = status.error;
+    return `${page}: ${error}`;
+  }
+  // @ts-expect-error Only failed recordings carry an error.
+  void status.error;
+  return `${page}: ${file}`;
+}
+// @ts-expect-error A non-idle session recording must identify its page.
+const missingRecordingPage: SessionRecordingStatus = encoderStatus;
+// @ts-expect-error A failed recording must explain the failure.
+const missingRecordingError: SessionRecordingStatus = { ...recordingStats, state: "failed", pageId: "page-1" };
+// @ts-expect-error Encoder handles never report idle.
+const idleEncoder: RecordingStatus = { state: "idle" };
+void [
+  completedRecording,
+  idleRecording,
+  failedRecording,
+  recordingRun,
+  describeRecording,
+  missingRecordingPage,
+  missingRecordingError,
+  idleEncoder,
+];

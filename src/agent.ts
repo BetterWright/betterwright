@@ -365,15 +365,14 @@ function observationFromResult(result) {
     if (Array.isArray(result[field]) && result[field].length)
       summary[field] = result[field];
   }
+  if (result.webagents) summary.webagents = result.webagents;
+  if (result.ui) summary.ui = result.ui;
   if (screenshots.length) summary.screenshots = screenshots;
   if (result.durationMs != null) summary.duration_ms = result.durationMs;
-  let text = JSON.stringify(summary);
-  if (text.length > OBSERVATION_LIMIT) {
-    summary.result = "[truncated — inspect via a scoped snapshot]";
-    text = JSON.stringify(summary);
-    if (text.length > OBSERVATION_LIMIT) text = `${text.slice(0, OBSERVATION_LIMIT)}…`;
+  if (summary.result !== undefined && JSON.stringify(summary.result).length > OBSERVATION_LIMIT) {
+    summary.result = "[truncated; inspect via a scoped snapshot]";
   }
-  return text;
+  return JSON.stringify(summary);
 }
 
 function browserToolObservation(id, result) {

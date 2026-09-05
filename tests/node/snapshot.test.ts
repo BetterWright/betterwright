@@ -219,6 +219,52 @@ test("compressSnapshot merges paragraphs and adjacent text into text lines", () 
   );
 });
 
+test("compressSnapshot preserves empty and quoted values when merging text", () => {
+  const cases = [
+    { values: [""], expected: "- text: " },
+    { values: ['""'], expected: '- text: ""' },
+    { values: ["", '""', "x"], expected: "- text: x" },
+    { values: ['""', "x"], expected: '- text: " x"' },
+    { values: ['""', '""'], expected: '- text: " "' },
+    { values: ["x", "", "y"], expected: "- text: x y" },
+    { values: ['"\\n"', "x"], expected: '- text: "\\n x"' },
+    { values: ['"unterminated', "x"], expected: '- text: "\\"unterminated x"' },
+    { values: ["true", "false"], expected: "- text: true false" },
+    { values: ['"\\u0061"'], expected: '- text: "\\u0061"' },
+    { values: ['"\\u0061"', "b"], expected: "- text: a b" },
+  ];
+  for (const { values, expected } of cases) {
+    assert.equal(
+      compressSnapshot(values.map((value) => `- text: ${value}`).join("\n")),
+      expected,
+      JSON.stringify(values),
+    );
+  }
+});
+
+test("compressSnapshot retains opaque children and action refs between text runs", () => {
+  const tree = [
+    "- text: First",
+    "  opaque child",
+    "- text: second",
+    '- button "Continue" [ref=e1]',
+    "- text: Third",
+    "- text: fourth",
+  ].join("\n");
+  assert.equal(compressSnapshot(tree), [
+    "- text: First second",
+    "  opaque child",
+    '- button "Continue" [ref=e1]',
+    "- text: Third fourth",
+  ].join("\n"));
+});
+
+test("compressSnapshot merges long text runs without changing their contents", () => {
+  const values = Array.from({ length: 4_000 }, (_, index) => `Paragraph ${index}.`);
+  const tree = values.map((value) => `- paragraph: ${value}`).join("\n");
+  assert.equal(compressSnapshot(tree), `- text: ${values.join(" ")}`);
+});
+
 test("compressSnapshot dedupes a value equal to the accessible name", () => {
   const tree = '- button "Submit" [ref=e2]: Submit';
   assert.equal(compressSnapshot(tree), '- button "Submit" [ref=e2]');

@@ -19,6 +19,7 @@ export const COMMAND_SUMMARIES = [
   ["boxes", "start, list, and stop cloud browser boxes"],
   ["cookies", "sync local browser cookies into a BetterWright profile"],
   ["run", "run one Playwright snippet in the persistent session"],
+  ["record", "record the current tab as an MP4 or WebM video"],
   ["repl", "run blank-line-separated snippets from stdin"],
   ["exec", "hand a whole task to BetterWright's own browser agent"],
   ["vault", "read and manage saved passwords"],
@@ -50,6 +51,29 @@ Docs: https://github.com/BetterWright/betterwright#readme`;
  * MAIN_USAGE, which is still better than running the command by accident.
  */
 export const COMMAND_HELP = {
+  record: `Usage: betterwright record start [name.mp4] [options]
+       betterwright record restart [name.mp4] [options]
+       betterwright record stop [--session <name>]
+       betterwright record status [--session <name>]
+
+Record the current tab without replacing its page or session state.
+MP4/H.264 is the default; a .webm filename selects WebM/VP8.
+Videos are saved in the session artifact directory. Use a filename, not a path.
+start/restart options:
+  --fps <n>           requested/output FPS, 1-60 (default 60)
+  --max-width <px>    maximum video width (default 1280)
+  --max-height <px>   maximum video height (default 720)
+  --quality <n>       capture quality, 1-100 (default 80)
+  --max-duration <s>  stop after this many seconds (default 300)
+  --session <name>    browser session (default "default")
+  --profile <name>    browser identity
+
+Requires FFmpeg with libx264 (MP4) or libvpx (WebM) on PATH or BETTERWRIGHT_FFMPEG_PATH. Does not install it.
+Actual motion cadence depends on page rendering and capture speed.
+Captures the viewport without audio. Stop flushes the video and returns its path.
+Requires the session daemon; --no-daemon and --close are not supported.
+Details: docs/recording.md`,
+
   init: `Usage: betterwright init [options]
 
 Guided first-time setup. Checks Bun, installs the managed browser if it is

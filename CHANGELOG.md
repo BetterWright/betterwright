@@ -9,6 +9,31 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-05
+
+### Added
+
+- Record the current tab through `betterwright record`, the `recording` snippet
+  helper, or MCP `browser_record`. Start, stop, status, and restart preserve
+  the page and elapsed time. Capture defaults to 60 FPS and MP4/H.264; an
+  explicit `.webm` filename selects VP8. Recording requires FFmpeg only while
+  active, with bounded frame queues, output size, and duration.
+
+### Changed
+
+- Skip unused page-event draining and redundant title reads between actions.
+- Merge adjacent snapshot text in linear time while preserving existing output.
+- Preserve complete action directories and valid JSON in large agent
+  observations; compact Pi observations without removing content.
+- Load CLI setup modules only when needed and skip default model discovery
+  when a model is explicitly selected.
+
+### Fixed
+
+- Snapshot diffs use only output delivered to the caller and keep URL-mode
+  histories separate. Refused output no longer becomes the next baseline.
+
+
 ## [2.2.0] - 2026-09-03
 
 The project runtime is Bun 1.4.0. CLI, worker, tests, CI, and Cloud Agent
@@ -1384,7 +1409,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/BetterWright/betterwright/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/BetterWright/betterwright/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/BetterWright/betterwright/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/BetterWright/betterwright/compare/v2.0.0...v2.0.1

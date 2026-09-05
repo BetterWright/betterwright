@@ -10,6 +10,12 @@ import type {
 
 export * from "./common.js";
 export type {
+  RecordingOptions,
+  RecordingStats,
+  RecordingStatus,
+  SessionRecordingStatus,
+} from "./recording.js";
+export type {
   NetworkDecision,
   NetworkPolicyCustom,
   NetworkPolicyOptions,

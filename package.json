@@ -1,6 +1,6 @@
 {
   "name": "betterwright",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "A persistent, policy-guarded Playwright browser for AI agents with network controls, trusted credential filling, proof screenshots, and CAPTCHA helpers.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -94,7 +94,7 @@
     "build:harness": "bun run build && tsc --noEmit -p tsconfig.harness.json",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json && tsc --noEmit -p tsconfig.examples.json",
     "check:build": "bun run build && bun scripts/check-build.ts",
-    "test": "bun run build && bun scripts/run-unit-tests.ts --all",
+    "test": "bun run build:harness && bun scripts/run-unit-tests.ts --all",
     "test:unit": "bun run build:harness && bun scripts/run-unit-tests.ts",
     "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
     "lint": "biome ci src bin scripts research tests benchmarks examples && oxlint",

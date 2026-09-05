@@ -181,7 +181,9 @@ test("native Pi extension registers persistent tools and records its supplied st
     assert.equal(result.details.step, 1);
     assert.equal(result.details.budgetExhausted, false);
     assert.equal(result.content[0].type, "text");
-    assert.match(result.content[0].text, /"remainingSteps": 1/);
+    const envelope = JSON.parse(result.content[0].text);
+    assert.equal(envelope.pi.remainingSteps, 1);
+    assert.equal(result.content[0].text, JSON.stringify(envelope));
     assert.equal(result.content[1].type, "image");
     assert.equal(result.content[1].mimeType, "image/png");
 
