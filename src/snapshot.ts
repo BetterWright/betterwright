@@ -300,11 +300,29 @@ function compressNode(node, options) {
   }
   // Merge runs of adjacent text lines into one.
   const merged = [];
-  for (const child of out) {
-    const previous = merged[merged.length - 1];
-    if (previous && isText(previous) && isText(child)) {
-      previous.value = joinTexts([previous.value, child.value]);
-      continue;
+  for (let index = 0; index < out.length; index += 1) {
+    const child = out[index];
+    if (isText(child) && index + 1 < out.length && isText(out[index + 1])) {
+      const parts: string[] = [];
+      let prefixTruthy = Boolean(child.value);
+      if (prefixTruthy) parts.push(unquote(child.value));
+      let length = parts[0]?.length || 0;
+      while (index + 1 < out.length && isText(out[index + 1])) {
+        index += 1;
+        const value = out[index].value;
+        if (prefixTruthy && value) {
+          parts.push(" ");
+          length += 1;
+        }
+        if (value) {
+          const decoded = unquote(value);
+          parts.push(decoded);
+          length += decoded.length;
+        }
+        prefixTruthy = length > 0;
+      }
+      const joined = parts.join("");
+      child.value = joined ? yamlEscapeValueIfNeeded(joined) : joined;
     }
     merged.push(child);
   }

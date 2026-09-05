@@ -595,7 +595,7 @@ export function createPiExtension(options: any = {}) {
         content: [
           {
             type: "text",
-            text: `${JSON.stringify(envelope, null, 2)}${budgetMessage}${traceWarning}`,
+            text: `${JSON.stringify(envelope)}${budgetMessage}${traceWarning}`,
           },
           ...(await piImageContent(combined)),
         ],

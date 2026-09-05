@@ -14,7 +14,9 @@ import path from "node:path";
 import readline from "node:readline";
 import { types as utilTypes } from "node:util";
 import vm from "node:vm";
+import type { Page } from "playwright-core";
 import { getDomain } from "tldts";
+import type { RecordingStatus } from "../types/recording.js";
 import {
   cookieSyncConsentTarget,
   redactProviderSecrets,
@@ -131,6 +133,7 @@ import {
   releaseProfileLockDir,
   touchProfileLock,
 } from "./profile-lock.js";
+import type { RecordingHandle } from "./recording.js";
 import {
   cookiesFromSetCookie,
   requestSiteResponse,
@@ -198,6 +201,14 @@ const DEFAULT_ARTIFACT_QUOTA = 100 * 1024 * 1024;
 const DEFAULT_DOWNLOAD_LIMIT = 50 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_PIXEL_LIMIT = 40_000_000;
+const DEFAULT_RECORDING_LIMIT = 50 * 1024 * 1024;
+
+type RecordingOwner = { handle: RecordingHandle; page: Page; path: string };
+type SessionRecording =
+  | { state: "starting"; ready: Promise<RecordingOwner> }
+  | { state: "active"; page: Page; path: string; ready: Promise<RecordingOwner> }
+  | { state: "finished"; page: Page; path: string; result: RecordingStatus };
+const sessionRecordings = new Map<string, SessionRecording>();
 // Playwright's screenshot waits for `document.fonts`. Challenge widgets often
 // load webfonts that never settle behind the guard, so the default 30s timeout
 // burns the whole solve budget. Fail over to CDP before that happens.
@@ -359,7 +370,11 @@ function quietSessionPages(session) {
     if (!browserContext || sessionIsExecuting(session.id)) return;
     void parkSession(session, {
       newCDPSession: (page) => browserContext.newCDPSession(page),
-      isBusy: (page) => vaultCapture?.isBusy(page) === true,
+      isBusy: (page) => {
+        const recording = sessionRecordings.get(session.id);
+        return vaultCapture?.isBusy(page) === true || recording?.state === "starting" ||
+          (recording?.state === "active" && recording.page === page);
+      },
     }).catch(() => {});
   }, PARK_IDLE_DELAY_MS);
   // A pending park must never be the reason the worker stays alive.
@@ -986,6 +1001,8 @@ function pruneArtifactQuota(session, incomingBytes = 0) {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
     const file = path.join(root, entry.name);
+    const recording = sessionRecordings.get(session.id);
+    if (recording?.state === "active" && recording.path === file) continue;
     const stat = fs.statSync(file);
     total += stat.size;
     files.push({ file, size: stat.size, mtime: stat.mtimeMs });
@@ -1034,7 +1051,8 @@ function makeArtifactPath(
   fallback = "artifact.txt",
   track = true,
 ) {
-  if (session.artifacts.length >= MAX_TRACKED_ARTIFACTS) {
+  const recordingSlots = sessionRecordings.get(session.id)?.state === "active" ? 1 : 0;
+  if (session.artifacts.length + recordingSlots >= MAX_TRACKED_ARTIFACTS) {
     throw new Error(
       `Browser artifact limit (${MAX_TRACKED_ARTIFACTS}) reached for this session.`,
     );
@@ -1043,6 +1061,110 @@ function makeArtifactPath(
   const file = path.join(artifactDir(session), name);
   if (track) session.artifacts.push({ kind: "artifact", path: file });
   return file;
+}
+
+async function startSessionRecording(session, options = {}) {
+  if (!isObjectValue(options) || Array.isArray(options)) {
+    throw new TypeError("recording.start options must be an object.");
+  }
+  const requested = untrustedField(options, "name") ?? "recording.mp4";
+  if (!isString(requested) || !requested.trim() ||
+      requested !== path.basename(requested) || requested !== path.win32.basename(requested) ||
+      !/\.(mp4|webm)$/i.test(requested)) {
+    throw new TypeError("Recording name must be a .mp4 or .webm filename without directories.");
+  }
+  const current = sessionRecordings.get(session.id);
+  if (current && current.state !== "finished") {
+    throw new Error("A recording is already active in this session. Stop it or use recording.restart().");
+  }
+  const pending: Extract<SessionRecording, { state: "starting" }> = {
+    state: "starting",
+    ready: Promise.resolve().then(async () => {
+      let release = () => {};
+      let page: Page | undefined;
+      let active: Extract<SessionRecording, { state: "active" }> | undefined;
+      const onPageClosed = () => {
+        void pending.ready.then(({ handle }) => handle.stop()).catch(() => {});
+      };
+      try {
+        const { normalizeRecordingOptions, startRecording } = await import("./recording.js");
+        const settings = normalizeRecordingOptions(options);
+        page = await ensureSessionPage(session);
+        const file = makeArtifactPath(session, requested, "recording.mp4", false);
+        const maxBytes = Math.max(1, Math.floor(Math.min(
+          DEFAULT_RECORDING_LIMIT,
+          configuredLimit(launchConfig.maxArtifactBytes, DEFAULT_ARTIFACT_QUOTA) / 2,
+        )));
+        release = reserveArtifactQuota(session, maxBytes);
+        active = { state: "active", page, path: file, ready: pending.ready };
+        sessionRecordings.set(session.id, active);
+        page.once("close", onPageClosed);
+        page.once("crash", onPageClosed);
+        await wakeSessionPages(session);
+        const cdp = await browserContext.newCDPSession(page);
+        const handle = await startRecording({
+          cdp,
+          path: file,
+          options: settings,
+          maxBytes,
+          onStop: (result) => {
+            release();
+            page.off("close", onPageClosed);
+            page.off("crash", onPageClosed);
+            if (sessionRecordings.get(session.id) !== active) return;
+            sessionRecordings.set(session.id, { state: "finished", page, path: file, result });
+            if (result.state === "completed") {
+              session.artifacts.push({ kind: "recording", path: file, mimeType: /\.webm$/i.test(file) ? "video/webm" : "video/mp4" });
+            } else if (result.state === "failed") {
+              session.warnings.push(`Recording failed: ${redactText(result.error)}`);
+            }
+            quietSessionPages(session);
+          },
+        });
+        return { handle, page, path: file };
+      } catch (error) {
+        release();
+        page?.off("close", onPageClosed);
+        page?.off("crash", onPageClosed);
+        const entry = sessionRecordings.get(session.id);
+        if (entry === pending || entry === active) sessionRecordings.delete(session.id);
+        throw error;
+      }
+    }),
+  };
+  sessionRecordings.set(session.id, pending);
+  const { handle, page } = await pending.ready;
+  return Object.assign(Object.create(null), handle.status(), { pageId: pageId(page) });
+}
+
+async function sessionRecordingStatus(session) {
+  const entry = sessionRecordings.get(session.id);
+  if (!entry) return Object.assign(Object.create(null), { state: "idle" });
+  if (entry.state === "finished") {
+    return Object.assign(Object.create(null), entry.result, { pageId: pageId(entry.page) });
+  }
+  const { handle, page } = await entry.ready;
+  return Object.assign(Object.create(null), handle.status(), { pageId: pageId(page) });
+}
+
+async function stopSessionRecording(session) {
+  const entry = sessionRecordings.get(session.id);
+  if (!entry) return Object.assign(Object.create(null), { state: "idle" });
+  if (entry.state === "finished") {
+    return Object.assign(Object.create(null), entry.result, { pageId: pageId(entry.page) });
+  }
+  const { handle, page } = await entry.ready;
+  return Object.assign(Object.create(null), await handle.stop(), { pageId: pageId(page) });
+}
+
+async function stopPageRecording(page) {
+  for (const session of sessions.values()) {
+    if (![...session.pages.values()].includes(page)) continue;
+    const entry = sessionRecordings.get(session.id);
+    if (!entry || entry.state === "finished") continue;
+    const owner = await entry.ready.catch(() => undefined);
+    if (owner?.page === page) await owner.handle.stop();
+  }
 }
 
 async function assertScreenshotPixelLimit(page, options) {
@@ -1677,11 +1799,8 @@ async function snapshotPage(page, options: any = {}) {
     String(options?.selector || ""),
     Boolean(options?.interactive),
     depth,
+    options?.urls === true,
   ]);
-  const store = lastSnapshots.get(page) || new Map();
-  lastSnapshots.set(page, store);
-  const previous = store.get(key);
-  store.set(key, text);
 
   let title = "";
   try {
@@ -1694,6 +1813,10 @@ async function snapshotPage(page, options: any = {}) {
     // A page mid-navigation can refuse title(); the header works without it.
   }
   const header = `page ${pageId(page)} ${page.url()}${title ? ` "${title}"` : ""}`;
+  const store = lastSnapshots.get(page) || new Map();
+  lastSnapshots.set(page, store);
+  const previous = store.get(key);
+  const current = text;
   if (options?.diff && previous !== undefined) {
     const result = diffSnapshots(previous, text);
     if (!result.changed)
@@ -1705,7 +1828,10 @@ async function snapshotPage(page, options: any = {}) {
     1_000,
     Math.min(Number(options?.maxChars || 10_000), 20_000),
   );
-  if (text.length <= limit) return `${header}\n${text}`;
+  if (text.length <= limit) {
+    store.set(key, current);
+    return `${header}\n${text}`;
+  }
   // Refuse instead of truncating: a cut-off tree reads as complete and sends
   // the model acting on half a page, while an error steers it to a scoped
   // re-read.
@@ -2849,7 +2975,9 @@ function wrap(value, realm) {
         validateMethodArguments(property, prepared);
         validateMethodPaths(kind, property, prepared);
         let result;
-        if (
+        if (kind === "Page" && property === "close") {
+          result = stopPageRecording(value).then(() => member.apply(value, prepared));
+        } else if (
           useSetContentCompatibility &&
           ["Page", "Frame"].includes(kind) &&
           property === "setContent"
@@ -4743,6 +4871,7 @@ function buildSandbox(session, consoleMessages, execution) {
         ? entries[target]
         : entries.find(([id]) => id === String(target));
     if (!entry) return { closed: false };
+    await stopPageRecording(entry[1]);
     await entry[1].close();
     return { closed: true, pageId: entry[0] };
   });
@@ -4753,6 +4882,15 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.artifactPath = realm.safeFunction((requested) =>
     makeArtifactPath(session, requested),
   );
+  const recording = Object.create(null);
+  recording.start = realm.safeFunction((options) => startSessionRecording(session, options));
+  recording.stop = realm.safeFunction(() => stopSessionRecording(session));
+  recording.status = realm.safeFunction(() => sessionRecordingStatus(session));
+  recording.restart = realm.safeFunction(async (options) => {
+    await stopSessionRecording(session);
+    return startSessionRecording(session, options);
+  });
+  sandbox.recording = Object.freeze(recording);
   sandbox.screenshot = realm.safeFunction(async (options) => {
     const settings =
       isString(options) ? { name: options } : options || {};
@@ -5288,13 +5426,13 @@ async function summarize(value, seen = new WeakSet(), depth = 0) {
   if (pageIds.has(raw)) {
     let title = "";
     try {
-      title ||= await raw.title();
       const domTitle = await raw
         .evaluate(
           () => document.title || document.querySelector("title")?.textContent || "",
         )
         .catch(() => "");
       if (isString(domTitle) && domTitle) title = domTitle;
+      else title = await raw.title();
     } catch {
       /* page may have closed */
     }
@@ -7615,6 +7753,7 @@ async function execute(message) {
   const flushPageEvents = async () => {
     if (pageEventsPumped) return;
     pageEventsPumped = true;
+    if (pageEvents.size === 0) return;
     await pumpPageEventQueue(session);
   };
   const execution = {
@@ -8082,6 +8221,8 @@ function shutdown() {
 }
 
 async function performShutdown() {
+  await Promise.allSettled([...sessions.values()].map(stopSessionRecording));
+  sessionRecordings.clear();
   // Chromium can emit BrowserContext.close before its process finishes the
   // final profile writes. Preserve the temporary path so shutdown performs a
   // second removal after close() has fully resolved, even if the close event
@@ -8131,6 +8272,8 @@ async function sessionClose(message) {
   const session = sessions.get(sessionId);
   let pagesClosed = 0;
   if (session) {
+    await stopSessionRecording(session).catch(() => {});
+    sessionRecordings.delete(sessionId);
     for (const page of session.pages.values()) {
       if (page.isClosed()) continue;
       pagesClosed += 1;
@@ -8227,7 +8370,8 @@ const idleReaper = setInterval(() => {
   const timeout = Number(launchConfig?.pageIdleTimeoutMs || 1_800_000);
   const cutoff = Date.now() - Math.max(timeout, 600_000);
   for (const [sessionId, session] of sessions) {
-    if (session.lastActivity >= cutoff || sessionIsExecuting(sessionId))
+    if (session.lastActivity >= cutoff || sessionIsExecuting(sessionId) ||
+        ["starting", "active"].includes(sessionRecordings.get(sessionId)?.state))
       continue;
     if (
       session.awaitingAnswerSince &&
@@ -8237,6 +8381,7 @@ const idleReaper = setInterval(() => {
     for (const page of session.pages.values())
       void page.close().catch(() => {});
     cancelPendingPark(sessionId);
+    sessionRecordings.delete(sessionId);
     sessions.delete(sessionId);
   }
 }, 60_000);

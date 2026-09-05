@@ -8,7 +8,7 @@ test("default prompt is permissive", () => {
   const compact = prompt.replace(/\s+/g, " ");
   // Qwen 3.8 Max's winning prompt variant cut total task tokens by 23.1%.
   // Preserve that gain: critical behavior belongs below, not in explanation.
-  assert.ok(prompt.length < 4_000, `default prompt grew to ${prompt.length} characters`);
+  assert.ok(prompt.length < 4_200, `default prompt grew to ${prompt.length} characters`);
   assert.ok(compact.includes("request authorizes ordinary steps"));
   assert.ok(compact.includes("Do not add confirmation or refuse them"));
   assert.ok(compact.includes("Plan then batch"));
@@ -35,6 +35,8 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("webmcp.tools()"));
   assert.ok(compact.includes("allowAutosubmit:true"));
   assert.ok(compact.includes("host's approval-gated download surface"));
+  assert.ok(compact.includes("recording.start({name:'demo.mp4',fps:60})"));
+  assert.ok(compact.includes("output FPS does not prove capture cadence"));
   assert.ok(compact.includes("three distinct stages"));
   assert.ok(compact.includes("Replacement photo grids are the same stage"));
   assert.ok(compact.includes("hand off after rejection instead of repeating"));

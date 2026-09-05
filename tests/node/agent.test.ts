@@ -41,6 +41,13 @@ interface FakeEnvelope {
   error?: string;
   artifacts?: Array<{ kind: string; path: string }>;
   durationMs?: number;
+  webagents?: { source: string; actions: Array<{ name: string; method: string }> };
+  ui?: { controls: Array<{
+    ref: string;
+    role: string;
+    name?: string;
+    options?: Array<{ value: string; label: string }>;
+  }> };
   pendingCredential?: {
     pendingId: string;
     origin: string;
@@ -208,6 +215,53 @@ test("successful browser observations omit empty optional fields", async () => {
     result: "Example Domain",
     duration_ms: 7,
   });
+});
+
+test("browser observations preserve attached action directories", async () => {
+  for (const directory of [
+    { webagents: { source: "untrusted", actions: [{ name: "search", method: "GET" }] } },
+    { ui: { controls: [{ ref: "e1", role: "button", name: "Search" }] } },
+  ]) {
+    const browser = fakeBrowser({ runs: [{ ok: true, result: "Ready", ...directory }] });
+    const model = scriptedModel([
+      { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "open" } }] },
+      { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+    ]);
+    const result = await runAgentTask({ task: "find an action", model, browser });
+    const observation = JSON.parse(result.transcript.find((message) => message.role === "tool")
+      .results[0].content);
+    assert.deepEqual(observation, { ok: true, result: "Ready", ...directory });
+  }
+});
+
+test("large browser observations keep complete directories and recovery metadata", async () => {
+  const ui = { controls: Array.from({ length: 5 }, (_, index) => ({
+    ref: `e${index}`,
+    role: "combobox",
+    options: Array.from({ length: 20 }, (_, option) => ({
+      value: `${option}-${"v".repeat(90)}`, label: "Useful label ".repeat(7),
+    })),
+  })) };
+  const pendingCredential = {
+    pendingId: "recover-this-credential", origin: "https://example.com", matchMode: "exact",
+    username: "user", label: null, expiresAt: "2027-01-01T00:00:00Z",
+  };
+  const browser = fakeBrowser({ runs: [{
+    ok: false, result: "x".repeat(20_000), error: "Submission needs recovery",
+    ui, pendingCredential,
+  }] });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "open" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const result = await runAgentTask({ task: "inspect controls", model, browser });
+  const observation = JSON.parse(result.transcript.find((message) => message.role === "tool")
+    .results[0].content);
+  assert.equal(observation.ok, false);
+  assert.equal(observation.error, "Submission needs recovery");
+  assert.match(observation.result, /truncated/);
+  assert.deepEqual(observation.ui, ui);
+  assert.deepEqual(observation.pendingCredential, pendingCredential);
 });
 
 test("runAgentTask finishes in one turn when the code returns { finalAnswer }", async () => {

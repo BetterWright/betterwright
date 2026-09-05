@@ -33,7 +33,7 @@ test("MCP omits and rejects browser_login when the vault is disabled", async () 
     const listed = await handlers.listTools();
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
-      ["browser", "browser_batch", "browser_download", "browser_handoff", "browser_doctor"],
+      ["browser", "browser_batch", "browser_download", "browser_record", "browser_handoff", "browser_doctor"],
     );
 
     const response = await handlers.callTool({
@@ -45,6 +45,77 @@ test("MCP omits and rejects browser_login when the vault is disabled", async () 
   } finally {
     await browser.close();
   }
+});
+
+test("MCP recording dispatches guarded session calls and retains video artifacts", async () => {
+  const calls = [];
+  const video = { kind: "recording", path: "/tmp/recording.mp4", mimeType: "video/mp4" };
+  const handlers = _createMcpHandlersForTest({
+    browser: {
+      vault: false,
+      async run(code, options) {
+        calls.push({ code, options });
+        return { ok: true, result: { state: "completed", path: video.path }, artifacts: [video] };
+      },
+    },
+    downloadPolicy: "deny",
+  });
+  const listed = await handlers.listTools();
+  const tool = listed.tools.find((entry) => entry.name === "browser_record");
+  assert.deepEqual(tool.inputSchema.properties.action.enum, ["start", "stop", "status", "restart"]);
+  assert.equal(tool.inputSchema.properties.fps.default, 60);
+  for (const action of ["start", "restart", "status", "stop"]) {
+    const starting = action === "start" || action === "restart";
+    const common = {
+      action,
+      session: "demo",
+      approvedDownloads: true,
+      code: "throw new Error('injected')",
+    };
+    const args = starting
+      ? { ...common, name: 'take"1.mp4', fps: 60, maxDurationMs: 2000 }
+      : common;
+    const response = await handlers.callTool({ params: {
+      name: "browser_record",
+      arguments: args,
+    } });
+    assert.equal(response.isError, undefined);
+    assert.equal(response.content.length, 1);
+    assert.deepEqual(JSON.parse(response.content[0].text).files, [video]);
+    assert.deepEqual(calls.at(-1).options, { session: "demo" });
+    assert.equal(calls.at(-1).code, starting
+      ? `return recording.${action}(${JSON.stringify({ name: 'take"1.mp4', fps: 60, maxDurationMs: 2000 })});`
+      : `return recording.${action}();`);
+  }
+});
+
+test("MCP recording rejects invalid actions and options on stop/status before running", async () => {
+  let runs = 0;
+  const handlers = _createMcpHandlersForTest({
+    browser: { vault: false, async run() { runs += 1; } },
+    downloadPolicy: "deny",
+  });
+  for (const args of [
+    { action: "start);process.exit()" },
+    { action: "stop", fps: 60 },
+    { action: "status", name: "unused.webm" },
+    {},
+  ]) {
+    const result = await handlers.callTool({ params: { name: "browser_record", arguments: args } });
+    assert.equal(result.isError, true);
+  }
+  assert.equal(runs, 0);
+});
+
+test("MCP recording returns worker failure details", async () => {
+  const handlers = _createMcpHandlersForTest({
+    browser: { vault: false, async run() { return { ok: false, error: "FFmpeg is unavailable" }; } },
+    downloadPolicy: "deny",
+  });
+  const response = await handlers.callTool({ params: {
+    name: "browser_record", arguments: { action: "start" },
+  } });
+  assert.deepEqual(JSON.parse(response.content[0].text), { ok: false, error: "FFmpeg is unavailable" });
 });
 
 test("MCP advertises and dispatches browser_login when a vault is available", async () => {
@@ -290,8 +361,10 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
 
   // Collapse runs of whitespace: line wrapping is nearly free in characters but
   // costs a token per line, so raw length would understate a rewrap regression.
-  const size = JSON.stringify(tools).replace(/\s+/g, " ").length;
+  const size = JSON.stringify(tools.filter((tool) => tool.name !== "browser_record")).replace(/\s+/g, " ").length;
   assert.ok(size < 7_250, `MCP tool list grew to ${size} collapsed characters`);
+  const recordingSize = JSON.stringify(tools.find((tool) => tool.name === "browser_record")).replace(/\s+/g, " ").length;
+  assert.ok(recordingSize < 1_000, `recording tool grew to ${recordingSize} collapsed characters`);
 
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
   const text = (name) => byName[name].description.replace(/\s+/g, " ");

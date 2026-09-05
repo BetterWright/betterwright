@@ -48,6 +48,20 @@ const [a, b] = await Promise.all([
 return { a: await a.title(), b: await b.title() };
 ```
 
+## Recording the page
+
+`recording.start(options?)` records the current tab to a session MP4 artifact by default.
+An explicit `.webm` filename selects VP8/WebM.
+`recording.status()` returns progress, `recording.stop()` finishes the video,
+and `recording.restart(options?)` finishes the previous take before starting another.
+Only one recording can run per session. Capture defaults to 60 FPS and preserves
+page state and elapsed time. FFmpeg is required only when recording.
+See [Record a browser session](recording.md) for options, limits, and CLI commands.
+
+```js
+return recording.start({ name: "demo.mp4", fps: 60 });
+```
+
 ## Reading the page
 
 `snapshot(options?)` returns an accessibility-tree snapshot of the current page —

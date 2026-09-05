@@ -80,18 +80,23 @@ test("console and pageerror listeners adopt payloads and support once/off", () =
   const adopt = (payload) => ({ adopted: payload });
   const listener = (payload) => seen.push(payload);
 
+  assert.equal(events.size, 0);
   events.dispatch(page, "on", "console", listener, adopt);
+  assert.equal(events.size, 1);
   page.emit("console", "first");
   assert.deepEqual(seen, [{ adopted: "first" }]);
   assert.equal(page.listeners.get("console")?.length, 1);
 
   events.dispatch(page, "off", "console", listener, adopt);
+  assert.equal(events.size, 0);
   page.emit("console", "ignored");
   assert.deepEqual(seen, [{ adopted: "first" }]);
   assert.equal(page.listeners.get("console")?.length, 0);
 
   events.dispatch(page, "once", "pageerror", listener, adopt);
+  assert.equal(events.size, 1);
   page.emit("pageerror", "boom");
+  assert.equal(events.size, 0);
   page.emit("pageerror", "again");
   assert.deepEqual(seen, [{ adopted: "first" }, { adopted: "boom" }]);
   assert.equal(page.listeners.get("pageerror")?.length, 0);

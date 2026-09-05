@@ -245,3 +245,38 @@ test("cli-main.js still dispatches when executed as the main module", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+/);
 });
+
+test("record help documents capture limits, artifact paths, and daemon requirements", () => {
+  const result = runCli(["record", "--help"]);
+  assert.equal(result.status, 0);
+  for (const expected of ["--fps", "--max-duration <s>", "BETTERWRIGHT_FFMPEG_PATH", "filename, not a path", "session daemon"]) {
+    assert.ok(result.stdout.includes(expected), `record help is missing ${expected}`);
+  }
+});
+
+test("record rejects invalid commands before creating a session", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-record-errors-"));
+  try {
+    for (const [args, expected] of [
+      [["record", "start", "--no-daemon"], /persistent session/],
+      [["record", "restart", "--close"], /persistent session/],
+      [["record", "start", "../demo.webm"], /filename/],
+      [["record", "start", "C:\\demo.webm"], /filename/],
+      [["record", "start", "demo.avi"], /filename/],
+      [["record", "start", "--fps", "61"], /--fps requires/],
+      [["record", "start", "--fps"], /--fps requires/],
+      [["record", "start", "--max-duration", "0"], /--max-duration requires/],
+      [["record", "stop", "--fps", "60"], /start\/restart/],
+      [["record", "status", "demo.webm"], /filename/],
+      [["record", "unknown"], /Usage: betterwright record/],
+      [["record", "start", "one.webm", "two.webm"], /Usage: betterwright record/],
+    ] satisfies [string[], RegExp][]) {
+      const result = runCli(args, { env: { BETTERWRIGHT_HOME: home } });
+      assert.equal(result.status, 1, args.join(" "));
+      assert.match(result.stderr, expected);
+    }
+    assert.deepEqual(fs.readdirSync(home), []);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

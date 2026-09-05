@@ -106,11 +106,15 @@ jobs:
             if (!binary) throw new Error('update did not install BetterChromium');
             console.log('BetterChromium update ok:', binary);
           "
+      - name: Install recording encoder
+        if: steps.existing.outputs.published != 'true'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Run browser integration suite
         if: steps.existing.outputs.published != 'true'
         run: bun run test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
+          BETTERWRIGHT_REQUIRE_RECORDING: "1"
       - name: Run final release verification
         if: steps.existing.outputs.published != 'true'
         run: bun run release:check

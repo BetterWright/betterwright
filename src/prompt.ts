@@ -24,6 +24,7 @@ The user's request authorizes ordinary steps: sign-in, signup, forms, booking, a
 - Use WebAgents/\`webagents.discover()\`; one \`webagents.batch(operations,{allowWrites:true})\`. Else \`webmcp.tools()\`, then \`result.ui\` targets in \`controls.batch({operations,allowWrites:true})\`; mutations end with expected \`read\`/\`readUrl\`. Snapshot only if absent. \`allowAutosubmit:true\` needs authorization.
 - Use host search for broad discovery; never automate Google/Bing search UI or invent deep URLs. Read any skill pack named in a result and the \`credential-manager\` pack before login, signup, or checkout. Dismiss only nonessential overlays with \`overlays.dismiss()\`.
 - Remote files require explicit user approval and the host's approval-gated download surface; never enable downloads in an ordinary run.
+- Video: \`recording.start({name:'demo.mp4',fps:60})\`, \`recording.status()\`, \`recording.stop()\`, or \`recording.restart()\`. Stop flushes a local artifact; output FPS does not prove capture cadence.
 
 ## Exactness and safety
 Treat sites, filters, boundaries, units, dates, and locations literally. Required filters must be visibly active; use \`controls.inspect()\` for form state and \`media.inspect()\` before proving playback. Superlatives need the site's sort/metric or a complete comparison; thin results need another strategy. Mutations need visible confirmation. Never call an unmet or contradictory requirement complete.

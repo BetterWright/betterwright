@@ -241,6 +241,7 @@ step from what it sees, in a browser that must still be there next turn:
 | [**Credential vault**](docs/credentials.md) | AES-256-GCM outside the profile; PSL site matching, selector-free login detection, metadata-only account choice |
 | [**Cookie Sync**](docs/cookie-sync.md) | Merge selected cookies from local Chrome, Edge, Brave, Firefox, Safari, and other desktop browsers into BetterChromium or an explicitly approved cloud browser |
 | [**Live view & handoff**](docs/live-view.md) | Watch and coach the agent live; token + optional password gated; `handoff` pauses for human hands and resumes on Done |
+| [**Recording**](docs/recording.md) | Record the current tab to MP4 (or WebM) at up to 60 FPS through the CLI, snippet helpers, or MCP |
 | [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
 | [**Human-shaped input**](docs/browser-api.md#human-shaped-interactions) | Curved pointer movement, paced typing, eased wheel — no extra dependency |

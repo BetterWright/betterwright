@@ -49,7 +49,6 @@ import { fileURLToPath } from "node:url";
 import { formatAgentUsage } from "../src/agent-usage.js";
 import { chromiumNeedsSoftwareGpu } from "../src/browser-runtime.js";
 import { configuredBrowserBackend } from "../src/chromium-fork.js";
-import { installChromiumFork } from "../src/chromium-fork-install.js";
 import {
   collectValues,
   firstPositional,
@@ -78,13 +77,6 @@ import {
   execTask,
   interruptSession,
 } from "../src/daemon-client.js";
-import {
-  doctorChecks,
-  doctorReport,
-  formatDoctorChecks,
-  modelSetupHint,
-  preferredModelId,
-} from "../src/doctor.js";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.js";
 import { profileLabel, resolveProfileName } from "../src/profile-name.js";
 // `agentSystemPrompt` comes from the light prompt module, not index.js, which
@@ -344,6 +336,7 @@ function providerFromFlags(_flags) {
 }
 
 async function cmdDoctor(flags) {
+  const { doctorReport, doctorChecks, formatDoctorChecks } = await import("../src/doctor.js");
   const report = await doctorReport();
   if (flags.has("--json")) {
     console.log(JSON.stringify({ ...report, checks: doctorChecks(report) }, null, 2));
@@ -374,6 +367,7 @@ async function cmdDoctor(flags) {
 // `init`: the guided path from nothing to a working browser.
 async function cmdInit(flags) {
   const { runInit } = await import("../src/onboard.js");
+  const { doctorReport } = await import("../src/doctor.js");
   // `flags` only carries `--`-prefixed tokens; accept `-y` as an alias for
   // `--yes` so it is not silently ignored on a TTY.
   const initFlags = new Set(flags);
@@ -457,6 +451,7 @@ async function cmdUpdate(flags) {
     );
     return 1;
   }
+  const { installChromiumFork } = await import("../src/chromium-fork-install.js");
   const backend = configuredBrowserBackend();
   const result = await installChromiumFork({ force: flags.has("--force") });
   if (result.skipped) {
@@ -498,6 +493,7 @@ async function cmdSetup(flags, { quiet = false }: any = {}) {
     return 1;
   }
 
+  const { installChromiumFork } = await import("../src/chromium-fork-install.js");
   const chromium = await installChromiumFork({ force: flags.has("--force") });
   if (chromium.skipped) {
     console.log(chromium.skipped);
@@ -748,6 +744,60 @@ async function cmdCookies(tokens, flags) {
   }
 }
 
+async function cmdRecord(rest, flags) {
+  const [action, name, ...extra] = positionalArgs(rest);
+  if (!["start", "stop", "status", "restart"].includes(action) || extra.length) {
+    console.error(helpFor("record"));
+    return 1;
+  }
+  if (daemonDisabled(flags) || flags.has("--close")) {
+    console.error("record requires a persistent session; omit --no-daemon and --close.");
+    return 1;
+  }
+  const starting = action === "start" || action === "restart";
+  const options: Record<string, string | number> = {};
+  if (name !== undefined) {
+    if (!starting || name !== path.basename(name) || name !== path.win32.basename(name) || !/\.(mp4|webm)$/i.test(name)) {
+      console.error("record start/restart accepts a .mp4 or .webm filename, without a directory path.");
+      return 1;
+    }
+    options.name = name;
+  }
+  const numericFlags = [
+    ["--fps", "fps", 1, 60, 1],
+    ["--max-width", "maxWidth", 2, 4096, 1],
+    ["--max-height", "maxHeight", 2, 4096, 1],
+    ["--quality", "quality", 1, 100, 1],
+    ["--max-duration", "maxDurationMs", 1, 3600, 1000],
+  ] as const;
+  for (const [flag, key, min, max, multiplier] of numericFlags) {
+    const provided = rest.some((token) => token === flag || token.startsWith(`${flag}=`));
+    if (!provided) continue;
+    const value = Number(flagValue(rest, flag));
+    if (!starting || !Number.isInteger(value) || value < min || value > max) {
+      console.error(`${flag} requires an integer from ${min} to ${max} on record start/restart.`);
+      return 1;
+    }
+    options[key] = value * multiplier;
+  }
+  const acquired = await acquireRunBrowser(flags);
+  try {
+    if (!acquired.viaDaemon) {
+      console.error(`record requires the session daemon. ${acquired.warning}`);
+      return 1;
+    }
+    const code = starting
+      ? `return recording.${action}(${JSON.stringify(options)});`
+      : `return recording.${action}();`;
+    const result = await acquired.browser.run(code, { session: acquired.session });
+    result.session = acquired.session;
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok && result.result?.state !== "failed" ? 0 : 1;
+  } finally {
+    await acquired.cleanup();
+  }
+}
+
 // A CLI-usage preamble that turns the operator guidance (which talks about
 // `run()`) into a self-contained skill for any agent that can run a shell
 // command.
@@ -888,17 +938,19 @@ function modelEndpointOptions(argv): CliModelOptions {
   return options;
 }
 
-function modelCliSelection(argv) {
-  const model =
-    flagValue(
-      argv,
-      "--model",
-      process.env.BETTERWRIGHT_MODEL || preferredModelId().model,
-    ) || "";
+async function modelCliSelection(argv) {
+  let model = flagValue(argv, "--model");
+  if (model === undefined) {
+    model = process.env.BETTERWRIGHT_MODEL;
+    if (!model) {
+      const { preferredModelId } = await import("../src/doctor.js");
+      model = preferredModelId().model;
+    }
+  }
   const modelOptions = modelEndpointOptions(argv);
   const effort = flagValue(argv, "--effort") || flagValue(argv, "--reasoning");
   if (effort) modelOptions.effort = effort;
-  return { model, modelOptions };
+  return { model: model || "", modelOptions };
 }
 
 function removedModelFlagMessage(argv) {
@@ -1035,7 +1087,7 @@ async function cmdInteractive(flags) {
     return 1;
   }
 
-  const selection = modelCliSelection(argv);
+  const selection = await modelCliSelection(argv);
   let model = selection.model;
   const modelOptions = selection.modelOptions;
   const session = flagValue(argv, "--session", "default");
@@ -1183,6 +1235,7 @@ async function cmdInteractive(flags) {
   // discover only after typing a task that no model is reachable. Say so up
   // front; the user can still get in and fix it with /model or /endpoint.
   if (!flagValue(argv, "--model") && !process.env.BETTERWRIGHT_MODEL && !modelOptions.baseURL) {
+    const { modelSetupHint } = await import("../src/doctor.js");
     const hint = modelSetupHint();
     if (hint) console.log(`${hint}\n`);
   }
@@ -1477,7 +1530,7 @@ async function cmdExec(flags) {
     console.error(EXEC_USAGE);
     return 1;
   }
-  const { model, modelOptions } = modelCliSelection(argv);
+  const { model, modelOptions } = await modelCliSelection(argv);
   // Fail here, with the four ways to fix it, rather than several seconds later
   // inside the model adapter with "@anthropic-ai/sdk is not installed".
   const explicitModel =
@@ -1485,6 +1538,7 @@ async function cmdExec(flags) {
     Boolean(process.env.BETTERWRIGHT_MODEL) ||
     Boolean(modelOptions.baseURL);
   if (!explicitModel) {
+    const { modelSetupHint } = await import("../src/doctor.js");
     const hint = modelSetupHint();
     if (hint) {
       console.error(hint);
@@ -2128,7 +2182,10 @@ export async function runCli() {
     // other entry point (mcp, __daemon, exec, run, non-TTY) is untouched.
     const { maybeOfferFirstRunSetup } = await import("../src/onboard.js");
     const firstRun = await maybeOfferFirstRunSetup({
-      doctorReport,
+      doctorReport: async () => {
+        const { doctorReport } = await import("../src/doctor.js");
+        return doctorReport();
+      },
       version: packageVersion(),
       runInit: () => cmdInit(flags),
     });
@@ -2188,6 +2245,8 @@ export async function runCli() {
     }
     case "run":
       return cmdRun(positional, flags);
+    case "record":
+      return cmdRecord(rest, flags);
     case "repl":
       return cmdRepl(flags);
     case "exec":
@@ -2215,6 +2274,7 @@ export async function runCli() {
         const { profileFromEnv } = await import("../src/mcp-server.js");
         const sdk = await mcpSdkAvailable();
         console.log(sdk.ok ? "  ✓ MCP SDK available" : `  ✗ ${sdk.error}`);
+        const { doctorReport } = await import("../src/doctor.js");
         const report = await doctorReport();
         console.log(
           report.ready

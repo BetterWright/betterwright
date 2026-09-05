@@ -81,11 +81,14 @@ jobs:
           if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+      - name: Install recording encoder
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       # REQUIRE_BROWSER turns the suite's local-dev skip into a CI failure, so a
       # broken BetterChromium install cannot report green by skipping tests.
       - run: bun run test
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
+          BETTERWRIGHT_REQUIRE_RECORDING: "1"
 
   cross-platform:
     # A NEW job, deliberately not a matrix over the two jobs above. Branch

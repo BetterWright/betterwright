@@ -5,11 +5,19 @@ import {
   collectValues,
   firstPositional,
   flagValue,
+  positionalArgs,
 } from "../../dist/src/cli-flags.js";
 import { NetworkPolicy } from "../../dist/src/policy.js";
 
 // A realistic argv prefix: node, script path, subcommand.
 const argvFor = (...tokens) => ["node", "dist/bin/betterwright.js", "run", ...tokens];
+
+test("recording value flags do not become recording names or subcommands", () => {
+  assert.deepEqual(positionalArgs([
+    "--fps", "60", "start", "--max-width", "1280", "--max-height=720",
+    "--quality", "80", "--max-duration", "15", "demo.webm", "--session", "recording",
+  ]), ["start", "demo.webm"]);
+});
 
 test("regression: --block-host=evil.com produces a non-empty block list that blocks the host", () => {
   const blockHosts = collectValues(
