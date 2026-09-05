@@ -199,7 +199,7 @@ test("missing FFmpeg returns setup guidance without leaving a partial file", asy
   assert.equal(fs.existsSync(output), false);
 });
 
-test("slow encoder input preserves elapsed duration without retaining every source frame", {
+test("slow encoder input and delayed timers preserve elapsed duration with bounded source frames", {
   skip: !encoderAvailable || process.platform === "win32",
 }, async t => {
   const output = location(t);
@@ -219,12 +219,15 @@ test("slow encoder input preserves elapsed duration without retaining every sour
   cdp.frame(large);
   await delay(30);
   for (let i = 0; i < 20; i++) cdp.frame(large);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
   await delay(70);
   const result = await recording.stop();
   assert.equal(result.state, "completed", JSON.stringify(result));
-  assert.ok(result.droppedFrames >= 19, JSON.stringify(result));
-  assert.ok(result.outputFrames >= 6 && result.outputFrames < 20, JSON.stringify(result));
-  assert.ok(Math.abs(result.outputFrames / 60 * 1000 - result.durationMs) <= 20);
+  assert.equal(result.capturedFrames, 22);
+  assert.ok(result.droppedFrames >= 19 && result.droppedFrames < result.capturedFrames, JSON.stringify(result));
+  assert.ok(result.durationMs >= 400, JSON.stringify(result));
+  assert.ok(result.outputFrames >= 6, JSON.stringify(result));
+  assert.ok(Math.abs(result.outputFrames / options.fps * 1000 - result.durationMs) <= 1000 / options.fps, JSON.stringify(result));
 });
 
 test("oversized source frames fail before decoding an unbounded payload", encoderOpts, async t => {
