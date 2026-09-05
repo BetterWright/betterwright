@@ -1392,6 +1392,47 @@ test("ordinary navigation attaches one compact UI directory automatically", opts
   }
 });
 
+test("action directory preserves shared contexts and refreshes them across scans and frames", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    const html = `<form><p>  First   context </p><button>Save</button><button>Save</button>
+      <input aria-label="Password" type="password" value="never-return-this"></form>
+      <section><p>${"Long context ".repeat(30)}</p><button>Choose</button><button>Choose</button></section>
+      <iframe name="settings" srcdoc="<form><p>Frame context</p><button>Save</button><button>Save</button></form>"></iframe>`;
+    const result = await bw.run(`
+      await page.setContent(${JSON.stringify(html)});
+      await page.frameLocator('iframe').getByRole('button', {name:'Save'}).first().waitFor();
+      return controls.directory();
+    `);
+    assert.equal(result.ok, true, result.error);
+    const controls = result.result.controls;
+    const saves = controls.filter((control) => control.target.name === "Save");
+    assert.deepEqual(saves.map((control) => ({ target: control.target, context: control.context })), [
+      { target: { role: "button", name: "Save", exact: true, nth: 0 }, context: "First context" },
+      { target: { role: "button", name: "Save", exact: true, nth: 1 }, context: "First context" },
+      { target: { role: "button", name: "Save", exact: true, nth: 0, frameName: "settings" }, context: "Frame context" },
+      { target: { role: "button", name: "Save", exact: true, nth: 1, frameName: "settings" }, context: "Frame context" },
+    ]);
+    const choices = controls.filter((control) => control.target.name === "Choose");
+    assert.equal(choices.length, 2);
+    assert.equal(choices[0].context.length, 180);
+    assert.equal(choices[1].context, choices[0].context);
+    assert.equal(controls.find((control) => control.target.label === "Password").value, "[redacted]");
+    assert.equal(JSON.stringify(result.result).includes("never-return-this"), false);
+
+    const changed = await bw.run(`
+      await page.locator('form p').evaluate(element => { element.textContent = 'Updated context'; });
+      return controls.directory();
+    `);
+    assert.equal(changed.ok, true, changed.error);
+    assert.deepEqual(changed.result.controls.filter((control) => control.target.name === "Save").map((control) => control.context), [
+      "Updated context", "Updated context", "Frame context", "Frame context",
+    ]);
+  } finally {
+    await bw.close();
+  }
+});
+
 test("WebAgents auto-discovery executes one same-origin operation DAG", opts, async () => {
   let status = "open";
   let workflowBody: any;
