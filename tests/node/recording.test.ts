@@ -41,6 +41,12 @@ function location(t, extension = "mp4") {
   return path.join(directory, `capture.${extension}`);
 }
 
+function decodeFrames(output: string, frameSize: number, expectedFrames: number) {
+  return execFileSync("ffmpeg", ["-v", "error", "-i", output, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], {
+    maxBuffer: (expectedFrames + 1) * frameSize,
+  });
+}
+
 test("recording options have bounded integer dimensions and cadence", () => {
   assert.deepEqual(normalizeRecordingOptions(), {
     fps: 60, maxWidth: 1280, maxHeight: 720, quality: 80, maxDurationMs: 300_000,
@@ -266,14 +272,15 @@ test("viewport resize keeps a fixed recording canvas without upscaling page pixe
   const output = location(t);
   const cdp = new FakeCdp();
   const recording = await startRecording({ cdp, path: output, options: { ...options, maxWidth: 128, maxHeight: 96 }, maxBytes: 1_000_000 });
-  await delay(100);
+  await delay(600);
   const smaller = execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=green:s=32x24", "-frames:v", "1", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"]);
   cdp.frame(smaller.toString("base64"));
   await delay(100);
   const result = await recording.stop();
   assert.equal(result.state, "completed", JSON.stringify(result));
-  const pixels = execFileSync("ffmpeg", ["-v", "error", "-i", output, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"]);
   const frameSize = 128 * 96 * 3;
+  const pixels = decodeFrames(output, frameSize, result.outputFrames);
+  assert.ok(pixels.length > 1024 * 1024);
   assert.equal(pixels.length / frameSize, result.outputFrames);
   const last = pixels.subarray(-frameSize);
   const center = (48 * 128 + 64) * 3;
@@ -289,7 +296,7 @@ test("an explicit WebM path retains VP8 recording", encoderOpts, async t => {
   const stopped = await recording.stop();
   assert.equal(stopped.state, "completed", JSON.stringify(stopped));
   assert.equal(fs.readFileSync(output).readUInt32BE(0), 0x1a45dfa3);
-  const decoded = execFileSync("ffmpeg", ["-v", "error", "-i", output, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"]);
+  const decoded = decodeFrames(output, 64 * 48 * 3, stopped.outputFrames);
   assert.equal(decoded.length, stopped.outputFrames * 64 * 48 * 3);
   if (probeAvailable) {
     const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_name", "-of", "json", output], { encoding: "utf8" }));
@@ -322,6 +329,6 @@ test("MP4 writes complete media fragments before recording stops", encoderOpts, 
   for (const type of ["ftyp", "moov", "moof", "mdat"]) assert.ok(boxes.includes(type), `${type} missing while recording`);
   const stopped = await recording.stop();
   assert.equal(stopped.state, "completed", JSON.stringify(stopped));
-  const pixels = execFileSync("ffmpeg", ["-v", "error", "-i", output, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"]);
+  const pixels = decodeFrames(output, 64 * 48 * 3, stopped.outputFrames);
   assert.equal(pixels.length, stopped.outputFrames * 64 * 48 * 3);
 });
