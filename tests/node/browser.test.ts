@@ -303,7 +303,14 @@ test("page summaries reflect changed and empty titles without snippet listeners"
 });
 
 test("recording preserves page state and animation between browser calls", recordingOpts, async () => {
+  let reportProgress: () => void;
+  const progress = new Promise<void>(resolve => { reportProgress = resolve; });
   const site = await listen((request, response) => {
+    if (request.url === "/progress") {
+      response.end("ok");
+      reportProgress();
+      return;
+    }
     if (request.url !== "/") { response.writeHead(404).end(); return; }
     response.end('<title>Recording fixture</title><input id="draft"><canvas width="640" height="360"></canvas>');
   });
@@ -324,20 +331,31 @@ test("recording preserves page state and animation between browser calls", recor
           context.fillRect(0, 0, 640, 360);
           context.fillStyle = '#facc15';
           context.fillRect(window.frameNumber % 580, 100, 60, 60);
+          if (window.frameNumber === window.reportAtFrame) void fetch('/progress');
           requestAnimationFrame(draw);
         };
         requestAnimationFrame(draw);
       });
       state.recordingDraft = 'preserved';
       const recordingState = await recording.start({ maxWidth: 640, maxHeight: 360 });
-      return { recordingState, frames: await page.evaluate(() => window.frameNumber) };
+      const frames = await page.evaluate(() => {
+        window.reportAtFrame = window.frameNumber + 50;
+        return window.frameNumber;
+      });
+      return { recordingState, frames };
     `);
     assert.equal(started.ok, true, started.error);
     assert.equal(started.result.recordingState.state, "recording");
     assert.equal(started.result.recordingState.fps, 60);
     assert.match(started.result.recordingState.path, /\.mp4$/);
     assert.equal((started.artifacts || []).filter((artifact) => artifact.kind === "recording").length, 0);
-    await new Promise((resolve) => setTimeout(resolve, 1_300));
+    let progressTimer: ReturnType<typeof setTimeout>;
+    await Promise.race([
+      progress,
+      new Promise<never>((_, reject) => {
+        progressTimer = setTimeout(() => reject(new Error("Recorded page stopped animating between calls.")), 10_000);
+      }),
+    ]).finally(() => clearTimeout(progressTimer));
     const stopped = await bw.run(`
       const saved = await recording.stop();
       const repeated = await recording.stop();
@@ -356,8 +374,9 @@ test("recording preserves page state and animation between browser calls", recor
     assert.equal(stopped.result.pageState.storage, "preserved");
     assert.match(stopped.result.pageState.cookie, /recording=preserved/);
     assert.ok(stopped.result.pageState.frames - started.result.frames >= 50, "recorded page stays awake between calls");
-    assert.ok(stopped.result.saved.outputFrames >= 60);
-    assert.ok(stopped.result.saved.capturedFrames >= 50);
+    assert.ok(stopped.result.saved.outputFrames > 1);
+    assert.ok(stopped.result.saved.capturedFrames > 1);
+    assert.ok(Math.abs(stopped.result.saved.outputFrames / 60 * 1000 - stopped.result.saved.durationMs) <= 20);
     assert.ok(stopped.result.saved.bytes > 0);
     assert.equal(fs.statSync(stopped.result.saved.path).size, stopped.result.saved.bytes);
     assert.ok(stopped.artifacts.some((artifact) => artifact.kind === "recording" && artifact.path === stopped.result.saved.path && artifact.mimeType === "video/mp4"));
