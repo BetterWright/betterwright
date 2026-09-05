@@ -8,6 +8,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { test } from "node:test";
+import zlib from "node:zlib";
 
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
@@ -38,6 +39,50 @@ if (!recordingReady && process.env.BETTERWRIGHT_REQUIRE_RECORDING) {
 const recordingOpts = { skip: recordingReady ? false : "recording runtime is unavailable" };
 function tempHome() {
   return makeTempDir("betterwright-test-");
+}
+
+function firstPngPixel(filePath: string) {
+  const png = fs.readFileSync(filePath);
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idat: Buffer[] = [];
+  while (offset < png.length) {
+    const length = png.readUInt32BE(offset);
+    const type = png.subarray(offset + 4, offset + 8).toString("ascii");
+    const data = png.subarray(offset + 8, offset + 8 + length);
+    offset += 12 + length;
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+    } else if (type === "IDAT") {
+      idat.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+  }
+  assert.equal(bitDepth, 8);
+  assert.ok(colorType === 2 || colorType === 6, `unsupported PNG color type ${colorType}`);
+  assert.ok(width > 0 && height > 0);
+  const channels = colorType === 6 ? 4 : 3;
+  const inflated = zlib.inflateSync(Buffer.concat(idat));
+  const first = inflated.subarray(1, 1 + channels);
+  return [first[0], first[1], first[2], colorType === 6 ? first[3] : 255];
+}
+
+function assertRgbaClose(actual: number[], expected: number[], tolerance = 2) {
+  assert.equal(actual.length, expected.length);
+  for (const [index, value] of actual.entries()) {
+    assert.ok(
+      Math.abs(value - expected[index]) <= tolerance,
+      `channel ${index}: expected ${expected[index]}, got ${value} from [${actual.join(", ")}]`,
+    );
+  }
 }
 
 // Chromium's site isolation keys on scheme + eTLD+1 and ignores the port, so a
@@ -147,65 +192,154 @@ test("stock software-rasterizer boilerplate warns without blocking launch", opts
   }
 });
 
-test("the selected managed browser keeps WebGL available with a coherent identity", opts, async () => {
-  const bw = new BetterWright({ home: tempHome(), headless: true });
+test("the selected managed browser keeps WebGL rendering available with a coherent identity", opts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url !== "/") { response.writeHead(404).end(); return; }
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end(`<!doctype html>
+      <style>body{margin:0;background:rgb(18,52,86)}</style>
+      <canvas id="two" width="2" height="2"></canvas>
+      <canvas id="one" width="2" height="2"></canvas>
+      <canvas id="webgl2" width="2" height="2"></canvas>`);
+  });
+  const bw = new BetterWright({ home: tempHome(), policy: new NetworkPolicy(), headless: true });
   try {
-    const result = await bw.run(`return await page.evaluate(() => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 2;
-      canvas.height = 2;
-      const gl = canvas.getContext("webgl");
-      if (!gl) {
-        // Diagnostic detail for a GPU-less runner: report every GL surface so a
-        // null context says why rather than just "false".
-        let webgl2 = "null";
-        try { webgl2 = canvas.getContext("webgl2") ? "ok" : "null"; } catch (e) { webgl2 = "err:" + e.message; }
-        return { available: false, webgl2, userAgent: navigator.userAgent, platform: navigator.platform };
-      }
-      gl.clearColor(0.25, 0.5, 0.75, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      const pixels = new Uint8Array(4);
-      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-      const debug = gl.getExtension("WEBGL_debug_renderer_info");
-      return {
-        available: true,
-        vendor: debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : null,
-        renderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : null,
-        extensions: gl.getSupportedExtensions()?.length || 0,
-        pixels: [...pixels],
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-      };
-    });`);
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      const rendering = await page.evaluate(async () => {
+        function compileShader(gl, type, source) {
+          const shader = gl.createShader(type);
+          if (!shader) throw new Error('createShader returned null');
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            throw new Error(gl.getShaderInfoLog(shader) || 'shader compile failed');
+          }
+          return shader;
+        }
+        function drawWebgl(id, kind) {
+          const canvas = document.getElementById(id);
+          const gl = canvas.getContext(kind, { preserveDrawingBuffer: true });
+          if (!gl) return { available: false, kind, userAgent: navigator.userAgent, platform: navigator.platform };
+          const secondVersion = kind === 'webgl2';
+          const vertexSource = secondVersion
+            ? '#version 300 es\\nin vec2 position; void main(){ gl_Position = vec4(position, 0.0, 1.0); }'
+            : 'attribute vec2 position; void main(){ gl_Position = vec4(position, 0.0, 1.0); }';
+          const fragmentSource = secondVersion
+            ? '#version 300 es\\nprecision mediump float; out vec4 color; void main(){ color = vec4(0.8, 0.3, 0.1, 1.0); }'
+            : 'precision mediump float; void main(){ gl_FragColor = vec4(0.2, 0.4, 0.6, 1.0); }';
+          const program = gl.createProgram();
+          if (!program) throw new Error('createProgram returned null');
+          gl.attachShader(program, compileShader(gl, gl.VERTEX_SHADER, vertexSource));
+          gl.attachShader(program, compileShader(gl, gl.FRAGMENT_SHADER, fragmentSource));
+          gl.linkProgram(program);
+          if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program) || 'program link failed');
+          }
+          gl.useProgram(program);
+          const buffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+          const location = gl.getAttribLocation(program, 'position');
+          gl.enableVertexAttribArray(location);
+          gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
+          gl.viewport(0, 0, 2, 2);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          const pixels = new Uint8Array(4);
+          gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+          const debug = gl.getExtension('WEBGL_debug_renderer_info');
+          return {
+            available: true,
+            kind,
+            vendor: debug ? gl.getParameter(debug.UNMASKED_VENDOR_WEBGL) : null,
+            renderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : null,
+            extensions: gl.getSupportedExtensions()?.length || 0,
+            pixels: [...pixels],
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+          };
+        }
+        const two = document.getElementById('two').getContext('2d');
+        two.fillStyle = 'rgb(51,102,153)';
+        two.fillRect(0, 0, 2, 2);
+        async function measureWebglFrames() {
+          const canvas = document.getElementById('one');
+          const gl = canvas.getContext('webgl');
+          if (!gl) return { available: false };
+          let frames = 0;
+          const start = performance.now();
+          await new Promise((resolve) => {
+            const draw = (now) => {
+              frames += 1;
+              gl.clearColor(frames % 2 ? 0.1 : 0.4, 0.2, 0.3, 1);
+              gl.clear(gl.COLOR_BUFFER_BIT);
+              if (now - start >= 500) resolve();
+              else requestAnimationFrame(draw);
+            };
+            requestAnimationFrame(draw);
+          });
+          return { available: true, frames, elapsedMs: performance.now() - start };
+        }
+        const webgpu = { secureContext: isSecureContext, hasGpu: 'gpu' in navigator };
+        if (webgpu.hasGpu) {
+          try {
+            webgpu.adapter = Boolean(await navigator.gpu.requestAdapter());
+          } catch (error) {
+            webgpu.error = error instanceof Error ? error.message : String(error);
+          }
+        }
+        return {
+          canvas2d: [...two.getImageData(0, 0, 1, 1).data],
+          webgl: drawWebgl('one', 'webgl'),
+          webgl2: drawWebgl('webgl2', 'webgl2'),
+          webglFrames: await measureWebglFrames(),
+          webgpu,
+        };
+      });
+      const artifact = await screenshot({kind: 'debug', name: 'rendering-css.png'});
+      return { ...rendering, artifact };
+    `);
     assert.equal(result.ok, true, result.error);
-    assert.equal(result.result.available, true, JSON.stringify(result.result));
-    assert.ok(isString(result.result.vendor));
-    assert.ok(result.result.vendor.length > 0);
-    assert.ok(isString(result.result.renderer));
-    assert.ok(result.result.renderer.length > 0);
-    assert.ok(result.result.extensions > 0);
-    for (const [index, actual] of result.result.pixels.entries()) {
-      assert.ok(Math.abs(actual - [64, 128, 191, 255][index]) <= 1);
+    assertRgbaClose(result.result.canvas2d, [51, 102, 153, 255]);
+    assert.equal(result.result.webgl.available, true, JSON.stringify(result.result.webgl));
+    assert.equal(result.result.webgl2.available, true, JSON.stringify(result.result.webgl2));
+    assertRgbaClose(result.result.webgl.pixels, [51, 102, 153, 255]);
+    assertRgbaClose(result.result.webgl2.pixels, [204, 77, 26, 255]);
+    for (const gl of [result.result.webgl, result.result.webgl2]) {
+      assert.ok(isString(gl.vendor));
+      assert.ok(gl.vendor.length > 0);
+      assert.ok(isString(gl.renderer));
+      assert.ok(gl.renderer.length > 0);
+      assert.ok(gl.extensions > 0);
     }
+    assert.equal(result.result.webglFrames.available, true, JSON.stringify(result.result.webglFrames));
+    assert.ok(result.result.webglFrames.frames >= 10, JSON.stringify(result.result.webglFrames));
+    assert.ok(result.result.webglFrames.elapsedMs >= 450, JSON.stringify(result.result.webglFrames));
+    assert.equal(result.result.webgpu.secureContext, true, JSON.stringify(result.result.webgpu));
+    assert.equal(isBoolean(result.result.webgpu.hasGpu), true, JSON.stringify(result.result.webgpu));
+    if (result.result.webgpu.hasGpu) {
+      assert.equal(isBoolean(result.result.webgpu.adapter), true, JSON.stringify(result.result.webgpu));
+    }
+    assertRgbaClose(firstPngPixel(result.result.artifact.path), [18, 52, 86, 255], 3);
     if (browserStatus.browser === "chromium-fork" && process.platform === "linux") {
-      // Honest-Linux fork: no Mac masquerade. The WebGL identity is a common
-      // GPU (never "SwiftShader"/"llvmpipe", even on a GPU-less host), the
-      // platform is Linux, and the UA says Linux.
-      assert.equal(result.result.platform, "Linux x86_64", JSON.stringify(result.result));
-      assert.match(result.result.userAgent, /Linux/, result.result.userAgent);
-      assert.doesNotMatch(result.result.userAgent, /Macintosh/, result.result.userAgent);
-      assert.doesNotMatch(result.result.renderer, /SwiftShader|llvmpipe|softpipe/i, result.result.renderer);
-      assert.match(result.result.renderer, /ANGLE/, result.result.renderer);
-    } else if (/Macintosh/.test(result.result.userAgent)) {
-      assert.equal(result.result.platform, "MacIntel");
-    } else if (/Windows/.test(result.result.userAgent)) {
-      assert.equal(result.result.platform, "Win32");
+      assert.equal(result.result.webgl.platform, "Linux x86_64", JSON.stringify(result.result.webgl));
+      assert.match(result.result.webgl.userAgent, /Linux/, result.result.webgl.userAgent);
+      assert.doesNotMatch(result.result.webgl.userAgent, /Macintosh/, result.result.webgl.userAgent);
+      assert.doesNotMatch(result.result.webgl.renderer, /SwiftShader|llvmpipe|softpipe/i, result.result.webgl.renderer);
+      assert.doesNotMatch(result.result.webgl2.renderer, /SwiftShader|llvmpipe|softpipe/i, result.result.webgl2.renderer);
+      assert.match(result.result.webgl.renderer, /ANGLE/, result.result.webgl.renderer);
+      assert.match(result.result.webgl2.renderer, /ANGLE/, result.result.webgl2.renderer);
+    } else if (/Macintosh/.test(result.result.webgl.userAgent)) {
+      assert.equal(result.result.webgl.platform, "MacIntel");
+    } else if (/Windows/.test(result.result.webgl.userAgent)) {
+      assert.equal(result.result.webgl.platform, "Win32");
     } else {
-      assert.match(result.result.userAgent, /Linux/);
-      assert.match(result.result.platform, /Linux/);
+      assert.match(result.result.webgl.userAgent, /Linux/);
+      assert.match(result.result.webgl.platform, /Linux/);
     }
   } finally {
     await bw.close();
+    await site.close();
   }
 });
 
@@ -325,6 +459,8 @@ test("recording preserves page state and animation between browser calls", recor
         window.frameNumber = 0;
         const canvas = document.querySelector('canvas');
         const context = canvas.getContext('2d');
+        context.fillStyle = '#164e63';
+        context.fillRect(0, 0, 640, 360);
         const draw = () => {
           window.frameNumber += 1;
           context.fillStyle = '#164e63';
@@ -337,6 +473,7 @@ test("recording preserves page state and animation between browser calls", recor
         requestAnimationFrame(draw);
       });
       state.recordingDraft = 'preserved';
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const recordingState = await recording.start({ maxWidth: 640, maxHeight: 360 });
       const frames = await page.evaluate(() => {
         setTimeout(() => { window.reportAtFrame = window.frameNumber + 50; }, 1_500);
