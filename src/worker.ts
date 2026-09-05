@@ -14,8 +14,8 @@ import path from "node:path";
 import readline from "node:readline";
 import { types as utilTypes } from "node:util";
 import vm from "node:vm";
-import { getDomain } from "tldts";
 import type { Page } from "playwright-core";
+import { getDomain } from "tldts";
 import type { RecordingStatus } from "../types/recording.js";
 import {
   cookieSyncConsentTarget,

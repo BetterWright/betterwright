@@ -132,6 +132,8 @@ The [Playwright routing documentation](https://playwright.dev/docs/api/class-bro
 
 ## Verification and limits
 
+The integrated v2.3.0 candidate passed the complete Bun 1.4 suite as a nonroot user with Chromium’s sandbox enabled: 1,104 tests passed, four optional live-site tests skipped, and no failures. The run required both the managed browser and recording encoders. An independent reviewer passed 77 focused tests and 13 browser tests. A separate Node 22.22.1 library check completed a browser call and MP4 recording. Earlier Node audit results below describe the pre-integration implementation.
+
 After the MP4 change, `BETTERWRIGHT_COVERAGE=1 npm run release:check` passed with 1,009 tests passed and five optional external live-site tests skipped. Lint, type checks, build validation, public declaration consumers, and package installation smoke testing passed. All 91 focused tests and all nine recording browser tests passed, including real MCP recordings in both formats. Recorder coverage is 97.52% of lines and 87.83% of branches in the release run.
 
 Before the format follow-up, the complete `BETTERWRIGHT_REQUIRE_BROWSER=1 BETTERWRIGHT_REQUIRE_RECORDING=1 npm test` run passed with 1,089 tests passed, five skipped, and no failures, including all 82 managed-browser tests. The follow-up reran the changed browser recording paths alongside the full release checks.
