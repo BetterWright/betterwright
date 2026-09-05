@@ -339,7 +339,7 @@ test("recording preserves page state and animation between browser calls", recor
       state.recordingDraft = 'preserved';
       const recordingState = await recording.start({ maxWidth: 640, maxHeight: 360 });
       const frames = await page.evaluate(() => {
-        window.reportAtFrame = window.frameNumber + 50;
+        setTimeout(() => { window.reportAtFrame = window.frameNumber + 50; }, 1_500);
         return window.frameNumber;
       });
       return { recordingState, frames };
