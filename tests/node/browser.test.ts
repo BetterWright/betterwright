@@ -2774,6 +2774,108 @@ test("interactive snapshots expose refs that aria-ref locators can act on", opts
   }
 });
 
+test("controls.batch accepts snapshot aria refs from frames", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent(\`
+        <button id="main">Main action</button>
+        <p id="mainStatus">main waiting</p>
+        <iframe name="outer" title="outer"></iframe>
+        <script>
+          document.querySelector('#main').addEventListener('click', () => {
+            document.querySelector('#mainStatus').textContent = 'main clicked';
+          });
+        </script>
+      \`);
+      const outer = page.frame({name: 'outer'});
+      await outer.setContent(\`
+        <button id="outerButton">Outer action</button>
+        <p id="outerStatus">outer waiting</p>
+        <iframe name="inner" title="inner"></iframe>
+        <script>
+          document.querySelector('#outerButton').addEventListener('click', () => {
+            document.querySelector('#outerStatus').textContent = 'outer clicked';
+          });
+        </script>
+      \`);
+      const inner = page.frame({name: 'inner'});
+      await inner.setContent(\`
+        <button id="deepPlain">Deep plain action</button>
+        <button id="deepPrefixed">Deep prefixed action</button>
+        <p id="deepPlainStatus">deep plain waiting</p>
+        <p id="deepPrefixedStatus">deep prefixed waiting</p>
+        <script>
+          document.querySelector('#deepPlain').addEventListener('click', () => {
+            document.querySelector('#deepPlainStatus').textContent = 'deep plain clicked';
+          });
+          document.querySelector('#deepPrefixed').addEventListener('click', () => {
+            document.querySelector('#deepPrefixedStatus').textContent = 'deep prefixed clicked';
+          });
+        </script>
+      \`);
+      const snap = await snapshot({interactive: true});
+      const refFor = (label) => {
+        const line = snap.split('\\n').find((entry) => entry.includes('button "' + label + '" [ref='));
+        const match = line?.match(/\\[ref=([^\\]]+)\\]/);
+        if (!match) throw new Error('missing ref for ' + label + '\\n' + snap);
+        return match[1];
+      };
+      const mainRef = refFor('Main action');
+      const outerRef = refFor('Outer action');
+      const deepPlainRef = refFor('Deep plain action');
+      const deepPrefixedRef = refFor('Deep prefixed action');
+      if (!/^e\\d+$/.test(mainRef)) throw new Error('expected main ref, got ' + mainRef);
+      for (const ref of [outerRef, deepPlainRef, deepPrefixedRef]) {
+        if (!/^(?:f\\d+)+e\\d+$/.test(ref)) throw new Error('expected frame ref, got ' + ref);
+      }
+      const run = async (id, ref, target, expected) => controls.batch({
+        operations: [
+          {id: 'click' + id, action: 'click', target: {ref}},
+          {id: 'read' + id, action: 'read', target, value: expected},
+        ],
+        allowWrites: true,
+        returnDirectory: false,
+      });
+      const main = await run('Main', mainRef, {css: '#mainStatus'}, 'main clicked');
+      const outerResult = await run('Outer', 'aria-ref=' + outerRef, {css: '#outerStatus', frameName: 'outer'}, 'outer clicked');
+      const deepPlain = await run('DeepPlain', deepPlainRef, {css: '#deepPlainStatus', frameName: 'inner'}, 'deep plain clicked');
+      const deepPrefixed = await run('DeepPrefixed', 'aria-ref=' + deepPrefixedRef, {css: '#deepPrefixedStatus', frameName: 'inner'}, 'deep prefixed clicked');
+      const invalid = await controls.batch({
+        operations: [
+          {id: 'clickBad', action: 'click', target: {ref: 'f1'}},
+          {id: 'readBad', action: 'read', target: {css: '#mainStatus'}, value: 'main clicked'},
+        ],
+        allowWrites: true,
+        returnDirectory: false,
+      }).then(
+        () => 'accepted',
+        (error) => String(error?.message || error),
+      );
+      return {
+        refs: {mainRef, outerRef, deepPlainRef, deepPrefixedRef},
+        main: main.results.readMain.text,
+        outer: outerResult.results.readOuter.text,
+        deepPlain: deepPlain.results.readDeepPlain.text,
+        deepPrefixed: deepPrefixed.results.readDeepPrefixed.text,
+        invalid,
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.match(result.result.refs.mainRef, /^e\d+$/);
+    assert.match(result.result.refs.outerRef, /^(?:f\d+)+e\d+$/);
+    assert.match(result.result.refs.deepPlainRef, /^(?:f\d+)+e\d+$/);
+    assert.match(result.result.refs.deepPrefixedRef, /^(?:f\d+)+e\d+$/);
+    assert.equal(result.result.main, "main clicked");
+    assert.equal(result.result.outer, "outer clicked");
+    assert.equal(result.result.deepPlain, "deep plain clicked");
+    assert.equal(result.result.deepPrefixed, "deep prefixed clicked");
+    assert.match(result.result.invalid, /invalid aria ref/);
+  } finally {
+    await bw.close();
+  }
+});
+
 test("WebMCP discovers and invokes a real page-published tool without exposing CDP", opts, async () => {
   const site = await listen((_request, response) => {
     response.writeHead(200, {"content-type": "text/html"});
