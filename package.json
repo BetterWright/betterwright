@@ -172,11 +172,11 @@
     "@electron/asar": "4.3.0",
     "electron": "43.4.1",
     "@types/ws": "8.5.13",
-    "@biomejs/biome": "^2.5.3",
+    "@biomejs/biome": "^2.5.12",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@oxlint/plugins": "^1.78.0",
+    "@oxlint/plugins": "^1.82.0",
     "@types/node": "^22.20.1",
-    "oxlint": "^1.78.0",
+    "oxlint": "^1.82.0",
     "typescript": "^7.0.2"
   },
   "optionalDependencies": {
