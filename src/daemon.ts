@@ -463,6 +463,9 @@ const SESSION_OPTION_METHODS = new Set([
   "waitForAsk",
 ]);
 const PLAIN_METHODS = new Set([
+  "vaultStatus",
+  "unlockVault",
+  "lockVault",
   "syncCookies",
   "stopLiveView",
   "liveViewStatus",

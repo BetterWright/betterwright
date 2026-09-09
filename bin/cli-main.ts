@@ -2245,7 +2245,22 @@ export async function runCli() {
       return cmdCookies(rest, flags);
     case "vault": {
       const { runVaultCommand } = await import("../src/vault-cli.js");
-      return runVaultCommand(rest);
+      return runVaultCommand(rest, {
+        daemonStatus: async () => {
+          const outcome = await connectSessionDaemon({ cliPath: CLI_PATH,
+            config: daemonConfigFromFlags(flags), spawnIfNeeded: false });
+          if (!outcome.ok) return null;
+          try { return await createDaemonBrowser(outcome.channel).vaultStatus(); }
+          finally { outcome.channel.end(); }
+        },
+        unlockDaemon: async (password: string) => {
+          const acquired = await acquireRunBrowser(flags);
+          try {
+            if (!acquired.viaDaemon) throw new Error("Unlock requires the persistent session daemon; retry without --no-daemon.");
+            return await acquired.browser.unlockVault({ password });
+          } finally { await acquired.cleanup(); }
+        },
+      });
     }
     case "run":
       return cmdRun(positional, flags);
@@ -2332,4 +2347,3 @@ if (invokedAsCliMain()) {
     },
   );
 }
-

@@ -39,6 +39,7 @@ import {
   type UntrustedValue,
   untrustedField,
 } from "./untrusted-value.js";
+import { parseMasterKey, unwrapMasterKey, wrapMasterKey } from "./vault-key-protection.js";
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -66,6 +67,23 @@ const MUTATION_AUDIT_WARNING = Object.freeze({
   message: "Credential vault mutation succeeded, but its audit entry could not be written.",
 });
 const execFileAsync = promisify(execFile);
+
+export interface VaultSettings {
+  agentUse: boolean;
+  offerSave: boolean;
+  autosave: boolean;
+}
+
+function vaultSettings(value: UntrustedValue): VaultSettings {
+  const agentUse = untrustedField(value, "agentUse");
+  const offerSave = untrustedField(value, "offerSave");
+  const autosave = untrustedField(value, "autosave");
+  if (!isRecord(value) || !isBoolean(agentUse) || !isBoolean(offerSave) || !isBoolean(autosave) ||
+      (autosave && !offerSave)) {
+    throw vaultError("Settings require agentUse, offerSave, and autosave booleans; autosave requires offerSave.", "BAD_INPUT");
+  }
+  return { agentUse, offerSave, autosave };
+}
 
 export const VAULT_CATEGORIES = Object.freeze([
   "login",
@@ -1402,6 +1420,12 @@ interface RevealedSecretMaterial {
  * been active in this process from result envelopes.
  */
 export class LocalCredentialVault {
+  #masterKey: Buffer | null = null;
+  #masterEnvelope: string | null = null;
+  #retryAt = 0;
+  #unlockUntil = 0;
+  #autoLockMs: number;
+  #unlockTimer: ReturnType<typeof setTimeout> | null = null;
   #activeSecrets = new Set();
   #lockAcquiredForTest = null;
   #beforeGeneratePersistForTest = null;
@@ -1421,6 +1445,7 @@ export class LocalCredentialVault {
 
   constructor(options: any = {}) {
     const resolved = normalizeOptions(options);
+    this.#autoLockMs = boundedInteger(resolved.autoLockMs, 15 * 60_000, 1, 24 * 60 * 60_000, "autoLockMs");
     if (resolved.keyProvider != null && !isCallable(resolved.keyProvider)) {
       throw new TypeError("keyProvider must be a function.");
     }
@@ -2025,8 +2050,11 @@ export class LocalCredentialVault {
   }
 
   async #dispatch(action, payload, target) {
-    const { key, snapshot } = await loadKeyAndSnapshot(this.paths, this.keyProvider);
+    const { key, snapshot } = await this.#load();
     try {
+      const settings = await this.ownerSettings();
+      if (!settings.agentUse) throw vaultError("Agent use of saved logins is disabled.", "VAULT_AGENT_DISABLED");
+      if (action === "save" && payload?.deferToPending && !settings.offerSave) return { saved: false };
       if (action === "list") return await this.#list(snapshot, payload, target);
       if (action === "list-pending") {
         return await this.#listPending(snapshot, target);
@@ -2109,9 +2137,8 @@ export class LocalCredentialVault {
 
   // --- Owner-only local access ---------------------------------------------
   //
-  // The person who owns these files can already read vault.key, so refusing
-  // them their own saved passwords protects nothing and strands anything the
-  // agent captured or generated. These methods give them a supported way in.
+  // Owners can recover captured and generated passwords here. Legacy vaults
+  // use vault.key; master-protected vaults require an unlocked instance.
   //
   // They are deliberately NOT reachable through `handleRequest`: that method
   // resolves a fixed action list in `#dispatch`, which is the only surface the
@@ -2128,9 +2155,14 @@ export class LocalCredentialVault {
    */
   async #readSnapshot() {
     if (!(await pathExists(this.paths.data))) return null;
-    const { key, snapshot } = await loadKeyAndSnapshot(this.paths, this.keyProvider);
-    key.fill(0);
-    return snapshot;
+    const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+    try {
+      const { key, snapshot } = await this.#load();
+      key.fill(0);
+      return snapshot;
+    } finally {
+      await release();
+    }
   }
 
   /**
@@ -2241,7 +2273,7 @@ export class LocalCredentialVault {
         if (!(await pathExists(this.paths.data))) {
           throw vaultError("No credential vault exists yet.", "NOT_FOUND");
         }
-        const { key, snapshot } = await loadKeyAndSnapshot(this.paths, this.keyProvider);
+        const { key, snapshot } = await this.#load();
         try {
           const index = snapshot.records.findIndex((candidate) => candidate.id === wanted);
           const pendingIndex =
@@ -2299,6 +2331,174 @@ export class LocalCredentialVault {
       }
     }
     return { entries: entries.slice(-count).reverse() };
+  }
+
+  get #protectionPath() { return path.join(this.dir, "master-key.json"); }
+
+  async ownerSettings(): Promise<VaultSettings> {
+    try {
+      return vaultSettings(JSON.parse((await readBoundedFile(
+        path.join(this.dir, "settings.json"), 4096, "Vault settings",
+      )).toString("utf8")));
+    } catch (error) {
+      if (isMissing(error)) return { agentUse: true, offerSave: true, autosave: false };
+      throw error;
+    }
+  }
+
+  async ownerConfigure(input: VaultSettings): Promise<VaultSettings> {
+    const settings = vaultSettings(input);
+    return this.#ownerTransaction(async () => {
+      const { key } = await this.#load();
+      key.fill(0);
+      await atomicWrite(path.join(this.dir, "settings.json"), Buffer.from(JSON.stringify(settings)));
+      return settings;
+    });
+  }
+
+  /** Trusted capture sensor only; agent preferences do not disable the owner's saving. */
+  async ownerCapture(payload, origin: string) {
+    const target = normalizeHttpOrigin(origin);
+    return this.#ownerTransaction(async () => {
+      if (!(await this.ownerSettings()).offerSave) return { saved: false };
+      const { key, snapshot } = await this.#load();
+      try { return await this.#save(snapshot, key, { ...payload, deferToPending: true }, target); }
+      finally { key.fill(0); }
+    });
+  }
+
+  #rememberKey(key: Buffer, identity: string) {
+    this.dispose();
+    this.#masterKey = Buffer.from(key);
+    this.#masterEnvelope = identity;
+    this.#unlockUntil = Date.now() + this.#autoLockMs;
+    this.#unlockTimer = setTimeout(() => this.dispose(), this.#autoLockMs);
+    this.#unlockTimer.unref?.();
+  }
+
+  async #protection() {
+    try {
+      const bytes = await readBoundedFile(this.#protectionPath, 4096, "Master key envelope");
+      return { envelope: parseMasterKey(bytes), identity: bytes.toString("utf8") };
+    } catch (error) {
+      if (isMissing(error)) return null;
+      throw vaultError("Master key protection could not be read.", "VAULT_KEY_INVALID");
+    }
+  }
+
+  async #load() {
+    const protection = await this.#protection();
+    if (!protection) {
+      // Never fall back to a legacy key after this instance observed protection.
+      if (this.#masterEnvelope) throw vaultError("Master key protection is missing.", "VAULT_KEY_MISSING");
+      return loadKeyAndSnapshot(this.paths, this.keyProvider);
+    }
+    if (!this.#masterKey || Date.now() >= this.#unlockUntil || protection.identity !== this.#masterEnvelope) {
+      this.#masterKey?.fill(0);
+      this.#masterKey = null;
+      throw vaultError("Vault is locked. Unlock it from a trusted host or `betterwright vault unlock`.", "VAULT_LOCKED");
+    }
+    const activeKey = Buffer.from(this.#masterKey);
+    try { return await loadKeyAndSnapshot(this.paths, async () => Buffer.from(activeKey)); }
+    finally { activeKey.fill(0); }
+  }
+
+  async #ownerTransaction<T>(operation: () => Promise<T>): Promise<T> {
+    return serialize(this.dir, async () => {
+      await ensurePrivateDirectory(this.dir);
+      const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+      try {
+        await release.assertOwned();
+        return await operation();
+      } finally {
+        await release();
+      }
+    });
+  }
+
+  /** Metadata only; does not create a vault or attempt to unlock it. */
+  async ownerStatus() {
+    return serialize(this.dir, async () => {
+      const protection = await this.#protection();
+      return { configured: Boolean(protection),
+        locked: Boolean(protection && (!this.#masterKey || Date.now() >= this.#unlockUntil || protection.identity !== this.#masterEnvelope)),
+        osProtected: false, exists: await pathExists(this.paths.data) };
+    });
+  }
+
+  /** Wrap the existing data key, verify it, then remove the legacy plaintext key. */
+  async ownerSetupMaster(password: string) {
+    if (!isString(password) || password.length < 12 || Buffer.byteLength(password) > 1024) {
+      throw vaultError("Use a master password of at least 12 characters and at most 1024 bytes.", "BAD_INPUT");
+    }
+    return this.#ownerTransaction(async () => {
+      if (this.keyProvider) throw vaultError("The host owns this vault key.", "VAULT_EXTERNAL_KEY");
+      if (await this.#protection()) throw vaultError("A master password is already configured.", "BAD_INPUT");
+      const { key } = await this.#load();
+      try {
+        const envelope = await wrapMasterKey(key, password);
+        const verified = await unwrapMasterKey(envelope, password);
+        try {
+          if (!timingSafeEqual(key, verified)) throw vaultError("Key verification failed.", "VAULT_KEY_INVALID");
+        } finally { verified.fill(0); }
+        const identity = JSON.stringify(envelope);
+        await atomicWrite(this.#protectionPath, Buffer.from(identity));
+        this.#rememberKey(key, identity);
+        await rm(this.paths.key, { force: true });
+        await syncDirectory(this.dir);
+        return { configured: true, locked: false, osProtected: false };
+      } finally { key.fill(0); }
+    });
+  }
+
+  async ownerUnlock(password: string) {
+    return this.#ownerTransaction(async () => {
+      if (Date.now() < this.#retryAt) throw vaultError("Try unlocking again shortly.", "VAULT_AUTH_FAILED");
+      const protection = await this.#protection();
+      if (!protection) throw vaultError("Set a master password first.", "BAD_INPUT");
+      let key: Buffer | undefined;
+      try {
+        key = await unwrapMasterKey(protection.envelope, password);
+        // Verify against the actual ciphertext before retiring a migration key.
+        const loaded = await loadKeyAndSnapshot(this.paths, async () => Buffer.from(key));
+        loaded.key.fill(0);
+        const legacy = await regularFileStats(this.paths.key, { missing: true });
+        if (legacy) {
+          const old = await readBoundedFile(this.paths.key, KEY_BYTES, "Legacy vault key");
+          try {
+            if (old.length !== key.length || !timingSafeEqual(old, key)) throw new Error("Key mismatch.");
+          } finally { old.fill(0); }
+          await rm(this.paths.key);
+          await syncDirectory(this.dir);
+        }
+        this.#rememberKey(key, protection.identity);
+        return { configured: true, locked: false, osProtected: false };
+      } catch {
+        this.#retryAt = Date.now() + 1000;
+        throw vaultError("Master password verification failed.", "VAULT_AUTH_FAILED");
+      } finally { key?.fill(0); }
+    });
+  }
+
+  /** Revoke cached unlocks in every process using this vault directory. */
+  async ownerLock() {
+    return this.#ownerTransaction(async () => {
+      const protection = await this.#protection();
+      if (!protection) throw vaultError("Set a master password before locking.", "BAD_INPUT");
+      this.dispose();
+      await atomicWrite(this.#protectionPath, Buffer.from(JSON.stringify({
+        ...protection.envelope, epoch: randomBytes(16).toString("base64"),
+      })));
+      return { configured: true, locked: true, osProtected: false };
+    });
+  }
+
+  /** Clear only key material. Redaction must survive while filled pages exist. */
+  dispose() {
+    if (this.#unlockTimer) clearTimeout(this.#unlockTimer);
+    this.#unlockTimer = null;
+    this.#masterKey?.fill(0);
+    this.#masterKey = null;
   }
 }
 

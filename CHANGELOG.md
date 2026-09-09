@@ -9,6 +9,21 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-09-09
+
+### Added
+
+- Master-password protection for the local vault, with hidden CLI prompts,
+  timed unlocks, cross-process locking, and trusted SDK controls.
+- Separate saved-login settings for agent access, capture, and human autosave.
+  No new MCP password-management tools are exposed.
+
+### Fixed
+
+- Preserve existing credentials and pending logins during master-password setup.
+- Keep autofill origin-scoped and retain secret redaction after locking.
+- Report actionable cookie-import permission and profile-discovery errors.
+
 ## [2.5.0] - 2026-09-09
 
 ### Added
@@ -1464,7 +1479,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.5.1...HEAD
+[2.5.1]: https://github.com/BetterWright/betterwright/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/BetterWright/betterwright/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/BetterWright/betterwright/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/BetterWright/betterwright/compare/v2.2.0...v2.3.0

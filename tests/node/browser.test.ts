@@ -7,15 +7,18 @@ import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
+import { fromPath } from "rookie-cookies";
 import { AD_BLOCK_CACHE_FILE } from "../../dist/src/ad-blocker.js";
-
+import { normalizeCookieSnapshot, normalizeCookieSyncOptions } from "../../dist/src/cookie-sync.js";
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
 import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
 import { isBoolean, isCallable, isString } from "../../dist/src/untrusted-value.js";
+import { createLocalCredentialVault } from "../../dist/src/vault.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 const browserStatus = await doctorReport();
@@ -859,6 +862,77 @@ test("setInputFiles only reads files from the artifact root", opts, async () => 
     }
   } finally {
     await bw.close();
+  }
+});
+
+test("master-protected autofill survives migration, locks, unlocks, and browser restart", opts, async () => {
+  const secret = "synthetic-autofill-secret";
+  const master = "synthetic master password for autofill";
+  let accepted = 0;
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", "text/html");
+    if (request.method === "POST") {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        const fields = new URLSearchParams(body);
+        const valid = fields.get("username") === "fixture" && fields.get("password") === secret;
+        if (valid) accepted += 1;
+        response.end(valid ? "<h1>Signed in</h1>" : "<h1>Rejected</h1>");
+      });
+      return;
+    }
+    response.end(`<form method="post"><label>Username<input name="username" autocomplete="username"></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password"></label>
+      <input name="future" type="password" autocomplete="new-password" hidden>
+      <button type="submit">Sign in</button></form>`);
+  });
+  const home = tempHome();
+  const owner = createLocalCredentialVault({ home });
+  const browser = new BetterWright({ home, headless: true, adBlock: false });
+  try {
+    const saved = await owner.handleRequest("save", { username: "fixture", password: secret, matchMode: "exact-origin" }, server.origin);
+    await owner.ownerSetupMaster(master);
+    const opened = await browser.run(`await page.goto(${JSON.stringify(server.origin)}); return true;`);
+    assert.equal(opened.ok, true, opened.error);
+    const locked = await browser.fillCredential({ id: saved.id, submit: true });
+    assert.equal(locked.ok, false);
+    assert.match(locked.error, /locked/i);
+    assert.equal(accepted, 0);
+    await browser.unlockVault({ password: master });
+    const filled = await browser.fillCredential({ id: saved.id, submit: true });
+    assert.equal(filled.ok, true, filled.error);
+    const signedIn = await browser.run("await page.getByRole('heading', {name: 'Signed in'}).waitFor(); return true;");
+    assert.equal(signedIn.ok, true, signedIn.error);
+    assert.equal(accepted, 1);
+    assert.equal(JSON.stringify(filled).includes(secret), false);
+    await owner.ownerLock();
+    assert.equal((await browser.vaultStatus()).locked, true);
+    await browser.unlockVault({ password: master });
+    await browser.run(`await page.goto(${JSON.stringify(server.origin)});`);
+    const handlers = _createMcpHandlersForTest({ browser, downloadPolicy: "deny" });
+    const mcp = await handlers.callTool({ params: { name: "browser_login", arguments: { id: saved.id, submit: true } } });
+    assert.notEqual(mcp.isError, true);
+    const mcpResult = JSON.parse(mcp.content[0].text);
+    assert.equal(mcpResult.ok, true, mcpResult.error);
+    assert.equal(JSON.stringify(mcp).includes(secret), false);
+    await browser.run("await page.getByRole('heading', {name: 'Signed in'}).waitFor();");
+    assert.equal(accepted, 2);
+    await browser.close();
+    const restarted = new BetterWright({ home, headless: true, adBlock: false });
+    try {
+      assert.equal((await restarted.vaultStatus()).locked, true);
+      await restarted.unlockVault({ password: master });
+      await restarted.run(`await page.goto(${JSON.stringify(server.origin)});`);
+      const again = await restarted.fillCredential({ id: saved.id, submit: true });
+      assert.equal(again.ok, true, again.error);
+      await restarted.run("await page.getByRole('heading', {name: 'Signed in'}).waitFor();");
+      assert.equal(accepted, 3);
+    } finally { await restarted.close(); }
+  } finally {
+    owner.dispose();
+    await browser.close();
+    await server.close();
   }
 });
 
@@ -3634,6 +3708,45 @@ test("Cookie Sync installs an HttpOnly cookie and persists it across restart", o
     await server.close();
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("native Cookie Sync reads a live SQLite WAL and authenticates after target restart", opts, async () => {
+  const home = tempHome();
+  const cookieFile = path.join(home, "cookies.sqlite");
+  const db = new DatabaseSync(cookieFile);
+  const sentinel = "synthetic-native-cookie";
+  db.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE moz_cookies (id INTEGER PRIMARY KEY, originAttributes TEXT NOT NULL DEFAULT '',
+      name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER, lastAccessed INTEGER,
+      creationTime INTEGER, isSecure INTEGER, isHttpOnly INTEGER, inBrowserElement INTEGER,
+      sameSite INTEGER, rawSameSite INTEGER, schemeMap INTEGER);`);
+  db.prepare("INSERT INTO moz_cookies VALUES (1, '', 'native_auth', ?, '127.0.0.1', '/', ?, 0, 0, 0, 1, 0, 1, 1, 1)")
+    .run(sentinel, Math.floor(Date.now() / 1000) + 3600);
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end(request.headers.cookie?.includes(`native_auth=${sentinel}`) ? "authenticated" : "signed out");
+  });
+  const config = { home, headless: true, adBlock: false, vault: false };
+  const browser = new BetterWright(config);
+  browser._extractCookieSync = async (options) => normalizeCookieSnapshot(
+    await fromPath({ path: cookieFile, timeoutMs: 10000 }), normalizeCookieSyncOptions(options));
+  try {
+    const result = await browser.syncCookies({ source: { browser: "firefox" }, domains: ["127.0.0.1"] });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.synced, 1);
+    assert.equal(JSON.stringify(result).includes(sentinel), false);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM moz_cookies").get().count, 1);
+    const first = await browser.run(`await page.goto(${JSON.stringify(server.origin)}); return page.locator('body').innerText();`);
+    assert.equal(first.ok, true, first.error);
+    assert.equal(first.result, "authenticated");
+    await browser.close();
+    const again = new BetterWright(config);
+    try {
+      const result = await again.run(`await page.goto(${JSON.stringify(server.origin)}); return page.locator('body').innerText();`);
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result, "authenticated");
+    } finally { await again.close(); }
+  } finally { db.close(); await browser.close(); await server.close(); }
 });
 
 test("Cookie Sync refuses a batch that could evict target cookies", opts, async () => {

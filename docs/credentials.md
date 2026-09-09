@@ -196,7 +196,51 @@ that redirect or open a popup are covered.
 
 ## Getting a password back (`betterwright vault`)
 
-Everything above is agent-facing: site-scoped, metadata-only, and deliberately
+### Master password and lock state
+
+```bash
+betterwright vault setup                  # hidden password entry and confirmation
+betterwright vault unlock                 # unlock the selected profile's session daemon
+betterwright vault status --json
+betterwright vault lock                   # revoke unlocks across all profiles
+betterwright vault settings
+betterwright vault settings agent-use off
+betterwright vault settings offer-save off
+betterwright vault settings offer-save on
+betterwright vault settings autosave on
+```
+
+Setup wraps the existing data key with a password-derived key, verifies the
+wrapper, and removes `vault.key`. Existing records and pending generated logins
+are preserved. Back up `vault.enc` and `master-key.json` together. There is no
+password reset that recovers a lost master password.
+
+Master passwords are accepted only through hidden terminal input, never CLI
+arguments or environment variables. Owner commands such as `list` and `copy`
+prompt when protected. `unlock` keeps the selected daemon unlocked for 15
+minutes; a daemon restart requires another unlock. Other SDK processes must
+unlock their own vault instance. Locking does not sign out websites or undo a
+fill that already happened, and does not clear secret redaction while pages
+remain open. It prevents subsequent vault access.
+
+Settings persist across restarts. Agent access and automatic login capture are
+independent. `offer-save off` suppresses capture; `autosave on` saves accepted
+human logins without a prompt and requires `offer-save on`. Existing defaults
+remain unchanged: agent use and capture enabled, human autosave disabled.
+Agent-driven accepted logins still save automatically when capture is enabled.
+Autofill remains explicit and origin-scoped; submission requires an explicit
+request. No new MCP vault-management or password-reveal tools are exposed.
+
+Trusted SDK hosts can use `ownerSetupMaster(password)`, `ownerUnlock(password)`,
+`ownerLock()`, `ownerStatus()`, `ownerSettings()`, and `ownerConfigure(settings)`
+on `LocalCredentialVault`. Pass `autoLockMs` at construction to select an
+unlock lifetime from 1 millisecond to 24 hours. Call `dispose()` when done.
+`BetterWright.unlockVault({password})`, `lockVault()`, and `vaultStatus()` control
+its built-in vault without making passwords available to browser snippets.
+Custom host-owned keys continue to use `keyProvider`; master-password setup
+refuses to replace an externally managed key.
+
+The browser credential API is agent-facing: site-scoped, metadata-only, and deliberately
 incapable of returning a secret. That is the right shape for model-authored
 code, and the wrong shape for you — a password the agent generated during a
 signup, or captured from a login you typed, would otherwise be unreachable.
@@ -307,7 +351,7 @@ can still expose them. If that bounded set fills, BetterWright returns a static
 failure and restarts the worker instead of evicting old plaintext while an old
 page is alive.
 
-The default key file protects against plaintext logs, support bundles, casual
+Without master-password setup, the default key file protects against plaintext logs, support bundles, casual
 file inspection, and copying only the ciphertext. It is not a defense against
 malware or another process already able to read files as the same OS user.
 Use an external password manager or secret service when that is in scope for

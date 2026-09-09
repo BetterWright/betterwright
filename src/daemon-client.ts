@@ -365,6 +365,9 @@ export function createDaemonBrowser(channel, { session = "default" }: any = {}) 
   };
   return {
     session: pinned,
+    vaultStatus: () => call("vaultStatus"),
+    unlockVault: (options: { password: string }) => call("unlockVault", [options]),
+    lockVault: () => call("lockVault"),
     run: (code, options?: any) => call("run", [code, options]),
     syncCookies: (options?: any) =>
       call(

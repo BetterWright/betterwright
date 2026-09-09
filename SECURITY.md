@@ -60,9 +60,11 @@ Be clear about what this does and does not change:
   and therefore model-authored snippet code can address — cannot route to.
   Snippets still get metadata only.
 - **It does not defend against a hostile shell.** Anyone who can run
-  `betterwright vault` can already read `vault.key` and `vault.enc` as the same
-  OS user. If you give an agent an unrestricted shell tool on a machine with a
-  populated vault, that agent can read the vault, with or without this command.
+  `betterwright vault` can read a legacy `vault.key` and `vault.enc` as the same
+  OS user. Master-password setup removes that plaintext key and wraps it using
+  scrypt (N=131072, r=8, p=1) and AES-256-GCM. This protects a locked vault's
+  files, not a compromised host: an unrestricted shell can modify the runtime
+  or attack a process after its owner unlocks it.
   Scope the agent's shell, run it as a different OS user, or use an external
   vault adapter whose key material lives somewhere the agent cannot reach.
 
@@ -74,6 +76,11 @@ cannot collect a password by mistake. Overriding it takes a deliberate
 `vault type` are exempt because the secret goes to the clipboard or the focused
 window and never to stdout. Every reveal is written to the metadata-only audit
 log (`betterwright vault audit`).
+
+Unlocks expire after 15 minutes by default. A lock changes the persisted unlock
+epoch, so other instances reject cached keys on their next vault access.
+Already-filled pages and active browser sessions are not revoked by a vault
+lock. Their redaction material remains active until those pages close.
 
 ## Reporting a vulnerability
 

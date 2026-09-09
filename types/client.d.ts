@@ -72,6 +72,10 @@ export class BetterWright {
   run<T = unknown>(code: string, options?: RunOptions): Promise<RunResult<T>>;
   /** Merge local browser cookies into this browser's persistent context. */
   syncCookies(options: CookieSyncOptions): Promise<CookieSyncResult>;
+  vaultStatus(): Promise<{ available: boolean; configured?: boolean; locked?: boolean; osProtected?: boolean; exists?: boolean }>;
+  /** Trusted host only. Never expose password input to a model tool. */
+  unlockVault(options: { password: string }): Promise<{ configured: boolean; locked: boolean; osProtected: boolean }>;
+  lockVault(): Promise<{ configured: boolean; locked: boolean; osProtected: boolean }>;
   /**
    * Close one session's pages and forget its state (tabs, `state`, cursor)
    * without touching the browser, the profile, or other sessions.

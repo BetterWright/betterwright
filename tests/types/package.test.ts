@@ -291,6 +291,15 @@ void [
 // The owner-only vault surface behind `betterwright vault`. These must never be
 // reachable from model code; they exist for a trusted host acting for the user.
 const ownedVault = createLocalCredentialVault({ home: "/tmp/betterwright-types" });
+void ownedVault.ownerStatus();
+void ownedVault.ownerSetupMaster("synthetic master password");
+void ownedVault.ownerUnlock("synthetic master password");
+void ownedVault.ownerLock();
+void ownedVault.ownerConfigure({ agentUse: true, offerSave: true, autosave: false });
+void ownedVault.ownerSettings();
+void new BetterWright().unlockVault({ password: "synthetic master password" });
+// @ts-expect-error Owner operations cannot be routed through model credentials.
+void ownedVault.handleRequest("ownerUnlock", {}, "https://example.com");
 const ownerListed: Promise<VaultOwnerListResult> = ownedVault.ownerList({
   query: "github",
   category: "login",

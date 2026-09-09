@@ -16,11 +16,24 @@ export class CookieReaderError extends Error {
   }
 }
 
+function explain(error: CookieReaderError): CookieReaderError {
+  if (error.cookiePermissionDenied) {
+    error.message += process.platform === "darwin"
+      ? " Grant Full Disk Access to the app running BetterWright in System Settings > Privacy & Security, restart that app, then retry."
+      : " Allow the current user to read the source browser profile, then retry.";
+  } else if (error.cookieReaderCode === "discovery_failed") {
+    error.message += " Browser profile discovery failed. Check that the source browser has a profile and the current process can read its directory.";
+  } else if (error.cookieReaderCode === "timed_out") {
+    error.message += " The native reader timed out; retry after any OS permission prompt is resolved.";
+  }
+  return error;
+}
+
 /** Extract only fixed diagnostic fields. Native messages can contain paths or secrets. */
 export async function cookieReaderError(cause, reader, options): Promise<CookieReaderError> {
   const error = new CookieReaderError(cause);
   const report = untrustedField(reader, "report");
-  if (error.cookiePermissionDenied || error.cookieReaderCode !== "source_extraction_failed" || !isCallable(report)) return error;
+  if (error.cookiePermissionDenied || error.cookieReaderCode !== "source_extraction_failed" || !isCallable(report)) return explain(error);
   try {
     const pending = [await report.call(reader, { ...options, select: "legacy_first", timeoutMs: Math.min(options.timeoutMs, 10_000), appBound: "disabled" })];
     for (let visited = 0; pending.length && visited < 100; visited++) {
@@ -38,5 +51,5 @@ export async function cookieReaderError(cause, reader, options): Promise<CookieR
       }
     }
   } catch { /* The fixed original error remains useful without a report. */ }
-  return error;
+  return explain(error);
 }

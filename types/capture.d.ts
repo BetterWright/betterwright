@@ -13,6 +13,7 @@ export interface CaptureOptions {
   shouldCapture?(capture: { page: Page; origin: string; username: string; password: string }): boolean | Promise<boolean>;
   /** Host-native save UI receives metadata, never a password. */
   requestSave?(request: { page: Page; origin: string; username: string; mode: "save" | "update" }): Promise<"save" | "dismiss" | "never">;
+  capturePolicy?(): Promise<{ offerSave: boolean; autosave: boolean }>;
   onReady?(): void;
   onError?(error: Error): void;
   prefsPath?: string;

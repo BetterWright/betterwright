@@ -2451,8 +2451,10 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
           ? path.dirname(launchConfig.runtimeDir)
           : path.dirname(profileLock.profileDir);
         vaultCapture = installVaultCapture(launchedContext, {
-          vaultCallAtOrigin: (session, origin, action, payload) =>
-            vaultCallAtOrigin(session, origin, action, payload),
+          capturePolicy: () => rpc("vault_capture_policy", {}, null),
+          vaultCallAtOrigin: (session, origin, action, payload) => action === "save"
+            ? rpc("vault_capture_save", { origin, payload }, null)
+            : vaultCallAtOrigin(session, origin, action, payload),
           sessionForPage: (page) =>
             sessionFor(pageToSession.get(page) || "default"),
           trackSecret,
