@@ -9,6 +9,14 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-09-09
+
+### Fixed
+
+- Refresh the JavaScript API reference with default-on ad blocking, Electron
+  hosting requirements, and trusted vault status, unlock, lock, and saved-login
+  settings. Clarify daemon versus SDK unlock lifetimes and locking limits.
+
 ## [2.5.1] - 2026-09-09
 
 ### Added
@@ -1479,7 +1487,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.5.1...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.5.2...HEAD
+[2.5.2]: https://github.com/BetterWright/betterwright/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/BetterWright/betterwright/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/BetterWright/betterwright/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/BetterWright/betterwright/compare/v2.3.0...v2.4.0
