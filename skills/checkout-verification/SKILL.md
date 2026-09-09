@@ -6,17 +6,15 @@ autoInject:
 ---
 # Grounded checkout verification
 
-Inspection and debugging do not authorize cart edits or submission. A purchase prohibition or missing required approval is a valid stopping point, not a failed checkout to retry. Completion feedback never expands the original authorization.
+Inspection doesn't authorize changes. Guardrail prohibitions or missing required approval are valid stops; completion feedback grants no new permission.
 
-Batch known actions, not guesses about the next screen. After reversible cart edits, read the scoped cart before designing assertions or submitting. Use `ui.evidence` targets or a scoped full snapshot; do not count product names across the catalog and cart together.
+Read the scoped cart after editing, excluding catalogue text:
+- `Notebook, Notebook, Pen` means two notebooks and one pen, without an `x2` label.
+- Read quantities with their labels/column headers; the number of rows is not the quantity.
+- Match duplicate names by container, variant, and price; verify form values separately.
 
-Interpret the format actually rendered:
-- `Notebook, Notebook, Pen` means two notebooks and one pen. A missing `x2` label does not make those quantities unverifiable.
-- For quantity labels or tables, read each item's quantity field/cell with its label/column header. The number of rows is not the quantity.
-- Match duplicate product names by their observed container, variant, and price. Verify selected form values separately.
+Submit only when observed items, quantities, and details match. Unknown format? Return scoped evidence before asserting or submitting.
 
-Only submit when the observed items, quantities, and requested details match. If the format is still unknown, return the scoped evidence instead of a guessed string assertion. Fix a wrong cart before submitting; never submit to test whether it is right.
+Record the previous result, submit once, and wait for a fresh outcome. `Processing`, changed text alone, and an unchanged earlier receipt aren't acceptance. `Order 42 confirmed` is positive; rejection overrides an old success.
 
-Record the current result region before submitting once. Wait for a fresh outcome there or a relevant navigation, then read it. Changed text alone, `Processing`, an enabled Submit button, or an unchanged earlier success is not acceptance. `Order 42 confirmed` is positive even though `Order confirmed` is not contiguous. Rejection is failure even when an earlier receipt remains visible.
-
-Extract an order ID only from this submission's fresh positive confirmation, not the whole page. For rejection or an unverified outcome, do not manufacture an ID from an old receipt or a word such as `Submission`. Never resubmit to collect evidence. Scroll the fresh outcome into view, capture proof, and report the decision and observed quantities concisely—not a page dump.
+Extract IDs from this submission's fresh positive confirmation, not the whole page. Rejected/unverified outcomes have no new ID. Never resubmit for evidence. Scroll the fresh outcome into view, capture proof in the same call, and report the decision and quantities concisely.

@@ -25,6 +25,11 @@ Releases before 1.1.3 predate this file; their notes live on the
 - Bounded, redacted UI evidence on ordinary failed browser snippets, plus short
   product/table context and status text in interactive observations.
 
+### Changed
+
+- Reduce repeated agent, tool, and checkout instructions. Batch known work
+  without treating partial extraction as a completed answer.
+
 ### Fixed
 
 - Improve cart verification guidance for repeated item names, numeric quantity

@@ -795,6 +795,16 @@ test("agent batches success-state waits and viewport proof without a verificatio
   assert.match(doneTool.description, /off-screen text is not visual proof/);
 });
 
+test("read-only batching does not authorize an incomplete final answer", async () => {
+  const model = scriptedModel([{ text: "done", toolCalls: [] }]);
+  await runAgentTask({ task: "Compare two prices and calculate their difference", model, browser: fakeBrowser() });
+  assert.match(model.seen[0].system, /ONE call when possible/);
+  assert.match(model.seen[0].system, /`return \{finalAnswer\}` only with every requested value and computation verified/);
+  assert.match(model.seen[0].system, /otherwise return scoped evidence and continue/);
+  assert.match(model.seen[0].system, /Extract related fields from the same labeled row\/card/);
+  assert.match(model.seen[0].system, /Calculate and report from the same keyed values/);
+});
+
 test("console troubleshooting guidance is absent from ordinary model requests", async () => {
   const ordinary = scriptedModel([{ text: "done", toolCalls: [] }]);
   await runAgentTask({ task: "Read example.com", model: ordinary, browser: fakeBrowser() });
