@@ -594,8 +594,8 @@ export async function listCookieSourceProfiles(
     value = await reader.browserProfiles(source.browser, {
       timeoutMs: normalized.timeoutMs,
     });
-  } catch {
-    throw new Error("Cookie Sync could not list profiles for the selected browser.");
+  } catch (cause) {
+    throw await cookieReaderError(cause, reader, { browser: source.browser, timeoutMs: normalized.timeoutMs });
   }
   if (!Array.isArray(value)) throw new Error("Cookie Sync returned an invalid profile list.");
   return value.flatMap((entry) => {

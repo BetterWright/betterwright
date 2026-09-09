@@ -52,7 +52,7 @@ import {
   type UntrustedValue,
   untrustedField,
 } from "./untrusted-value.js";
-import { createLocalCredentialVault } from "./vault.js";
+import { createLocalCredentialVault, LocalCredentialVault } from "./vault.js";
 
 const WORKER_PATH = fileURLToPath(new URL("./worker.js", import.meta.url));
 // The lane host-wide calls (live view, worker revival) queue on. A session can
@@ -297,6 +297,7 @@ function stealthDriverAvailable() {
 
 /** A persistent, policy-guarded Playwright browser. */
 export class BetterWright {
+  #ownsVault = false;
   declare home: string;
   declare profile: string | null;
   declare policy: NetworkPolicy;
@@ -479,6 +480,7 @@ export class BetterWright {
         );
     } else {
       this.vault = createLocalCredentialVault({ home: this.home });
+      this.#ownsVault = true;
     }
     this.credentialCapture = this.vault
       ? options.credentialCapture !== false
@@ -942,6 +944,16 @@ export class BetterWright {
         // object, and `cacheable` is an envelope field, not part of the public
         // NetworkDecision the policy produced.
         result = { ...this.policy.check(url, details), cacheable: this._policyCacheable };
+      } else if (message.method === "vault_capture_save") {
+        if (!this.vault || this.hostTarget) throw new Error("Credential capture is unavailable.");
+        result = this.vault.ownerCapture
+          ? await this.vault.ownerCapture(payload.payload, payload.origin)
+          : await this.vault.handleRequest("save", payload.payload, payload.origin);
+      } else if (message.method === "vault_capture_policy") {
+        const protection = await this.vault?.ownerStatus?.();
+        const settings = await this.vault?.ownerSettings?.();
+        result = { offerSave: !protection?.locked && settings?.offerSave !== false,
+          autosave: settings?.autosave === true };
       } else if (message.method === "vault") {
         if (!this.vault)
           throw new Error(
@@ -1185,6 +1197,22 @@ export class BetterWright {
    */
   syncCookies(options: any = {}) {
     return this._enqueueExclusive(() => this._syncCookiesNow(options));
+  }
+
+  /** Owner control only; deliberately absent from the worker's snippet bindings. */
+  async vaultStatus() {
+    if (!this.vault?.ownerStatus) return { available: false };
+    return { available: true, ...await this.vault.ownerStatus() };
+  }
+
+  async unlockVault(options: { password: string }) {
+    if (!this.vault?.ownerUnlock) throw new Error("This vault does not support master-password unlock.");
+    return this.vault.ownerUnlock(options?.password);
+  }
+
+  async lockVault() {
+    if (!this.vault?.ownerLock) throw new Error("This vault does not support locking.");
+    return this.vault.ownerLock();
   }
 
   async _syncCookiesNow(options) {
@@ -1750,7 +1778,10 @@ export class BetterWright {
     // and the next call brings a replacement up; a call from another session
     // that lands in between must wait for that replacement, not be told the
     // browser is gone.
-    if (!restart) this._closed = true;
+    if (!restart) {
+      this._closed = true;
+      if (this.#ownsVault && this.vault instanceof LocalCredentialVault) this.vault.dispose();
+    }
     const child = requestedChild || this._process;
     const closesActiveWorker = !requestedChild || this._process === child;
     if (closesActiveWorker) {

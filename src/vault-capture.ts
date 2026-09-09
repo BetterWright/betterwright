@@ -231,13 +231,15 @@ export function installVaultCapture(context, deps: any = {}) {
     clearTimeout(capture.timer);
     if (neverOrigins.has(capture.origin)) return;
     if (deps.shouldCapture && !await deps.shouldCapture(capture)) return;
+    const policy = deps.capturePolicy ? await deps.capturePolicy() : { offerSave: true, autosave: false };
+    if (!policy.offerSave) return;
     if (state.disposed) return;
 
     const lastModelAt = deps.lastModelActivity(page, capture.origin);
-    if (
+    if (policy.autosave || (
       Number.isFinite(lastModelAt) &&
       Date.now() - lastModelAt <= timings.modelWindowMs
-    ) {
+    )) {
       // The model just drove this page/origin: signups and logins it types
       // are always saved without a prompt.
       await saveCapture(capture);

@@ -129,6 +129,7 @@ async function waitFor(condition, timeoutMs = 2_000) {
 type UntrustedValue = NonNullable<unknown> | null | undefined;
 
 interface HarnessOverrides {
+  capturePolicy?: () => Promise<{ offerSave: boolean; autosave: boolean }>;
   listRecords?: Array<{ username: string }>;
   pendingFails?: boolean;
   pendingRecords?: Array<{ pendingId: string; origin: string; username: string }>;
@@ -142,6 +143,7 @@ function isModelClock(value: number | (() => number) | undefined): value is () =
 }
 
 interface HarnessDeps {
+  capturePolicy?: () => Promise<{ offerSave: boolean; autosave: boolean }>;
   vaultCallAtOrigin: (
     session: UntrustedValue,
     origin: string,
@@ -170,6 +172,7 @@ function makeHarness(overrides: HarnessOverrides = {}) {
   const context = new FakeContext([page]);
   const calls = [];
   const deps: HarnessDeps = {
+    capturePolicy: overrides.capturePolicy,
     vaultCallAtOrigin: async (_session, origin, action, payload) => {
       calls.push({ kind: "vault", origin, action, payload });
       if (action === "list") return { credentials: overrides.listRecords || [] };
@@ -247,6 +250,31 @@ function emitPasswordFormScan(session, present) {
 
 const vaultSaves = (calls) =>
   calls.filter((call) => call.kind === "vault" && call.action === "save");
+
+test("disabled capture policy suppresses prompts and automatic saves", async () => {
+  const harness = makeHarness({ headed: true, modelAt: () => Date.now(),
+    capturePolicy: async () => ({ offerSave: false, autosave: false }) });
+  try {
+    const session = await attached(harness);
+    emitCapture(session);
+    emitNavigation(session, `${ORIGIN}/home`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(vaultSaves(harness.calls).length, 0);
+    assert.equal(session.promptCalls().length, 0);
+  } finally { harness.handle.dispose(); }
+});
+
+test("explicit autosave saves an accepted human login without a prompt", async () => {
+  const harness = makeHarness({ headed: true, modelAt: 0,
+    capturePolicy: async () => ({ offerSave: true, autosave: true }) });
+  try {
+    const session = await attached(harness);
+    emitCapture(session);
+    emitNavigation(session, `${ORIGIN}/home`);
+    assert.equal(await waitFor(() => vaultSaves(harness.calls).length === 1), true);
+    assert.equal(session.promptCalls().length, 0);
+  } finally { harness.handle.dispose(); }
+});
 
 test("model-driven capture is saved silently after navigation", async () => {
   const harness = makeHarness({ headed: false, modelAt: () => Date.now() });
