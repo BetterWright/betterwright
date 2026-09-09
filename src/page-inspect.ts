@@ -226,7 +226,7 @@ export async function inspectActionDirectory(page) {
       };
       const contexts = new Map<Element, string>();
       const contextFor = (element) => {
-        let root = element.closest("article,li,[role='listitem'],form,section");
+        let root = element.closest("article,li,[role='listitem'],tr,[role='row'],form,section");
         if (!root) {
           let cursor = element.parentElement;
           for (let depth = 0; cursor && depth < 4; depth += 1, cursor = cursor.parentElement) {
@@ -237,11 +237,18 @@ export async function inspectActionDirectory(page) {
         if (!root) return "";
         const cached = contexts.get(root);
         if (cached !== undefined) return cached;
-        const copy = root.cloneNode(true);
-        for (const control of copy.querySelectorAll(
-          "button,input,select,textarea,[role='button'],[role='link']",
-        )) control.remove();
-        const context = clean(copy.textContent, 180);
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const parts = [];
+        let length = 0;
+        for (let node = walker.nextNode(); node && length < 180; node = walker.nextNode()) {
+          const owner = node.parentElement;
+          if (!owner || !visible(owner) || owner.closest(
+            "button,input,select,textarea,a[href],[role='button'],[role='link'],script,style,noscript",
+          )) continue;
+          const text = clean(node.textContent, 180 - length);
+          if (text) { parts.push(text); length += text.length + 1; }
+        }
+        const context = parts.join(" ");
         contexts.set(root, context);
         return context;
       };
@@ -296,6 +303,7 @@ export async function inspectActionDirectory(page) {
             disabled: "disabled" in element ? Boolean(element.disabled) : element.getAttribute("aria-disabled") === "true",
             options,
             context: contextFor(element),
+            itemContext: role !== "link" && Boolean(element.closest("article,li,[role='listitem'],tr,[role='row']")),
           };
         }).filter((entry) => !(["button", "link"].includes(entry.role) && !entry.name)),
       };
@@ -318,6 +326,7 @@ export async function inspectActionDirectory(page) {
       duplicateCounts.set(key, (duplicateCounts.get(key) || 0) + 1);
     }
     const seen = new Map();
+    const seenContexts = new Set();
     for (const entry of entries.entries) {
       const method = methodFor(entry);
       const value = method === "label" ? entry.label : method === "placeholder" ? entry.placeholder : `${entry.role}\u0000${entry.name}`;
@@ -347,23 +356,40 @@ export async function inspectActionDirectory(page) {
       if (entry.checked !== undefined) compact.checked = entry.checked;
       if (entry.disabled) compact.disabled = true;
       if (entry.options) compact.options = entry.options;
-      if ((duplicateCounts.get(key) || 0) > 1 && entry.context) compact.context = entry.context;
+      if (entry.context && ((duplicateCounts.get(key) || 0) > 1 ||
+          (entry.itemContext && !entry.name.includes(entry.context) && !seenContexts.has(entry.context)))) {
+        compact.context = entry.context;
+        seenContexts.add(entry.context);
+      }
       controls.push(compact);
     }
   }
-  const evidence = await page.evaluate(() => {
-    const clean = (value, limit = 500) => String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+  return {
+    protocol: "betterwright-ui/1",
+    tool: "browser_batch",
+    controls,
+    evidence: await inspectActionEvidence(page),
+    truncated,
+  };
+}
+
+export async function inspectActionEvidence(page, { maxEntries = 12, maxTextChars = 500 } = {}) {
+  return page.evaluate(({ maxEntries, maxTextChars }) => {
+    const clean = (value) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxTextChars);
     const visible = (element) => {
       const style = getComputedStyle(element);
       return Boolean(element.getClientRects().length) && style.visibility !== "hidden" && style.display !== "none";
     };
-    const candidates = [...document.querySelectorAll([
+    const candidates = document.querySelectorAll([
       "[role='status']", "[role='alert']", "[aria-live]",
-      "[id*='summary' i]", "[id*='result' i]", "[id*='confirmation' i]",
-    ].join(","))].filter(visible).slice(0, 12);
-    return candidates.flatMap((element) => {
+      "output", "[id*='cart' i]", "[id*='summary' i]", "[id*='result' i]", "[id*='confirmation' i]",
+    ].join(","));
+    const evidence = [];
+    for (const element of candidates) {
+      if (evidence.length >= maxEntries) break;
+      if (!visible(element)) continue;
       const text = clean(element instanceof HTMLElement ? element.innerText : element.textContent);
-      if (!text) return [];
+      if (!text && !element.matches("[role='status'],[role='alert'],[aria-live]")) continue;
       const id = element.getAttribute("id");
       const role = element.getAttribute("role");
       const target = id
@@ -371,16 +397,10 @@ export async function inspectActionDirectory(page) {
         : role
           ? { role }
           : null;
-      return target ? [{ target, text }] : [];
-    });
-  }).catch(() => []);
-  return {
-    protocol: "betterwright-ui/1",
-    tool: "browser_batch",
-    controls,
-    evidence,
-    truncated,
-  };
+      if (target) evidence.push({ target, text });
+    }
+    return evidence;
+  }, { maxEntries, maxTextChars }).catch(() => []);
 }
 
 export async function inspectMedia(page) {

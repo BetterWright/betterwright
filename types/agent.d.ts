@@ -156,7 +156,9 @@ export interface AgentResult {
    * "interrupted" (the caller's `signal` stopped the run — the transcript is
    * preserved), "timeout" (wall-clock budget), "context_limit" (transcript
    * budget), "no_progress" (the same browser step failed identically five
-   * times in a row), "max_tokens" (the provider truncated the final response
+   * times in a row, or checkout verification reached an evidence or guardrail
+   * bound without completing),
+   * "max_tokens" (the provider truncated the final response
    * at the output-token limit — `answer` holds the fragment), "refusal" (the
    * model declined the task), "model_error" (a transient provider failure
    * survived the bounded retries — the transcript is preserved).

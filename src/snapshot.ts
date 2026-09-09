@@ -18,6 +18,8 @@ function indentOf(line) {
 }
 
 const PROPERTY_LINE = /^\s*- \//;
+const EVIDENCE_ROLE = /^\s*- (?:status|alert)\b/;
+const CONTEXT_ROLE = /^\s*- (?:listitem|row|cell|rowheader|columnheader)\b/;
 
 /**
  * Reduce an aria snapshot to interactive elements plus the ancestor lines
@@ -33,10 +35,12 @@ export function filterInteractive(text) {
   const walked = new Uint8Array(count);
   const indents = new Int32Array(count);
   const property = new Uint8Array(count);
+  const evidence = new Uint8Array(count);
   // Nearest preceding line with a smaller indent, from one monotonic-stack
   // pass. Replaces a backwards scan per interactive line (quadratic on big
   // snapshots) with a constant-time parent link.
   const parent = new Int32Array(count);
+  const table = new Int32Array(count);
   const stack: number[] = [];
   for (let i = 0; i < count; i += 1) {
     const line = lines[i];
@@ -46,13 +50,15 @@ export function filterInteractive(text) {
     while (stack.length && indents[stack[stack.length - 1]] >= indent)
       stack.pop();
     parent[i] = stack.length ? stack[stack.length - 1] : -1;
+    table[i] = /^\s*- (?:table|grid)\b/.test(line) ? i : parent[i] >= 0 ? table[parent[i]] : -1;
     stack.push(i);
   }
   for (let i = 0; i < count; i += 1) {
     const line = lines[i];
+    evidence[i] = EVIDENCE_ROLE.test(line) || (parent[i] >= 0 && evidence[parent[i]]) ? 1 : 0;
     if (
-      property[i] ||
-      !(INTERACTIVE_ROLE.test(line) || line.includes("[cursor=pointer]"))
+      !evidence[i] &&
+      (property[i] || !(INTERACTIVE_ROLE.test(line) || line.includes("[cursor=pointer]")))
     )
       continue;
     keep[i] = 1;
@@ -66,6 +72,18 @@ export function filterInteractive(text) {
       if (!property[j] || indents[j] <= indents[i]) break;
       keep[j] = 1;
     }
+  }
+  for (let i = 0; i < count; i += 1) {
+    if (!/^\s*- columnheader\b/.test(lines[i])) continue;
+    if (table[i] >= 0 && keep[table[i]]) {
+      keep[i] = 1;
+      for (let ancestor = parent[i]; ancestor >= 0 && !keep[ancestor]; ancestor = parent[ancestor]) keep[ancestor] = 1;
+    }
+  }
+  for (let i = 0; i < count; i += 1) {
+    const ancestor = parent[i];
+    if (ancestor < 0 || !keep[ancestor] || !CONTEXT_ROLE.test(lines[ancestor])) continue;
+    if (/^\s*- (?:text|cell|rowheader|columnheader)\b/.test(lines[i]) && lines[i].trim().length <= 300) keep[i] = 1;
   }
   const kept = lines.filter((_, i) => keep[i] === 1);
   return kept.length ? kept.join("\n") : "(no interactive elements)";

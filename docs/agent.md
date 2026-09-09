@@ -82,6 +82,32 @@ a warning telling the model to change approach; at five, the run ends with
 that cannot succeed. Any successful browser call — or new human steering through
 the live view — clears the streak.
 
+Tasks matching the `checkout-verification` skill also get a compact independent
+completion check. Before accepting a final answer, the host reads bounded fresh
+UI evidence, product context, and form values, then asks the same configured
+model to check the answer without tools or the full browsing transcript. A
+bounded earlier UI observation and its executed code provide context for
+distinguishing a new result from an old receipt. Empty compact regions get a
+small full accessibility snapshot automatically. When the supplied evidence
+still omits the receipt, the checker can request a bounded full or scoped
+snapshot, including iframe content. The host executes only these read-only
+snapshot requests, never checker-authored browser code. Duplicate requests and
+exhausted inspections stop without reopening actions. The check can correct an
+unsupported order ID or defer completion for further observation; it cannot
+perform actions or authorize another submission. Pending processing is not a
+completed checkout. Three unverified checks stop with `reason: "no_progress"`.
+Snapshot inspection shares the same three-check budget. With configured
+guardrails, the check may inspect read-only evidence but cannot resume actions
+after an unsuccessful check; a genuine prohibition or approval blocker is a
+valid answer.
+The check covers cart and transaction claims, not unrelated page descriptions.
+These additional model turns and their usage are included in `steps` and token
+totals. They do not run for ordinary tasks that do not match the checkout skill.
+The check is a model-assisted consistency check, not a replacement for a site's
+server-side transaction guarantees.
+External agents using the SDK or MCP browser tools must perform their own
+completion verification; those tools do not own the external agent's final answer.
+
 `reason` is one of `done`, `answered` (the model gave its answer in prose
 instead of calling `done`), `stopped`, `interrupted` (see
 [sessions.md](sessions.md)), `timeout`, `context_limit`, `no_progress`,

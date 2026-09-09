@@ -1577,6 +1577,170 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
   }
 });
 
+test("interactive snapshots expose product context and changing confirmation text", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const first = await bw.run(`
+      await page.setContent('<ul><li>Blue notebook $12 <button>Add notebook</button></li></ul><p role="status">Cart empty</p><p>Unrelated background prose</p>');
+      return snapshot({interactive: true});
+    `);
+    assert.equal(first.ok, true, first.error);
+    assert.match(first.result, /Blue notebook \$12/);
+    assert.match(first.result, /Cart empty/);
+    assert.doesNotMatch(first.result, /Unrelated background prose/);
+    const changed = await bw.run(`
+      await page.getByRole('status').evaluate(el => { el.textContent = 'Order 42 confirmed: $27'; });
+      return snapshot({interactive: true, diff: true});
+    `);
+    assert.equal(changed.ok, true, changed.error);
+    assert.match(changed.result, /Order 42 confirmed: \$27/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("action directories retain visible product context without repeating it or dumping articles", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<article><h2>Blue notebook</h2><p>$12 <span hidden>hidden-price-$99</span></p><button>Add notebook</button><button>More details</button></article><article><p>' + 'Unrelated article prose '.repeat(100) + '</p><a href="#read">Read article</a></article>');
+      return controls.directory();
+    `);
+    assert.equal(result.ok, true, result.error);
+    const controls = result.result.controls;
+    assert.equal(controls.find(entry => entry.target.name === 'Add notebook').context, 'Blue notebook $12');
+    assert.ok(!controls.find(entry => entry.target.name === 'More details').context);
+    assert.ok(!controls.find(entry => entry.target.name === 'Read article').context);
+    assert.ok(!JSON.stringify(controls).includes('hidden-price'));
+    assert.ok(!JSON.stringify(controls).includes('Unrelated article prose'));
+  } finally {
+    await bw.close();
+  }
+});
+
+test("checkout inspection covers plain, framed, shadow, and oversized receipt pages", opts, async () => {
+  const receipt = '<p class="receipt">Order NEW-123 accepted. Two notebooks and one pen. Total $27.</p>';
+  const pages = {
+    plain: `<main>${receipt}</main>`,
+    framed: `<iframe srcdoc="${receipt.replaceAll('"', '&quot;')}"></iframe>`,
+    shadow: '<section id="host"></section>',
+    oversized: `<main>${Array.from({ length: 250 }, (_, i) => `<p>Catalog item ${i}: ${'Description '.repeat(10)}</p>`).join('')}${receipt}</main>`,
+    crowded: `${Array.from({ length: 16 }, (_, i) => `<p role="status">Inventory area ${i}: available</p>`).join('')}${receipt}`,
+  };
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    for (const [kind, html] of Object.entries(pages)) {
+      const prepared = await bw.run(`
+        await page.setContent(${JSON.stringify(html)});
+        ${kind === 'shadow' ? `await page.evaluate(markup => document.querySelector('#host').attachShadow({mode: 'open'}).innerHTML = markup, ${JSON.stringify(receipt)});` : ''}
+        return await controls.directory();
+      `);
+      assert.equal(prepared.ok, true, prepared.error);
+      if (kind === 'crowded') {
+        assert.equal(prepared.result.evidence.length, 12);
+        assert.ok(prepared.result.evidence.every(entry => !entry.text.includes('NEW-123')));
+      } else assert.deepEqual(prepared.result.evidence, []);
+      let checks = 0;
+      const model = {
+        async complete(request) {
+          if (request.tools.length) return { text: "Order NEW-123 accepted", toolCalls: [] };
+          checks++;
+          const input = JSON.parse(request.messages[0].text);
+          if (kind === 'crowded') assert.equal(input.evidence.document, undefined);
+          else assert.match(input.evidence.document, kind === 'oversized' ? /over the 3000 limit/ : /Order NEW-123 accepted/);
+          const observations = input.observations || [];
+          if (!observations.length) return { text: JSON.stringify({ complete: false, inspect: {} }), toolCalls: [] };
+          const last = observations.at(-1);
+          assert.equal(last.ok, true);
+          if (kind === 'oversized' && observations.length === 1) {
+            assert.match(last.content, /over the 6000 limit/);
+            return { text: JSON.stringify({ complete: false, inspect: { selector: '.receipt' } }), toolCalls: [] };
+          }
+          assert.match(last.content, /Order NEW-123 accepted/);
+          return { text: JSON.stringify({ complete: true, answer: "Order NEW-123 accepted" }), toolCalls: [] };
+        },
+      };
+      const result = await runAgentTask({ task: "Check the displayed checkout receipt without making changes", model, browser: bw, liveView: false });
+      assert.equal(result.ok, true, `${kind}: ${result.answer}`);
+      assert.equal(result.answer, "Order NEW-123 accepted");
+      assert.equal(checks, kind === 'oversized' ? 3 : 2);
+      assert.equal(result.toolCalls, 0);
+    }
+  } finally {
+    await bw.close();
+  }
+});
+
+test("failed verification returns bounded observed evidence without replaying actions", opts, async () => {
+  let submissions = 0;
+  const server = await listen((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/submit') {
+      submissions++;
+      setTimeout(() => response.end('Order 42 confirmed: $27'), 100);
+      return;
+    }
+    response.end(`<p id="cart">Cart: Blue notebook, Blue notebook, Black pen; Total $27</p>
+      <p role="status" id="status"></p><button>Submit</button><script>
+      document.querySelector('button').onclick = async () => {
+        document.querySelector('#status').textContent = await fetch('/submit').then(r => r.text());
+      };
+      </script>`);
+  });
+  const bw = new BetterWright({
+    home: tempHome(), headless: true,
+    vault: { async handleRequest(_action, _payload, origin) { return { id: 'evidence-fixture', origin }; } },
+  });
+  try {
+    const first = await bw.run(`await page.goto(${JSON.stringify(server.origin)}); return 'ready'`);
+    assert.equal(first.ok, true, first.error);
+    assert.ok(first.ui.evidence.some(entry => entry.target.css === '#cart' && entry.text.includes('Blue notebook')));
+    assert.ok(first.ui.evidence.some(entry => entry.target.css === '#status' && entry.text === ''));
+    const incorrect = await bw.run(`throw new Error('Expected a quantity format that was never observed')`);
+    assert.equal(incorrect.ok, false);
+    assert.ok(incorrect.ui.evidence.some(entry => entry.text.includes('Blue notebook, Blue notebook')));
+    assert.equal(submissions, 0);
+
+    const result = await bw.run(`
+      await page.getByRole('button', {name: 'Submit', exact: true}).click();
+      await page.getByText('Order confirmed', {exact: true}).waitFor({timeout: 500});
+    `);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /waitFor/);
+    assert.equal(submissions, 1);
+    assert.ok(result.ui.evidence.some(entry => entry.target.css === '#status' && entry.text === 'Order 42 confirmed: $27'));
+    assert.deepEqual(result.ui.controls, []);
+    assert.equal(result.ui.truncated, true);
+
+    const success = await bw.run(`return await page.getByRole('status').innerText()`);
+    assert.equal(success.ok, true, success.error);
+    assert.equal(success.result, 'Order 42 confirmed: $27');
+    assert.ok(!('ui' in success));
+    assert.equal(submissions, 1);
+
+    const bounded = await bw.run(`
+      await page.setContent(Array.from({length: 12}, (_, i) => '<p role="status" id="result-' + i + '">' + 'x'.repeat(1_000) + '</p>').join(''));
+      throw new Error('test failure');
+    `);
+    assert.equal(bounded.ok, false);
+    assert.equal(bounded.ui.evidence.length, 4);
+    assert.ok(bounded.ui.evidence.every(entry => entry.text.length <= 300));
+
+    const secret = 'verification-evidence-synthetic-secret-0123456';
+    const redacted = await bw.run(`
+      await credentials.save({category: 'api-credential', fields: {secret: ${JSON.stringify(secret)}}});
+      await page.setContent(${JSON.stringify(`<p role="status">${secret}</p>`)});
+      throw new Error('test failure');
+    `);
+    assert.equal(redacted.ok, false);
+    assert.ok(redacted.ui.evidence.length > 0);
+    assert.ok(!JSON.stringify(redacted).includes(secret));
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
 test("ordinary navigation attaches one compact UI directory automatically", opts, async () => {
   let probes = 0;
   const site = await listen((request, response) => {
@@ -2204,6 +2368,63 @@ test("downloadPolicy deny rejects even trusted approval", opts, async () => {
     assert.equal(state.result, false);
   } finally {
     await bw.close();
+  }
+});
+
+test("agent waits for an off-screen confirmation and captures viewport proof in one turn", opts, async () => {
+  let submissions = 0;
+  const server = await listen((request, response) => {
+    if (request.url === "/submit") {
+      submissions++;
+      setTimeout(() => response.end("Order 1 confirmed: $27"), 150);
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end(`<!doctype html><style>
+      body { margin: 0; }
+      #spacer { height: 3000px; }
+      #confirmation { height: 100vh; box-sizing: border-box; padding: 20px; background: rgb(12, 186, 120); }
+    </style><button>Place test order</button><div id="spacer"></div><div id="confirmation" role="status"></div>
+    <script>
+      document.querySelector('button').onclick = async () => {
+        document.querySelector('#confirmation').textContent = await fetch('/submit', {method: 'POST'}).then(r => r.text());
+      };
+    </script>`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  const model = scriptedAgentModel([{
+    text: "",
+    toolCalls: [{
+      id: "order",
+      name: "browser",
+      input: { code: `
+        await page.goto(${JSON.stringify(server.origin)});
+        await page.getByRole('button', {name: 'Place test order'}).click();
+        const confirmation = page.getByRole('status').filter({hasText: 'Order 1 confirmed: $27'});
+        await confirmation.waitFor();
+        const text = await confirmation.innerText();
+        await confirmation.scrollIntoViewIfNeeded();
+        await screenshot({kind: 'proof'});
+        return {finalAnswer: text};
+      ` },
+    }],
+  }]);
+  try {
+    const result = await runAgentTask({ task: "Place one test order and prove its confirmation", browser: bw, model });
+    assert.equal(result.ok, true);
+    assert.equal(result.answer, "Order 1 confirmed: $27");
+    assert.equal(result.steps, 1);
+    assert.equal(model.seen.length, 1);
+    assert.equal(submissions, 1);
+    assertRgbaClose(firstPngPixel(result.proof), [12, 186, 120, 255]);
+    const image = fs.readFileSync(result.proof);
+    const viewport = await bw.run("return page.evaluate(() => ({width: innerWidth, height: innerHeight}))");
+    assert.equal(viewport.ok, true, viewport.error);
+    assert.equal(image.readUInt32BE(16), viewport.result.width);
+    assert.equal(image.readUInt32BE(20), viewport.result.height);
+  } finally {
+    await bw.close();
+    await server.close();
   }
 });
 
@@ -3208,6 +3429,93 @@ test("model code cannot reach CDP or Playwright private channels", opts, async (
     });
   } finally {
     await bw.close();
+  }
+});
+
+test("console history is opt-in, bounded, and scoped to the current navigation", opts, async () => {
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end(request.url === "/first"
+      ? '<script>console.warn("first-warning"); throw new Error("first-error")</script>'
+      : '<script>console.info("second-page")</script>');
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const first = await bw.run(`await page.goto(${JSON.stringify(`${server.origin}/first`)}); return 'loaded'`);
+    assert.equal(first.ok, true, first.error);
+    assert.ok(!("console" in first));
+    const history = await bw.run(`return {
+      console: (await page.consoleMessages({filter: 'since-navigation'})).map(m => ({level: m.type(), text: m.text(), location: m.location()})),
+      errors: (await page.pageErrors({filter: 'since-navigation'})).map(e => e.message),
+    }`);
+    assert.equal(history.ok, true, history.error);
+    assert.ok(history.result.console.some(m => m.text === "first-warning" && m.level === "warning"));
+    assert.ok(history.result.console.some(m => m.location.url === `${server.origin}/first`));
+    assert.ok(history.result.errors.includes("first-error"));
+
+    const noisy = await bw.run(`await page.evaluate(() => {
+      for (let i = 0; i < 220; i++) console.debug('noise-' + i);
+      console.error('latest-error-' + 'x'.repeat(2_000));
+    }); return 'generated'`);
+    assert.equal(noisy.ok, true, noisy.error);
+    assert.ok(!("console" in noisy));
+    const bounded = await bw.run(`const messages = await page.consoleMessages(); return {
+      retained: messages.length,
+      errors: messages.filter(m => m.type() === 'error').slice(-10).map(m => m.text().slice(0, 1_000)),
+    }`);
+    assert.equal(bounded.ok, true, bounded.error);
+    assert.ok(bounded.result.retained <= 200);
+    assert.equal(bounded.result.errors.length, 1);
+    assert.equal(bounded.result.errors[0].length, 1_000);
+    assert.match(bounded.result.errors[0], /^latest-error-/);
+
+    const next = await bw.run(`await page.goto(${JSON.stringify(`${server.origin}/second`)}); return 'loaded'`);
+    assert.equal(next.ok, true, next.error);
+    const scoped = await bw.run(`return {
+      console: (await page.consoleMessages({filter: 'since-navigation'})).map(m => m.text()),
+      errors: (await page.pageErrors({filter: 'since-navigation'})).map(e => e.message),
+    }`);
+    assert.equal(scoped.ok, true, scoped.error);
+    assert.ok(scoped.result.console.includes("second-page"));
+    assert.ok(!scoped.result.console.some(text => /first-warning|latest-error|noise-/.test(text)));
+    assert.deepEqual(scoped.result.errors, []);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("historical console messages and page errors redact handled vault secrets", opts, async () => {
+  const secret = "console-history-synthetic-secret-0123456";
+  const server = await listen((_request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end("<main>Console redaction fixture</main>");
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    vault: { async handleRequest(_action, _payload, origin) { return { id: "console-fixture", origin }; } },
+  });
+  try {
+    const generated = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      await credentials.save({category: 'api-credential', fields: {secret: ${JSON.stringify(secret)}}});
+      await page.addScriptTag({content: ${JSON.stringify(`console.error(${JSON.stringify(secret)}); throw new Error(${JSON.stringify(secret)});`)}});
+      return 'generated';
+    `);
+    assert.equal(generated.ok, true, generated.error);
+    const result = await bw.run(`return {
+      console: await page.consoleMessages({filter: 'since-navigation'}),
+      errors: (await page.pageErrors({filter: 'since-navigation'})).map(e => ({message: e.message, stack: e.stack})),
+    }`);
+    assert.equal(result.ok, true, result.error);
+    assert.ok(result.result.console.length > 0);
+    assert.ok(result.result.errors.length > 0);
+    assert.ok(!JSON.stringify(result).includes(secret));
+    assert.match(JSON.stringify(result.result), /REDACTED/i);
+  } finally {
+    await bw.close();
+    await server.close();
   }
 });
 

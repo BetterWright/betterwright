@@ -123,6 +123,7 @@ import {
 import {
   dismissObstructiveOverlays,
   inspectActionDirectory,
+  inspectActionEvidence,
   inspectControls,
   inspectMedia,
 } from "./page-inspect.js";
@@ -8000,6 +8001,18 @@ async function execute(message) {
       error: redactText(failure?.message || String(failure)),
       restartWorker,
     };
+    const page = session.pages.get(session.currentId);
+    if (!restartWorker && !challenges.length && page && !page.isClosed()) {
+      const evidence = await Promise.race([
+        inspectActionEvidence(page, { maxEntries: 4, maxTextChars: 300 }),
+        hostDelay(200).then(() => []),
+      ]);
+      if (evidence.length) {
+        Object.assign(failureFields, {
+          ui: { protocol: "betterwright-ui/1", tool: "browser_batch", controls: [], evidence, truncated: true },
+        });
+      }
+    }
     sendResult(
       await buildEnvelope(
         session,
