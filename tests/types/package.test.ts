@@ -28,6 +28,26 @@ import {
   type SessionRecordingStatus,
   type VaultMatchMode,
 } from "betterwright";
+import { type CaptureOptions, installVaultCapture } from "betterwright/capture";
+import { configureElectronNetwork, createElectronHostTarget, type ElectronHostOptions } from "betterwright/electron";
+
+const electronNetworkSetup: () => void = configureElectronNetwork;
+const electronTargetFactory: (options: ElectronHostOptions) => NonNullable<BetterWrightOptions["hostTarget"]> = createElectronHostTarget;
+const captureInstaller: (context: Parameters<typeof installVaultCapture>[0], options: CaptureOptions) => { dispose(): Promise<void> } = installVaultCapture;
+void electronNetworkSetup;
+void electronTargetFactory;
+void captureInstaller;
+
+// Existing host adapters remain valid without status; new ones can report
+// synchronous revocation before their worker observes the CDP disconnect.
+type HostConnection = Awaited<ReturnType<NonNullable<BetterWrightOptions["hostTarget"]>["connect"]>>;
+const legacyHostConnection: HostConnection = { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() {} };
+const observableHostConnection: HostConnection = { ...legacyHostConnection, get closed() { return true; } };
+const hostConnectionClosed: boolean | undefined = observableHostConnection.closed;
+// @ts-expect-error The lifecycle status belongs to the adapter, not its caller.
+observableHostConnection.closed = false;
+void hostConnectionClosed;
+
 import {
   type AgentMessage,
   type AgentModel,
