@@ -35,7 +35,9 @@ Releases before 1.1.3 predate this file; their notes live on the
 - Improve cart verification guidance for repeated item names, numeric quantity
   cells, duplicate product names, delayed confirmations, and stale receipts.
   Keep action, confirmation waits, and visible proof together without replaying
-  uncertain submissions or inventing order IDs.
+  uncertain submissions or inventing order IDs. Completion checks now approve
+  only their input candidate; checker-authored corrections require a separate
+  bounded check before they can become the final answer.
 - Distinguish CAPTCHA interaction outcomes and token receipt from server-side
   acceptance in live-test reporting and documentation.
 

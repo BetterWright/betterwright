@@ -100,6 +100,16 @@ Snapshot inspection shares the same three-check budget. With configured
 guardrails, the check may inspect read-only evidence but cannot resume actions
 after an unsuccessful check; a genuine prohibition or approval blocker is a
 valid answer.
+Approval is decision-only: a successful check approves exactly the answer it
+received. Candidates over 4,000 characters stop before browser inspection or a
+model check rather than sending a truncated prefix and approving the full text.
+A checker-authored correction is incomplete until a later check receives that
+correction as its candidate and approves it within the same three-check budget.
+Contradictory rewrites and corrections that exhaust the budget stop without
+reopening browser actions. This guarantees that every emitted answer was itself
+the input to a completed check; the configured model still makes the semantic
+judgment. It does not mechanically prove factual correctness in arbitrary
+language.
 The check covers cart and transaction claims, not unrelated page descriptions.
 These additional model turns and their usage are included in `steps` and token
 totals. They do not run for ordinary tasks that do not match the checkout skill.

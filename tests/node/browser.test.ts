@@ -1657,7 +1657,7 @@ test("checkout inspection covers plain, framed, shadow, and oversized receipt pa
             return { text: JSON.stringify({ complete: false, inspect: { selector: '.receipt' } }), toolCalls: [] };
           }
           assert.match(last.content, /Order NEW-123 accepted/);
-          return { text: JSON.stringify({ complete: true, answer: "Order NEW-123 accepted" }), toolCalls: [] };
+          return { text: JSON.stringify({ complete: true }), toolCalls: [] };
         },
       };
       const result = await runAgentTask({ task: "Check the displayed checkout receipt without making changes", model, browser: bw, liveView: false });

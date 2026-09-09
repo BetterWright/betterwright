@@ -821,16 +821,17 @@ test("checkout completion is independently checked and its usage is counted", as
   const browser = fakeBrowser({ runs: [{ ok: true, result: { status: "Rejected; no new order" } }] });
   const model = scriptedModel([
     { text: "Rejected, order ID was", toolCalls: [], usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 40 } },
-    { text: JSON.stringify({ complete: true, answer: "Rejected. No new order ID exists.", instruction: "" }), toolCalls: [], usage: { inputTokens: 60, outputTokens: 10, cacheReadTokens: 0 } },
+    { text: JSON.stringify({ complete: false, correction: "Rejected; no new order. No new order ID exists." }), toolCalls: [], usage: { inputTokens: 60, outputTokens: 10, cacheReadTokens: 0 } },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
   ]);
   const result = await runAgentTask({ task: "Check this checkout", model, browser });
   assert.equal(result.ok, true);
-  assert.equal(result.answer, "Rejected. No new order ID exists.");
-  assert.equal(result.steps, 2);
+  assert.equal(result.answer, "Rejected; no new order. No new order ID exists.");
+  assert.equal(result.steps, 3);
   assert.equal(result.usage.inputTokens, 120);
   assert.equal(result.usage.outputTokens, 30);
   assert.equal(result.usage.cacheReadTokens, 40);
-  assert.deepEqual(model.seen[1].tools, []);
+  assert.ok(model.seen.slice(1).every(request => request.tools.length === 0));
   assert.match(model.seen[1].system, /Independently check/);
   assert.equal(browser.calls.run.length, 1);
   assert.match(browser.calls.run[0].code, /controls.directory/);
@@ -864,7 +865,7 @@ test("checkout checks retain bounded earlier host evidence with its executed cod
     const model = scriptedModel([
       { toolCalls: [{ id: "load", name: "browser", input: { code } }] },
       { text: "Order NEW-1 confirmed", toolCalls: [] },
-      { text: JSON.stringify({ complete: true, answer: "Order NEW-1 confirmed" }), toolCalls: [] },
+      { text: JSON.stringify({ complete: true }), toolCalls: [] },
     ]);
     await runAgentTask({ task: "Check this checkout", model, browser });
     const check = JSON.parse(model.seen[2].messages[0].text);
@@ -881,7 +882,7 @@ test("checkout completion refreshes an existing proof alongside the checked stat
   ] });
   const model = scriptedModel([
     { toolCalls: [{ id: "submit", name: "browser", input: { code: "return {};" } }] },
-    { text: JSON.stringify({ complete: true, answer: "Order NEW-1 confirmed" }), toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
   ]);
   const result = await runAgentTask({ task: "Check this checkout", model, browser });
   assert.equal(result.proof, "/current.png");
@@ -897,7 +898,7 @@ test("checkout checks can request a bounded read-only receipt snapshot", async (
   const model = scriptedModel([
     { toolCalls: [{ id: "read", name: "browser", input: { code: "read_receipt" } }] },
     { text: JSON.stringify({ complete: false, inspect: { selector: ".receipt" } }), toolCalls: [] },
-    { text: JSON.stringify({ complete: true, answer: "Order NEW-1 accepted" }), toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
   ]);
   const result = await runAgentTask({ task: "Check this checkout", model, browser, guardrails: { forbidPurchases: true } });
   assert.equal(result.ok, true);
@@ -917,7 +918,7 @@ test("checkout inspection cannot inject executable code through a selector", asy
   const model = scriptedModel([
     { text: "Order accepted", toolCalls: [] },
     { text: JSON.stringify({ complete: false, inspect: { selector, code: "globalThis.injected = true" } }), toolCalls: [] },
-    { text: JSON.stringify({ complete: true, answer: "Order accepted" }), toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
   ]);
   await runAgentTask({ task: "Check this checkout", model, browser });
   let options;
@@ -1030,11 +1031,11 @@ test("pending checkout completion resumes with read-only guidance rather than re
     { text: "", toolCalls: [{ id: "submit", name: "browser", input: { code: "submit_once" } }] },
     { text: JSON.stringify({ complete: false, instruction: "Wait for the current submission; do not resubmit." }), toolCalls: [] },
     { text: "", toolCalls: [{ id: "read", name: "browser", input: { code: "read_status" } }] },
-    { text: JSON.stringify({ complete: true, answer: "Accepted, order 42." }), toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
   ]);
   const result = await runAgentTask({ task: "Submit exactly once", model, browser });
   assert.equal(result.ok, true);
-  assert.equal(result.answer, "Accepted, order 42.");
+  assert.equal(result.answer, "Order 42 confirmed");
   assert.equal(result.steps, 4);
   assert.equal(result.toolCalls, 2);
   assert.equal(browser.calls.run.filter(call => call.code === "submit_once").length, 1);
@@ -1056,6 +1057,25 @@ test("checkout completion checks are bounded and malformed verdicts cannot pass"
   assert.equal(browser.calls.run.length, 3);
 });
 
+test("an oversized checkout candidate stops before a hidden tail can be checked or replayed", async () => {
+  const hidden = `Observed status. ${"x".repeat(4_000)} Order NEW-99 confirmed`;
+  const model = scriptedModel([
+    { text: hidden, toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
+    { toolCalls: [{ id: "replay", name: "browser", input: { code: "submit_again" } }] },
+  ]);
+  const browser = fakeBrowser({ runs: [{ ok: true, result: { status: "Order OLD-42 confirmed" } }] });
+  const result = await runAgentTask({ task: "Check this checkout", model, browser });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "no_progress");
+  assert.match(result.answer, /oversized proposed answer/);
+  assert.doesNotMatch(result.answer, /NEW-99/);
+  assert.equal(result.steps, 1);
+  assert.equal(result.toolCalls, 0);
+  assert.equal(model.seen.length, 1);
+  assert.equal(browser.calls.run.length, 0);
+});
+
 test("missing fresh checkout evidence cannot approve a fabricated completion", async () => {
   const model = scriptedModel(Array.from({ length: 3 }, () => [
     { text: "Accepted", toolCalls: [] },
@@ -1065,6 +1085,81 @@ test("missing fresh checkout evidence cannot approve a fabricated completion", a
   const result = await runAgentTask({ task: "Check this checkout", model, browser });
   assert.equal(result.ok, false);
   assert.equal(result.reason, "no_progress");
+});
+
+test("a complete verdict cannot replace the checked receipt answer", async () => {
+  for (const rewritten of [
+    "Order NEW-99 confirmed",
+    "Order NEW-99 confirmed. Evidence: Order OLD-42 confirmed",
+  ]) {
+    const browser = fakeBrowser({ runs: [{ ok: true, result: { status: "Order OLD-42 confirmed" } }] });
+    const model = scriptedModel([
+      { text: "Order OLD-42 confirmed", toolCalls: [] },
+      { text: JSON.stringify({ complete: true, answer: rewritten }), toolCalls: [] },
+      { toolCalls: [{ id: "replay", name: "browser", input: { code: "submit_again" } }] },
+    ]);
+    const result = await runAgentTask({
+      task: "Check this checkout",
+      model,
+      browser,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "no_progress");
+    assert.doesNotMatch(result.answer, /NEW-99/);
+    assert.equal(JSON.parse(model.seen[1].messages[0].text).proposed, "Order OLD-42 confirmed");
+    assert.equal(model.seen.length, 2);
+    assert.equal(browser.calls.run.length, 1);
+  }
+});
+
+test("decision-only approval preserves repeated quantities and derived checkout analysis", async () => {
+  const browser = fakeBrowser({ runs: [{ ok: true, result: {
+    cart: "Notebook, Notebook, Pen",
+    prices: "Notebook $12; Pen $3",
+  } }] });
+  const answer = "There are 2 notebooks and 1 pen, totaling $27.";
+  const model = scriptedModel([
+    { text: answer, toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
+  ]);
+  const result = await runAgentTask({ task: "Analyze this shopping cart without purchasing", model, browser });
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, answer);
+  assert.equal(result.toolCalls, 0);
+});
+
+test("a correction is checked as the next candidate before it can be approved", async () => {
+  const browser = fakeBrowser({ runs: [{ ok: true, result: { status: "Order OLD-42 rejected" } }] });
+  const corrected = "Order OLD-42 was rejected. No new order was created.";
+  const model = scriptedModel([
+    { text: "Order OLD-42 confirmed", toolCalls: [] },
+    { text: JSON.stringify({ complete: false, correction: corrected }), toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
+  ]);
+  const result = await runAgentTask({ task: "Check this checkout", model, browser });
+  assert.equal(result.ok, true);
+  assert.equal(result.answer, corrected);
+  assert.equal(result.steps, 3);
+  assert.equal(JSON.parse(model.seen[2].messages[0].text).proposed, corrected);
+  assert.equal(browser.calls.run.length, 1);
+});
+
+test("corrections that exhaust the three-check budget stop without actions", async () => {
+  const browser = fakeBrowser({ runs: [{ ok: true, result: { status: "Rejected" } }] });
+  const model = scriptedModel([
+    { text: "candidate zero", toolCalls: [] },
+    { text: JSON.stringify({ complete: false, correction: "candidate one" }), toolCalls: [] },
+    { text: JSON.stringify({ complete: false, correction: "candidate two" }), toolCalls: [] },
+    { text: JSON.stringify({ complete: false, correction: "candidate three" }), toolCalls: [] },
+    { toolCalls: [{ id: "replay", name: "browser", input: { code: "submit_again" } }] },
+  ]);
+  const result = await runAgentTask({ task: "Check this checkout", model, browser });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "no_progress");
+  assert.match(result.answer, /could not approve the corrected answer/);
+  assert.equal(result.steps, 4);
+  assert.equal(model.seen.length, 4);
+  assert.equal(browser.calls.run.length, 1);
 });
 
 test("truncated completion checks cannot approve checkout answers", async () => {
@@ -1082,9 +1177,9 @@ test("human steering during a checkout check defers the old answer and reaches t
   const queue: string[] = [];
   const scripted = scriptedModel([
     { text: "old answer", toolCalls: [] },
-    { text: JSON.stringify({ complete: true, answer: "old answer" }), toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
     { text: "new answer", toolCalls: [] },
-    { text: JSON.stringify({ complete: true, answer: "new answer" }), toolCalls: [] },
+    { text: JSON.stringify({ complete: true }), toolCalls: [] },
   ]);
   const model = {
     async complete(request) {
