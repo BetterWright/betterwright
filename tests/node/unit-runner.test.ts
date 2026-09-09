@@ -51,3 +51,39 @@ test("unit runner executes TypeScript sources and ignores stale compiled files",
   assert.equal(sourceOnly.status, 0, sourceOnly.stdout + sourceOnly.stderr);
   assert.match(sourceOnly.stdout + sourceOnly.stderr, /source without compiled output/);
 });
+
+test("full runner completes unit tests before the isolated browser phase and preserves failures", () => {
+  const root = makeTempDir("betterwright-runner-phases-");
+  const scripts = path.join(root, "scripts");
+  const tests = path.join(root, "tests", "node");
+  fs.mkdirSync(scripts, { recursive: true });
+  fs.mkdirSync(tests, { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
+  fs.copyFileSync(
+    new URL("../../scripts/run-unit-tests.ts", import.meta.url),
+    path.join(scripts, "run-unit-tests.ts"),
+  );
+  const unitSource = 'import test from "node:test"; import fs from "node:fs"; test("unit phase", async () => { await new Promise(resolve => setTimeout(resolve, 150)); fs.appendFileSync("phases.log", "unit\\n"); });';
+  fs.writeFileSync(path.join(tests, "unit.test.ts"), unitSource);
+  fs.writeFileSync(path.join(tests, "browser.test.ts"),
+    'import test from "node:test"; import assert from "node:assert/strict"; import fs from "node:fs"; test("browser phase", () => { assert.equal(fs.readFileSync("phases.log", "utf8"), "unit\\n"); fs.appendFileSync("phases.log", "browser\\n"); });');
+  const env: NodeJS.ProcessEnv = { ...process.env, BETTERWRIGHT_COVERAGE: "0" };
+  delete env.NODE_TEST_CONTEXT;
+  const passed = spawnSync(process.execPath, [path.join(scripts, "run-unit-tests.ts"), "--all"], {
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+  assert.equal(fs.readFileSync(path.join(root, "phases.log"), "utf8"), "unit\nbrowser\n");
+
+  fs.unlinkSync(path.join(root, "phases.log"));
+  fs.writeFileSync(path.join(tests, "unit.test.ts"),
+    unitSource.replace('fs.appendFileSync("phases.log", "unit\\n");', 'fs.appendFileSync("phases.log", "unit\\n"); throw new Error("unit failure must propagate");'));
+  const failed = spawnSync(process.execPath, [path.join(scripts, "run-unit-tests.ts"), "--all"], {
+    encoding: "utf8",
+    env,
+  });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stdout + failed.stderr, /unit failure must propagate/);
+  assert.equal(fs.readFileSync(path.join(root, "phases.log"), "utf8"), "unit\nbrowser\n");
+});
