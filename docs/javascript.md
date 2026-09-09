@@ -41,6 +41,18 @@ routing broad discovery through the host's search tool anyway, and set
 have the worker enforce that. `searchMinIntervalMs` spaces public-search
 navigations while they are permitted.
 
+Ad and tracker blocking is on by default. Pass `adBlock: false` to disable it;
+an explicit option overrides `BETTERWRIGHT_AD_BLOCK`. First enabled use downloads
+the filter lists, and blocking disables service workers in new contexts without
+weakening network policy. See [ad blocking](ad-blocking.md) for caching and
+restart requirements.
+
+To control a host-owned Electron tab instead of launching a managed browser,
+pass a `hostTarget` created by `betterwright/electron`. The adapter keeps the
+tab on the network guard and leaves its lifetime with the host. See
+[Electron hosting](electron-host.md) for the required dedicated session,
+pre-start network configuration, approved uploads, and cancellation setup.
+
 Model-authored snippets cannot access CDP, the raw browser object, or
 `newCDPSession`.
 
@@ -59,6 +71,9 @@ Install the optional dependency (`npm install patchright-core`) to use it;
 | --- | --- |
 | `run(code, { session, note, timeout, approvedDownloads }) => Promise<envelope>` | Execute one snippet. Calls are queued and run one at a time. |
 | `close() => Promise<void>` | Shut the worker down. Idempotent. |
+| `vaultStatus() => Promise<status>` | Read vault availability and protection state without unlocking it. |
+| `unlockVault({ password }) => Promise<status>` | Unlock this browser's vault instance from a trusted host. Never expose the password to model code. |
+| `lockVault() => Promise<status>` | Revoke cached unlocks across processes sharing the master-protected vault directory. |
 | `policy` | The active `NetworkPolicy`. |
 
 There is no context-manager sugar in JS — call `close()` in a `finally`.
@@ -247,6 +262,21 @@ selectors only when detection reports ambiguity. Rotation forms can pin
 together. Set `vault: false` (or `null`) to disable credential helpers entirely.
 
 ### Reading secrets back (trusted hosts only)
+
+For a master-protected local vault, unlock the instance before reading records.
+Trusted hosts can call `ownerSetupMaster(password)`, `ownerUnlock(password)`,
+`ownerLock()`, and `ownerStatus()` on the local vault object. The default unlock
+lifetime is 15 minutes; `createLocalCredentialVault({ autoLockMs })` configures
+it, and `dispose()` clears cached key material while preserving redaction.
+Separate SDK instances must unlock independently; CLI `vault unlock` unlocks
+only the selected persistent daemon, not every SDK process. Locking prevents
+subsequent vault access but does not sign out existing browser sessions.
+
+`ownerSettings()` and `ownerConfigure({ agentUse, offerSave, autosave })` manage
+saved-login preferences. Human autosave requires capture (`offerSave`) to be
+enabled; agent access and human saving are independent. See
+[master-password controls](credentials.md#master-password-and-lock-state) for
+setup, backup requirements, and the trusted-input boundary.
 
 Everything above is deliberately incapable of returning a secret. When your
 host needs to act for the *person* who owns the vault — the same job
