@@ -9,6 +9,38 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-09
+
+### Added
+
+- A bounded completion consistency check for checkout tasks in the built-in
+  agent. It compares current and earlier UI evidence, can inspect full or scoped
+  receipt snapshots, and accounts for verification turns in usage totals.
+  Read-only inspections cannot execute checker-authored actions; duplicate or
+  exhausted inspections stop, and failed checks do not reopen actions under
+  configured guardrails. Purchase authorization remains unchanged by default.
+- Conditional checkout-verification and browser-console skills. Console
+  guidance uses existing bounded history APIs without adding console output to
+  ordinary browser results.
+- Bounded, redacted UI evidence on ordinary failed browser snippets, plus short
+  product/table context and status text in interactive observations.
+
+### Changed
+
+- Reduce repeated agent, tool, and checkout instructions. Batch known work
+  without treating partial extraction as a completed answer.
+
+### Fixed
+
+- Improve cart verification guidance for repeated item names, numeric quantity
+  cells, duplicate product names, delayed confirmations, and stale receipts.
+  Keep action, confirmation waits, and visible proof together without replaying
+  uncertain submissions or inventing order IDs. Completion checks now approve
+  only their input candidate; checker-authored corrections require a separate
+  bounded check before they can become the final answer.
+- Distinguish CAPTCHA interaction outcomes and token receipt from server-side
+  acceptance in live-test reporting and documentation.
+
 ## [2.5.2] - 2026-09-09
 
 ### Fixed
@@ -1487,7 +1519,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.5.2...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/BetterWright/betterwright/compare/v2.5.2...v2.6.0
 [2.5.2]: https://github.com/BetterWright/betterwright/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/BetterWright/betterwright/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/BetterWright/betterwright/compare/v2.4.0...v2.5.0

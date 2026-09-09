@@ -522,7 +522,7 @@ test("an oversized request line is refused instead of buffered", async () => {
     const replies = [];
     readline.createInterface({ input: socket }).on("line", (line) => replies.push(JSON.parse(line)));
     socket.write(`${JSON.stringify({ id: 1, op: "exec", task: "x".repeat(9 * 1024 * 1024) })}\n`);
-    await tick(400);
+    await waitUntil(() => replies.length > 0);
     assert.equal(replies.at(-1)?.ok, false);
     assert.match(replies.at(-1)?.error, /too large/);
 

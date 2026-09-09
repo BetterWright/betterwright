@@ -22,12 +22,20 @@ if (!files.length) {
 
 const coverageArgs = process.env.BETTERWRIGHT_COVERAGE === "1" ? ["--coverage"] : [];
 const workers = String(os.availableParallelism?.() || os.cpus().length);
-const result = spawnSync(
-  process.execPath,
-  ["test", "--timeout", "120000", `--parallel=${workers}`, ...coverageArgs, ...files],
-  {
-    cwd: root,
-    stdio: "inherit",
-  },
-);
-process.exit(result.status ?? 1);
+const browserFile = path.join("tests", "node", "browser.test.ts");
+const batches = [files.filter((file) => file !== browserFile)];
+if (files.includes(browserFile)) batches.push([browserFile]);
+let exitCode = 0;
+for (const batch of batches) {
+  if (!batch.length) continue;
+  const result = spawnSync(
+    process.execPath,
+    ["test", "--timeout", "120000", `--parallel=${batch.includes(browserFile) ? 1 : workers}`, ...coverageArgs, ...batch],
+    {
+      cwd: root,
+      stdio: "inherit",
+    },
+  );
+  if (!exitCode) exitCode = result.status ?? 1;
+}
+process.exit(exitCode);

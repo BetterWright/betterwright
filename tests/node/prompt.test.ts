@@ -73,6 +73,15 @@ test("confirm before purchase adds a clause", () => {
   assert.ok(prompt.includes("order summary"));
 });
 
+test("verification and proof guidance stays within the existing prompt budget", () => {
+  const prompt = agentSystemPrompt();
+  assert.ok(prompt.length <= 4_193, `default prompt grew to ${prompt.length} characters`);
+  assert.match(prompt, /confirmation reads don't: wait on its locator, add no sleeps/);
+  assert.match(prompt, /observed state, not invented text/);
+  assert.match(prompt, /Scroll the verified result into view before `screenshot\(\{kind:'proof'\}\)` in the same call/);
+  assert.match(prompt, /`processing` is not solved/);
+});
+
 test("forbid purchases supersedes confirm", () => {
   const prompt = agentSystemPrompt({ forbidPurchases: true, confirmBeforePurchase: true });
   assert.ok(prompt.includes("Do not complete any purchase"));

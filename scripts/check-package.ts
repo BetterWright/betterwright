@@ -97,6 +97,8 @@ try {
     "types/mcp-server.d.ts",
     "types/public.d.ts",
     "types/skills.d.ts",
+    "skills/browser-console/SKILL.md",
+    "skills/checkout-verification/SKILL.md",
     "skills/full-stack-e2e-review/SKILL.md",
   ];
   const missing = required.filter((name) => !paths.has(name));

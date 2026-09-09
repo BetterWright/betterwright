@@ -234,7 +234,33 @@ or guarantee that a provider will accept the managed browser. An invisible or
 scored challenge may have no native interaction to perform; preserve the page
 and request human help instead of looping or changing identity.
 
-Public unit and browser fixtures cover the local pipeline end-to-end. Live
-provider demos (Google reCAPTCHA, hCaptcha, Cloudflare Turnstile) succeed when
-the provider accepts the session; bot-scoring may still block headless or
-datacenter IPs regardless of correct clicks.
+Public unit and browser fixtures cover the local pipeline end-to-end.
+
+### Live contract tests are not verified solves
+
+The optional `BETTERWRIGHT_LIVE_CAPTCHA=1` tests in
+`tests/node/captcha-e2e.test.ts` exercise Google reCAPTCHA, hCaptcha, and
+Cloudflare Turnstile demos. A passing test validates the helper contract,
+including its permitted `ready`, `processing`, and `error` statuses and the
+local/no-external-API assertions made by that test. It does **not** establish
+that the CAPTCHA was solved: a processing result with no token can pass, as
+can a helper-reported error. Bot-scoring may still block headless or datacenter
+IPs regardless of correct clicks.
+
+Each demo logs an explicit harness-only `outcome`:
+
+| Outcome | Evidence |
+| --- | --- |
+| `error` | The helper returned `error`; this takes precedence even if a response field contains a token. |
+| `token_received` | A nonempty provider response field was observed after the attempt, without a helper error. This is token receipt, not server acceptance. |
+| `needs_vision` | No token was observed and the helper returned `processing` for an image-grid or text stage. Host vision is still needed; the live test does not perform that step. |
+| `unresolved` | No token was observed and the helper returned another `processing` stage. The bounded demo attempt did not establish completion; this alone does not establish that human handoff is required. |
+| `unverified` | No token was observed and none of the above applies, including `ready` when a widget disappeared or no challenge was detected. |
+
+The logs report only response lengths (`tokenLen`), including hCaptcha's;
+they do not print token values. Every demo reports
+`serverAcceptance: "unverified"` because these tests do not submit the demo
+form and verify the server's response. A verified solve requires explicit
+server acceptance or a confirmed successful protected action, not merely a
+token, a `ready` status, or a green contract test. This reporting lives only
+in the test harness; it adds no runtime envelope fields or model-token cost.

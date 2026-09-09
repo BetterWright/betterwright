@@ -40,6 +40,59 @@ test("filterInteractive reports pages with nothing to click", () => {
   assert.equal(filtered, "(no interactive elements)");
 });
 
+test("interactive snapshots retain bounded item context and live outcomes", () => {
+  const text = [
+    '- list:',
+    '  - listitem [ref=e1]:',
+    '    - text: Blue notebook $12',
+    '    - button "Add notebook" [ref=e2]',
+    '  - listitem [ref=e3]:',
+    '    - text: Unrelated static item',
+    '- paragraph: Unrelated page prose',
+    '- status [ref=e4]:',
+    '  - text: Order 42 confirmed: $27',
+    '- alert [ref=e5]: Payment rejected',
+  ].join('\n');
+  const filtered = filterInteractive(text);
+  assert.match(filtered, /Blue notebook \$12/);
+  assert.match(filtered, /Order 42 confirmed: \$27/);
+  assert.match(filtered, /Payment rejected/);
+  assert.ok(!filtered.includes('Unrelated'));
+  assert.equal(filterInteractive('- status [ref=e1]: Processing'), '- status [ref=e1]: Processing');
+});
+
+test("interactive table rows retain column labels and quantity cells", () => {
+  const text = [
+    '- table:',
+    '  - row:',
+    '    - columnheader: Product',
+    '    - columnheader: Quantity',
+    '    - columnheader: Action',
+    '  - row:',
+    '    - cell: Blue notebook',
+    '    - cell: 2',
+    '    - cell:',
+    '      - button "Remove" [ref=e1]',
+    '- table:',
+    '  - row:',
+    '    - columnheader: Unrelated table',
+  ].join('\n');
+  const filtered = filterInteractive(text);
+  for (const value of ['columnheader: Product', 'columnheader: Quantity', 'cell: Blue notebook', 'cell: 2']) {
+    assert.ok(filtered.includes(value), filtered);
+  }
+  assert.ok(!filtered.includes('Unrelated table'));
+});
+
+test("interactive context never pulls in long descriptions or static articles", () => {
+  const text = `- listitem:\n  - text: ${'description '.repeat(100)}\n  - button "Add" [ref=e1]\n- article:\n  - text: ${'article '.repeat(100)}`;
+  const filtered = filterInteractive(text);
+  assert.match(filtered, /button "Add"/);
+  assert.ok(!filtered.includes('description'));
+  assert.ok(!filtered.includes('article'));
+  assert.ok(filtered.length < 100);
+});
+
 test("diffSnapshots detects no change", () => {
   assert.deepEqual(diffSnapshots(TREE, TREE), { changed: false });
 });

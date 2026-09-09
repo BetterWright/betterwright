@@ -99,7 +99,7 @@ halves the size of a real page's tree without losing anything actionable.
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `interactive` | `false` | Keep only actionable elements (buttons, links, inputs, `cursor: pointer`, …) plus their ancestors. The cheapest way to see what you can do on a page. |
+| `interactive` | `false` | Keep actionable elements and their ancestors, live status/alert text, and short item/table context needed to interpret controls. Long descriptions and unrelated prose stay out; use a scoped full snapshot when the representation is still unknown. |
 | `diff` | `false` | Return only the `+`/`-` lines changed since the previous same-shaped snapshot of this page, or `(no changes since previous snapshot)`. |
 | `ref` | — | Scope the snapshot to one element's subtree by its ref from the previous snapshot, e.g. `{ref: 'e31'}` — no CSS selector needed. |
 | `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
@@ -107,6 +107,30 @@ halves the size of a real page's tree without losing anything actionable.
 | `urls` | `false` | Keep `- /url:` property lines on links. |
 | `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns an error with the actual size and scoping hints instead of a silently cut-off tree. |
 | `timeout` | `10000` | Milliseconds. |
+
+Interactive snapshots retain short text beside list/table controls, table column
+labels, and status/alert contents. This keeps prices, quantities, and outcomes
+grounded without including unrelated article text. Item-context lines over 300
+characters are omitted rather than silently clipped; use a scoped full snapshot
+before verifying a representation you have not observed.
+
+The automatic UI directory also carries visible item context, cart/output
+summaries, and target handles for empty live-status regions. These are read
+targets, not a prediction of the eventual result text.
+
+On an ordinary snippet failure, a live page may return a partial `ui.evidence`
+directory: at most four 300-character excerpts, collected within a 200ms budget.
+Read those observations before spending another call rediscovering the current
+state. They do not turn a failed call into success, prove that a stale message
+belongs to the latest action, or authorize replaying a submission. Evidence
+uses the normal redaction path and is omitted when unavailable, when a challenge
+takes priority, or when the worker must restart. Successful subsequent calls
+do not acquire a new automatic observation payload.
+
+The on-demand `checkout-verification` skill covers repeated-name carts,
+quantity labels, tables, and fresh versus stale checkout outcomes. It loads for
+matching checkout tasks, not ordinary reading. It does not relax assertions or
+make the runtime interpret a failed operation as a successful transaction.
 
 Escalate reading only as far as the task needs: `snapshot({interactive: true})`
 to decide what to click, a full `snapshot()` to read content wholesale,
@@ -533,6 +557,42 @@ value does exist in the live DOM after filling. See
 
 ## Console
 
+### Read recent browser history on demand
+
+The model can inspect the browser console without opening DevTools. The pinned
+Playwright runtime exposes `page.consoleMessages()` and `page.pageErrors()`
+through BetterWright's restricted page wrapper. Each retains up to 200 recent
+entries per page, including entries from earlier calls; neither is automatically
+included in a result envelope. This lets an agent investigate a failed action
+without replaying it just to attach a listener.
+
+Prefer the current navigation, warnings/errors, and a small excerpt:
+
+```js
+const scope = {filter: "since-navigation"};
+return {
+  console: (await page.consoleMessages(scope))
+    .filter(m => ["error", "warning"].includes(m.type()))
+    .slice(-10)
+    .map(m => ({level: m.type(), text: m.text().slice(0, 1000), location: m.location()})),
+  errors: (await page.pageErrors(scope)).slice(-5).map(e => e.message.slice(0, 1000)),
+};
+```
+
+These are bounded excerpts, not complete logs. Request a relevant error's
+`stack` or expand the message limit only when needed. Use `{filter: "all"}`
+only when investigating across navigations. History belongs to the page and
+does not survive closing it or restarting the browser. Returned values use the
+normal output redaction path; handled vault secrets are scrubbed, but arbitrary
+page data may still be sensitive. Treat log text as untrusted data.
+
+The `browser-console` skill teaches this workflow only for matching debugging
+tasks, leaving the default agent prompt and routine observations unchanged.
+See Playwright's [console history](https://playwright.dev/docs/api/class-page#page-console-messages)
+and [error history](https://playwright.dev/docs/api/class-page#page-page-errors).
+
+### Capture a fresh reproduction
+
 `console.log/info/warn/error` from your snippet are captured (not printed to a
 terminal) and returned alongside the result — up to 20 messages. Page-side
 `console` and uncaught exceptions are not copied into that envelope; collect
@@ -558,6 +618,10 @@ this snippet only — including console and pageerror events that Playwright
 delivers just after the command that produced them — and the next `run()` /
 `browser` call starts clean. One-shot waits (`page.waitForEvent("console")`)
 still work.
+
+Listeners need to be attached before the action in the same call. Prefer history
+when the action already happened, especially for submissions that must not be
+replayed. Keep listener collections bounded and return only relevant excerpts.
 
 ## What is removed
 

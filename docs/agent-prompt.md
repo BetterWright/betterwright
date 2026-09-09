@@ -77,6 +77,13 @@ prompt; set hard limits with those.
 
 ## Re-adding limits with `Guardrails`
 
+Limits are opt-in. Without `Guardrails`, a request such as “buy this” authorizes
+the purchase; the agent should not ask for another confirmation. Set
+`confirmBeforePurchase` to require a separate approval, `forbidPurchases` to
+prohibit purchases, or `spendingLimit` to require approval above a chosen amount.
+An ordinary human reply through `askUser` or live-view chat can give approval;
+no special phrase or authorization token is required.
+
 ```js
 import { agentSystemPrompt } from "betterwright";
 
@@ -99,6 +106,11 @@ const systemPrompt = agentSystemPrompt({
 
 When any guardrail is set, the guidance gains a **"Guardrails for this session"**
 section that overrides the autonomy above where they conflict.
+Pass the same object as `runAgentTask({ task, guardrails })` when using the
+built-in task agent. These remain behavioral instructions, not a payment
+firewall; the completion checker cannot prevent an initial action that ignores
+them. It does stop a failed checkout check from resuming actions under configured
+guardrails.
 
 ## Prompt for behavior, policy for enforcement
 
