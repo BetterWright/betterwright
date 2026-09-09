@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-09-09
+
 ### Added
 
 - Optional `betterwright/electron` adapter for a host-owned tab, with scoped
@@ -1462,7 +1464,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/BetterWright/betterwright/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/BetterWright/betterwright/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/BetterWright/betterwright/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/BetterWright/betterwright/compare/v2.1.0...v2.2.0
