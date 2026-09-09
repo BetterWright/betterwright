@@ -10,6 +10,7 @@ import { configureElectronNetwork, createElectronHostTarget } from "../../dist/s
 import { BetterWright, NetworkPolicy } from "../../dist/src/index.js";
 import { installVaultCapture } from "../../dist/src/vault-capture.js";
 
+const primaryModifier = process.platform === "darwin" ? "Meta" : "Control";
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-electron-e2e-"));
 app.setPath("userData", path.join(home, "electron"));
 configureElectronNetwork();
@@ -42,7 +43,7 @@ try {
   contents.setZoomFactor(1.25);
   assert.equal(await run("await page.getByLabel('Name').fill('Ada'); await page.getByRole('button', {name:'Save'}).click(); return await page.locator('output').innerText();"), "Ada");
   console.log("PASS hidden target, zoom, batched native input, empty result");
-  const denied = await browser.run("await page.keyboard.press('Meta+L');", { timeout: 5 });
+  const denied = await browser.run(`await page.keyboard.press('${primaryModifier}+L');`, { timeout: 5 });
   assert.equal(denied.ok, false);
   assert.equal(await run("await page.getByLabel('Name').fill('Grace'); await page.getByRole('button', {name:'Save'}).click(); return await page.locator('output').innerText();"), "Grace");
   assert.equal((await browser.run("await page.close();")).ok, false);
@@ -50,10 +51,10 @@ try {
   console.log("PASS denied shortcuts recover and host tab cannot be closed");
   const previousClipboard = clipboard.availableFormats().map(format => [format, clipboard.readBuffer(format)]);
   try {
-    await run("await page.getByLabel('Name').click(); await page.keyboard.press('Meta+A'); await page.keyboard.press('Meta+C'); return true;");
+    await run(`await page.getByLabel('Name').click(); await page.keyboard.press('${primaryModifier}+A'); await page.keyboard.press('${primaryModifier}+C'); return true;`);
     assert.equal(clipboard.readText(), "Grace");
     clipboard.writeText("Native paste");
-    assert.equal(await run("await page.keyboard.press('Meta+V'); return await page.getByLabel('Name').inputValue();"), "Native paste");
+    assert.equal(await run(`await page.keyboard.press('${primaryModifier}+V'); return await page.getByLabel('Name').inputValue();`), "Native paste");
   } finally {
     clipboard.clear();
     for (const [format, buffer] of previousClipboard) clipboard.writeBuffer(format, buffer);
@@ -125,6 +126,13 @@ try {
       assert.equal(removed.result.value, true);
       await cdp.detach();
       console.log("PASS authenticated single-tab attachment, native save prompt, sensor cleanup");
+      await page.setContent('<h1>BetterWright PDF regression</h1><p>Synthetic fixture only.</p>');
+      const pdf = await page.pdf();
+      assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
+      const customPdf = await page.pdf({ width: "6in", height: "9in", margin: { top: "0.2in", bottom: "0.3in" }, printBackground: true, tagged: true, outline: true });
+      assert.equal(customPdf.subarray(0, 5).toString(), "%PDF-");
+      assert.match(customPdf.toString("latin1"), /\/MediaBox\s*\[\s*0\s+0\s+432\s+648\s*\]/);
+      console.log("PASS native PDF export reads and closes the target-owned stream");
     } finally { await attached.close(); }
   } finally { await connection.close(); }
 } finally {

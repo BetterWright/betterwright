@@ -77,10 +77,155 @@ test("aborting a run also settles other sessions in the stopped worker", async (
   const controller = new AbortController();
   const first = browser._dispatch({ type: "execute" }, 5, controller.signal);
   const second = browser._dispatch({ type: "execute" }, 5);
+  const [firstId, secondId] = [...browser._pending.keys()];
+  const recovery = { pendingId: "pending-aborted", origin: "https://example.com", username: "test" };
+  const otherRecovery = { ...recovery, pendingId: "pending-other-session" };
+  browser._pendingCredentialRecoveries.set(firstId, recovery);
+  browser._pendingCredentialRecoveries.set(secondId, otherRecovery);
   controller.abort();
   const [aborted, stopped] = await Promise.all([first, second]);
   assert.equal(aborted.errorCode, "BW_ABORTED");
   assert.equal(aborted.effectMayHaveCommitted, true);
   assert.equal(stopped.ok, false);
+  assert.deepEqual(aborted.pendingCredential, recovery);
+  assert.deepEqual(stopped.pendingCredential, otherRecovery);
   assert.equal(browser._pending.size, 0);
+  assert.equal(browser._pendingCredentialRecoveries.size, 0);
+});
+
+for (const failure of [false, true]) {
+  test(`abort retains late recovery after an ignored success, teardown failure=${failure}`, async () => {
+    const browser = new BetterWright({ vault: false });
+    const child = {};
+    browser._process = child;
+    browser._send = () => {};
+    const recovery = { pendingId: "pending-late", origin: "https://example.com", username: "test" };
+    browser.close = async () => {
+      // A vault RPC may finish while cancellation is draining the worker.
+      const [id] = browser._pending.keys();
+      browser._pendingCredentialRecoveries.set(id, recovery);
+      browser._pending.get(id).done(browser._attachPendingCredentialRecovery(id, { ok: true }));
+      if (failure) throw new Error("synthetic teardown failure");
+      browser._resolvePendingForWorkerExit(child);
+    };
+    const controller = new AbortController();
+    const pending = browser._dispatch({ type: "execute" }, 5, controller.signal);
+    controller.abort();
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, failure ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED");
+    assert.equal(result.effectMayHaveCommitted, true);
+    assert.deepEqual(result.pendingCredential, recovery);
+    assert.equal(browser._pending.size, 0);
+    assert.equal(browser._pendingCredentialRecoveries.size, 0);
+  });
+}
+
+test("an explicit run retries failed host attachment only after releasing its previous lease", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-host-reconnect-"));
+  const events: string[] = [];
+  let release: () => void;
+  let started: () => void;
+  const drain = new Promise<void>(resolve => { release = resolve; });
+  const draining = new Promise<void>(resolve => { started = resolve; });
+  const browser = new BetterWright({
+    home, vault: false, adBlock: false,
+    hostTarget: {
+      async connect() {
+        const generation = events.filter(event => event.startsWith("connect")).length + 1;
+        events.push(`connect-${generation}`);
+        return {
+          provider: { cdpUrl: "ws://127.0.0.1:1" },
+          async close() {
+            if (generation === 1) { started(); await drain; }
+            events.push(`close-${generation}`);
+          },
+        };
+      },
+    },
+  });
+  try {
+    const first = await browser.run("return 1", { timeout: 5 });
+    assert.equal(first.ok, false);
+    assert.match(first.error, /ECONNREFUSED/);
+    assert.deepEqual(events, ["connect-1"]);
+    const retry = browser.run("return 2", { timeout: 5 });
+    await draining;
+    assert.deepEqual(events, ["connect-1"]);
+    release();
+    const second = await retry;
+    assert.equal(second.ok, false);
+    assert.match(second.error, /ECONNREFUSED/);
+    assert.deepEqual(events, ["connect-1", "close-1", "connect-2"]);
+  } finally {
+    release();
+    await browser.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+  assert.deepEqual(events, ["connect-1", "close-1", "connect-2", "close-2"]);
+});
+
+test("failed host lease teardown blocks reconnection", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-host-reconnect-failure-"));
+  let connects = 0;
+  const browser = new BetterWright({
+    home, vault: false, adBlock: false,
+    hostTarget: {
+      async connect() {
+        connects++;
+        return {
+          provider: { cdpUrl: "ws://127.0.0.1:1" },
+          async close() { throw new Error("synthetic host teardown failure"); },
+        };
+      },
+    },
+  });
+  try {
+    const first = await browser.run("return 1", { timeout: 5 });
+    assert.equal(first.ok, false);
+    assert.match(first.error, /ECONNREFUSED/);
+    const second = await browser.run("return 2", { timeout: 5 });
+    assert.equal(second.ok, false);
+    assert.equal(second.error, "synthetic host teardown failure");
+    assert.equal(connects, 1);
+  } finally {
+    await browser.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a revoked host connection retires its stale worker before dispatching the next run", async () => {
+  const oldChild = { exitCode: null, signalCode: null };
+  let revoked = false;
+  const events: string[] = [];
+  const browser = new BetterWright({ vault: false, hostTarget: {
+    async connect() {
+      return { provider: { cdpUrl: "ws://127.0.0.1:1" }, get closed() { return revoked; }, async close() {} };
+    },
+  } });
+  browser._process = oldChild;
+  browser._send = () => {};
+  await browser._serviceRpc({ method: "host_connect", payload: { proxyUrl: "socks5://127.0.0.1:12345" } }, oldChild);
+  const config = browser._workerConfig();
+  browser._lastConfig = config;
+  browser.close = async options => {
+    assert.equal(options.child, oldChild);
+    assert.equal(options.restart, true);
+    events.push("retire");
+    browser._process = null;
+  };
+  browser._start = async () => {
+    assert.equal(browser._process, null);
+    events.push("start");
+    browser._process = { exitCode: null, signalCode: null };
+  };
+  browser._dispatch = async message => {
+    assert.notEqual(browser._process, oldChild);
+    events.push(message.code);
+    return { ok: true, result: "fresh" };
+  };
+  revoked = true;
+  assert.deepEqual(events, []);
+  assert.deepEqual(await browser.run("return 'fresh'"), { ok: true, result: "fresh" });
+  assert.deepEqual(events, ["retire", "start", "return 'fresh'"]);
 });

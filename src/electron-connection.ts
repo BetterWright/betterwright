@@ -62,6 +62,7 @@ export async function openBetterwrightConnection(
           backendSessionId,
           cookieImport,
           expectAgentInput,
+          () => { void close().catch(() => {}); },
         );
       } catch {
         client.close();
@@ -99,7 +100,8 @@ export async function openBetterwrightConnection(
   const address = server.address();
   if (!address || isString(address)) throw new Error("Browser transport unavailable.");
   function close(cancel = true): Promise<void> {
-    closing ??= (async () => {
+    // Publish the close promise before terminating sockets can trigger close again.
+    closing ??= Promise.resolve().then(async () => {
       const draining = target
         ? target.dispose(cancel)
         : contents.debugger
@@ -112,10 +114,11 @@ export async function openBetterwrightConnection(
       await new Promise<void>((resolve) => sockets.close(() => resolve()));
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await draining;
-    })();
+    });
     return closing;
   }
   return {
+    get closed() { return closing !== undefined; },
     provider: {
       cdpUrl: `ws://127.0.0.1:${address.port}/browser`,
       headers: { authorization: `Bearer ${capability}` },

@@ -42,6 +42,7 @@ export function createElectronHostTarget(options: ElectronHostOptions): HostTarg
         let closing: Promise<void> | undefined;
         return {
           provider: connection.provider,
+          get closed() { return connection.closed; },
           close() {
             closing ??= connection.close().finally(() => {
               session.removeListener("will-download", denyDownload);

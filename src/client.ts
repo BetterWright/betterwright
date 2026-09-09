@@ -843,7 +843,9 @@ export class BetterWright {
     const key = String(id || "");
     const recovery = this._pendingCredentialRecoveries.get(key);
     if (!recovery) return message;
-    this._pendingCredentialRecoveries.delete(key);
+    // Cancellation ignores worker results until teardown finishes. Keep recovery
+    // available for its final abort envelope, including a late successful reply.
+    if (!this._pending.get(key)?.preserveRecovery) this._pendingCredentialRecoveries.delete(key);
     if (message?.ok !== false) return message;
     return { ...message, pendingCredential: recovery };
   }
@@ -914,9 +916,19 @@ export class BetterWright {
       const payload = message.payload || {};
       let result;
       if (message.method === "host_connect") {
-        if (!this.hostTarget || this.hostConnections.has(child)) throw new Error("Host target unavailable.");
+        if (!this.hostTarget) throw new Error("Host target unavailable.");
         const proxyUrl = String(payload.proxyUrl || "");
         if (!/^socks5:\/\/127\.0\.0\.1:[1-9][0-9]*$/.test(proxyUrl)) throw new Error("Invalid host guard endpoint.");
+        // A failed CDP attachment can leave this worker alive. A later explicit
+        // run may reconnect, but only after the previous lease has drained.
+        const previous = this.hostConnections.get(child);
+        if (previous) {
+          await previous.close();
+          this.hostConnections.delete(child);
+        }
+        if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
+          throw new Error("Host worker stopped during connection.");
+        }
         const connection = await this.hostTarget.connect({ proxyUrl });
         if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
           await connection.close();
@@ -1582,6 +1594,13 @@ export class BetterWright {
   }
 
   async _prepareNow() {
+    // Host teardown can finish before the worker receives CDP's close event.
+    // Retire that worker before sending the next explicit operation, rather
+    // than letting it reuse stale handles or replaying a failed operation.
+    const child = this._process;
+    if (child && this.hostConnections.get(child)?.closed === true) {
+      await this.close({ child, restart: true });
+    }
     const config = this._workerConfig();
     if (
       this._process &&
@@ -1624,13 +1643,21 @@ export class BetterWright {
       let settled = false;
       let timer;
       let aborting = false;
+      const finishAbort = (error, errorCode) => {
+        const result = this._attachPendingCredentialRecovery(id, {
+          ok: false, error, errorCode, effectMayHaveCommitted: true,
+        });
+        this._pendingCredentialRecoveries.delete(id);
+        done(result);
+      };
       const onAbort = () => {
         aborting = true;
+        this._pending.get(id).preserveRecovery = true;
         clearTimeout(timer);
         void this.close({ child, restart: true }).then(() => {
-          done({ ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: true });
+          finishAbort("Browser operation aborted.", "BW_ABORTED");
         }, () => {
-          done({ ok: false, error: "Browser operation aborted; teardown failed.", errorCode: "BW_ABORT_TEARDOWN_FAILED", effectMayHaveCommitted: true });
+          finishAbort("Browser operation aborted; teardown failed.", "BW_ABORT_TEARDOWN_FAILED");
         });
       };
       const done = (result) => {

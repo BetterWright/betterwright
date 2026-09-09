@@ -3,6 +3,11 @@ import type { RunResult } from "./common.js";
 export interface HostConnection {
   /** A capability-authenticated CDP endpoint exposing exactly one tab. */
   provider: { cdpUrl: string; headers?: Record<string, string> };
+  /** True as soon as the lease is revoked or teardown starts, even before close() settles.
+   * The next explicit operation replaces its stale worker before sending any code.
+   * Omit only when the adapter cannot report transport lifetime synchronously.
+   */
+  readonly closed?: boolean;
   /** Revoke input authority, disconnect and drain pending commands. Never close the page. */
   close(): Promise<void>;
 }

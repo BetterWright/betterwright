@@ -48,6 +48,10 @@ app.whenReady().then(async () => {
   cookie access are denied. There is no global debugging port.
 - After disconnect, the session still points at the closed guard, rather than
   silently falling back to direct traffic. Reconnect before reusing it online.
+- If attachment fails or the debugger detaches, the next explicit browser run
+  can reconnect after the previous connection drains. No failed action is replayed.
+  Replacing a revoked connection restarts the worker and resets its in-memory
+  snippet state; the host tab survives.
 - Downloads are denied. Popup presentation, window layout, preview bounds,
   navigation chrome and native authentication belong to the host application.
   Adopt a popup through a separate host-controlled connection and session, not
@@ -72,6 +76,12 @@ File uploads require the same exact absolute staged paths in the adapter's
 `uploadFiles` and BetterWright's `hostUploadFiles`. Symlinks, arbitrary paths and
 in-memory file payloads are rejected. Keep staged files private and immutable
 until the operation finishes.
+
+`page.pdf()` uses Electron's native printing API, including custom paper sizes,
+margins, headers, footers, tagging and outlines. PDF streams belong only to the
+leased page. At most 16 streams and 100 MiB of PDF data can remain open; closing a
+stream or disconnecting releases its retained data. Printing child targets is
+not supported.
 
 ## Credentials
 

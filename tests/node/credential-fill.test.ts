@@ -1883,6 +1883,50 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       assert.equal(discardedSandbox.ok, true, discardedSandbox.error);
     });
 
+    await t.test("aborting real browser generation preserves recovery and permits discard", async () => {
+      await visit("/signup");
+      nextPendingId = "pending-aborted-generation";
+      const controller = new AbortController();
+      const operation = bw.run(`
+        await credentials.generateAndFill({
+          username: 'aborted@example.com',
+          passwordSelector: '#signup-password',
+          matchMode: 'exact-origin',
+        });
+        await new Promise(() => {});
+      `, { signal: controller.signal, timeout: 10 });
+      let staged = false;
+      try {
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          staged = [...bw._pendingCredentialRecoveries.values()].some(
+            recovery => recovery.pendingId === "pending-aborted-generation",
+          );
+          if (staged) break;
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+      } finally { controller.abort(); }
+      const result = await operation;
+      assert.equal(staged, true, "generation must stage a credential before cancellation");
+      assert.equal(result.errorCode, "BW_ABORTED");
+      assert.equal(result.effectMayHaveCommitted, true);
+      assert.deepEqual(result.pendingCredential, {
+        pendingId: "pending-aborted-generation",
+        origin: server.origin,
+        matchMode: "exact-origin",
+        username: "aborted@example.com",
+        label: null,
+        expiresAt: "2030-01-01T00:00:00.000Z",
+      });
+      assert.ok(!JSON.stringify(result).includes(generatedSecret));
+      assert.equal(bw._pendingCredentialRecoveries.size, 0);
+      const discarded = await bw.discardGeneratedCredential({
+        pendingId: result.pendingCredential.pendingId,
+      });
+      assert.equal(discarded.ok, true, discarded.error);
+      assert.equal(pendingOrigins.has("pending-aborted-generation"), false);
+    });
+
     await t.test("fails closed before a second generation in one execution", async () => {
       await visit("/signup");
       nextPendingId = "pending-single-generation";

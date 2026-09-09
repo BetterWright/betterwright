@@ -1,12 +1,48 @@
 import { randomUUID } from "node:crypto";
-import { type WebContents, webContents } from "electron";
+import type { PrintToPDFOptions, WebContents } from "electron";
 import type { ElectronHostOptions } from "../types/electron.js";
 import { withRendererGuestFocus } from "./electron-focus.js";
 import { betterwrightExpectedInputs } from "./electron-input.js";
 import { BetterwrightKeyboardPolicy } from "./electron-keyboard-policy.js";
-import { isNumber, isString, type UntrustedValue } from "./untrusted-value.js";
+import { isBoolean, isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 type Params = Record<string, UntrustedValue>;
+const MAX_PDF_BYTES = 100 * 1024 * 1024; // Match the worker's artifact-size limit.
+const PDF_READ_BYTES = 64 * 1024;
+
+function pdfOptions(params: Params): PrintToPDFOptions {
+  const options: PrintToPDFOptions = {};
+  const booleans = ["landscape", "displayHeaderFooter", "printBackground", "preferCSSPageSize", "generateTaggedPDF", "generateDocumentOutline"];
+  const strings = ["headerTemplate", "footerTemplate", "pageRanges"];
+  const numbers = ["scale", "paperWidth", "paperHeight", "marginTop", "marginBottom", "marginLeft", "marginRight"];
+  const allowed = new Set([...booleans, ...strings, ...numbers, "transferMode"]);
+  for (const key of Object.keys(params)) {
+    if (!allowed.has(key)) throw new Error("Unsupported PDF option.");
+    if (params[key] === undefined) continue;
+    if (booleans.includes(key)) {
+      if (!isBoolean(params[key])) throw new Error("Invalid PDF option.");
+      options[key] = params[key];
+    } else if (strings.includes(key)) {
+      if (!isString(params[key])) throw new Error("Invalid PDF option.");
+      options[key] = params[key];
+    } else if (numbers.includes(key)) {
+      const value = params[key];
+      if (!isNumber(value) || !Number.isFinite(value) ||
+          (key === "scale" ? value < 0.1 || value > 2 : key.startsWith("paper") ? value <= 0 : value < 0))
+        throw new Error("Invalid PDF dimension.");
+    }
+  }
+  if (params.transferMode !== undefined && !["ReturnAsStream", "ReturnAsBase64"].includes(String(params.transferMode)))
+    throw new Error("Unsupported PDF transfer mode.");
+  // Both CDP and Electron printToPDF use inches, unlike Electron's print() API.
+  options.pageSize = { width: Number(params.paperWidth ?? 8.5), height: Number(params.paperHeight ?? 11) };
+  options.margins = {
+    top: Number(params.marginTop ?? 0.4), bottom: Number(params.marginBottom ?? 0.4),
+    left: Number(params.marginLeft ?? 0.4), right: Number(params.marginRight ?? 0.4),
+  };
+  options.scale = Number(params.scale ?? 1);
+  return options;
+}
 let nativeInputQueue: Promise<void> = Promise.resolve();
 
 function enqueueNativeInput(operation: () => Promise<UntrustedValue>): Promise<UntrustedValue> {
@@ -69,6 +105,11 @@ export class BetterwrightCdpTarget {
   private readonly pageSessions = new Set<string>();
   private readonly childSessions = new Set<string>();
   private readonly pending = new Set<Promise<UntrustedValue>>();
+  private readonly streams = new Map<string, string | undefined>();
+  private readonly pdfStreams = new Map<string, { data: Buffer; offset: number }>();
+  private pdfBytes = 0;
+  private printingPdf = false;
+  private revoked = false;
   private endLease!: () => void;
   private readonly leaseEnded = new Promise<void>((resolve) => {
     this.endLease = resolve;
@@ -90,6 +131,7 @@ export class BetterwrightCdpTarget {
     private readonly backendSessionId?: string,
     private readonly cookieImport = false,
     private readonly expectAgentInput?: ElectronHostOptions["expectAgentInput"],
+    private readonly onRevoked?: () => void,
   ) {
     if (contents.isDestroyed()) throw new Error("Browser target is unavailable.");
     if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
@@ -110,8 +152,21 @@ export class BetterwrightCdpTarget {
   }
 
   private readonly onDetach = () => {
+    if (this.revoked) return;
+    this.revoked = true;
     this.disposed = true;
-    this.emit({ method: "Target.detachedFromTarget", params: { sessionId: this.pageSession } });
+    this.endLease();
+    this.streams.clear();
+    this.pdfStreams.clear();
+    this.pdfBytes = 0;
+    this.contents.debugger.removeListener("message", this.onMessage);
+    this.contents.debugger.removeListener("detach", this.onDetach);
+    try {
+      for (const sessionId of this.pageSessions)
+        this.emit({ method: "Target.detachedFromTarget", params: { sessionId, targetId: this.targetId } });
+    } finally {
+      this.onRevoked?.();
+    }
   };
 
   private readonly onMessage = (
@@ -123,6 +178,10 @@ export class BetterwrightCdpTarget {
     if (this.disposed) return;
     this.diagnostic?.(method, "received");
     if (this.backendSessionId) {
+      if (!sessionId && method === "Target.detachedFromTarget" && params.sessionId === this.backendSessionId) {
+        this.onDetach();
+        return;
+      }
       if (sessionId === this.backendSessionId) sessionId = undefined;
       else if (!sessionId) return;
     }
@@ -166,7 +225,20 @@ export class BetterwrightCdpTarget {
   private send(method: string, params: Params, sessionId?: string): Promise<UntrustedValue> {
     if (this.disposed) return Promise.reject(new Error("Browser target lease ended."));
     const operation = Promise.race([
-      this.contents.debugger.sendCommand(method, params, sessionId ?? this.backendSessionId),
+      this.contents.debugger.sendCommand(method, params, sessionId ?? this.backendSessionId).then(async (result) => {
+        // Only handles issued by these authorized commands gain IO authority.
+        const handle = method === "Network.loadNetworkResource"
+          ? untrustedField(untrustedField(result, "resource"), "stream")
+          : method === "Fetch.takeResponseBodyAsStream"
+            ? untrustedField(result, "stream") : undefined;
+        if (isString(handle) && handle) {
+          const owner = sessionId ?? this.backendSessionId;
+          if (this.disposed) {
+            await this.contents.debugger.sendCommand("IO.close", { handle }, owner).catch(() => {});
+          } else this.streams.set(handle, owner);
+        }
+        return result;
+      }),
       this.leaseEnded.then(() => {
         throw new Error("Browser target lease ended.");
       }),
@@ -177,6 +249,28 @@ export class BetterwrightCdpTarget {
       () => this.pending.delete(operation),
     );
     return operation;
+  }
+
+  private async printPdf(params: Params): Promise<UntrustedValue> {
+    const options = pdfOptions(params);
+    if (this.printingPdf || this.pdfStreams.size >= 16) throw new Error("PDF capacity exceeded.");
+    this.printingPdf = true;
+    const printing = Promise.resolve().then(() => {
+      if (this.disposed || this.contents.isDestroyed()) throw new Error("Browser target lease ended.");
+      return this.contents.printToPDF(options);
+    }).then(data => {
+      if (this.disposed) throw new Error("Browser target lease ended.");
+      if (data.length > MAX_PDF_BYTES - this.pdfBytes) throw new Error("PDF capacity exceeded.");
+      if (params.transferMode !== "ReturnAsStream") return { data: data.toString("base64") };
+      const stream = `betterwright-pdf-${randomUUID()}`;
+      this.pdfStreams.set(stream, { data, offset: 0 });
+      this.pdfBytes += data.length;
+      return { data: "", stream };
+    }).finally(() => { this.printingPdf = false; });
+    const operation = Promise.race([printing, this.leaseEnded.then(() => { throw new Error("Browser target lease ended."); })]);
+    this.pending.add(operation);
+    try { return await operation; }
+    finally { this.pending.delete(operation); }
   }
 
   private async command(method: string, params: Params, sessionId?: string): Promise<UntrustedValue> {
@@ -234,6 +328,36 @@ export class BetterwrightCdpTarget {
       }
       throw new Error("Browser-wide command denied.");
     }
+    if (method === "Page.printToPDF") {
+      if (this.childSessions.has(sessionId)) throw new Error("Printing a child target is unsupported.");
+      return this.printPdf(params);
+    }
+    if (method === "IO.read" || method === "IO.close") {
+      const pdf = isString(params.handle) ? this.pdfStreams.get(params.handle) : undefined;
+      if (pdf) {
+        if (this.childSessions.has(sessionId)) throw new Error("Unknown target stream.");
+        if (method === "IO.close") {
+          this.pdfStreams.delete(String(params.handle));
+          this.pdfBytes -= pdf.data.length;
+          return {};
+        }
+        const offset = params.offset ?? pdf.offset;
+        const size = params.size ?? PDF_READ_BYTES;
+        if (!isNumber(offset) || !Number.isSafeInteger(offset) || offset < 0 ||
+            !isNumber(size) || !Number.isSafeInteger(size) || size <= 0)
+          throw new Error("Invalid stream read.");
+        const start = Math.min(offset, pdf.data.length);
+        const end = Math.min(start + Math.min(size, PDF_READ_BYTES), pdf.data.length);
+        pdf.offset = end;
+        return { data: pdf.data.subarray(start, end).toString("base64"), base64Encoded: true, eof: end === pdf.data.length };
+      }
+      const owner = this.childSessions.has(sessionId) ? sessionId : this.backendSessionId;
+      if (!isString(params.handle) || !this.streams.has(params.handle) || this.streams.get(params.handle) !== owner)
+        throw new Error("Unknown target stream.");
+      const result = await this.send(method, params, owner);
+      if (method === "IO.close") this.streams.delete(params.handle);
+      return result;
+    }
     if (method === "Target.setAutoAttach") {
       return this.send(
         method,
@@ -277,7 +401,9 @@ export class BetterwrightCdpTarget {
       const releases = betterwrightExpectedInputs(method, params).map((input) =>
         this.expectAgentInput?.(input),
       );
-      const previousFocus = nativeInput ? webContents.getFocusedWebContents() : null;
+      // Resolve Electron only for native input; protocol-only tests need no Electron process.
+      const webContents = nativeInput ? (await import("electron")).webContents : undefined;
+      const previousFocus = webContents?.getFocusedWebContents() ?? null;
       try {
         // Native focus is shared across tabs; DOM focus alone cannot route text
         // to an offscreen preview. Keep focus and dispatch in the same lease.
@@ -349,11 +475,15 @@ export class BetterwrightCdpTarget {
 
   private async drain(cancel: boolean): Promise<void> {
     this.disposed = true;
+    this.pdfStreams.clear();
+    this.pdfBytes = 0;
     this.contents.debugger.removeListener("message", this.onMessage);
     this.contents.debugger.removeListener("detach", this.onDetach);
-    let leaseRevoked = this.contents.isDestroyed() || !this.contents.debugger.isAttached();
-    if (!this.contents.isDestroyed() && this.contents.debugger.isAttached()) {
+    let leaseRevoked = this.revoked || this.contents.isDestroyed() || !this.contents.debugger.isAttached();
+    if (!leaseRevoked) {
       await Promise.allSettled([
+        ...Array.from(this.streams, ([handle, owner]) =>
+          this.contents.debugger.sendCommand("IO.close", { handle }, owner)),
         ...(cancel
           ? [
               this.contents.debugger.sendCommand(
@@ -389,6 +519,7 @@ export class BetterwrightCdpTarget {
     if (leaseRevoked || this.contents.isDestroyed() || !this.contents.debugger.isAttached())
       this.endLease();
     await Promise.allSettled([...this.pending]);
+    this.streams.clear();
     // The manager, annotations and diagnostics share this debugger. Never detach or close it here.
   }
 }
