@@ -9,6 +9,23 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- Default sandbox navigation to `domcontentloaded` so slow subresources do not
+  hold up agent actions. Explicit load modes and timeouts remain supported;
+  wait on the relevant locator before reading dynamic page or frame state.
+- Limit automatic UI discovery to 2,400 JSON characters and omit it when a
+  snippet returns the full `betterwright-ui/1` directory itself.
+  `controls.directory()` retains the full discovery limits and option lists.
+- Print compact JSON for piped `betterwright run` output without dropping any
+  fields. Terminal output stays indented; `--pretty` also indents piped output.
+
+### Added
+
+- Per-call `automaticUI: false` / `run --no-auto-ui` for agents returning scoped
+  page observations. It omits successful automatic UI catalogs while preserving
+  on-demand discovery, first-party workflows, failure evidence, and warnings.
+
 ### Fixed
 
 - Align setup, security, browser, SDK, and agent documentation with current

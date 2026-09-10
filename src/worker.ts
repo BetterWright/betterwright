@@ -17,6 +17,7 @@ import vm from "node:vm";
 import type { Page } from "playwright-core";
 import { getDomain } from "tldts";
 import type { RecordingStatus } from "../types/recording.js";
+import { compactAutomaticUI, hasReturnedUIDirectory } from "./automatic-ui.js";
 import {
   cookieSyncConsentTarget,
   redactProviderSecrets,
@@ -116,6 +117,7 @@ import {
 import { buildLaunchIdentityPlan, resolveGeoIdentity } from "./launch-identity.js";
 import { createLiveViewServer } from "./live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.js";
+import { applyNavigationDefaults, navigationOptions } from "./navigation-defaults.js";
 import {
   createSnippetPageEvents,
   isSnippetPageEventMethod,
@@ -3007,6 +3009,7 @@ function wrap(value, realm) {
         const kind = objectKind(value);
         validateMethodArguments(property, prepared);
         validateMethodPaths(kind, property, prepared);
+        applyNavigationDefaults(kind, property, prepared);
         let result;
         if (kind === "Page" && property === "close") {
           result = stopPageRecording(value).then(() => member.apply(value, prepared));
@@ -4780,7 +4783,7 @@ async function unannouncedWebAgentsDirectory(session) {
   return discovered.manifest ? publicWebAgentsManifest(discovered.manifest) : null;
 }
 
-async function unannouncedUIDirectory(session) {
+async function unannouncedUIDirectory(session, result) {
   const page = session.pages.get(session.currentId);
   if (!page || page.isClosed()) return null;
   let key;
@@ -4795,8 +4798,9 @@ async function unannouncedUIDirectory(session) {
   const discovered = pageWebAgentsDiscovery.get(page);
   if (!discovered || discovered.manifest) return null;
   session.uiDirectoryAnnouncedOrigins.add(key);
+  if (hasReturnedUIDirectory(result)) return null;
   const directory = await inspectActionDirectory(page);
-  return directory.controls.length ? directory : null;
+  return directory.controls.length ? compactAutomaticUI(directory) : null;
 }
 
 async function inspectSiteAssets(page) {
@@ -4888,7 +4892,7 @@ function buildSandbox(session, consoleMessages, execution) {
     const page = adoptPage(rawPage, session.id);
     if (url) {
       assertModelNavigationUrl(url);
-      await page.goto(String(url), options);
+      await page.goto(String(url), navigationOptions(options));
     }
     return wrap(page, realm);
   });
@@ -7904,9 +7908,9 @@ async function execute(message) {
     const summarized = await summarize(result);
     const challenges = await detectSessionChallenges(session);
     const webagents = await unannouncedWebAgentsDirectory(session).catch(() => null);
-    const ui = webagents
+    const ui = webagents || message.automaticUI === false
       ? null
-      : await unannouncedUIDirectory(session).catch(() => null);
+      : await unannouncedUIDirectory(session, summarized).catch(() => null);
     await enforceArtifactQuota(session);
 
     let publicResult = summarized;

@@ -37,6 +37,28 @@ test("the encrypted local credential vault is enabled by default and can be repl
   }
 });
 
+test("automatic UI is a validated per-call option and does not become a session default", async () => {
+  const browser = new BetterWright({ home: makeTempDir("betterwright-ui-option-"), vault: false });
+  const messages = [];
+  browser._prepare = async () => ({});
+  browser._dispatch = async (message) => {
+    messages.push(message);
+    return { ok: true, result: "ready" };
+  };
+  try {
+    await browser.run("return 'ready'", { automaticUI: false });
+    await browser.run("return 'ready'");
+    assert.equal(messages[0].automaticUI, false);
+    assert.equal(messages[1].automaticUI, true);
+    const invalid = await browser.run("return 'ready'", { automaticUI: "false" });
+    assert.equal(invalid.ok, false);
+    assert.match(invalid.error, /automaticUI must be a boolean/);
+    assert.equal(messages.length, 2);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("download approval is required by default and configurable", async () => {
   const guarded = new BetterWright();
   const allowed = new BetterWright({ downloadPolicy: "allow" });

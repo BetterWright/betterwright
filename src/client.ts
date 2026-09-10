@@ -1142,7 +1142,7 @@ export class BetterWright {
   /**
    * Execute one Playwright snippet and resolve with a result object.
    * @param {string} code asynchronous Playwright JavaScript
-   * @param {object} [options] { session, note, timeout, approvedDownloads }
+   * @param {object} [options] { session, note, timeout, approvedDownloads, automaticUI }
    */
   run(code, options: any = {}) {
     if (this.hostTarget) return this._enqueueExclusive(() => {
@@ -1403,6 +1403,8 @@ export class BetterWright {
     if (options.signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
     if (!isString(code) || !code.trim())
       return { ok: false, error: "code must be a non-empty string" };
+    if (options.automaticUI !== undefined && !isBoolean(options.automaticUI))
+      return { ok: false, error: "automaticUI must be a boolean" };
     const timeoutSeconds = Math.max(Number(options.timeout) || this.defaultTimeout, 5);
     const config = await this._prepare();
     return this._dispatch(
@@ -1411,6 +1413,7 @@ export class BetterWright {
         sessionId: String(options.session || "default"),
         code,
         approvedDownloads: options.approvedDownloads === true,
+        automaticUI: options.automaticUI !== false,
         timeoutMs: timeoutSeconds * 1000,
         config,
       },

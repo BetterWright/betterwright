@@ -236,6 +236,8 @@ Options:
   --no-ad-block           disable blocking, overriding the environment
   --headed               show the browser window
   --close                close the session after this call
+  --pretty               indent JSON even when stdout is piped (terminals indent by default)
+  --no-auto-ui           omit automatic UI catalogs on successful calls; discovery remains on demand
   --approve-downloads    allow downloads for this one run
   --no-daemon            do not use the background session daemon
   --stealth              isolated-world driver (needs patchright-core)
