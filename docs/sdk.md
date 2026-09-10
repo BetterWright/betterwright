@@ -29,6 +29,9 @@ const title = await withBrowser({ headless: false }, async (bw) => {
 
   const result = await bw.run<string>("return page.title()");
   if (!result.ok) throw new BrowserError(result.error);
+  if (typeof result.result !== "string") {
+    throw new BrowserError(`Title output was truncated; inspect ${result.result.fullOutputPath}`);
+  }
 
   await bw.run("return screenshot({ kind: 'proof', name: 'example-home' })");
   return result.result;
@@ -40,7 +43,8 @@ console.log(title);
 `withBrowser` constructs a `BetterWright`, awaits your function, and closes the
 client in a `finally`, so the worker process and the browser are released even
 when the function throws. It resolves with whatever your function returned.
-Pass the callback alone, `withBrowser(fn)`, to take the default options.
+The callback may be synchronous or asynchronous. Pass the callback alone,
+`withBrowser(fn)`, to take the default options.
 
 The string each `run()` call takes is Playwright code, executed inside the
 worker sandbox where `page`, `snapshot`, `screenshot`, `human`, and
@@ -57,6 +61,9 @@ Browser client:
 | `BetterWright` | The client itself: `run()`, sessions, live view, downloads, credential filling. Full reference in [javascript.md](javascript.md). |
 | `BrowserError` | The error type to throw when a result envelope comes back with `ok: false`. |
 | `validateCredentialMatchMode(value)` | Returns the value when it is one of the four credential URL scopes, and throws a `TypeError` otherwise. |
+| `listCookieSourceBrowsers()` | List local browser sources supported by Cookie Sync. |
+| `listCookieSourceProfiles(browser, options?)` | List profiles for one Cookie Sync source. See [Cookie Sync](cookie-sync.md). |
+| `agentSystemPrompt(guardrails?)` | Operator guidance and optional behavioral limits for an external agent. See [agent-prompt.md](agent-prompt.md). |
 
 Network policy:
 
@@ -128,13 +135,21 @@ an exception.
   timeout, 15 s by default. Set `BETTERWRIGHT_WORKER_START_TIMEOUT_MS` higher
   on a cold disk or a small ARM board; the hung process is killed either way.
 
-**Timeouts restart the worker, not the browser.** Each call takes a `timeout`
-in seconds (default `defaultTimeout`, 30). When it expires the worker is
-restarted, the call resolves `{ ok: false, error: "Execution timed out …" }`,
-and the next call spawns a replacement. Calls from other sessions that land
-during that restart wait for the replacement; they are not told the browser
-has been closed, because it has not. The browser profile, cookies, and
-logins are on disk and survive every restart.
+**Timeouts restart the worker and its managed browser context, not the client.**
+Each call takes a `timeout` in seconds (default `defaultTimeout`, 30; minimum 5).
+On expiry the call resolves `{ ok: false, error }` and the worker is torn down.
+The usual worker error is `Playwright code timed out after …ms`; the client's
+fallback watchdog reports `Execution timed out after …s`. Do not match only one
+literal error message.
+
+The `BetterWright` client remains reusable: calls arriving during teardown wait
+for the replacement worker. Live page handles and in-memory session `state` are
+lost, while the persistent profile's on-disk cookies and logins remain available
+to the replacement browser. Externally owned browser targets have their own
+lifetime rules; the host-owned Electron tab is not destroyed by a worker restart.
+After an interrupted action, inspect application state before deciding whether
+it is safe to replay it. See [cancellation](javascript.md#cancellation) for the
+related `run(code, { signal })` contract.
 
 **Provider API calls are bounded.** A cloud-provider launch and every
 `createProviderSession` / `listProviderSessions` / `getProviderSession` /
@@ -149,5 +164,5 @@ non-object options bag is a `TypeError` before any client exists.
 
 ## Runnable example
 
-[examples/typescript/sdk.ts](../examples/typescript/sdk.ts) is the code above as
-a file you can run with `node examples/typescript/sdk.ts`.
+[examples/typescript/sdk.ts](../examples/typescript/sdk.ts) demonstrates the same
+workflow as a file you can run with `node examples/typescript/sdk.ts`.

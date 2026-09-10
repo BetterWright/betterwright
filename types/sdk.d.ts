@@ -92,6 +92,6 @@ export function stopProviderSession(
  */
 export function withBrowser<T>(
   options: BetterWrightOptions,
-  fn: (bw: BetterWright) => Promise<T>,
+  fn: (bw: BetterWright) => T | PromiseLike<T>,
 ): Promise<T>;
-export function withBrowser<T>(fn: (bw: BetterWright) => Promise<T>): Promise<T>;
+export function withBrowser<T>(fn: (bw: BetterWright) => T | PromiseLike<T>): Promise<T>;

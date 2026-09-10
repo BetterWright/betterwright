@@ -170,8 +170,11 @@ stays populated without any agent code calling `save`:
   login, an in-page banner asks "Save password?" with **Save**, **Not now**,
   and **Never for this site**. Choosing an existing username's account offers
   "Update saved password?" instead. "Never" is remembered per origin in
-  `$BETTERWRIGHT_HOME/browser/save-prompt.json` (owner-only). In headless
-  sessions there is nobody to ask, so user-driven captures are dropped.
+  `$BETTERWRIGHT_HOME/browser/save-prompt.json` (owner-only). With the default
+  human-autosave-off setting, headless sessions have no save prompt and drop
+  user-driven captures. Enabling both `offer-save` and `autosave` saves accepted
+  human logins silently, including headless handoffs; see
+  [master password and lock state](#master-password-and-lock-state).
 
 Capture is implemented by a worker-injected sensor running in a dedicated CDP
 isolated world per frame (`src/vault-sensor.ts` + `src/vault-capture.ts`),

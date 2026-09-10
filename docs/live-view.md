@@ -90,12 +90,14 @@ you'd do in normal Chrome chrome, you can do to the streamed session:
 
 Every control is gated exactly like mouse/keyboard input: available when the
 view is interactive or a handoff is active, refused server-side on watch-only
-views. Viewer-driven navigation flows through the SOCKS policy proxy and every
-other guard, the same as agent navigation.
+views. Viewer-driven navigation uses the same guards as agent navigation.
 
-Human browser input goes through every existing guard: the SOCKS policy proxy,
-download limits, and credential capture treat takeover navigation exactly like
-model-driven navigation. **Takeover does not bypass network policy.** Chat is
+Human browser input goes through the existing guards: download limits and
+credential capture treat takeover navigation like model-driven navigation.
+Locally launched browsers and guarded Electron attachments also retain the
+SOCKS policy proxy; ordinary remote CDP browsers have the same
+[transport limitations](browser-providers.md#what-changes-with-a-remote-browser)
+during takeover as during agent use. **Takeover does not bypass network policy.** Chat is
 allowed even in watch-only mode (watch-only only blocks mouse/keyboard into the
 page).
 
@@ -190,17 +192,21 @@ Unlike cloud debug URLs, the self-hosted viewer is authenticated by default:
   SHA-256 digest; the session is a random 192-bit id in an `HttpOnly;
   SameSite=Strict` cookie valid 12 hours; failed logins lock the source
   address out after 10 attempts per 15 minutes; sessions die with the server.
-  The page is plain http — rely on the network layer (LAN, tailnet, or an
-  https tunnel) for transport privacy, which every preset provides.
+  The page and WebSocket use plain HTTP/WS. The `lan` preset provides
+  reachability, not encryption: the token, password, and browser stream travel
+  unencrypted on that network. Use Tailscale or an HTTPS tunnel when transport
+  confidentiality is required.
 - **Server-side watch-only.** `--watch-only` (or `interactive: false`) is
   enforced in the worker; the browser-side toggle is a convenience, never an
   authority. Handoffs force interactive on for their duration only.
 - **Origin check + headers.** WebSocket upgrades with a mismatched `Origin`
   are dropped; the page is served with `Cache-Control: no-store`,
   `Referrer-Policy: no-referrer`, and `X-Frame-Options: DENY`.
-- **Sealed from the model.** Nothing live-view-related exists in the code
-  sandbox. The model can *request* a handoff; it cannot start servers, read
-  the token, or synthesize input.
+- **Sealed from snippet code.** Live-view controls and tokens are absent from
+  snippet globals. Trusted host tools such as `live_view` and `browser_handoff`
+  can start the viewer and intentionally return its token-bearing URL to the
+  model for relay to the user. That URL can therefore enter model context;
+  treat tool outputs and transcripts containing it as sensitive.
 
 ## Options
 
@@ -246,10 +252,15 @@ Unlike cloud debug URLs, the self-hosted viewer is authenticated by default:
   auto-handled by the worker). If a step needs a file picker, use the
   download/upload APIs instead.
 - Credentials you type manually during a handoff are treated as *manual*
-  logins by the capture engine: in headless sessions the save prompt cannot
-  render, so they are not captured into the vault. The characters you type are
-  visible as pixels in your own viewer stream (and nowhere else — frames never
-  enter the model transcript).
+  logins by the capture engine. With the default human-autosave-off setting,
+  headless sessions cannot show the save prompt and do not save these logins.
+  Enabling both `vault settings offer-save on` and `vault settings autosave on`
+  allows accepted human logins to save silently, including headless handoffs;
+  see [credential settings](credentials.md#master-password-and-lock-state).
+  The viewer stream is not automatically attached to model results. Ordinary
+  screenshot and DOM-reading capabilities remain available, subject to their
+  usual redaction limits; the stream does not make page pixels or data private
+  from those capabilities.
 - One page streams full-res at a time. When more than one tab is open, the
   tab strip shows a live low-res thumbnail of every tab (refreshed every few
   seconds, re-sent only when it changes); click a card to switch the main

@@ -6,17 +6,18 @@ changes and why it lives in the browser source rather than in the JS layer.
 Install, discovery, and the runtime options are in
 [chromium-fork.md](chromium-fork.md).
 
-`src/fork-identity.ts` masks the user agent, UA-CH, `navigator.platform`, and
-screen geometry through launch flags and CDP emulation. The surfaces below are
-reachable only from Chromium source, so the binary stays coherent where CDP
-cannot follow: service workers and other non-page contexts, WebGL, canvas
-readback, audio rendering, and font enumeration.
+The current launcher uses `src/launch-identity.ts` and defaults to the host's
+real operating system. It does not install the former `src/fork-identity.ts`
+CDP masking layer or configure a macOS font collection on Linux. Native patch
+behavior still covers non-page contexts, WebGL, canvas readback, and audio.
 
-Every patch is gated on `--fingerprint-platform=macos`, the flag the launcher
-passes, and per-profile variation is keyed to `--fingerprint=<seed>`. The masked
-values are the ones genuine Google Chrome 151.0.7922.108 reports on Apple
-silicon under macOS 26.6 — the same table `src/fork-identity.ts` applies from
-the launch side, so both layers describe one machine rather than two.
+The aggregate [Chromium patch](../patches/chromium-151/chromium-betterchromium-151.patch)
+retains optional macOS-mask hunks gated on `--fingerprint-platform=macos`.
+Their reference values below came from Google Chrome 151.0.7922.108 on Apple
+silicon under macOS 26.6; they are not the default Linux identity. Other hunks
+apply to Linux or to fingerprint seeds independently of that mask. Per-profile
+variation is keyed to `--fingerprint=<seed>`. The font and performance
+measurements below are historical build evidence, not current-release results.
 
 ## 1. Platform identity at the source
 
@@ -155,50 +156,58 @@ A real display stack completes the picture: under a window manager and panel
 that publish `_NET_WORKAREA`, `screen.availHeight < screen.height`, so
 `noTaskbar` reads false as it would on a physical desktop.
 
-## 8. Fonts
+## 8. Historical macOS-metric font setup
 
-Font metrics are the strongest Linux-to-macOS tell, and nothing in the JS layer
-can fake them:
+The earlier Linux-to-macOS masking experiment also used a local macOS-metric
+font collection. This is not part of the current launcher or the public
+artifact:
 
 - `research/assemble-mac-fonts.sh`, run on macOS, copies 36 mac-metric fonts
   (Helvetica and Helvetica Neue, the Arial and Times New Roman sets, Courier
   New, Georgia, Verdana, Trebuchet, Menlo, Monaco, SFNS, Palatino, Futura,
   Avenir Next, Apple Color Emoji, …) into `artifacts/linux-x64/fonts/ttf`.
   Apple-licensed fonts are not redistributed in the public artifact.
-- The worker writes an absolute-path `fonts.conf` into the profile runtime
-  directory and launches the fork with `FONTCONFIG_FILE` pointing at it
-  (`prepareForkFontsConfig` in `src/fork-identity.ts`, gated on the macOS mask).
+- The former worker wrote an absolute-path `fonts.conf` into the profile
+  runtime directory and set `FONTCONFIG_FILE` through `prepareForkFontsConfig`
+  in the removed `src/fork-identity.ts`. Current launches do not do this.
 
-With that set in place, `fc-list` enumerates 470 faces and `measureText` widths
-differ per family (Helvetica Neue 291, Menlo 247, Georgia 307, Palatino 307,
-Avenir Next 304) instead of collapsing onto a single fallback.
+With that set in place, the recorded experiment enumerated 470 faces with
+`fc-list`, and `measureText` widths differed per family (Helvetica Neue 291,
+Menlo 247, Georgia 307, Palatino 307, Avenir Next 304) instead of collapsing
+onto a single fallback. These are measurements of that local font set.
 
 ## 9. Linux font-data file sharing
 
-[`patches/chromium-151/font-data-file-sharing.patch`](../patches/chromium-151/font-data-file-sharing.patch)
-applies from the Chromium source root. It was validated against Chromium
+The FontDataService hunks now live in
+[`patches/chromium-151/chromium-betterchromium-151.patch`](../patches/chromium-151/chromium-betterchromium-151.patch),
+which applies from the Chromium source root; there is no separate Chromium 151
+font-data patch file. The earlier standalone change was validated against Chromium
 `e69b30bba288603e514cffb4c79c359cac68e923` and Skia
 `bee4c917220040e147f14964635ff92ce6c5a3f6`.
 
-Upstream, `getResourceName()` is unimplemented on Linux and ChromeOS, so
-`FontDataService` always falls back to copying a complete font into an anonymous
-shared memory region. The patch lets Skia's FontConfig-backed typefaces expose
-their backing file identity, so the service can hand renderers a read-only font
-file handle instead. TTC indices, variation coordinates, synthetic styles, the
-fallback for typefaces that are not file-backed, and renderer-side per-file
-mapping are all unchanged. The patch also promotes the service's unit tests to a
-standalone `font_data_service_unittests` target and moves the Linux
-expectations from the memory-region fallback to the file-handle path, while the
-explicit memory-fallback tests keep asserting valid shared regions.
+The aggregate removes the service's assertion that Linux/ChromeOS typefaces
+cannot expose a resource path. When Skia supplies a backing-file identity,
+`FontDataService` can hand renderers a read-only file handle rather than copying
+the complete font into an anonymous shared memory region. TTC indices,
+variation coordinates, synthetic styles, the memory fallback, and renderer-side
+per-file mapping are unchanged. The aggregate also adds a standalone
+`font_data_service_unittests` target and changes Linux test expectations to
+the file-handle path while retaining explicit memory-fallback tests.
 
-This matters most with the bundled mac-metric collection above, where the old
-fallback held large font mappings alongside deleted `/tmp/.org.chromium.*`
-copies.
+The earlier standalone patch also implemented the backing-file identity in
+Skia's FontConfig typefaces. Those Skia hunks are not in the current Chromium
+151 aggregate; applying its service-side changes alone does not establish that
+Skia supplies the path.
+
+The recorded memory benefit was greatest with the historical local mac-metric
+collection above, where the old fallback held large font mappings alongside
+deleted `/tmp/.org.chromium.*` copies. That collection is not bundled publicly.
 
 ## 10. Linux renderer soft limit
 
-[`patches/chromium-151/renderer-process-soft-limit.patch`](../patches/chromium-151/renderer-process-soft-limit.patch)
-applies from the Chromium source root and makes four the Linux fork's default
+The renderer-limit hunk in
+[`patches/chromium-151/chromium-betterchromium-151.patch`](../patches/chromium-151/chromium-betterchromium-151.patch)
+makes four the Linux binary's native default
 **soft** renderer-process limit, keeping `--renderer-process-limit` as an
 explicit override. Chromium's memory-derived default allows dozens of renderers
 in a small sandbox, duplicating substantial same-site V8 and Blink state without
@@ -221,12 +230,19 @@ fate. Chromium's own
 `SitePerProcessBrowserTest.MainFrameProcessReuseWhenOverLimit` and
 `SubframeProcessReuseWhenOverLimit` cover that invariant.
 
-On the compiled Linux artifact, summed Chromium PSS fell 29.62%, 29.81%,
-25.96%, and 28.50% at 1, 5, 10, and 20 same-site tabs against the PGO control.
+In the recorded four-renderer compiled-artifact comparison, summed Chromium PSS
+fell 29.62%, 29.81%, 25.96%, and 28.50% at 1, 5, 10, and 20 same-site tabs
+against the PGO control.
 Concurrent deterministic throughput moved between +0.55% and +1.42%, and live
-CPU-seconds per 1,000 operations improved between 1.55% and 8.67%. On a host
-where same-site renderer parallelism matters more than memory, raise the limit
-with `BETTERWRIGHT_CHROMIUM_ARGS=--renderer-process-limit=N`.
+CPU-seconds per 1,000 operations improved between 1.55% and 8.67%. These are
+historical measurements, not measurements of the current managed launch.
+
+BetterWright now passes `--renderer-process-limit=2` from
+`src/browser-runtime.ts`, overriding that native default. Caller switches that
+collide with a managed switch are ignored with a warning, so
+`BETTERWRIGHT_CHROMIUM_ARGS=--renderer-process-limit=N` cannot raise the limit
+for a managed launch. The current two-renderer limit remains soft: site
+isolation can still require additional processes.
 
 ## 11. Build flags
 
@@ -235,15 +251,15 @@ with `BETTERWRIGHT_CHROMIUM_ARGS=--renderer-process-limit=N`.
 
 ## Coherence with egress
 
-The patch set makes the binary self-consistent; it cannot make the *session*
-consistent. A headless Linux fork behind residential egress returns a real
-Google SERP for a query a genuine Mac passes only once timezone and locale match
-the egress IP (`timezone: "Asia/Singapore"` and `locale: "en-US"` for a
-Singapore exit, or `geoip: true` with an upstream proxy). A UTC timezone paired
-with a residential exit in another region is a coherence break on its own,
-whatever the rest of the surfaces report.
+The patch set cannot guarantee session acceptance. In the earlier recorded
+egress experiment, the headless Linux fork returned a Google SERP only after
+timezone and locale matched the exit IP (`timezone: "Asia/Singapore"` and
+`locale: "en-US"` for that Singapore exit). This is historical evidence, not a
+current search workflow or an acceptance guarantee. Configure geography for
+the actual exit, or use `geoip: true` with an upstream proxy; no region is the
+default for every session.
 
-`research/stealth-report.js` inspects a built artifact — roughly 30 local surface
+`research/stealth-report.ts` inspects a built artifact — roughly 30 local surface
 checks against stock-Chrome behavior, plus the live score endpoints described in
 [launch-identity.md](launch-identity.md#verification):
 

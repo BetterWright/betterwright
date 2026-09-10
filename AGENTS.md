@@ -6,7 +6,7 @@ because they are enforced by code, not convention.
 
 ## Commands
 
-- `bun run lint` — biome lint rules. The formatter is off deliberately (see
+- `bun run lint` — Biome and Oxlint rules. The formatter is off deliberately (see
   biome.jsonc); match the hand style recorded in .editorconfig.
 - `bun run typecheck` — TypeScript 7 checks, without emitting, the runtime and
   CLI (`tsconfig.json`), the build tooling (`tsconfig.tools.json`), and the
@@ -41,11 +41,14 @@ because they are enforced by code, not convention.
 
 ## Invariants
 
-- **Every browser connection stays on the guard proxy.** Chromium is pointed
-  at the worker's SOCKS guard (`src/guard-proxy.ts`) on the command line so
-  even traffic that bypasses Playwright routing is policy-checked. The network
-  floor is the security boundary (SECURITY.md) — never add a launch path or
-  transport that skips it.
+- **Locally launched browsers and Electron attachments stay on the guard
+  proxy.** Chromium launch flags and Electron session proxy settings point at
+  the worker's SOCKS guard (`src/guard-proxy.ts`), so traffic that bypasses
+  Playwright routing is still policy-checked. Never add a local launch or
+  Electron transport that skips it. Ordinary remote CDP/provider browsers are
+  the explicit exception: their traffic is outside this guard, and launch
+  warnings and documentation must preserve that limitation. See SECURITY.md
+  and docs/browser-providers.md for the boundary.
 - **Secrets never enter the model sandbox.** The vault fills credentials via
   trusted input without returning values to model code, and handled secrets
   are redacted from every result envelope. Any new output channel must go

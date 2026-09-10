@@ -358,7 +358,11 @@ results hint at packs matching the open page; this is how you read one yourself.
   mcp: `Usage: betterwright mcp [--check] [--ad-block | --no-ad-block]
 
 Serve BetterWright over the Model Context Protocol on stdio. Exposes browser,
-browser_login, browser_download, browser_handoff, and browser_doctor.
+browser_batch, browser_download, browser_record, browser_handoff, and
+browser_doctor, plus browser_login when the credential vault is enabled.
+
+browser_batch runs guarded UI batches (docs/browser-api.md).
+browser_record controls local video recording (docs/recording.md).
 
   --check   verify the server can start, then exit — use this to debug a
             client that shows no BetterWright tools
