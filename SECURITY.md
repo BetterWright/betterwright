@@ -4,9 +4,14 @@ BetterWright hands a browser to automated, sometimes model-authored, code. Its
 threat model and the controls that enforce it are documented in
 [docs/architecture.md](docs/architecture.md#security-model). In short:
 
-- **The network floor** (metadata endpoints and private networks blocked at the
-  resolver, transport proxy, and policy layers) is the real boundary and fails
-  closed.
+- **The network floor** is the real boundary for locally launched browsers and
+  guarded Electron attachments and fails closed. Cloud metadata is always
+  blocked there; private networks and loopback are allowed by default. Set both
+  `allowPrivateNetwork: false` and `allowLoopback: false` to block those too.
+  Ordinary remote CDP/provider browsers are outside the local transport guard:
+  supported Playwright routing checks still apply, but the transport and
+  DNS-rebinding guarantees do not. See [provider boundaries](docs/browser-providers.md#what-changes-with-a-remote-browser)
+  and [Electron network safety](docs/electron-host.md#ownership-and-network-safety).
 - **The sandbox** removes the escape-hatch APIs from model code as defense in
   depth. It is not, and does not claim to be, a `node:vm` security boundary.
 - **The credential vault** encrypts records at rest, URL-gates login lookup,

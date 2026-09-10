@@ -139,9 +139,11 @@ betterwright repl < steps.txt
 
 Semantics the skill already explains to the agent:
 
-- Logins, cookies, and the browser profile persist across **every** invocation.
-  Open tabs and the in-memory `state` object persist only within one `repl`
-  session; each `run` starts on a fresh tab.
+- The profile preserves cookies and logins. By default, `run`, `repl`, and
+  `exec` share a daemon that preserves tabs and the in-memory `state` object
+  for the same named session. Closing the session, its idle TTL, or a worker
+  restart ends that live state. `--no-daemon` and a warned one-shot fallback
+  do not preserve tabs between invocations. See [sessions](docs/sessions.md).
 - Longer snippets come from a file (`betterwright run snippet.js`) or stdin
   (`betterwright run -`).
 - Screenshots land in the JSON `artifacts` list as file paths; the agent opens
@@ -166,7 +168,7 @@ For a published package:
 
 ```bash
 pi install npm:betterwright
-npx -y betterwright setup
+bunx betterwright setup
 pi
 ```
 
@@ -206,9 +208,11 @@ keep download approval and network policy under trusted host control. Then do
 ## §3 — MCP client
 
 If the host is an MCP client and you prefer a first-class tool over the CLI,
-BetterWright ships an MCP server that exposes `browser`, `browser_download`,
-`browser_handoff`, and `browser_doctor`, plus `browser_login` when the
-credential vault is enabled. `browser_download` is the autonomous download
+BetterWright ships an MCP server that exposes `browser`, `browser_batch`,
+`browser_download`, `browser_record`, `browser_handoff`, and `browser_doctor`,
+plus `browser_login` when the credential vault is enabled. `browser_batch`
+runs [guarded UI batches](docs/browser-api.md); `browser_record` controls
+[local video recording](docs/recording.md). `browser_download` is the autonomous download
 tool: calling it grants that one run permission to save a remote file. The
 `browser` tool cannot download. Set `BETTERWRIGHT_DOWNLOAD_POLICY=deny` to disable
 downloads, or `allow` if the `browser` tool should be able to save files too.
@@ -372,10 +376,12 @@ using an alternate source or requesting human help.
 
 ## §6 — Safeguards (configure to taste)
 
-By default BetterWright blocks only cloud-metadata endpoints; the public
-internet, private networks, and loopback are all reachable so an agent can
-drive local dev servers and intranet hosts out of the box. Tighten it
-deliberately. Two independent layers:
+By default, network policy allows the public internet, private networks, and
+loopback while blocking cloud-metadata endpoints. The transport-level metadata
+floor and DNS-rebinding protection apply to locally launched browsers and
+guarded Electron attachments, not ordinary remote CDP/provider browsers; see
+[provider boundaries](docs/browser-providers.md#what-changes-with-a-remote-browser).
+Tighten private-network access deliberately. Two independent layers:
 
 **Network — what the browser can reach** (CLI flags, `NetworkPolicy` options,
 or the MCP env vars):
@@ -384,7 +390,7 @@ or the MCP env vars):
 | --- | --- | --- |
 | Block the private network | `--block-private-network` / `allowPrivateNetwork: false` | `BETTERWRIGHT_BLOCK_PRIVATE_NETWORK=1` |
 | Block loopback too | `--block-loopback` / `allowLoopback: false` | `BETTERWRIGHT_BLOCK_LOOPBACK=1` |
-| Restrict to specific sites | `--allow-host example.com` / `allowHosts: ["example.com"]` | `BETTERWRIGHT_ALLOW_HOSTS=example.com` |
+| Allow an otherwise-blocked host | `--allow-host staging.internal` / `allowHosts: ["staging.internal"]` | `BETTERWRIGHT_ALLOW_HOSTS=staging.internal` |
 | Block specific sites | `--block-host ads.example.com` / `blockHosts: [...]` | `BETTERWRIGHT_BLOCK_HOSTS=ads.example.com` |
 | `browser_download` may save files; the `browser` tool may not | `downloadPolicy: "ask"` (default) | `BETTERWRIGHT_DOWNLOAD_POLICY=ask` |
 | Allow downloads from any run | `downloadPolicy: "allow"` | `BETTERWRIGHT_DOWNLOAD_POLICY=allow` |
@@ -400,7 +406,12 @@ shared, so a credential saved once fills in any profile. Omit it for the single
 default profile. Use `--session <name>` instead for parallel work as the *same*
 identity. See [docs/sessions.md](docs/sessions.md#sessions-vs-profiles).
 
-Cloud metadata endpoints can never be allowlisted. See
+`allowHosts` adds exceptions; it does not restrict access to other public sites.
+There is no exclusive CLI site-allowlist flag. Hosts needing that restriction
+must supply a custom policy that denies nonmatching destinations, including
+resolved-literal transport checks.
+
+Cloud metadata endpoints can never be allowlisted in `NetworkPolicy`. See
 [docs/network-policy.md](docs/network-policy.md).
 
 **Behavior — how bold the agent is** (`Guardrails`, prompt-level). The default

@@ -12,6 +12,7 @@ CommonJS.
 ```js
 new BetterWright({
   home,             // state dir; default $BETTERWRIGHT_HOME or ~/.betterwright
+  profile,          // optional named identity; sessions within it share cookies
   policy,           // a NetworkPolicy; default: safe policy
   vault,            // optional { handleRequest(action, payload, origin), redact? }
   browser: "chromium-fork", // the managed BetterChromium fork (the default)
@@ -24,6 +25,7 @@ new BetterWright({
   defaultTimeout: 30,   // per-snippet seconds, min 5
   downloadPolicy: "ask", // "ask" (default), "allow", or "deny"
   stealthRuntimeFix: false, // isolated-world driver; evades main-world detection
+  parkBackgroundPages: true, // pause idle headless pages between calls
 });
 ```
 
@@ -47,6 +49,13 @@ the filter lists, and blocking disables service workers in new contexts without
 weakening network policy. See [ad blocking](ad-blocking.md) for caching and
 restart requirements.
 
+Idle headless pages are parked after a short delay between calls by default.
+Timers, animation frames, and animation timelines pause while parked and resume
+before the next execution. Set `parkBackgroundPages: false` or
+`BETTERWRIGHT_PARK_BACKGROUND_PAGES=0` if the application must keep progressing
+between calls. Headed sessions, sessions with a live view, and actively recording
+pages are not parked.
+
 To control a host-owned Electron tab instead of launching a managed browser,
 pass a `hostTarget` created by `betterwright/electron`. The adapter keeps the
 tab on the network guard and leaves its lifetime with the host. See
@@ -69,14 +78,36 @@ Install the optional dependency (`npm install patchright-core`) to use it;
 
 | Method | Description |
 | --- | --- |
-| `run(code, { session, note, timeout, approvedDownloads }) => Promise<envelope>` | Execute one snippet. Calls are queued and run one at a time. |
+| `run(code, { session, note, timeout, approvedDownloads, signal }) => Promise<envelope>` | Execute one snippet. Calls within a session are queued; different sessions may execute concurrently. |
 | `close() => Promise<void>` | Shut the worker down. Idempotent. |
+| `closeSession(session?) => Promise<{ ok, closed, pagesClosed, error? }>` | Close one session's pages and forget its state without closing other sessions or the browser. |
+| `syncCookies(options) => Promise<CookieSyncResult>` | Import cookies from a local browser into this identity. See [Cookie Sync](cookie-sync.md). |
+| `startLiveView(options?) => Promise<LiveViewStatus>` | Start or reuse a live viewer; returns its URL and status. See [live view](live-view.md). |
+| `stopLiveView()`, `liveViewStatus() => Promise<LiveViewStatus>` | Stop the viewer or read its status. |
+| `waitForHandoff(options?) => Promise<HandoffResult>` | Wait for a human to finish or cancel a live-view handoff. |
+| `waitForAsk(options?) => Promise<AskResult>` | Wait for a human's answer in live-view chat. |
+| `liveViewPostChat(options?) => Promise<{ ok, message?, error? }>` | Post a chat message to the live viewer. |
+| `liveViewDrainChat() => Promise<LiveViewDrainChatResult>` | Read and drain pending human chat messages. |
 | `vaultStatus() => Promise<status>` | Read vault availability and protection state without unlocking it. |
 | `unlockVault({ password }) => Promise<status>` | Unlock this browser's vault instance from a trusted host. Never expose the password to model code. |
 | `lockVault() => Promise<status>` | Revoke cached unlocks across processes sharing the master-protected vault directory. |
 | `policy` | The active `NetworkPolicy`. |
 
-There is no context-manager sugar in JS — call `close()` in a `finally`.
+Call `close()` in a `finally`, or use `withBrowser` from
+[`betterwright/sdk`](sdk.md) to own that lifetime for you.
+
+### Cancellation
+
+Pass an `AbortSignal` as `run(code, { signal })`. If the signal is already
+aborted before dispatch, the snippet does not execute. Aborting dispatched
+work stops and drains the worker; other in-flight sessions in that worker
+also stop. The client remains reusable, but the managed browser context and
+in-memory session state are lost, as on a [timeout](sdk.md#errors-timeouts-and-the-worker).
+
+Cancellation failures carry an `errorCode`, normally `BW_ABORTED`. A
+dispatched operation reports `effectMayHaveCommitted: true`: cancellation
+cannot undo a submission, payment, or other effect already performed by the
+page. Verify application state before replaying an interrupted operation.
 
 ### Download approval
 
@@ -104,8 +135,10 @@ it from inside the sandbox.
 | Field | Description |
 | --- | --- |
 | `ok` | Whether the snippet completed. |
-| `result` | The snippet's return value. |
+| `result` | The bounded summary of the snippet's return value, or a spill-file descriptor. See [return values](browser-api.md#return-values). |
 | `error` | Error message when `ok` is `false`. |
+| `errorCode` | Optional machine-readable error code, such as `BW_ABORTED` for cancellation. |
+| `effectMayHaveCommitted` | Cancellation cannot undo page effects; `true` means dispatched work may already have performed them. |
 | `console` | Captured snippet `console.*` calls. Page-side logs use `page.on("console")`. |
 | `events` | Page lifecycle events. |
 | `artifacts` | `[{ kind, path, media, size? }]`. |
@@ -113,7 +146,27 @@ it from inside the sandbox.
 | `challenges` | Visible CAPTCHA/bot checks with page, provider, URL, and routing advice. |
 | `warnings` | Non-fatal notices. |
 | `webagents` | One-time compact action directory when the active origin supports WebAgents. |
+| `ui` | Optional compact semantic action directory or bounded failure evidence. |
+| `skills` | Optional metadata hints for skill packs matching an open page. |
+| `profileMode` | Whether the browser is using a persistent or ephemeral profile. |
+| `pendingCredential` | Secret-free recovery metadata for an interrupted generated credential. |
+| `envelopeTruncated` | Present when the envelope was reduced to fit transport limits. |
 | `durationMs` | Time spent in the worker. |
+
+In TypeScript, a successful `run<T>()` envelope has `result: T | SpilledRunOutput`,
+not unconditionally `T`. `SpilledRunOutput` is exported as a type from both
+`betterwright` and `betterwright/sdk`. After checking `ok`, narrow the result
+before using it; for a string result:
+
+```ts
+const output = await bw.run<string>("return page.title()");
+if (!output.ok) throw new BrowserError(output.error);
+if (typeof output.result === "string") {
+  console.log(output.result);
+} else {
+  console.log(output.result.preview, output.result.fullOutputPath);
+}
+```
 
 ```js
 const bw = new BetterWright();
@@ -304,12 +357,21 @@ does not need to implement any of this.
 ## Sessions
 
 Pass `{ session: "name" }` to `run()`. Each session is an isolated set of pages
-and `state`; snippets in the same session share tabs across calls.
+and `state`; snippets in the same session share tabs across calls. Calls are
+ordered within each session, while separate sessions may run concurrently.
+Sessions share the browser's cookie jar and identity: they are separate work
+lanes, not separate logins.
 
 ```js
 await bw.run("await page.goto('https://a.example')", { session: "a" });
 await bw.run("await page.goto('https://b.example')", { session: "b" });
 ```
+
+Use `new BetterWright({ profile: "work" })` for a separate persistent browser
+identity. Profiles have separate cookie jars, but share the home directory's
+vault, artifacts, and browser cache. See [sessions and profiles](sessions.md).
+Call `bw.closeSession("a")` to discard only that session's pages and state;
+`bw.close()` shuts down the client and all its sessions.
 
 ## `agentSystemPrompt`
 

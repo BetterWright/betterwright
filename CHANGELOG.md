@@ -9,6 +9,19 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Fixed
+
+- Align setup, security, browser, SDK, and agent documentation with current
+  network-policy defaults, remote-browser limits, session lifetimes, result
+  bounds, cancellation, live-view access, and conditional skill loading.
+- Correct the semantic UI batch example and MCP CLI help inventory, and
+  distinguish historical Chromium patch measurements from current launch
+  defaults.
+- Accept synchronous callbacks in the `withBrowser` declarations and include
+  the existing large-output spill wrapper in successful `RunResult` types.
+- Refresh vulnerable transitive dependencies in the development lockfile
+  without changing the pinned browser or runtime dependencies.
+
 ## [2.6.0] - 2026-09-09
 
 ### Added

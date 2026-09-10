@@ -51,9 +51,15 @@ export interface ResultEnvelopeBase {
   pendingCredential?: PendingCredentialRecovery;
 }
 
+export interface SpilledRunOutput {
+  truncated: true;
+  preview: string;
+  fullOutputPath: string;
+}
+
 export interface SuccessfulRunResult<T = unknown> extends ResultEnvelopeBase {
   ok: true;
-  result: T;
+  result: T | SpilledRunOutput;
   error?: never;
 }
 

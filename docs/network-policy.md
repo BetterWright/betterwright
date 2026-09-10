@@ -1,12 +1,18 @@
 # Network policy
 
-![The policy blocks private and metadata addresses while public traffic flows through](https://raw.githubusercontent.com/BetterWright/betterwright/main/docs/assets/network-policy.png)
+![A hardened policy blocks private and metadata addresses while public traffic flows through](https://raw.githubusercontent.com/BetterWright/betterwright/main/docs/assets/network-policy.png)
 
-Every request the browser makes is authorized before it goes out — page
-navigations, subresources (scripts, images, XHR/fetch), WebSocket upgrades, and
+For locally launched browsers and guarded Electron attachments, every browser
+request is authorized before it goes out — page navigations, subresources
+(scripts, images, XHR/fetch), WebSocket upgrades, and
 the raw TCP connections the worker's transport makes on the browser's behalf.
 The worker sends each one to the client as a `guard` request; the client answers
 it with a `NetworkPolicy`.
+
+Ordinary remote CDP/provider browsers do not use the local transport guard.
+Playwright routing still checks requests where the attached browser supports
+it, but the transport-level metadata floor and DNS-rebinding protection do not
+apply. See [browser providers](browser-providers.md#what-changes-with-a-remote-browser).
 
 ## The default posture
 
@@ -52,14 +58,20 @@ new BetterWright({ policy });
 
 | Option | Effect |
 | --- | --- |
-| `allowLoopback` | Permit `127.0.0.1` / `localhost` (for local dev servers). Does **not** open the wider private network. Default `true`; set `false` to block. |
+| `allowLoopback` | Permit `127.0.0.1` / `localhost` (for local dev servers). Does **not** open the wider private network. Default `true`; set both this and `allowPrivateNetwork` to `false` to block loopback. |
 | `allowPrivateNetwork` | Permit RFC 1918, link-local, and `*.internal`/`*.local` hosts. Implies loopback. Default `true`; set `false` to block. |
-| `allowHosts` | Always allow these hosts. An entry matches a host exactly or as a parent domain (`example.com` also matches `sub.example.com`); add `:port` to pin a port. |
-| `blockHosts` | Always block these hosts, evaluated before allowlists. |
+| `allowHosts` | Allow these hosts in the built-in decision, unless metadata or `blockHosts` denies them. An entry matches a host exactly or as a parent domain (`example.com` also matches `sub.example.com`); add `:port` to pin a port. A custom hook can override ordinary decisions. |
+| `blockHosts` | Block these hosts in the built-in decision, before allowlists. A custom hook may override this denial, but never the metadata floor. |
 | `custom` | A hook, `custom(url, details)`, returning a decision or `null`, evaluated last. |
 
-Evaluation order is: scheme check → `blockHosts` → `allowHosts` → metadata
-floor → private-network rules → `custom`.
+`allowHosts` adds exceptions to the normal policy; it is not an exclusive site
+allowlist. Other public sites remain allowed. Restricting browsing to specific
+destinations requires a trusted custom policy, including handling the
+resolved-literal transport checks described below.
+
+Evaluation order is: scheme check → metadata floor → `blockHosts` →
+`allowHosts` → private-network rules → `custom`. A custom allow is checked
+against the metadata floor again.
 
 ### The custom hook
 
@@ -119,16 +131,18 @@ that can make an HTTP request from the box. A prompt-injected page trying to
 read those is one of the sharpest risks in agent browsing. So the block is not
 just a policy default — it is enforced at two independent layers:
 
-1. **The transport guard.** All traffic is forced through the worker's own
-   loopback SOCKS proxy (Chromium cannot bypass it, even for localhost). The
-   proxy validates the connect target *and* re-validates every IP the hostname
+1. **The transport guard.** Locally launched browsers and guarded Electron
+   attachments force traffic through the worker's own loopback SOCKS proxy,
+   including localhost. The proxy validates the connect target *and*
+   re-validates every IP the hostname
    resolved to, so a hostname that passes cannot be swapped for a metadata
    address by DNS rebinding.
 2. **The policy.** `NetworkPolicy` refuses metadata hosts and refuses to honor
    an `allowHosts` entry or a `custom` allow that names one.
 
-Either layer stops the common case; together they close the redirect and
-rebinding variants too.
+For those guarded browsers, either layer stops the common case; together they
+close the redirect and rebinding variants too. An ordinary remote CDP
+attachment has no local transport guard, so it does not gain that guarantee.
 
 ## Failure is closed
 

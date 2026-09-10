@@ -29,8 +29,8 @@ machine, and proves it works by loading a real page. One command, no choices to
 make up front.
 
 **Compressed snapshots** instead of raw HTML or a full accessibility dump ·
-read-only tasks finish in **one model turn** · persistent sessions so you
-don't re-pay login and navigation cost every step.
+simple non-checkout read-only tasks can finish in **one model turn** ·
+persistent sessions so you don't re-pay login and navigation cost every step.
 
 ---
 
@@ -67,7 +67,8 @@ betterwright skill >> ~/.codex/AGENTS.md   # Codex reads an instructions file
 # and the npm package (node_modules/betterwright/SKILL.md); copy it wherever
 # your agent reads skills, or print it with `betterwright skill`.
 
-# MCP (stdio server: browser, browser_login, browser_download, browser_handoff, browser_doctor)
+# MCP (stdio server: browser, browser_batch, browser_download, browser_record,
+# browser_handoff, browser_doctor; browser_login when the vault is enabled)
 bun add -g betterwright @modelcontextprotocol/sdk
 claude mcp add betterwright -- bunx betterwright mcp
 betterwright mcp --check           # why does my client show no tools?
@@ -208,9 +209,9 @@ BetterWright's whole observation stack is built around that problem:
 | --- | --- |
 | **Compressed agent snapshots** | Playwright's `mode: "ai"` accessibility tree with everything an agent cannot act on pruned out — `/url` property lines, refs on non-actionable roles, bare `generic` wrappers, duplicated text, names past 100 characters — leaving `[ref=eN]` markers the model acts on directly instead of re-deriving selectors |
 | **Diff mode** | After an action, return **only what changed** — not the page again |
-| **Interactive-only filter** | Drop static text nodes; keep what the agent can click, fill, or read |
+| **Interactive-only filter** | Keep actionable elements, live status/alert text, and short item/table context; omit unrelated prose |
 | **Scoped truncation** | Hints about *where* to look next instead of a silently clipped wall |
-| **Single-call finish** | Read-only tasks complete in **one model turn** — the code returns `{finalAnswer}` and the loop ends, no confirmation round-trip |
+| **Single-call finish** | Simple non-checkout read-only tasks can complete in **one model turn** with `{finalAnswer}`; [checkout tasks receive additional completion checks](docs/agent.md) |
 | **Persistent session** | One long-lived browser: no re-login, no re-navigation, no re-paying the token cost of getting back to where you were |
 | **Sub-agent delegation** | `betterwright exec` keeps the entire browsing transcript out of your main agent's context — a whole task costs it one tool call |
 
@@ -243,7 +244,7 @@ step from what it sees, in a browser that must still be there next turn:
 | **Observations** | Raw accessibility tree or DIY HTML | Compressed, diffable, redacted snapshots priced for a context window |
 | **Session** | Browser per script | One persistent managed browser — logins survive turns, days, restarts |
 | **Trust** | Full API access | Model code runs sandboxed: no file, process, or network-routing APIs |
-| **Network** | Any URL | Every request policy-checked (DNS-rebinding-proof); cloud metadata endpoints always blocked |
+| **Network** | Any URL | Guarded local and Electron browsers get policy checks and a DNS-rebinding-resistant metadata floor; [remote CDP browsers lack that transport boundary](docs/browser-providers.md#what-changes-with-a-remote-browser) |
 | **Secrets** | Passwords in the script | AES-256-GCM vault; forms are detected and filled without the secret ever entering the conversation |
 | **Evidence** | Assertions | `screenshot({kind: 'proof'})` — tagged artifacts the agent cites as proof of work |
 | **CAPTCHAs** | Out of scope | Local `captcha.solve()` — checkbox, Turnstile, slider; vision handoff for image grids |
@@ -260,14 +261,14 @@ step from what it sees, in a browser that must still be there next turn:
 | [**Cookie Sync**](docs/cookie-sync.md) | Merge selected cookies from local Chrome, Edge, Brave, Firefox, Safari, and other desktop browsers into BetterChromium or an explicitly approved cloud browser |
 | [**Live view & handoff**](docs/live-view.md) | Watch and coach the agent live; token + optional password gated; `handoff` pauses for human hands and resumes on Done |
 | [**Recording**](docs/recording.md) | Record the current tab to MP4 (or WebM) at up to 60 FPS through the CLI, snippet helpers, or MCP |
-| [**Network policy**](docs/network-policy.md) | Every navigation, subresource, WebSocket, and raw TCP connection checked; metadata endpoints always blocked |
+| [**Network policy**](docs/network-policy.md) | Guarded local and Electron browsers check navigations, subresources, WebSockets, and TCP connections; remote CDP browsers retain supported routing checks, not the transport floor |
 | [**CAPTCHA helpers**](docs/captcha.md) | Local solving for checkbox/Turnstile/slider; image grids hand off to the agent's own vision with tile crops |
 | [**Human-shaped input**](docs/browser-api.md#human-shaped-interactions) | Curved pointer movement, paced typing, eased wheel — no extra dependency |
 | [**WebMCP page tools**](docs/browser-api.md#page-published-webmcp-tools) | Discover and invoke typed first-party page capabilities; fresh frame-aware lookup, bounded input/output, explicit autosubmit opt-in, and automatic timeout cancellation |
-| [**Launch identity**](docs/launch-identity.md) | Coherent native identity: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; the two public reCAPTCHA v3 score-detector demos in the stealth report return a server-verified 0.9 headed and headless |
+| [**Launch identity**](docs/launch-identity.md) | Coherent native identity: build-specific viewport, locale, timezone, optional geo-matched egress. No page-world shims; recorded runs of two public reCAPTCHA v3 score-detector demos returned a server-verified 0.9 headed and headless, not a guarantee for other runs or sites |
 | [**BetterChromium**](docs/chromium-fork.md) | Default browser on supported macOS arm64, Linux x64, and Windows x64 hosts: per-profile-stable canvas/audio farbling, no OS masquerade (Linux runs as Linux). Bring your own executable, CDP endpoint, or cloud browser via the [provider option](docs/browser-providers.md) |
 | [**Browser providers**](docs/browser-providers.md) | Managed fork by default; attach a local executable, a raw CDP endpoint, or a named cloud browser. `configure --connect` saves API keys; `betterwright boxes` starts/lists/stops sessions on the six SDK-backed providers |
-| [**Skill packs**](docs/skills.md) | Per-site and per-password-manager guidance the driving agent reads on demand — your own or the built-in loop — surfaced automatically when an open page matches |
+| [**Skill packs**](docs/skills.md) | External agents read pack bodies on demand from URL-match hints; the built-in loop injects task-keyword matches before browsing, while later URL matches surface metadata hints |
 | [**Download approval**](docs/browser-api.md) | Denied by default; a trusted host approves one download run at a time |
 | [**Operator guidance**](docs/agent-prompt.md) | `betterwright skill` / `agentSystemPrompt()` — decisive action on authorized tasks, with optional confirmation/spending guardrails |
 

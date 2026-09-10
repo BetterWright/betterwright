@@ -56,9 +56,10 @@ stdout:
 }
 ```
 
-`toolCalls` counts the `browser`/`login`/`ask`/`done` calls the model issued (it
-can exceed `steps` when a turn batches several). `usage` sums the token counts the
-model adapter reported across turns (a field is `0` when the provider returned no
+`toolCalls` counts all calls the model issued: `browser`, `login`, `ask`,
+`live_view`, `handoff`, and `done` (it can exceed `steps` when a turn batches
+several). `usage` sums the token counts the model adapter reported across turns
+(a field is `0` when the provider returned no
 usage block); `inputTokens` is fresh input only: each turn's provider input total
 minus the portion served from cache.
 `cacheReadTokens` and `cacheWriteTokens` come straight from the provider's usage
@@ -139,7 +140,7 @@ Flags:
 | `--session <name>` | `default` | Parallel lanes inside one identity; the browser and the conversation both persist under that name |
 | `--profile <name>` | the shared profile | A separate identity: its own cookies, its own daemon, its own `exec` history (`BETTERWRIGHT_PROFILE` sets one for the whole shell; the flag wins) |
 | `--headed` | off | Show the managed browser |
-| `--live-view` | off | Start the viewer at step 0 and print its URL (see [live-view.md](live-view.md)) |
+| `--live-view` | off | Start the viewer at step 0 and print its URL; without the flag, the agent can still open it on demand (see [live-view.md](live-view.md)) |
 | `--stdin` | off | Read the task from stdin instead of an argument — no second round of shell parsing |
 | `--fresh` | off | Forget this session's `exec` conversation and start the transcript over; the browser and its logins are untouched |
 | `--close` | off | Close the session after this task instead of leaving it live |
@@ -216,8 +217,14 @@ choice with no reasonable default, or a task ambiguous enough that guessing risk
 the wrong thing — it asks you a question (offering short concrete options when the
 answer is a choice) and waits for your typed reply before continuing. It still
 acts on its own for ordinary reversible steps; it does not ask permission to
-proceed. `betterwright exec` has no user watching, so it runs without the `ask`
-tool and never stalls on a question.
+proceed.
+
+`betterwright exec` has no terminal question handler, but it can still offer
+`ask`, `live_view`, and `handoff` through an on-demand live viewer. When the
+model asks a question, the CLI prints the viewer URL and the run can wait for
+an answer in its chat. `--live-view` starts that viewer immediately; omitting
+the flag does not disable it. Programmatic callers that must not wait for a
+human should omit `askUser` and set `liveView: false`.
 
 ## Choosing a model
 
@@ -429,7 +436,7 @@ CLI behavior:
 import { runAgentTask } from "betterwright/agent";
 
 const result = await runAgentTask({
-  task: "log in to example.com and download this month's invoice",
+  task: "log in to example.com and report this month's invoice total",
   model: "claude-opus-5",         // actual model id, or your own model object
   maxDurationMs: 30 * 60 * 1000,   // configurable; there is no fixed step cap
   maxTranscriptChars: 1_000_000,   // bound accumulated model/tool context
@@ -443,7 +450,14 @@ console.log(result.toolCalls, result.usage, result.durationMs);
 
 Pass an **`askUser`** handler to let the loop ask the human mid-task — this is
 how the interactive console wires the `ask` tool. Given a handler, `runAgentTask`
-exposes an `ask` tool to the model; without one it runs fully autonomously.
+exposes an `ask` tool to the model and sends questions to that handler. Without
+one, the loop can instead ask through live-view chat when `liveView` is not
+`false`, the browser supports live view, and an `onStep` callback can surface
+its URL. `live_view` and `handoff` use the same availability gate, with either
+`askUser` or `onStep` providing a human-facing surface. Pass `liveView: true`
+or a live-view options object to start the viewer at the beginning; otherwise
+it starts on demand. To disable human-input tools, omit `askUser` and pass
+`liveView: false`.
 
 ```js
 const result = await runAgentTask({
@@ -470,8 +484,26 @@ await browser.close();
 The loop exposes a selector-free `login` tool backed by the same URL-matched
 worker fill as MCP/Pi's `browser_login`. Generated signup/rotation passwords
 remain pending until a later browser step verifies success and commits them, so
-failed forms do not leave stale saved items. Pass `vault: false` to disable the
-tool or a custom adapter to replace the local store.
+failed forms do not leave stale saved items. For a browser the loop creates,
+pass `vault: false` to disable the tool or a custom adapter to replace the local
+store. When passing an existing browser, configure its vault on that browser;
+the task's `vault` option is ignored.
+
+The loop's default browser uses `downloadPolicy: "ask"`, and its `browser` tool
+does not set trusted per-run download approval. A task asking for a download
+does not bypass that gate. Use a trusted host's approval-gated download path,
+or, after obtaining the user's approval for the task's downloads, pass a
+browser configured with `downloadPolicy: "allow"`. See
+[download approval](javascript.md#download-approval).
+
+Pass `signal: controller.signal` to interrupt a task. Model requests receive
+cancellation, and the result retains the transcript with `reason: "interrupted"`.
+For an externally supplied browser, interruption stops waiting for an in-flight
+browser call but does not cancel that call: it can finish or reach its worker
+timeout. The loop closes a browser it created itself during cleanup. Do not
+assume an interrupted task rolled back a page action; inspect the state before
+resuming. This differs from calling the client's
+[`run(code, { signal })`](javascript.md#cancellation) directly.
 
 ## Bring your own model or agent
 
@@ -516,7 +548,8 @@ remains available when you need full control of the request shape.
 
 Each turn: the model sees the task, the operator guidance from
 [`agentSystemPrompt`](agent-prompt.md), and the tools (`browser`, `done`,
-`login` when a vault is present, and `ask` when an `askUser` handler is present).
+`login` when a vault is present, `ask` when a question handler or live-view
+channel is available, and `live_view`/`handoff` when live view is available).
 It calls `browser` with async Playwright
 JavaScript; BetterWright runs it and feeds back a compact JSON observation
 (`ok`, `result`, `console`, `pages`, `challenges`, `skills`, `warnings`,
@@ -526,7 +559,11 @@ paths surfaced; the last `proof` screenshot is returned on the result.
 
 A `browser` call can also end the task in the *same* turn: when the model's
 code returns `{ finalAnswer: "…" }` (from an `ok` run), the harness records
-that as the answer and finishes without spending another model round-trip. The
-preamble teaches the model to use this single-call shape for read-only tasks —
+that as its candidate answer. For tasks outside checkout verification it can
+finish without spending another model round-trip. The preamble teaches the
+model to use this single-call shape for read-only tasks —
 navigate, extract, compute, capture proof, and return `finalAnswer` in one
-call — which makes a simple lookup cost one model turn instead of two.
+call — which can make a simple lookup cost one model turn instead of two.
+Tasks matching `checkout-verification` still run the bounded independent
+completion check described above, even for read-only checkout analysis. A
+`finalAnswer` does not bypass those checks or guarantee one-turn completion.

@@ -12,9 +12,11 @@ line only if it is genuinely unrelated to your change, and say so.
 
 - [ ] `bun run release:check` passes locally (versions, lint, typecheck, build,
       unit tests, published declarations, tarball).
-- [ ] **Every browser connection still goes through the guard proxy.** No new
-      launch path, transport, or fetch bypasses the worker's SOCKS guard
-      (`src/guard-proxy.ts`) — the network floor is the security boundary.
+- [ ] **Locally launched browsers and Electron attachments stay on the guard
+      proxy.** No local launch or Electron transport bypasses the worker's
+      SOCKS guard (`src/guard-proxy.ts`). Ordinary remote CDP/provider browsers
+      remain the explicit exception; their warnings and documentation must
+      not claim the local transport boundary applies.
 - [ ] **No secret value reaches the model sandbox.** New output channels,
       result envelopes, log lines, and MCP/agent tool results go through
       redaction; the vault still fills without returning values to snippet code.
@@ -41,7 +43,7 @@ line only if it is genuinely unrelated to your change, and say so.
 
 <!--
 Beyond release:check. Name the commands you ran — for example the managed
-browser suite (`BETTERWRIGHT_REQUIRE_BROWSER=1 BETTERWRIGHT_CHROMIUM_ROOT=off
-bun run test`), a `betterwright doctor` before/after, or the platform you tested on
-if the change is platform-specific.
+browser suite (`BETTERWRIGHT_REQUIRE_BROWSER=1 bun run test` after installing
+the managed browser), a `betterwright doctor` before/after, or the platform you
+tested on if the change is platform-specific.
 -->

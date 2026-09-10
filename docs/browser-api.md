@@ -18,11 +18,16 @@ await bw.run(`
 - A single trailing **expression** is returned automatically:
   `bw.run("return page.title()")` and `bw.run("page.title()")` are equivalent.
 - A multi-statement block must use `return`.
-- The value is serialized to JSON. Playwright handles (`Page`, `Locator`) are
-  summarized rather than serialized whole — a `Page` becomes
+- The value becomes a bounded JSON-safe summary. Playwright handles (`Page`,
+  `Locator`) are summarized rather than serialized whole — a `Page` becomes
   `{type: "Page", pageId, url, title, closed}`.
-- Large results are spilled to an artifact file and replaced with a
-  `{truncated: true, preview, fullOutputPath}` summary.
+- Arrays, Maps, Sets, and object properties are limited to the first 200
+  entries; nested containers beyond depth eight become `"[Max depth]"`.
+  These reductions do not themselves add a `truncated` marker. Aggregate
+  inside the snippet or return explicit bounded chunks when completeness matters.
+- If the summarized result still exceeds the output-size limit, it is spilled
+  to a file and replaced with `{truncated: true, preview, fullOutputPath}`.
+  That file contains the bounded summary, not the original unbounded value.
 
 ## Pages
 
@@ -38,6 +43,15 @@ await bw.run(`
 Pages persist across `run()` calls within the same session, so an agent can
 open a tab in one step and act on it in the next. Popups and
 `target=_blank` links are adopted automatically and appear in `pages`.
+
+By default, idle headless pages are parked after a short delay between calls:
+their timers, animation frames, and animation timelines pause, then resume
+before the next execution. Pass `parkBackgroundPages: false` to the client
+or set `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0` when the application must keep
+progressing in the background. Headed sessions, sessions with a live view,
+and actively recording pages are not parked. Worker restarts discard the
+session's in-memory state and live page handles; see
+[timeouts and the worker](sdk.md#errors-timeouts-and-the-worker).
 
 ```js
 // Work two tabs at once
@@ -105,7 +119,7 @@ halves the size of a real page's tree without losing anything actionable.
 | `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
 | `depth` | — | Limit tree depth. |
 | `urls` | `false` | Keep `- /url:` property lines on links. |
-| `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns an error with the actual size and scoping hints instead of a silently cut-off tree. |
+| `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns a diagnostic string with the actual size and scoping hints instead of a cut-off tree. It does not throw or make the run envelope fail. |
 | `timeout` | `10000` | Milliseconds. |
 
 Interactive snapshots retain short text beside list/table controls, table column
@@ -298,13 +312,15 @@ await human.scroll(650); // negative values scroll upward
 `human.click(target, options?)` and `human.type(target, text, options?)` accept a
 selector, Locator, ElementHandle, or `{x, y, width, height}` bounds. Typing clears
 the field by default; pass `{clear: false}` to append, or set `minDelay` and
-`maxDelay`. After typing, `human.type` reads the field back. Success requires the
-requested text to be inserted in full, so a prefix, an unchanged field, or
-an overlapping partial append is not a hit.
+`maxDelay`. For readable element targets, `human.type` reads the field back.
+Success requires the requested text to be inserted in full, so a prefix, an
+unchanged field, or an overlapping partial append is not a hit.
 If that check fails — typical of Draft.js and other rich-text editors that
 swallow synthetic key events — it restores the original value when appending,
 retries with `insertText`, and throws if the field still did not accept the
-text.
+text. Bounds-only targets cannot be read back, so they do not get this
+verification or retry. Prefer a selector, Locator, or ElementHandle; verify
+coordinate-based typing independently.
 `human.scroll(deltaY, options?)` accepts `steps`, while the object
 form also accepts `deltaX`.
 
@@ -449,7 +465,7 @@ return controls.batch({
   operations: [
     {id: 'query', action: 'fill', target: {label: 'Search'}, value: 'keyboard'},
     {id: 'submit', action: 'click', target: {role: 'button', name: 'Search', exact: true}},
-    {id: 'verify', action: 'read', target: {role: 'heading', name: 'Results'}},
+    {id: 'verify', action: 'read', target: {role: 'heading', name: 'Results'}, value: 'Results'},
   ],
   allowWrites: true,
 });
