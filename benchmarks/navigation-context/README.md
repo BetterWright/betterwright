@@ -1,6 +1,6 @@
 # Navigation and observation overhead
 
-This local benchmark compares two built BetterWright packages with identical
+This local benchmark builds and compares two BetterWright source checkouts with identical
 browser binaries, default options, and unchanged native skills. It checks result
 parity on article extraction, form submission, table filtering, delayed content,
 and explicit control discovery. There are no task-specific runtime or prompt
@@ -9,10 +9,29 @@ changes.
 ```sh
 export BETTERWRIGHT_CHROMIUM_PATH=/path/to/BetterChromium
 bun benchmarks/navigation-context/run.ts \
-  --baseline /path/to/built/baseline \
-  --candidate /path/to/built/candidate \
+  --baseline /path/to/baseline-checkout \
+  --candidate /path/to/candidate-checkout \
   --output results.json
 ```
+
+Install each checkout's locked dependencies first. Source and build inputs must
+be committed and clean, including staged, untracked, and ignored files under
+the recorded source paths. The harness rebuilds each checkout before importing
+its runtime, then records:
+
+- Immutable baseline and candidate commit IDs.
+- SHA-256 of the committed baseline-to-variant diff over `src`, `bin`, and
+  `types`, including newly added files.
+- SHA-256 of Git tree entries for all recorded source/build inputs, plus a
+  fingerprint of every generated file in `dist/`.
+- Browser and benchmark-code hashes.
+
+The harness checks these inputs and outputs again after measurement. Publishing
+`results.json` necessarily creates a later commit than the measured candidate;
+a report-only commit is valid when its recorded source tree and runtime diff
+are unchanged. The candidate commit identifies the code measured, not the
+later commit containing the result file. The provenance regression tests cover
+this distinction and reject subsequent runtime changes.
 
 Each workload has one warmup pair and ten measured pairs, alternating which
 build goes first. Browser startup is excluded. Unique URL paths cause the same

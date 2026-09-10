@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,29 +7,39 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import type { UntrustedValue } from "../../src/untrusted-value.js";
 import { startFixtures, workloads } from "./fixtures.js";
+import { assertSameSource, directoryIdentity, RUNTIME_PATHS, SOURCE_PATHS, sha256, sourceIdentity } from "./provenance.js";
 
 const { values } = parseArgs({ options: {
   baseline: { type: "string" }, candidate: { type: "string" }, output: { type: "string" },
 } });
-assert.ok(values.baseline && values.candidate && values.output, "Pass --baseline, --candidate (built packages), and --output");
+assert.ok(values.baseline && values.candidate && values.output, "Pass --baseline, --candidate (clean source checkouts with dependencies installed), and --output");
 assert.ok(process.env.BETTERWRIGHT_CHROMIUM_PATH, "Set BETTERWRIGHT_CHROMIUM_PATH to the shared browser executable");
 const roots = { baseline: path.resolve(values.baseline), candidate: path.resolve(values.candidate) };
-const fixture = await startFixtures();
 const browsers: Record<string, { run(code: string): Promise<any>; close(): Promise<void> }> = {};
 const homes: string[] = [];
 const samples = [];
 const repetitions = 10;
-const sha256 = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 const promptHashes: Record<string, string> = {};
-const identities = {};
+type BuildIdentity = ReturnType<typeof sourceIdentity> & { build: Awaited<ReturnType<typeof directoryIdentity>>; workerSha256: string };
+const identities: Record<string, BuildIdentity> = {};
+const baselineHead = sourceIdentity(roots.baseline).head;
+const browserSha256 = sha256(await readFile(process.env.BETTERWRIGHT_CHROMIUM_PATH));
+const harnessHash = async () => sha256(JSON.stringify(await Promise.all(["run.ts", "provenance.ts", "fixtures.ts"].map(async (name) => [name, sha256(await readFile(new URL(name, import.meta.url)))]))));
+const harnessSha256 = await harnessHash();
 const startedAt = new Date().toISOString();
+const fixture = await startFixtures();
 
 try {
   for (const [variant, root] of Object.entries(roots)) {
     promptHashes[variant] = sha256(await readFile(path.join(root, "SKILL.md")));
+    const source = sourceIdentity(root, baselineHead);
+    // Rebuild before importing either runtime; a clean checkout alone cannot
+    // prove that an existing dist/ was produced from that checkout.
+    execFileSync(process.execPath, ["run", "build"], { cwd: root, stdio: "pipe" });
+    assert.deepEqual(sourceIdentity(root, baselineHead), source, "Build changed source inputs");
     identities[variant] = {
-      head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
-      diffSha256: sha256(execFileSync("git", ["diff", "--", "src", "bin", "types"], { cwd: root })),
+      ...source,
+      build: await directoryIdentity(path.join(root, "dist")),
       workerSha256: sha256(await readFile(path.join(root, "dist/src/worker.js"))),
     };
     const { BetterWright } = await import(pathToFileURL(path.join(root, "dist/src/index.js")).href);
@@ -76,6 +85,15 @@ try {
   for (const home of homes) await rm(home, { recursive: true, force: true });
 }
 
+for (const [variant, root] of Object.entries(roots)) {
+  const current = sourceIdentity(root, baselineHead);
+  assert.equal(current.head, identities[variant].head, "Source revision changed during measurement");
+  assertSameSource(identities[variant], current);
+  assert.deepEqual(await directoryIdentity(path.join(root, "dist")), identities[variant].build, "Build artifacts changed during measurement");
+}
+assert.equal(await harnessHash(), harnessSha256, "Benchmark code changed during measurement");
+assert.equal(sha256(await readFile(process.env.BETTERWRIGHT_CHROMIUM_PATH)), browserSha256, "Browser changed during measurement");
+
 const median = (values: number[]) => {
   const sorted = [...values].sort((a, b) => a - b);
   return (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2;
@@ -92,11 +110,12 @@ const summary = Object.fromEntries(Object.keys(workloads).map((workload) => [wor
   })),
 ]));
 await writeFile(values.output, `${JSON.stringify({
+  schemaVersion: 2,
   startedAt, finishedAt: new Date().toISOString(),
   host: { platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, bun: process.versions.bun },
-  browserSha256: sha256(await readFile(process.env.BETTERWRIGHT_CHROMIUM_PATH)),
+  browserSha256, harnessSha256,
   fixtureSha256: sha256(await readFile(new URL("fixtures.ts", import.meta.url))),
-  config: { repetitions, warmupPairs: 1, defaultOptions: true, pipedSerializationSimulated: true, deferredResourceMs: 800, promptsUnchanged: true },
+  config: { repetitions, warmupPairs: 1, defaultOptions: true, pipedSerializationSimulated: true, deferredResourceMs: 800, promptsUnchanged: true, rebuildBeforeMeasurement: true, sourcePaths: SOURCE_PATHS, runtimeDiffPaths: RUNTIME_PATHS },
   identities, promptHashes, summary, samples,
 }, null, 2)}\n`);
 console.log(JSON.stringify(summary, null, 2));
