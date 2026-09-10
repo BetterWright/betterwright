@@ -47,14 +47,16 @@ executes the CLI in both compact and `--pretty` modes and checks JSON parity.
 
 [results.json](results.json) records ten samples per workload/build on macOS
 arm64, together with source/build identifiers and the browser/fixture hashes.
+The measured baseline is `8a87ae6e44341204803c84085bf72b706a0e92fc`; the measured candidate is
+`07141956b22f781cbe8f359828a1ae59926c38f3`. The source/build inputs in subsequent report-only commits must remain identical.
 
 | Workload | Baseline median ms | Candidate median ms | Baseline piped characters | Candidate piped characters |
 | --- | ---: | ---: | ---: | ---: |
-| Article extraction | 48.7 | 47.4 | 8,855 | 2,740 |
-| Form submission | 368.7 | 372.6 | 1,864 | 973 |
-| Table filtering | 66.6 | 72.5 | 1,471 | 744 |
-| Delayed content | 850.3 | 225.7 | 318 | 236 |
-| Explicit directory | 50.9 | 46.7 | 3,056 | 837 |
+| Article extraction | 46.4 | 46.8 | 8,855 | 2,740 |
+| Form submission | 392.3 | 357.9 | 1,864 | 973 |
+| Table filtering | 83.5 | 84.2 | 1,471 | 744 |
+| Delayed content | 859.0 | 239.4 | 318 | 236 |
+| Explicit directory | 54.2 | 48.0 | 3,056 | 837 |
 
 All 100 measured executions passed result parity. Piped observations were
 25.8–72.6% smaller. The delayed-content fixture has an explicit 800 ms decorative

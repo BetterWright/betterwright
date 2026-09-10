@@ -1,6 +1,7 @@
 {
-  "startedAt": "2026-09-10T22:08:35.862Z",
-  "finishedAt": "2026-09-10T22:09:02.691Z",
+  "schemaVersion": 2,
+  "startedAt": "2026-09-10T22:44:25.402Z",
+  "finishedAt": "2026-09-10T22:44:56.781Z",
   "host": {
     "platform": "darwin",
     "arch": "arm64",
@@ -8,6 +9,7 @@
     "bun": "1.4.0"
   },
   "browserSha256": "0c942f4891ea6bf8c83fe9ff278b1a032c40033aa769ae69f7fd83021f98fb24",
+  "harnessSha256": "5390cb080c154c3d7640094f5c0403873ed5a57734fa95753a43fcd953c364f3",
   "fixtureSha256": "c11e0642e8d6fddc2e28f433c780dc737faeabd77782a80baaca930d8d51699f",
   "config": {
     "repetitions": 10,
@@ -15,17 +17,47 @@
     "defaultOptions": true,
     "pipedSerializationSimulated": true,
     "deferredResourceMs": 800,
-    "promptsUnchanged": true
+    "promptsUnchanged": true,
+    "rebuildBeforeMeasurement": true,
+    "sourcePaths": [
+      "src",
+      "bin",
+      "types",
+      "scripts",
+      "package.json",
+      "bun.lock",
+      ".bun-version",
+      "tsconfig.json",
+      "tsconfig.tools.json",
+      "SKILL.md"
+    ],
+    "runtimeDiffPaths": [
+      "src",
+      "bin",
+      "types"
+    ]
   },
   "identities": {
     "baseline": {
       "head": "8a87ae6e44341204803c84085bf72b706a0e92fc",
+      "baselineHead": "8a87ae6e44341204803c84085bf72b706a0e92fc",
+      "sourceTreeSha256": "7504c99d96dd1fcde5446d41482afec88c9778dd175c3c49d28cf3e2d881c5cc",
       "diffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "build": {
+        "sha256": "c81e40b0e5386288ff0db6052b0b6ade2f1f59efd840311b4bd1a635346037db",
+        "fileCount": 90
+      },
       "workerSha256": "a21568aaa52d1802f410ee9c4d00404739f94cff3e388e9487d5e7eea881504c"
     },
     "candidate": {
-      "head": "8a87ae6e44341204803c84085bf72b706a0e92fc",
-      "diffSha256": "b79885f073368b58b5115fdf29c9cf4e17bb7711c8ede3f3a16c61219d48bcfa",
+      "head": "07141956b22f781cbe8f359828a1ae59926c38f3",
+      "baselineHead": "8a87ae6e44341204803c84085bf72b706a0e92fc",
+      "sourceTreeSha256": "cb6359a5a7fafd3f1a4208faf32dab03e16b776039cad04b7371be6c9c1af7b4",
+      "diffSha256": "586f74b7378c91f542429cbee098acb8215209864e33fbd082a481fc3c18ce54",
+      "build": {
+        "sha256": "7f25256b58540720c371e2f0945f1a99923ea1c98098c9fa6c6d1f023c4ed75e",
+        "fileCount": 92
+      },
       "workerSha256": "35793c9ae2aa11ce03e8f596b8d5bb2085d7891e13be23f0dfee67df5bccfa2a"
     }
   },
@@ -36,13 +68,13 @@
   "summary": {
     "article": {
       "baseline": {
-        "medianMs": 48.67964599999959,
+        "medianMs": 46.377958500001114,
         "medianPipedChars": 8855,
         "medianCompactChars": 4331,
         "resultParity": true
       },
       "candidate": {
-        "medianMs": 47.40264600000046,
+        "medianMs": 46.79027150000002,
         "medianPipedChars": 2740,
         "medianCompactChars": 2740,
         "resultParity": true
@@ -50,13 +82,13 @@
     },
     "form": {
       "baseline": {
-        "medianMs": 368.7468955000004,
+        "medianMs": 392.3491040000008,
         "medianPipedChars": 1864,
         "medianCompactChars": 1022,
         "resultParity": true
       },
       "candidate": {
-        "medianMs": 372.60058350000054,
+        "medianMs": 357.88062549999813,
         "medianPipedChars": 973,
         "medianCompactChars": 973,
         "resultParity": true
@@ -64,13 +96,13 @@
     },
     "table": {
       "baseline": {
-        "medianMs": 66.55741649999982,
+        "medianMs": 83.531645999999,
         "medianPipedChars": 1471,
         "medianCompactChars": 813,
         "resultParity": true
       },
       "candidate": {
-        "medianMs": 72.50202100000024,
+        "medianMs": 84.23379199999908,
         "medianPipedChars": 744,
         "medianCompactChars": 744,
         "resultParity": true
@@ -78,13 +110,13 @@
     },
     "deferred": {
       "baseline": {
-        "medianMs": 850.3196875000003,
+        "medianMs": 859.0160210000004,
         "medianPipedChars": 318,
         "medianCompactChars": 236,
         "resultParity": true
       },
       "candidate": {
-        "medianMs": 225.68189600000187,
+        "medianMs": 239.41918749999877,
         "medianPipedChars": 236,
         "medianCompactChars": 236,
         "resultParity": true
@@ -92,13 +124,13 @@
     },
     "directory": {
       "baseline": {
-        "medianMs": 50.91279149999991,
+        "medianMs": 54.24360449999949,
         "medianPipedChars": 3056,
         "medianCompactChars": 1478,
         "resultParity": true
       },
       "candidate": {
-        "medianMs": 46.69135449999976,
+        "medianMs": 47.99243750000005,
         "medianPipedChars": 837,
         "medianCompactChars": 837,
         "resultParity": true
@@ -110,7 +142,7 @@
       "variant": "baseline",
       "workload": "article",
       "repetition": 0,
-      "elapsedMs": 47.80904199999986,
+      "elapsedMs": 47.13641699999971,
       "compactEnvelopeChars": 4331,
       "pipedEnvelopeChars": 8855,
       "automaticUIChars": 3971,
@@ -120,7 +152,7 @@
       "variant": "candidate",
       "workload": "article",
       "repetition": 0,
-      "elapsedMs": 53.67433299999993,
+      "elapsedMs": 44.04512500000055,
       "compactEnvelopeChars": 2740,
       "pipedEnvelopeChars": 2740,
       "automaticUIChars": 2380,
@@ -130,7 +162,7 @@
       "variant": "baseline",
       "workload": "form",
       "repetition": 0,
-      "elapsedMs": 380.1554580000002,
+      "elapsedMs": 363.5135829999999,
       "compactEnvelopeChars": 1022,
       "pipedEnvelopeChars": 1864,
       "automaticUIChars": 733,
@@ -140,7 +172,7 @@
       "variant": "candidate",
       "workload": "form",
       "repetition": 0,
-      "elapsedMs": 373.0427500000005,
+      "elapsedMs": 270.56287500000053,
       "compactEnvelopeChars": 973,
       "pipedEnvelopeChars": 973,
       "automaticUIChars": 684,
@@ -150,7 +182,7 @@
       "variant": "baseline",
       "workload": "table",
       "repetition": 0,
-      "elapsedMs": 86.6155830000007,
+      "elapsedMs": 90.58216699999957,
       "compactEnvelopeChars": 813,
       "pipedEnvelopeChars": 1471,
       "automaticUIChars": 446,
@@ -167,7 +199,7 @@
       "variant": "candidate",
       "workload": "table",
       "repetition": 0,
-      "elapsedMs": 71.70924999999988,
+      "elapsedMs": 66.13850000000002,
       "compactEnvelopeChars": 744,
       "pipedEnvelopeChars": 744,
       "automaticUIChars": 377,
@@ -184,7 +216,7 @@
       "variant": "baseline",
       "workload": "deferred",
       "repetition": 0,
-      "elapsedMs": 847.941417,
+      "elapsedMs": 859.2935830000006,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 318,
       "automaticUIChars": 0,
@@ -194,7 +226,7 @@
       "variant": "candidate",
       "workload": "deferred",
       "repetition": 0,
-      "elapsedMs": 233.09020800000053,
+      "elapsedMs": 243.72329200000058,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 236,
       "automaticUIChars": 0,
@@ -204,7 +236,7 @@
       "variant": "baseline",
       "workload": "directory",
       "repetition": 0,
-      "elapsedMs": 50.71437499999956,
+      "elapsedMs": 72.22249999999985,
       "compactEnvelopeChars": 1478,
       "pipedEnvelopeChars": 3056,
       "automaticUIChars": 635,
@@ -290,7 +322,7 @@
       "variant": "candidate",
       "workload": "directory",
       "repetition": 0,
-      "elapsedMs": 45.38995799999975,
+      "elapsedMs": 48.07099999999991,
       "compactEnvelopeChars": 837,
       "pipedEnvelopeChars": 837,
       "automaticUIChars": 0,
@@ -376,7 +408,7 @@
       "variant": "candidate",
       "workload": "article",
       "repetition": 1,
-      "elapsedMs": 45.58191699999952,
+      "elapsedMs": 45.96129199999996,
       "compactEnvelopeChars": 2740,
       "pipedEnvelopeChars": 2740,
       "automaticUIChars": 2380,
@@ -386,7 +418,7 @@
       "variant": "baseline",
       "workload": "article",
       "repetition": 1,
-      "elapsedMs": 50.022375000000466,
+      "elapsedMs": 45.940333000000464,
       "compactEnvelopeChars": 4331,
       "pipedEnvelopeChars": 8855,
       "automaticUIChars": 3971,
@@ -396,7 +428,7 @@
       "variant": "candidate",
       "workload": "form",
       "repetition": 1,
-      "elapsedMs": 367.77141699999993,
+      "elapsedMs": 361.58791700000074,
       "compactEnvelopeChars": 973,
       "pipedEnvelopeChars": 973,
       "automaticUIChars": 684,
@@ -406,7 +438,7 @@
       "variant": "baseline",
       "workload": "form",
       "repetition": 1,
-      "elapsedMs": 364.1736659999997,
+      "elapsedMs": 369.884,
       "compactEnvelopeChars": 1022,
       "pipedEnvelopeChars": 1864,
       "automaticUIChars": 733,
@@ -416,290 +448,7 @@
       "variant": "candidate",
       "workload": "table",
       "repetition": 1,
-      "elapsedMs": 70.21179100000063,
-      "compactEnvelopeChars": 744,
-      "pipedEnvelopeChars": 744,
-      "automaticUIChars": 377,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "baseline",
-      "workload": "table",
-      "repetition": 1,
-      "elapsedMs": 65.86937500000022,
-      "compactEnvelopeChars": 813,
-      "pipedEnvelopeChars": 1471,
-      "automaticUIChars": 446,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "candidate",
-      "workload": "deferred",
-      "repetition": 1,
-      "elapsedMs": 222.38458300000093,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 236,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "baseline",
-      "workload": "deferred",
-      "repetition": 1,
-      "elapsedMs": 849.1908329999987,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 318,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "candidate",
-      "workload": "directory",
-      "repetition": 1,
-      "elapsedMs": 46.5044999999991,
-      "compactEnvelopeChars": 837,
-      "pipedEnvelopeChars": 837,
-      "automaticUIChars": 0,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "baseline",
-      "workload": "directory",
-      "repetition": 1,
-      "elapsedMs": 48.944250000000466,
-      "compactEnvelopeChars": 1478,
-      "pipedEnvelopeChars": 3056,
-      "automaticUIChars": 635,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "baseline",
-      "workload": "article",
-      "repetition": 2,
-      "elapsedMs": 46.88441700000112,
-      "compactEnvelopeChars": 4331,
-      "pipedEnvelopeChars": 8855,
-      "automaticUIChars": 3971,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "candidate",
-      "workload": "article",
-      "repetition": 2,
-      "elapsedMs": 50.59970799999974,
-      "compactEnvelopeChars": 2740,
-      "pipedEnvelopeChars": 2740,
-      "automaticUIChars": 2380,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "baseline",
-      "workload": "form",
-      "repetition": 2,
-      "elapsedMs": 364.6087919999991,
-      "compactEnvelopeChars": 1022,
-      "pipedEnvelopeChars": 1864,
-      "automaticUIChars": 733,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "candidate",
-      "workload": "form",
-      "repetition": 2,
-      "elapsedMs": 378.2791669999988,
-      "compactEnvelopeChars": 971,
-      "pipedEnvelopeChars": 971,
-      "automaticUIChars": 684,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "baseline",
-      "workload": "table",
-      "repetition": 2,
-      "elapsedMs": 68.19279099999949,
-      "compactEnvelopeChars": 813,
-      "pipedEnvelopeChars": 1471,
-      "automaticUIChars": 446,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "candidate",
-      "workload": "table",
-      "repetition": 2,
-      "elapsedMs": 73.2947920000006,
+      "elapsedMs": 86.3361670000013,
       "compactEnvelopeChars": 742,
       "pipedEnvelopeChars": 742,
       "automaticUIChars": 377,
@@ -714,9 +463,292 @@
     },
     {
       "variant": "baseline",
+      "workload": "table",
+      "repetition": 1,
+      "elapsedMs": 71.71187500000087,
+      "compactEnvelopeChars": 813,
+      "pipedEnvelopeChars": 1471,
+      "automaticUIChars": 446,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "candidate",
+      "workload": "deferred",
+      "repetition": 1,
+      "elapsedMs": 241.71016699999927,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 236,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "baseline",
+      "workload": "deferred",
+      "repetition": 1,
+      "elapsedMs": 877.0549169999995,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 318,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "candidate",
+      "workload": "directory",
+      "repetition": 1,
+      "elapsedMs": 50.14954200000102,
+      "compactEnvelopeChars": 837,
+      "pipedEnvelopeChars": 837,
+      "automaticUIChars": 0,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "baseline",
+      "workload": "directory",
+      "repetition": 1,
+      "elapsedMs": 44.65912500000013,
+      "compactEnvelopeChars": 1478,
+      "pipedEnvelopeChars": 3056,
+      "automaticUIChars": 635,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "baseline",
+      "workload": "article",
+      "repetition": 2,
+      "elapsedMs": 47.88891599999988,
+      "compactEnvelopeChars": 4331,
+      "pipedEnvelopeChars": 8855,
+      "automaticUIChars": 3971,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "candidate",
+      "workload": "article",
+      "repetition": 2,
+      "elapsedMs": 48.18870900000002,
+      "compactEnvelopeChars": 2740,
+      "pipedEnvelopeChars": 2740,
+      "automaticUIChars": 2380,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "baseline",
+      "workload": "form",
+      "repetition": 2,
+      "elapsedMs": 888.0389160000013,
+      "compactEnvelopeChars": 1022,
+      "pipedEnvelopeChars": 1864,
+      "automaticUIChars": 733,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "candidate",
+      "workload": "form",
+      "repetition": 2,
+      "elapsedMs": 742.5012920000008,
+      "compactEnvelopeChars": 973,
+      "pipedEnvelopeChars": 973,
+      "automaticUIChars": 684,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "baseline",
+      "workload": "table",
+      "repetition": 2,
+      "elapsedMs": 174.92100000000028,
+      "compactEnvelopeChars": 814,
+      "pipedEnvelopeChars": 1472,
+      "automaticUIChars": 446,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "candidate",
+      "workload": "table",
+      "repetition": 2,
+      "elapsedMs": 189.40733399999954,
+      "compactEnvelopeChars": 745,
+      "pipedEnvelopeChars": 745,
+      "automaticUIChars": 377,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "baseline",
       "workload": "deferred",
       "repetition": 2,
-      "elapsedMs": 850.7257499999996,
+      "elapsedMs": 848.3243340000008,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 318,
       "automaticUIChars": 0,
@@ -726,7 +758,7 @@
       "variant": "candidate",
       "workload": "deferred",
       "repetition": 2,
-      "elapsedMs": 222.8227910000005,
+      "elapsedMs": 226.83287500000006,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 236,
       "automaticUIChars": 0,
@@ -736,7 +768,7 @@
       "variant": "baseline",
       "workload": "directory",
       "repetition": 2,
-      "elapsedMs": 50.55341700000099,
+      "elapsedMs": 60.75129100000049,
       "compactEnvelopeChars": 1478,
       "pipedEnvelopeChars": 3056,
       "automaticUIChars": 635,
@@ -822,7 +854,7 @@
       "variant": "candidate",
       "workload": "directory",
       "repetition": 2,
-      "elapsedMs": 48.167208999999275,
+      "elapsedMs": 47.91387500000019,
       "compactEnvelopeChars": 837,
       "pipedEnvelopeChars": 837,
       "automaticUIChars": 0,
@@ -908,9 +940,9 @@
       "variant": "candidate",
       "workload": "article",
       "repetition": 3,
-      "elapsedMs": 47.2450000000008,
-      "compactEnvelopeChars": 2738,
-      "pipedEnvelopeChars": 2738,
+      "elapsedMs": 48.649083000000246,
+      "compactEnvelopeChars": 2740,
+      "pipedEnvelopeChars": 2740,
       "automaticUIChars": 2380,
       "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
     },
@@ -918,7 +950,7 @@
       "variant": "baseline",
       "workload": "article",
       "repetition": 3,
-      "elapsedMs": 48.8693749999984,
+      "elapsedMs": 46.07337499999994,
       "compactEnvelopeChars": 4331,
       "pipedEnvelopeChars": 8855,
       "automaticUIChars": 3971,
@@ -928,9 +960,9 @@
       "variant": "candidate",
       "workload": "form",
       "repetition": 3,
-      "elapsedMs": 387.6250830000008,
-      "compactEnvelopeChars": 973,
-      "pipedEnvelopeChars": 973,
+      "elapsedMs": 330.22799999999916,
+      "compactEnvelopeChars": 971,
+      "pipedEnvelopeChars": 971,
       "automaticUIChars": 684,
       "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
     },
@@ -938,7 +970,7 @@
       "variant": "baseline",
       "workload": "form",
       "repetition": 3,
-      "elapsedMs": 366.73391600000105,
+      "elapsedMs": 405.0528750000012,
       "compactEnvelopeChars": 1022,
       "pipedEnvelopeChars": 1864,
       "automaticUIChars": 733,
@@ -948,7 +980,7 @@
       "variant": "candidate",
       "workload": "table",
       "repetition": 3,
-      "elapsedMs": 99.77087500000016,
+      "elapsedMs": 97.1142920000002,
       "compactEnvelopeChars": 744,
       "pipedEnvelopeChars": 744,
       "automaticUIChars": 377,
@@ -965,7 +997,7 @@
       "variant": "baseline",
       "workload": "table",
       "repetition": 3,
-      "elapsedMs": 73.41279199999917,
+      "elapsedMs": 72.1049579999999,
       "compactEnvelopeChars": 813,
       "pipedEnvelopeChars": 1471,
       "automaticUIChars": 446,
@@ -982,7 +1014,7 @@
       "variant": "candidate",
       "workload": "deferred",
       "repetition": 3,
-      "elapsedMs": 225.0044170000001,
+      "elapsedMs": 230.33470800000032,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 236,
       "automaticUIChars": 0,
@@ -992,7 +1024,7 @@
       "variant": "baseline",
       "workload": "deferred",
       "repetition": 3,
-      "elapsedMs": 850.5811250000006,
+      "elapsedMs": 859.3077499999999,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 318,
       "automaticUIChars": 0,
@@ -1002,7 +1034,7 @@
       "variant": "candidate",
       "workload": "directory",
       "repetition": 3,
-      "elapsedMs": 46.878209000000425,
+      "elapsedMs": 53.20804099999987,
       "compactEnvelopeChars": 837,
       "pipedEnvelopeChars": 837,
       "automaticUIChars": 0,
@@ -1088,7 +1120,7 @@
       "variant": "baseline",
       "workload": "directory",
       "repetition": 3,
-      "elapsedMs": 51.93183300000055,
+      "elapsedMs": 45.432333000000654,
       "compactEnvelopeChars": 1478,
       "pipedEnvelopeChars": 3056,
       "automaticUIChars": 635,
@@ -1174,7 +1206,7 @@
       "variant": "baseline",
       "workload": "article",
       "repetition": 4,
-      "elapsedMs": 46.81291699999929,
+      "elapsedMs": 48.06287499999962,
       "compactEnvelopeChars": 4331,
       "pipedEnvelopeChars": 8855,
       "automaticUIChars": 3971,
@@ -1184,1071 +1216,7 @@
       "variant": "candidate",
       "workload": "article",
       "repetition": 4,
-      "elapsedMs": 46.895541999998386,
-      "compactEnvelopeChars": 2740,
-      "pipedEnvelopeChars": 2740,
-      "automaticUIChars": 2380,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "baseline",
-      "workload": "form",
-      "repetition": 4,
-      "elapsedMs": 370.75987499999974,
-      "compactEnvelopeChars": 1022,
-      "pipedEnvelopeChars": 1864,
-      "automaticUIChars": 733,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "candidate",
-      "workload": "form",
-      "repetition": 4,
-      "elapsedMs": 383.8160829999997,
-      "compactEnvelopeChars": 973,
-      "pipedEnvelopeChars": 973,
-      "automaticUIChars": 684,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "baseline",
-      "workload": "table",
-      "repetition": 4,
-      "elapsedMs": 66.1763749999991,
-      "compactEnvelopeChars": 813,
-      "pipedEnvelopeChars": 1471,
-      "automaticUIChars": 446,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "candidate",
-      "workload": "table",
-      "repetition": 4,
-      "elapsedMs": 82.32941600000049,
-      "compactEnvelopeChars": 744,
-      "pipedEnvelopeChars": 744,
-      "automaticUIChars": 377,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "baseline",
-      "workload": "deferred",
-      "repetition": 4,
-      "elapsedMs": 850.05825,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 318,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "candidate",
-      "workload": "deferred",
-      "repetition": 4,
-      "elapsedMs": 226.83550000000105,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 236,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "baseline",
-      "workload": "directory",
-      "repetition": 4,
-      "elapsedMs": 51.11120800000026,
-      "compactEnvelopeChars": 1478,
-      "pipedEnvelopeChars": 3056,
-      "automaticUIChars": 635,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "candidate",
-      "workload": "directory",
-      "repetition": 4,
-      "elapsedMs": 44.40162500000042,
-      "compactEnvelopeChars": 837,
-      "pipedEnvelopeChars": 837,
-      "automaticUIChars": 0,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "candidate",
-      "workload": "article",
-      "repetition": 5,
-      "elapsedMs": 48.66479199999958,
-      "compactEnvelopeChars": 2740,
-      "pipedEnvelopeChars": 2740,
-      "automaticUIChars": 2380,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "baseline",
-      "workload": "article",
-      "repetition": 5,
-      "elapsedMs": 48.48991700000079,
-      "compactEnvelopeChars": 4331,
-      "pipedEnvelopeChars": 8855,
-      "automaticUIChars": 3971,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "candidate",
-      "workload": "form",
-      "repetition": 5,
-      "elapsedMs": 372.15841700000055,
-      "compactEnvelopeChars": 973,
-      "pipedEnvelopeChars": 973,
-      "automaticUIChars": 684,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "baseline",
-      "workload": "form",
-      "repetition": 5,
-      "elapsedMs": 372.7737080000006,
-      "compactEnvelopeChars": 1022,
-      "pipedEnvelopeChars": 1864,
-      "automaticUIChars": 733,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "candidate",
-      "workload": "table",
-      "repetition": 5,
-      "elapsedMs": 68.03395900000032,
-      "compactEnvelopeChars": 744,
-      "pipedEnvelopeChars": 744,
-      "automaticUIChars": 377,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "baseline",
-      "workload": "table",
-      "repetition": 5,
-      "elapsedMs": 58.37216699999772,
-      "compactEnvelopeChars": 813,
-      "pipedEnvelopeChars": 1471,
-      "automaticUIChars": 446,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "candidate",
-      "workload": "deferred",
-      "repetition": 5,
-      "elapsedMs": 221.75124999999753,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 236,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "baseline",
-      "workload": "deferred",
-      "repetition": 5,
-      "elapsedMs": 849.0656249999993,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 318,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "candidate",
-      "workload": "directory",
-      "repetition": 5,
-      "elapsedMs": 55.256790999999794,
-      "compactEnvelopeChars": 837,
-      "pipedEnvelopeChars": 837,
-      "automaticUIChars": 0,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "baseline",
-      "workload": "directory",
-      "repetition": 5,
-      "elapsedMs": 52.808249999998225,
-      "compactEnvelopeChars": 1478,
-      "pipedEnvelopeChars": 3056,
-      "automaticUIChars": 635,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "baseline",
-      "workload": "article",
-      "repetition": 6,
-      "elapsedMs": 44.98004200000287,
-      "compactEnvelopeChars": 4331,
-      "pipedEnvelopeChars": 8855,
-      "automaticUIChars": 3971,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "candidate",
-      "workload": "article",
-      "repetition": 6,
-      "elapsedMs": 48.39650000000256,
-      "compactEnvelopeChars": 2740,
-      "pipedEnvelopeChars": 2740,
-      "automaticUIChars": 2380,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "baseline",
-      "workload": "form",
-      "repetition": 6,
-      "elapsedMs": 373.7307919999985,
-      "compactEnvelopeChars": 1022,
-      "pipedEnvelopeChars": 1864,
-      "automaticUIChars": 733,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "candidate",
-      "workload": "form",
-      "repetition": 6,
-      "elapsedMs": 371.7917500000003,
-      "compactEnvelopeChars": 973,
-      "pipedEnvelopeChars": 973,
-      "automaticUIChars": 684,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "baseline",
-      "workload": "table",
-      "repetition": 6,
-      "elapsedMs": 64.28512499999852,
-      "compactEnvelopeChars": 813,
-      "pipedEnvelopeChars": 1471,
-      "automaticUIChars": 446,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "candidate",
-      "workload": "table",
-      "repetition": 6,
-      "elapsedMs": 76.04875000000175,
-      "compactEnvelopeChars": 744,
-      "pipedEnvelopeChars": 744,
-      "automaticUIChars": 377,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "baseline",
-      "workload": "deferred",
-      "repetition": 6,
-      "elapsedMs": 850.8112919999985,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 318,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "candidate",
-      "workload": "deferred",
-      "repetition": 6,
-      "elapsedMs": 227.30199999999968,
-      "compactEnvelopeChars": 234,
-      "pipedEnvelopeChars": 234,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "baseline",
-      "workload": "directory",
-      "repetition": 6,
-      "elapsedMs": 56.3236250000009,
-      "compactEnvelopeChars": 1476,
-      "pipedEnvelopeChars": 3054,
-      "automaticUIChars": 635,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "candidate",
-      "workload": "directory",
-      "repetition": 6,
-      "elapsedMs": 45.65983300000153,
-      "compactEnvelopeChars": 837,
-      "pipedEnvelopeChars": 837,
-      "automaticUIChars": 0,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "candidate",
-      "workload": "article",
-      "repetition": 7,
-      "elapsedMs": 47.52758400000312,
-      "compactEnvelopeChars": 2740,
-      "pipedEnvelopeChars": 2740,
-      "automaticUIChars": 2380,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "baseline",
-      "workload": "article",
-      "repetition": 7,
-      "elapsedMs": 49.80279200000223,
-      "compactEnvelopeChars": 4331,
-      "pipedEnvelopeChars": 8855,
-      "automaticUIChars": 3971,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "candidate",
-      "workload": "form",
-      "repetition": 7,
-      "elapsedMs": 363.9832920000008,
-      "compactEnvelopeChars": 973,
-      "pipedEnvelopeChars": 973,
-      "automaticUIChars": 684,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "baseline",
-      "workload": "form",
-      "repetition": 7,
-      "elapsedMs": 363.58033299999806,
-      "compactEnvelopeChars": 1022,
-      "pipedEnvelopeChars": 1864,
-      "automaticUIChars": 733,
-      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
-    },
-    {
-      "variant": "candidate",
-      "workload": "table",
-      "repetition": 7,
-      "elapsedMs": 71.21179100000154,
-      "compactEnvelopeChars": 744,
-      "pipedEnvelopeChars": 744,
-      "automaticUIChars": 377,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "baseline",
-      "workload": "table",
-      "repetition": 7,
-      "elapsedMs": 64.3761250000025,
-      "compactEnvelopeChars": 813,
-      "pipedEnvelopeChars": 1471,
-      "automaticUIChars": 446,
-      "result": [
-        "Device 02OperationsYes3",
-        "Device 08OperationsYes9",
-        "Device 11OperationsYes12",
-        "Device 14OperationsYes15",
-        "Device 20OperationsYes21",
-        "Device 23OperationsYes24"
-      ]
-    },
-    {
-      "variant": "candidate",
-      "workload": "deferred",
-      "repetition": 7,
-      "elapsedMs": 225.2502080000013,
-      "compactEnvelopeChars": 234,
-      "pipedEnvelopeChars": 234,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "baseline",
-      "workload": "deferred",
-      "repetition": 7,
-      "elapsedMs": 852.746916,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 318,
-      "automaticUIChars": 0,
-      "result": "Report ready: 24 records"
-    },
-    {
-      "variant": "candidate",
-      "workload": "directory",
-      "repetition": 7,
-      "elapsedMs": 47.37837500000023,
-      "compactEnvelopeChars": 837,
-      "pipedEnvelopeChars": 837,
-      "automaticUIChars": 0,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "baseline",
-      "workload": "directory",
-      "repetition": 7,
-      "elapsedMs": 51.25483299999905,
-      "compactEnvelopeChars": 1476,
-      "pipedEnvelopeChars": 3054,
-      "automaticUIChars": 635,
-      "result": {
-        "protocol": "betterwright-ui/1",
-        "tool": "browser_batch",
-        "controls": [
-          {
-            "target": {
-              "label": "Display name",
-              "exact": true
-            },
-            "actions": [
-              "fill",
-              "read"
-            ]
-          },
-          {
-            "target": {
-              "role": "combobox",
-              "name": "Department",
-              "exact": true
-            },
-            "actions": [
-              "select",
-              "read"
-            ],
-            "value": "Engineering",
-            "options": [
-              [
-                "Engineering",
-                "Engineering",
-                true
-              ],
-              [
-                "Operations",
-                "Operations",
-                false
-              ],
-              [
-                "Design",
-                "Design",
-                false
-              ]
-            ]
-          },
-          {
-            "target": {
-              "label": "Weekly digest",
-              "exact": true
-            },
-            "actions": [
-              "check",
-              "read"
-            ],
-            "value": "on",
-            "checked": false
-          },
-          {
-            "target": {
-              "role": "button",
-              "name": "Save preferences",
-              "exact": true
-            },
-            "actions": [
-              "click",
-              "read"
-            ]
-          }
-        ],
-        "evidence": [
-          {
-            "target": {
-              "role": "status"
-            },
-            "text": ""
-          }
-        ],
-        "truncated": false
-      }
-    },
-    {
-      "variant": "baseline",
-      "workload": "article",
-      "repetition": 8,
-      "elapsedMs": 56.83770799999911,
-      "compactEnvelopeChars": 4331,
-      "pipedEnvelopeChars": 8855,
-      "automaticUIChars": 3971,
-      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
-    },
-    {
-      "variant": "candidate",
-      "workload": "article",
-      "repetition": 8,
-      "elapsedMs": 47.2777079999978,
+      "elapsedMs": 47.33270899999843,
       "compactEnvelopeChars": 2738,
       "pipedEnvelopeChars": 2738,
       "automaticUIChars": 2380,
@@ -2257,8 +1225,8 @@
     {
       "variant": "baseline",
       "workload": "form",
-      "repetition": 8,
-      "elapsedMs": 382.06383300000016,
+      "repetition": 4,
+      "elapsedMs": 264.7199999999975,
       "compactEnvelopeChars": 1022,
       "pipedEnvelopeChars": 1864,
       "automaticUIChars": 733,
@@ -2267,8 +1235,8 @@
     {
       "variant": "candidate",
       "workload": "form",
-      "repetition": 8,
-      "elapsedMs": 264.46887499999866,
+      "repetition": 4,
+      "elapsedMs": 279.22291699999914,
       "compactEnvelopeChars": 973,
       "pipedEnvelopeChars": 973,
       "automaticUIChars": 684,
@@ -2277,8 +1245,540 @@
     {
       "variant": "baseline",
       "workload": "table",
-      "repetition": 8,
-      "elapsedMs": 69.5391660000023,
+      "repetition": 4,
+      "elapsedMs": 68.3049170000013,
+      "compactEnvelopeChars": 811,
+      "pipedEnvelopeChars": 1469,
+      "automaticUIChars": 446,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "candidate",
+      "workload": "table",
+      "repetition": 4,
+      "elapsedMs": 58.40679099999761,
+      "compactEnvelopeChars": 744,
+      "pipedEnvelopeChars": 744,
+      "automaticUIChars": 377,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "baseline",
+      "workload": "deferred",
+      "repetition": 4,
+      "elapsedMs": 855.5740829999995,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 318,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "candidate",
+      "workload": "deferred",
+      "repetition": 4,
+      "elapsedMs": 258.70279200000004,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 236,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "baseline",
+      "workload": "directory",
+      "repetition": 4,
+      "elapsedMs": 60.62158400000044,
+      "compactEnvelopeChars": 1478,
+      "pipedEnvelopeChars": 3056,
+      "automaticUIChars": 635,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "candidate",
+      "workload": "directory",
+      "repetition": 4,
+      "elapsedMs": 42.3035830000008,
+      "compactEnvelopeChars": 835,
+      "pipedEnvelopeChars": 835,
+      "automaticUIChars": 0,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "candidate",
+      "workload": "article",
+      "repetition": 5,
+      "elapsedMs": 44.83233299999847,
+      "compactEnvelopeChars": 2740,
+      "pipedEnvelopeChars": 2740,
+      "automaticUIChars": 2380,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "baseline",
+      "workload": "article",
+      "repetition": 5,
+      "elapsedMs": 45.61191599999802,
+      "compactEnvelopeChars": 4331,
+      "pipedEnvelopeChars": 8855,
+      "automaticUIChars": 3971,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "candidate",
+      "workload": "form",
+      "repetition": 5,
+      "elapsedMs": 355.02879199999734,
+      "compactEnvelopeChars": 973,
+      "pipedEnvelopeChars": 973,
+      "automaticUIChars": 684,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "baseline",
+      "workload": "form",
+      "repetition": 5,
+      "elapsedMs": 391.54475000000093,
+      "compactEnvelopeChars": 1020,
+      "pipedEnvelopeChars": 1862,
+      "automaticUIChars": 733,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "candidate",
+      "workload": "table",
+      "repetition": 5,
+      "elapsedMs": 139.6762920000001,
+      "compactEnvelopeChars": 745,
+      "pipedEnvelopeChars": 745,
+      "automaticUIChars": 377,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "baseline",
+      "workload": "table",
+      "repetition": 5,
+      "elapsedMs": 76.48112499999843,
+      "compactEnvelopeChars": 813,
+      "pipedEnvelopeChars": 1471,
+      "automaticUIChars": 446,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "candidate",
+      "workload": "deferred",
+      "repetition": 5,
+      "elapsedMs": 255.83083400000032,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 236,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "baseline",
+      "workload": "deferred",
+      "repetition": 5,
+      "elapsedMs": 858.7384590000001,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 318,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "candidate",
+      "workload": "directory",
+      "repetition": 5,
+      "elapsedMs": 45.40412500000093,
+      "compactEnvelopeChars": 837,
+      "pipedEnvelopeChars": 837,
+      "automaticUIChars": 0,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "baseline",
+      "workload": "directory",
+      "repetition": 5,
+      "elapsedMs": 47.865624999998545,
+      "compactEnvelopeChars": 1478,
+      "pipedEnvelopeChars": 3056,
+      "automaticUIChars": 635,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "baseline",
+      "workload": "article",
+      "repetition": 6,
+      "elapsedMs": 43.47745800000121,
+      "compactEnvelopeChars": 4331,
+      "pipedEnvelopeChars": 8855,
+      "automaticUIChars": 3971,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "candidate",
+      "workload": "article",
+      "repetition": 6,
+      "elapsedMs": 46.2478340000016,
+      "compactEnvelopeChars": 2738,
+      "pipedEnvelopeChars": 2738,
+      "automaticUIChars": 2380,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "baseline",
+      "workload": "form",
+      "repetition": 6,
+      "elapsedMs": 497.3110839999972,
+      "compactEnvelopeChars": 1020,
+      "pipedEnvelopeChars": 1862,
+      "automaticUIChars": 733,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "candidate",
+      "workload": "form",
+      "repetition": 6,
+      "elapsedMs": 393.3859999999986,
+      "compactEnvelopeChars": 971,
+      "pipedEnvelopeChars": 971,
+      "automaticUIChars": 684,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "baseline",
+      "workload": "table",
+      "repetition": 6,
+      "elapsedMs": 93.84270900000047,
       "compactEnvelopeChars": 813,
       "pipedEnvelopeChars": 1471,
       "automaticUIChars": 446,
@@ -2294,8 +1794,540 @@
     {
       "variant": "candidate",
       "workload": "table",
+      "repetition": 6,
+      "elapsedMs": 82.13141699999687,
+      "compactEnvelopeChars": 744,
+      "pipedEnvelopeChars": 744,
+      "automaticUIChars": 377,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "baseline",
+      "workload": "deferred",
+      "repetition": 6,
+      "elapsedMs": 857.0584579999995,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 318,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "candidate",
+      "workload": "deferred",
+      "repetition": 6,
+      "elapsedMs": 237.12820799999827,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 236,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "baseline",
+      "workload": "directory",
+      "repetition": 6,
+      "elapsedMs": 65.3059170000015,
+      "compactEnvelopeChars": 1478,
+      "pipedEnvelopeChars": 3056,
+      "automaticUIChars": 635,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "candidate",
+      "workload": "directory",
+      "repetition": 6,
+      "elapsedMs": 45.122041999999055,
+      "compactEnvelopeChars": 837,
+      "pipedEnvelopeChars": 837,
+      "automaticUIChars": 0,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "candidate",
+      "workload": "article",
+      "repetition": 7,
+      "elapsedMs": 43.480124999998225,
+      "compactEnvelopeChars": 2740,
+      "pipedEnvelopeChars": 2740,
+      "automaticUIChars": 2380,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "baseline",
+      "workload": "article",
+      "repetition": 7,
+      "elapsedMs": 46.682542000002286,
+      "compactEnvelopeChars": 4331,
+      "pipedEnvelopeChars": 8855,
+      "automaticUIChars": 3971,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "candidate",
+      "workload": "form",
+      "repetition": 7,
+      "elapsedMs": 360.7324589999989,
+      "compactEnvelopeChars": 973,
+      "pipedEnvelopeChars": 973,
+      "automaticUIChars": 684,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "baseline",
+      "workload": "form",
+      "repetition": 7,
+      "elapsedMs": 393.1534580000007,
+      "compactEnvelopeChars": 1022,
+      "pipedEnvelopeChars": 1864,
+      "automaticUIChars": 733,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "candidate",
+      "workload": "table",
+      "repetition": 7,
+      "elapsedMs": 75.87225000000035,
+      "compactEnvelopeChars": 744,
+      "pipedEnvelopeChars": 744,
+      "automaticUIChars": 377,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "baseline",
+      "workload": "table",
+      "repetition": 7,
+      "elapsedMs": 69.23174999999901,
+      "compactEnvelopeChars": 813,
+      "pipedEnvelopeChars": 1471,
+      "automaticUIChars": 446,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "candidate",
+      "workload": "deferred",
+      "repetition": 7,
+      "elapsedMs": 225.49687500000073,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 236,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "baseline",
+      "workload": "deferred",
+      "repetition": 7,
+      "elapsedMs": 870.1082080000015,
+      "compactEnvelopeChars": 236,
+      "pipedEnvelopeChars": 318,
+      "automaticUIChars": 0,
+      "result": "Report ready: 24 records"
+    },
+    {
+      "variant": "candidate",
+      "workload": "directory",
+      "repetition": 7,
+      "elapsedMs": 57.79504100000122,
+      "compactEnvelopeChars": 837,
+      "pipedEnvelopeChars": 837,
+      "automaticUIChars": 0,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "baseline",
+      "workload": "directory",
+      "repetition": 7,
+      "elapsedMs": 44.97075000000041,
+      "compactEnvelopeChars": 1478,
+      "pipedEnvelopeChars": 3056,
+      "automaticUIChars": 635,
+      "result": {
+        "protocol": "betterwright-ui/1",
+        "tool": "browser_batch",
+        "controls": [
+          {
+            "target": {
+              "label": "Display name",
+              "exact": true
+            },
+            "actions": [
+              "fill",
+              "read"
+            ]
+          },
+          {
+            "target": {
+              "role": "combobox",
+              "name": "Department",
+              "exact": true
+            },
+            "actions": [
+              "select",
+              "read"
+            ],
+            "value": "Engineering",
+            "options": [
+              [
+                "Engineering",
+                "Engineering",
+                true
+              ],
+              [
+                "Operations",
+                "Operations",
+                false
+              ],
+              [
+                "Design",
+                "Design",
+                false
+              ]
+            ]
+          },
+          {
+            "target": {
+              "label": "Weekly digest",
+              "exact": true
+            },
+            "actions": [
+              "check",
+              "read"
+            ],
+            "value": "on",
+            "checked": false
+          },
+          {
+            "target": {
+              "role": "button",
+              "name": "Save preferences",
+              "exact": true
+            },
+            "actions": [
+              "click",
+              "read"
+            ]
+          }
+        ],
+        "evidence": [
+          {
+            "target": {
+              "role": "status"
+            },
+            "text": ""
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "variant": "baseline",
+      "workload": "article",
       "repetition": 8,
-      "elapsedMs": 73.9353749999973,
+      "elapsedMs": 45.873084000002564,
+      "compactEnvelopeChars": 4331,
+      "pipedEnvelopeChars": 8855,
+      "automaticUIChars": 3971,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "candidate",
+      "workload": "article",
+      "repetition": 8,
+      "elapsedMs": 48.47070800000074,
+      "compactEnvelopeChars": 2740,
+      "pipedEnvelopeChars": 2740,
+      "automaticUIChars": 2380,
+      "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
+    },
+    {
+      "variant": "baseline",
+      "workload": "form",
+      "repetition": 8,
+      "elapsedMs": 365.40016599999944,
+      "compactEnvelopeChars": 1022,
+      "pipedEnvelopeChars": 1864,
+      "automaticUIChars": 733,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "candidate",
+      "workload": "form",
+      "repetition": 8,
+      "elapsedMs": 385.9108750000014,
+      "compactEnvelopeChars": 973,
+      "pipedEnvelopeChars": 973,
+      "automaticUIChars": 684,
+      "result": "Saved: {\"displayName\":\"Taylor\",\"department\":\"Operations\",\"digest\":\"on\"}"
+    },
+    {
+      "variant": "baseline",
+      "workload": "table",
+      "repetition": 8,
+      "elapsedMs": 103.96812499999942,
+      "compactEnvelopeChars": 814,
+      "pipedEnvelopeChars": 1472,
+      "automaticUIChars": 446,
+      "result": [
+        "Device 02OperationsYes3",
+        "Device 08OperationsYes9",
+        "Device 11OperationsYes12",
+        "Device 14OperationsYes15",
+        "Device 20OperationsYes21",
+        "Device 23OperationsYes24"
+      ]
+    },
+    {
+      "variant": "candidate",
+      "workload": "table",
+      "repetition": 8,
+      "elapsedMs": 69.63087500000256,
       "compactEnvelopeChars": 744,
       "pipedEnvelopeChars": 744,
       "automaticUIChars": 377,
@@ -2312,9 +2344,9 @@
       "variant": "baseline",
       "workload": "deferred",
       "repetition": 8,
-      "elapsedMs": 849.5917499999996,
-      "compactEnvelopeChars": 236,
-      "pipedEnvelopeChars": 318,
+      "elapsedMs": 1924.4412920000032,
+      "compactEnvelopeChars": 237,
+      "pipedEnvelopeChars": 319,
       "automaticUIChars": 0,
       "result": "Report ready: 24 records"
     },
@@ -2322,7 +2354,7 @@
       "variant": "candidate",
       "workload": "deferred",
       "repetition": 8,
-      "elapsedMs": 259.5966249999983,
+      "elapsedMs": 393.2467089999991,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 236,
       "automaticUIChars": 0,
@@ -2332,7 +2364,7 @@
       "variant": "baseline",
       "workload": "directory",
       "repetition": 8,
-      "elapsedMs": 48.740874999999505,
+      "elapsedMs": 63.616375000001426,
       "compactEnvelopeChars": 1478,
       "pipedEnvelopeChars": 3056,
       "automaticUIChars": 635,
@@ -2418,7 +2450,7 @@
       "variant": "candidate",
       "workload": "directory",
       "repetition": 8,
-      "elapsedMs": 44.32404200000019,
+      "elapsedMs": 45.85133300000234,
       "compactEnvelopeChars": 837,
       "pipedEnvelopeChars": 837,
       "automaticUIChars": 0,
@@ -2504,9 +2536,9 @@
       "variant": "candidate",
       "workload": "article",
       "repetition": 9,
-      "elapsedMs": 47.16679199999999,
-      "compactEnvelopeChars": 2738,
-      "pipedEnvelopeChars": 2738,
+      "elapsedMs": 47.49304200000188,
+      "compactEnvelopeChars": 2740,
+      "pipedEnvelopeChars": 2740,
       "automaticUIChars": 2380,
       "result": "Retention policy\n\nStandard records are retained for 45 days. Archived records are retained for 180 days. Export requests finish within 12 hours."
     },
@@ -2514,7 +2546,7 @@
       "variant": "baseline",
       "workload": "article",
       "repetition": 9,
-      "elapsedMs": 50.76841599999898,
+      "elapsedMs": 47.23829200000182,
       "compactEnvelopeChars": 4331,
       "pipedEnvelopeChars": 8855,
       "automaticUIChars": 3971,
@@ -2524,7 +2556,7 @@
       "variant": "candidate",
       "workload": "form",
       "repetition": 9,
-      "elapsedMs": 380.66425000000163,
+      "elapsedMs": 338.03391700000066,
       "compactEnvelopeChars": 973,
       "pipedEnvelopeChars": 973,
       "automaticUIChars": 684,
@@ -2534,7 +2566,7 @@
       "variant": "baseline",
       "workload": "form",
       "repetition": 9,
-      "elapsedMs": 364.52829100000235,
+      "elapsedMs": 418.6958339999983,
       "compactEnvelopeChars": 1022,
       "pipedEnvelopeChars": 1864,
       "automaticUIChars": 733,
@@ -2544,9 +2576,9 @@
       "variant": "candidate",
       "workload": "table",
       "repetition": 9,
-      "elapsedMs": 67.63141699999687,
-      "compactEnvelopeChars": 744,
-      "pipedEnvelopeChars": 744,
+      "elapsedMs": 308.86391699999876,
+      "compactEnvelopeChars": 745,
+      "pipedEnvelopeChars": 745,
       "automaticUIChars": 377,
       "result": [
         "Device 02OperationsYes3",
@@ -2561,9 +2593,9 @@
       "variant": "baseline",
       "workload": "table",
       "repetition": 9,
-      "elapsedMs": 66.93845800000054,
-      "compactEnvelopeChars": 813,
-      "pipedEnvelopeChars": 1471,
+      "elapsedMs": 120.8996670000015,
+      "compactEnvelopeChars": 814,
+      "pipedEnvelopeChars": 1472,
       "automaticUIChars": 446,
       "result": [
         "Device 02OperationsYes3",
@@ -2578,7 +2610,7 @@
       "variant": "candidate",
       "workload": "deferred",
       "repetition": 9,
-      "elapsedMs": 226.11358400000245,
+      "elapsedMs": 229.0723340000004,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 236,
       "automaticUIChars": 0,
@@ -2588,7 +2620,7 @@
       "variant": "baseline",
       "workload": "deferred",
       "repetition": 9,
-      "elapsedMs": 853.9733750000014,
+      "elapsedMs": 856.997292,
       "compactEnvelopeChars": 236,
       "pipedEnvelopeChars": 318,
       "automaticUIChars": 0,
@@ -2598,7 +2630,7 @@
       "variant": "candidate",
       "workload": "directory",
       "repetition": 9,
-      "elapsedMs": 48.556791999999405,
+      "elapsedMs": 49.31450000000041,
       "compactEnvelopeChars": 837,
       "pipedEnvelopeChars": 837,
       "automaticUIChars": 0,
@@ -2684,7 +2716,7 @@
       "variant": "baseline",
       "workload": "directory",
       "repetition": 9,
-      "elapsedMs": 45.993624999999156,
+      "elapsedMs": 43.81850000000122,
       "compactEnvelopeChars": 1478,
       "pipedEnvelopeChars": 3056,
       "automaticUIChars": 635,
