@@ -56,7 +56,7 @@ export function refreshGrokToken(): Promise<string>;
 /** A JWT is expired, or within `skewSeconds` (default 120) of it. */
 export function isJwtExpired(token: string, skewSeconds?: number): boolean;
 
-/** Directory holding the codex token file, under `BETTERWRIGHT_HOME`. */
+/** Directory holding the codex token file: `CODEX_HOME`, else `~/.codex`. */
 export function codexHome(): string;
-/** Directory holding the grok token file, under `BETTERWRIGHT_HOME`. */
+/** Directory holding the grok token file: `GROK_HOME`, else `~/.grok`. */
 export function grokHome(): string;

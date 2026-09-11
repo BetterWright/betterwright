@@ -170,6 +170,11 @@ replacing its page or session state. Requires the session daemon; `--no-daemon`
 and `--close` are rejected. FFmpeg must be on `PATH` (or
 `BETTERWRIGHT_FFMPEG_PATH`). See [recording.md](recording.md).
 
+The name is a filename, not a path; `record start /abs/path.mp4` is rejected.
+When the daemon was started with display flags, `record` needs the same ones:
+a `run --headed` session takes `record start demo.mp4 --headed`, and the same
+applies to `--headed-invisible`.
+
 `start`/`restart` options: `--fps <n>` (1-60, default 60), `--max-width <px>`
 (default 1280), `--max-height <px>` (default 720), `--quality <n>` (1-100,
 default 80), `--max-duration <s>` (default 300), `--session`, `--profile`.

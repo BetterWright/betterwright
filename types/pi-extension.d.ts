@@ -4,8 +4,10 @@ import type { BetterWrightOptions } from "./public.js";
 import type { UntrustedValue } from "./untrusted-value.js";
 
 /**
- * Options for `createPiExtension`. Every field has a `BETTERWRIGHT_PI_*`
- * environment counterpart the option overrides; see docs/environment.md.
+ * Options for `createPiExtension`. The environment-backed fields name their
+ * `BETTERWRIGHT_PI_*` counterpart inline (see docs/environment.md);
+ * `browser`, `browserOptions`, `closeBrowserOnShutdown`, and `guardrails`
+ * are programmatic-only.
  */
 export interface PiExtensionOptions {
   /**
