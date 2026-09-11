@@ -229,6 +229,26 @@ async function readUrlWhen(page, expected, operationId) {
   return { url: page.url(), title: await page.title() };
 }
 
+async function expectationAlreadyVisible(page, operation) {
+  if (!READ_ACTIONS.has(operation.action) || operation.value === undefined) return false;
+  if (operation.action === "readUrl") return page.url().includes(operation.value);
+  try {
+    const locator = targetLocator(page, operation.target, operation.id);
+    if (await locator.count() !== 1 || !await locator.isVisible()) return false;
+    return await locator.evaluate((element, expected) => {
+      const text = (element instanceof HTMLElement ? element.innerText : element.textContent) || "";
+      const control = element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement;
+      const password = element instanceof HTMLInputElement && element.type === "password";
+      const value = password ? "[redacted]" : control ? String(element.value ?? "") : "";
+      return [text.trim().slice(0, 4_000), value.slice(0, 4_000)].some((item) => item.includes(expected));
+    }, operation.value, { timeout: 100 });
+  } catch {
+    // Controls revealed by earlier steps need no pre-batch match. Their real
+    // lookup still auto-waits and checks uniqueness at the operation boundary.
+    return false;
+  }
+}
+
 async function assertNotPassword(locator, operationId, allowPasswordFill) {
   const password = await locator.evaluate((element) =>
     element instanceof HTMLInputElement && element.type.toLowerCase() === "password");
@@ -408,6 +428,12 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
     page.on("requestfailed", requestEnded);
   }
   try {
+    const alreadyVisible = new Set<string>();
+    if (hasWrites) {
+      for (const operation of operations) {
+        if (await expectationAlreadyVisible(page, operation)) alreadyVisible.add(operation.id);
+      }
+    }
     let needsSettle = false;
     for (const [index, operation] of operations.entries()) {
       if (index && options.minIntervalMs) await hostDelay(options.minIntervalMs);
@@ -416,7 +442,9 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
         if (READ_ACTIONS.has(operation.action) && needsSettle) {
           // An asserted read waits for its own visible result. Unrelated
           // background requests must not delay an already verified batch.
-          if (operation.value === undefined) await settleAfterWrites(activity);
+          // A message already present before the write is not fresh evidence;
+          // retain the bounded settling check for that case.
+          if (operation.value === undefined || alreadyVisible.has(operation.id)) await settleAfterWrites(activity);
           needsSettle = false;
         }
         if (operation.action === "readUrl") {

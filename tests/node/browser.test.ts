@@ -4632,3 +4632,52 @@ test("long-form discovery finds distant fields and keeps the submit button", opt
     assert.match(invalid.error, /query must be/);
   } finally { await bw.close(); await server.close(); }
 });
+
+
+test("a success message already visible before a batch does not bypass pending writes", opts, async () => {
+  let committed = false;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      setTimeout(() => { committed = true; response.end("ok"); }, 350);
+      return;
+    }
+    if (request.url !== "/save-again") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end('<button onclick="fetch(location.pathname,{method:\'POST\'})">Save</button><output role="status">Saved</output>');
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/save-again');
+      return controls.batch([
+        {id:'save', action:'click', target:{role:'button', name:'Save', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Saved'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(committed, true, "a pre-existing success message must not skip a pending write");
+  } finally { await bw.close(); await server.close(); }
+});
+
+
+test("query discovery preserves duplicate target positions before filtering and truncation", opts, async () => {
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const opened = await bw.run(String.raw`
+      await page.setContent('<button hidden aria-label="Submit">Hidden</button>' +
+        Array.from({length:45}, (_, i) => '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send item '+i+'</button>').join('') +
+        '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send invoice</button><output role="status">Waiting</output>');
+      return controls.directory({query:'invoice'});
+    `);
+    assert.equal(opened.ok, true, opened.error);
+    assert.equal(opened.result.controls.length, 1);
+    const target = opened.result.controls[0].target;
+    assert.deepEqual(target, {label:'Submit', exact:true, nth:46});
+    const result = await bw.run(`return controls.batch([
+      {id:'send', action:'click', target:${JSON.stringify(target)}},
+      {id:'verify', action:'read', target:{role:'status'}, value:'Send invoice'},
+    ], {allowWrites:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, 'Send invoice');
+  } finally { await bw.close(); }
+});

@@ -267,23 +267,60 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
         "[role='button']", "[role='checkbox']", "[role='combobox']",
         "[role='link']", "[role='radio']", "[role='searchbox']",
         "[role='slider']", "[role='spinbutton']", "[role='switch']", "[role='textbox']",
-      ].join(","))].filter(visible);
+      ].join(","))];
       const unique = [...new Set(candidates)].filter((element) =>
         !(element instanceof HTMLInputElement && element.type.toLowerCase() === "file"));
+      const identityFor = (element) => {
+        const role = roleFor(element);
+        const label = labelFor(element);
+        const placeholder = clean(element.getAttribute("placeholder"));
+        const formControl = element instanceof HTMLInputElement ||
+          element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement;
+        const buttonValue = element instanceof HTMLInputElement &&
+          ["button", "submit", "reset", "image"].includes(element.type.toLowerCase())
+          ? element.value
+          : "";
+        const name = clean(
+          element.getAttribute("aria-label") ||
+          label ||
+          element.getAttribute("alt") ||
+          (!formControl && element instanceof HTMLElement ? element.innerText : "") ||
+          buttonValue ||
+          element.getAttribute("title") ||
+          placeholder,
+        );
+        const method = ["combobox", "listbox"].includes(role) ? "role"
+          : label ? "label" : placeholder ? "placeholder" : "role";
+        const identity = method === "label" ? label : method === "placeholder" ? placeholder : `${role}\u0000${name}`;
+        return { role, label, placeholder, name, method, key: `${method}\u0000${identity}` };
+      };
+      // Keep selector positions across the whole frame before filtering or
+      // truncation. Label/placeholder locators also match hidden controls.
+      const identities = new Map(unique.map((element) => [element, identityFor(element)]));
+      const duplicates = new Map<string, Element[]>();
+      for (const element of unique) {
+        const entry = identities.get(element);
+        if (entry.method === "role" && !visible(element)) continue;
+        const group = duplicates.get(entry.key) || [];
+        group.push(element);
+        duplicates.set(entry.key, group);
+      }
       // Filter before limiting: named controls near the end of a long page
       // must be discoverable without returning every preceding control.
-      const matching = terms.length ? unique.filter((element) => {
-        const text = [labelFor(element), element.getAttribute("placeholder"),
+      const matching = unique.filter((element) => {
+        if (!visible(element)) return false;
+        if (!terms.length) return true;
+        const text = [identities.get(element).label, element.getAttribute("placeholder"),
           element.getAttribute("aria-label"), element.getAttribute("title"),
           element instanceof HTMLElement ? element.innerText : element.textContent,
         ].join(" ").toLowerCase();
         return terms.some((term) => text.includes(term));
-      }) : unique;
-      const primary = matching.filter((element) => roleFor(element) !== "link");
-      const links = matching.filter((element) => roleFor(element) === "link");
+      });
+      const primary = matching.filter((element) => identities.get(element).role !== "link");
+      const links = matching.filter((element) => identities.get(element).role === "link");
       // Reserve action buttons, then fill the remaining slots in DOM order.
       // Otherwise a submit button after many fields disappears from discovery.
-      const selectedPrimary = new Set(primary.filter((element) => roleFor(element) === "button").slice(0, 8));
+      const selectedPrimary = new Set(primary.filter((element) => identities.get(element).role === "button").slice(0, 8));
       for (const element of primary) {
         if (selectedPrimary.size >= 36) break;
         selectedPrimary.add(element);
@@ -292,24 +329,8 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
       return {
         total: matching.length,
         entries: selected.map((element) => {
-          const role = roleFor(element);
-          const label = labelFor(element);
-          const placeholder = clean(element.getAttribute("placeholder"));
-          const formControl = element instanceof HTMLInputElement ||
-            element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement;
-          const buttonValue = element instanceof HTMLInputElement &&
-            ["button", "submit", "reset", "image"].includes(element.type.toLowerCase())
-            ? element.value
-            : "";
-          const name = clean(
-            element.getAttribute("aria-label") ||
-            label ||
-            element.getAttribute("alt") ||
-            (!formControl && element instanceof HTMLElement ? element.innerText : "") ||
-            buttonValue ||
-            element.getAttribute("title") ||
-            placeholder,
-          );
+          const { role, label, placeholder, name, method, key } = identities.get(element);
+          const group = duplicates.get(key) || [element];
           const password = element instanceof HTMLInputElement && element.type.toLowerCase() === "password";
           const value = "value" in element
             ? password ? "[redacted]" : clean(element.value, 240)
@@ -322,6 +343,9 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
             label,
             placeholder,
             name,
+            method,
+            duplicateCount: group.length,
+            index: group.indexOf(element),
             value,
             checked: element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type)
               ? Boolean(element.checked)
@@ -336,29 +360,9 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
     }, terms).catch(() => ({ total: 0, entries: [] }));
     if (!entries.entries.length) continue;
     if (entries.total > entries.entries.length) truncated = true;
-    const methodFor = (entry) =>
-      ["combobox", "listbox"].includes(entry.role)
-        ? "role"
-        : entry.label
-          ? "label"
-          : entry.placeholder
-            ? "placeholder"
-            : "role";
-    const duplicateCounts = new Map();
-    for (const entry of entries.entries) {
-      const method = methodFor(entry);
-      const value = method === "label" ? entry.label : method === "placeholder" ? entry.placeholder : `${entry.role}\u0000${entry.name}`;
-      const key = `${method}\u0000${value}`;
-      duplicateCounts.set(key, (duplicateCounts.get(key) || 0) + 1);
-    }
-    const seen = new Map();
     const seenContexts = new Set();
     for (const entry of entries.entries) {
-      const method = methodFor(entry);
-      const value = method === "label" ? entry.label : method === "placeholder" ? entry.placeholder : `${entry.role}\u0000${entry.name}`;
-      const key = `${method}\u0000${value}`;
-      const index = seen.get(key) || 0;
-      seen.set(key, index + 1);
+      const method = entry.method;
       const target: any = method === "label"
         ? { label: entry.label, exact: true }
         : method === "placeholder"
@@ -366,7 +370,7 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
           : entry.name
             ? { role: entry.role, name: entry.name, exact: true }
             : { role: entry.role, exact: true };
-      if ((duplicateCounts.get(key) || 0) > 1) target.nth = index;
+      if (entry.duplicateCount > 1) target.nth = entry.index;
       if (frame !== page.mainFrame()) {
         const frameName = frame.name();
         if (frameName && frameNames.get(frameName) === 1) target.frameName = frameName;
@@ -382,7 +386,7 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
       if (entry.checked !== undefined) compact.checked = entry.checked;
       if (entry.disabled) compact.disabled = true;
       if (entry.options) compact.options = entry.options;
-      if (entry.context && ((duplicateCounts.get(key) || 0) > 1 ||
+      if (entry.context && (entry.duplicateCount > 1 ||
           (entry.itemContext && !entry.name.includes(entry.context) && !seenContexts.has(entry.context)))) {
         compact.context = entry.context;
         seenContexts.add(entry.context);

@@ -31,7 +31,7 @@ test("batch stops after a failure and identifies completed operations", async ()
       if (actions.length === 2) throw new Error("covered");
     },
   };
-  const page = { getByRole() { return locator; }, on() {}, off() {} };
+  const page = { getByRole() { return locator; }, url() { return "initial"; }, on() {}, off() {} };
   await assert.rejects(executeUIBatch(page, [
     { id: "first", action: "click", target: { role: "button" } },
     { id: "second", action: "click", target: { role: "button" } },

@@ -519,7 +519,9 @@ verification boundary and must supply a non-empty expected substring in
 `value`. The batch fails unless that expected text, form value, or URL is
 observed on the final operation's specified target (`readUrl` checks the active
 page URL). Page-wide directory evidence never substitutes for that target.
-Asserted reads wait for that specific result, with no blanket network-idle wait.
+Asserted reads wait for that specific result, with no blanket network-idle wait
+when the expectation was not already visible before the batch. A pre-existing
+matching message retains the bounded settling check to avoid reading stale success.
 Choose an expectation that proves the intended change. Unasserted intermediate
 reads retain their bounded settling wait. `returnDirectory:true` returns a fresh
 directory immediately after verification; callers needing a settling window
