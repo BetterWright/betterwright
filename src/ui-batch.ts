@@ -139,8 +139,8 @@ function targetLocator(page, targetValue, operationId) {
   }
   const nthValue = untrustedField(targetValue, "nth");
   if (nthValue !== undefined) {
-    if (!isNumber(nthValue) || !Number.isInteger(nthValue) || nthValue < 0 || nthValue > 99) {
-      throw new RangeError(`UI batch operation ${JSON.stringify(operationId)} target nth must be an integer from 0 to 99.`);
+    if (!isNumber(nthValue) || !Number.isSafeInteger(nthValue) || nthValue < 0) {
+      throw new RangeError(`UI batch operation ${JSON.stringify(operationId)} target nth must be a non-negative safe integer.`);
     }
     locator = locator.nth(nthValue);
   }
@@ -162,36 +162,40 @@ async function exactLocator(page, target, operationId) {
   return locator;
 }
 
-async function readLocator(locator) {
-  await locator.waitFor({ state: "visible" });
-  return locator.evaluate((element) => {
-    const input = element instanceof HTMLInputElement ? element : null;
-    const valueControl = element instanceof HTMLInputElement ||
-        element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement
-      ? element
-      : null;
-    const disableable = valueControl || element instanceof HTMLButtonElement
-      ? element
-      : null;
-    const text = element instanceof HTMLElement
-      ? (element.innerText || element.textContent || "").trim()
-      : (element.textContent || "").trim();
-    return {
-      tag: element.tagName.toLowerCase(),
-      text: text.slice(0, 4_000),
-      value: input?.type === "password"
-        ? "[redacted]"
-        : valueControl
-          ? String(valueControl.value ?? "").slice(0, 4_000)
-          : undefined,
-      checked: input && ["checkbox", "radio"].includes(input.type) ? input.checked : undefined,
-      disabled: disableable ? disableable.matches(":disabled") : undefined,
-      ariaLabel: element.getAttribute("aria-label") || undefined,
-    };
-  });
+// Runs in the page realm. A value assertion must inspect live control state,
+// not a textarea's initial markup or an unselected option's text.
+function readElement(element) {
+  const input = element instanceof HTMLInputElement ? element : null;
+  const select = element instanceof HTMLSelectElement ? element : null;
+  const valueControl = input || select || (element instanceof HTMLTextAreaElement ? element : null);
+  const disableable = valueControl || (element instanceof HTMLButtonElement ? element : null);
+  const text = select
+    ? Array.from(select.selectedOptions, (option) => option.textContent || "").join("\n").trim()
+    : valueControl
+      ? ""
+      : (element instanceof HTMLElement ? (element.innerText || element.textContent || "") : (element.textContent || "")).trim();
+  return {
+    tag: element.tagName.toLowerCase(),
+    text: text.slice(0, 4_000),
+    value: input?.type === "password"
+      ? "[redacted]"
+      : valueControl ? String(valueControl.value ?? "").slice(0, 4_000) : undefined,
+    checked: input && ["checkbox", "radio"].includes(input.type) ? input.checked : undefined,
+    disabled: disableable ? disableable.matches(":disabled") : undefined,
+    ariaLabel: element.getAttribute("aria-label") || undefined,
+  };
 }
 
-async function readLocatorWhen(locator, expected, operationId) {
+function matchesExpected(result, expected: string) {
+  return [result.text, result.value].some((value) => isString(value) && value.includes(expected));
+}
+
+async function readLocator(locator) {
+  await locator.waitFor({ state: "visible" });
+  return locator.evaluate(readElement);
+}
+
+async function readLocatorWhen(locator, expected, operationId, unsettledWrites?: BatchActivity) {
   if (expected === undefined) return readLocator(locator);
   if (!isString(expected) || !expected.trim() || expected.length > MAX_TEXT_CHARS) {
     throw new TypeError(
@@ -202,7 +206,14 @@ async function readLocatorWhen(locator, expected, operationId) {
   let result;
   do {
     result = await readLocator(locator);
-    if ([result.text, result.value].some((value) => isString(value) && value.includes(expected))) {
+    // A changed field value may precede a later submission in this batch.
+    // Reading it is not acknowledgement that the submission has finished.
+    if (unsettledWrites && result.value !== undefined) {
+      await settleAfterWrites(unsettledWrites);
+      result = await readLocator(locator);
+    }
+    unsettledWrites = undefined;
+    if (matchesExpected(result, expected)) {
       return result;
     }
     await hostDelay(25);
@@ -229,6 +240,20 @@ async function readUrlWhen(page, expected, operationId) {
   return { url: page.url(), title: await page.title() };
 }
 
+async function expectationAlreadyVisible(page, operation) {
+  if (!READ_ACTIONS.has(operation.action) || operation.value === undefined) return false;
+  if (operation.action === "readUrl") return page.url().includes(operation.value);
+  try {
+    const locator = targetLocator(page, operation.target, operation.id);
+    if (await locator.count() !== 1 || !await locator.isVisible()) return false;
+    return matchesExpected(await locator.evaluate(readElement, undefined, { timeout: 100 }), operation.value);
+  } catch {
+    // Controls revealed by earlier steps need no pre-batch match. Their real
+    // lookup still auto-waits and checks uniqueness at the operation boundary.
+    return false;
+  }
+}
+
 async function assertNotPassword(locator, operationId, allowPasswordFill) {
   const password = await locator.evaluate((element) =>
     element instanceof HTMLInputElement && element.type.toLowerCase() === "password");
@@ -239,15 +264,37 @@ async function assertNotPassword(locator, operationId, allowPasswordFill) {
   }
 }
 
+// Validate every action value before the first write, so a malformed later
+// operation cannot leave an avoidable partial submission behind.
+function validateActionValue(action: string, value: UntrustedValue, id: string) {
+  if (action === "fill" && (!isString(value) || value.length > MAX_TEXT_CHARS)) {
+    throw new TypeError(`UI batch operation ${JSON.stringify(id)} fill value must be a string of at most ${MAX_TEXT_CHARS} characters.`);
+  }
+  if (action === "select") {
+    const values = Array.isArray(value) ? value : [value];
+    if (!values.length || values.length > 50 || values.some((entry) => !isString(entry) || !entry.length || entry.length > 500)) {
+      throw new TypeError(`UI batch operation ${JSON.stringify(id)} select value must be a string or a bounded string array.`);
+    }
+  }
+  if (action === "press") boundedString(value, `UI batch operation ${JSON.stringify(id)} key`, 100);
+  if (READ_ACTIONS.has(action) && value !== undefined) {
+    const maximum = action === "readUrl" ? 2_000 : MAX_TEXT_CHARS;
+    if (!isString(value) || !value.trim() || value.length > maximum) {
+      throw new TypeError(`UI batch operation ${JSON.stringify(id)} expected value must be a non-empty string of at most ${maximum} characters.`);
+    }
+  }
+}
+
 function normalizeOptions(value: UntrustedValue) {
   if (value === undefined) {
     return {
       allowWrites: false,
       allowIrreversible: false,
-      minIntervalMs: 40,
+      minIntervalMs: 0,
       returnDirectory: false,
       directoryWaitMs: 0,
       allowPasswordFill: false,
+      observe: false,
     };
   }
   if (!isRecord(value)) throw new TypeError("controls.batch options must be an object.");
@@ -268,10 +315,11 @@ function normalizeOptions(value: UntrustedValue) {
   return {
     allowWrites: untrustedField(value, "allowWrites") === true,
     allowIrreversible: untrustedField(value, "allowIrreversible") === true,
-    minIntervalMs: pacing === undefined ? 40 : Number(pacing),
+    minIntervalMs: pacing === undefined ? 0 : Number(pacing),
     returnDirectory,
-    directoryWaitMs: directoryWait === undefined ? 2_500 : Number(directoryWait),
+    directoryWaitMs: directoryWait === undefined ? 0 : Number(directoryWait),
     allowPasswordFill: untrustedField(value, "allowPasswordFill") === true,
+    observe: untrustedField(value, "observe") === true,
   };
 }
 
@@ -279,6 +327,7 @@ async function refreshedActionDirectory(page, waitMs: number, activity: BatchAct
   const deadline = Date.now() + waitMs;
   const minimumUntil = Date.now() + Math.min(125, waitMs);
   let directory = await inspectActionDirectory(page);
+  if (waitMs === 0) return directory;
   let signature = JSON.stringify(directory);
   let stableSince = Date.now();
   do {
@@ -349,19 +398,21 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
     if (action !== "readUrl" && !isRecord(target)) {
       throw new TypeError(`UI batch operation ${JSON.stringify(id)} requires a target.`);
     }
-    return { id, action, target, value: untrustedField(value, "value"), irreversible };
+    const actionValue = untrustedField(value, "value");
+    validateActionValue(action, actionValue, id);
+    return { id, action, target, value: actionValue, irreversible };
   });
   const hasWrites = operations.some((operation) => !READ_ACTIONS.has(operation.action));
   const finalOperation = operations.at(-1);
-  if (hasWrites && !READ_ACTIONS.has(finalOperation?.action || "")) {
-    throw new Error("A mutating controls.batch transaction must end with read or readUrl verification.");
+  if (hasWrites && !options.observe && !READ_ACTIONS.has(finalOperation?.action || "")) {
+    throw new Error("A mutating controls.batch transaction must end with read or readUrl verification, or use observe:true for fresh evidence.");
   }
   if (
-    hasWrites &&
+    hasWrites && !options.observe &&
     (!isString(finalOperation?.value) || !finalOperation.value.trim())
   ) {
     throw new Error(
-      "A mutating controls.batch transaction's final read/readUrl must include a non-empty expected value.",
+      "A mutating controls.batch transaction's final read/readUrl must include a non-empty expected value, or use observe:true for fresh evidence.",
     );
   }
 
@@ -384,13 +435,25 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
     page.on("requestfailed", requestEnded);
   }
   try {
+    const alreadyVisible = new Set<string>();
+    if (hasWrites) {
+      for (const operation of operations) {
+        if (await expectationAlreadyVisible(page, operation)) alreadyVisible.add(operation.id);
+      }
+    }
     let needsSettle = false;
     for (const [index, operation] of operations.entries()) {
       if (index && options.minIntervalMs) await hostDelay(options.minIntervalMs);
       const operationStartedAt = Date.now();
       try {
+        let unsettledReadWrites: BatchActivity | undefined;
         if (READ_ACTIONS.has(operation.action) && needsSettle) {
-          await settleAfterWrites(activity);
+          // An asserted read waits for its own visible result. Unrelated
+          // background requests must not delay an already verified batch.
+          // A message already present before the write is not fresh evidence;
+          // retain the bounded settling check for that case.
+          if (operation.value === undefined || alreadyVisible.has(operation.id)) await settleAfterWrites(activity);
+          else unsettledReadWrites = activity;
           needsSettle = false;
         }
         if (operation.action === "readUrl") {
@@ -425,19 +488,21 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
           await locator.press(key);
           results.set(operation.id, { pressed: key });
         } else {
-          results.set(operation.id, await readLocatorWhen(locator, operation.value, operation.id));
+          results.set(operation.id, await readLocatorWhen(locator, operation.value, operation.id, unsettledReadWrites));
         }
         if (!READ_ACTIONS.has(operation.action)) needsSettle = true;
       } catch (error) {
         throw new Error(
-          `UI batch operation ${JSON.stringify(operation.id)} (${operation.action}) failed: ${error?.message || error}`,
+          `UI batch operation ${JSON.stringify(operation.id)} (${operation.action}) failed: ${error?.message || error}. Completed operations: ${JSON.stringify([...results.keys()])}. Earlier writes are not rolled back; inspect the failed step before retrying.`,
         );
       } finally {
         const result = results.get(operation.id);
         if (result) result.durationMs = Date.now() - operationStartedAt;
       }
     }
-    const ui = options.returnDirectory && hasWrites
+    // Observation is bounded evidence collection, not an assertion of success.
+    if (options.observe && needsSettle) await settleAfterWrites(activity);
+    const ui = (options.returnDirectory && hasWrites) || options.observe
       ? await refreshedActionDirectory(page, options.directoryWaitMs, activity)
       : undefined;
     const outcome: any = {
@@ -446,6 +511,7 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
       durationMs: Date.now() - startedAt,
       results: Object.fromEntries(results),
     };
+    if (options.observe) outcome.verification = "observed";
     if (ui) outcome.ui = ui;
     return outcome;
   } finally {

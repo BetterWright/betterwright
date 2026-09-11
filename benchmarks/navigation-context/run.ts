@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import type { UntrustedValue } from "../../src/untrusted-value.js";
 import { startFixtures, workloads } from "./fixtures.js";
-import { assertSameSource, directoryIdentity, RUNTIME_PATHS, SOURCE_PATHS, sha256, sourceIdentity } from "./provenance.js";
+import { assertSameSource, dependencyIdentity, directoryIdentity, RUNTIME_PATHS, SOURCE_PATHS, sha256, sourceIdentity } from "./provenance.js";
 
 const { values } = parseArgs({ options: {
   baseline: { type: "string" }, candidate: { type: "string" }, output: { type: "string" },
@@ -20,9 +20,9 @@ const homes: string[] = [];
 const samples = [];
 const repetitions = 10;
 const promptHashes: Record<string, string> = {};
-type BuildIdentity = ReturnType<typeof sourceIdentity> & { build: Awaited<ReturnType<typeof directoryIdentity>>; workerSha256: string };
+type BuildIdentity = Awaited<ReturnType<typeof sourceIdentity>> & { build: Awaited<ReturnType<typeof directoryIdentity>>; workerSha256: string; dependencies: Awaited<ReturnType<typeof dependencyIdentity>> };
 const identities: Record<string, BuildIdentity> = {};
-const baselineHead = sourceIdentity(roots.baseline).head;
+const baselineHead = (await sourceIdentity(roots.baseline)).head;
 const browserSha256 = sha256(await readFile(process.env.BETTERWRIGHT_CHROMIUM_PATH));
 const harnessHash = async () => sha256(JSON.stringify(await Promise.all(["run.ts", "provenance.ts", "fixtures.ts"].map(async (name) => [name, sha256(await readFile(new URL(name, import.meta.url)))]))));
 const harnessSha256 = await harnessHash();
@@ -32,13 +32,15 @@ const fixture = await startFixtures();
 try {
   for (const [variant, root] of Object.entries(roots)) {
     promptHashes[variant] = sha256(await readFile(path.join(root, "SKILL.md")));
-    const source = sourceIdentity(root, baselineHead);
+    const source = await sourceIdentity(root, baselineHead);
     // Rebuild before importing either runtime; a clean checkout alone cannot
     // prove that an existing dist/ was produced from that checkout.
+    const dependencies = await dependencyIdentity(path.join(root, "node_modules"));
     execFileSync(process.execPath, ["run", "build"], { cwd: root, stdio: "pipe" });
-    assert.deepEqual(sourceIdentity(root, baselineHead), source, "Build changed source inputs");
+    assert.deepEqual(await sourceIdentity(root, baselineHead), source, "Build changed source inputs");
     identities[variant] = {
       ...source,
+      dependencies,
       build: await directoryIdentity(path.join(root, "dist")),
       workerSha256: sha256(await readFile(path.join(root, "dist/src/worker.js"))),
     };
@@ -86,10 +88,11 @@ try {
 }
 
 for (const [variant, root] of Object.entries(roots)) {
-  const current = sourceIdentity(root, baselineHead);
+  const current = await sourceIdentity(root, baselineHead);
   assert.equal(current.head, identities[variant].head, "Source revision changed during measurement");
   assertSameSource(identities[variant], current);
   assert.deepEqual(await directoryIdentity(path.join(root, "dist")), identities[variant].build, "Build artifacts changed during measurement");
+  assert.deepEqual(await dependencyIdentity(path.join(root, "node_modules")), identities[variant].dependencies, "Installed dependencies changed during measurement");
 }
 assert.equal(await harnessHash(), harnessSha256, "Benchmark code changed during measurement");
 assert.equal(sha256(await readFile(process.env.BETTERWRIGHT_CHROMIUM_PATH)), browserSha256, "Browser changed during measurement");

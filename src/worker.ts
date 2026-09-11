@@ -5179,9 +5179,9 @@ function buildSandbox(session, consoleMessages, execution) {
     const page = await ensureSessionPage(session);
     return inspectControls(page);
   });
-  controls.directory = realm.safeFunction(async () => {
+  controls.directory = realm.safeFunction(async (options) => {
     const page = await ensureSessionPage(session);
-    return inspectActionDirectory(page);
+    return inspectActionDirectory(page, options);
   });
   controls.batch = realm.safeFunction(
     async (operationsValue, optionsValue: any = {}) => {

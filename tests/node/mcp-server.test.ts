@@ -401,13 +401,13 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser"), /webmcp\.tools\(\)\/webmcp\.invoke\(\)/);
   assert.match(text("browser"), /autosubmit requires explicit opt-in/);
   assert.match(text("browser"), /use browser_batch/i);
-  assert.match(text("browser"), /browser_batch \{url\}/i);
+  assert.match(text("browser"), /browser_batch \{url,query:\[names\]\}/i);
   assert.match(text("browser_batch"), /Default for ordinary forms/);
   assert.match(text("browser_batch"), /ordinary forms/);
   assert.match(text("browser_batch"), /role \(\+ name\), label, text/);
   assert.match(text("browser_batch"), /Mutating batches require allowWrites=true/);
   assert.match(text("browser_batch"), /Task-supplied passwords need allowPasswords=true/);
-  assert.match(text("browser_batch"), /end in read\/readUrl with a non-empty expected value/);
+  assert.match(text("browser_batch"), /End in read\/readUrl with a non-empty expected value/);
   assert.deepEqual(byName.browser_batch.inputSchema.properties.operations.items.properties.action.enum, [
     "fill", "click", "select", "check", "uncheck", "press", "read", "readUrl",
   ]);
@@ -1046,4 +1046,62 @@ test("MCP protocol roundtrip: deny still blocks browser_download", async () => {
   } finally {
     await session.close();
   }
+});
+
+
+test("MCP browser_batch discovers current targets without navigation or writes", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({
+    browser: { vault: false, async run(code, options) {
+      calls.push({ code, options });
+      return { ok: true, result: { protocol: "betterwright-ui/1", controls: [] } };
+    } }, downloadPolicy: "deny",
+  });
+  const response = await handlers.callTool({ params: {
+    name: "browser_batch", arguments: { discover: true, session: "existing" },
+  } });
+  assert.equal(response.isError, undefined);
+  assert.deepEqual(calls, [{ code: "return controls.directory();", options: { session: "existing", note: undefined } }]);
+  for (const args of [{ discover: true, operations: [] }, { discover: true, url: "https://example.com", operations: [] }]) {
+    const invalid = await handlers.callTool({ params: { name: "browser_batch", arguments: args } });
+    assert.equal(invalid.isError, true);
+  }
+  assert.equal(calls.length, 1);
+});
+
+
+test("MCP forwards multi-target discovery filters and rejects them on writes", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({browser:{vault:false, async run(code) {
+    calls.push(code); return {ok:true, result:{protocol:"betterwright-ui/1", controls:[]}};
+  }}, downloadPolicy:"deny"});
+  const args = {discover:true, query:["Email", "Save"]};
+  const result = await handlers.callTool({params:{name:"browser_batch", arguments:args}});
+  assert.equal(result.isError, undefined);
+  assert.equal(calls[0], 'return controls.directory({"query":["Email","Save"]});');
+  const opened = await handlers.callTool({params:{name:"browser_batch", arguments:{url:"https://example.com", query:args.query}}});
+  assert.equal(opened.isError, undefined);
+  assert.equal(calls[1], 'await page.goto("https://example.com"); return controls.directory({"query":["Email","Save"]});');
+  const invalid = await handlers.callTool({params:{name:"browser_batch", arguments:{query:args.query, operations:[]}}});
+  assert.equal(invalid.isError, true);
+  assert.equal(calls.length, 2);
+});
+
+
+test("MCP observation keeps write gates and navigates before explicit discovery", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({browser:{vault:false, async run(code) {
+    calls.push(code); return {ok:true, result:{verification:"observed"}};
+  }}, downloadPolicy:"deny"});
+  const opened = await handlers.callTool({params:{name:"browser_batch", arguments:{url:"https://example.com", discover:true}}});
+  assert.equal(opened.isError, undefined);
+  assert.equal(calls[0], 'await page.goto("https://example.com"); return controls.directory();');
+  const observed = await handlers.callTool({params:{name:"browser_batch", arguments:{
+    observe:true, operations:[{id:"submit",action:"click",target:{role:"button",name:"Submit"}}],
+  }}});
+  assert.equal(observed.isError, undefined);
+  assert.match(calls[1], /"observe":true/);
+  assert.match(calls[1], /"allowWrites":false/);
+  assert.match(calls[1], /"allowIrreversible":false/);
+  assert.match(calls[1], /"allowPasswordFill":false/);
 });

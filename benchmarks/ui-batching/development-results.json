@@ -1,0 +1,393 @@
+[
+  {
+    "round": "batching-round1",
+    "candidate_revision": "b514bb6e6b373918f054df7d91bea051c2d013ef",
+    "summary": {
+      "DeepSeek V4.1 Flash": {
+        "baseline": {
+          "completed": 12,
+          "correct": 6,
+          "mean_seconds": 21.70475022558332,
+          "median_seconds": 12.99875487449998,
+          "task_state_or_data_correct": 11,
+          "input_tokens": 516375,
+          "uncached_input_tokens": 47383,
+          "output_tokens": 27223,
+          "tool_calls": 68,
+          "batch_calls": 30,
+          "errors": 9,
+          "cost_usd": 0.049696451999999995,
+          "tasks": {
+            "delayed-report": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 8.57298142999999
+            },
+            "long-controls": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 26.40497758299999
+            },
+            "public-read": {
+              "correct": 0,
+              "n": 3,
+              "mean_seconds": 4.773914722333303
+            },
+            "reservation": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 47.06712716700001
+            }
+          }
+        },
+        "candidate": {
+          "completed": 12,
+          "correct": 8,
+          "mean_seconds": 12.262608000250003,
+          "median_seconds": 11.585105270999993,
+          "task_state_or_data_correct": 12,
+          "input_tokens": 339838,
+          "uncached_input_tokens": 34686,
+          "output_tokens": 15167,
+          "tool_calls": 53,
+          "batch_calls": 28,
+          "errors": 8,
+          "cost_usd": 0.030437112,
+          "tasks": {
+            "delayed-report": {
+              "correct": 0,
+              "n": 3,
+              "mean_seconds": 7.667211374999994
+            },
+            "long-controls": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 17.36555966700001
+            },
+            "public-read": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 3.5186284170000195
+            },
+            "reservation": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 20.49903254199999
+            }
+          }
+        }
+      },
+      "GPT-5.6 Sol": {
+        "baseline": {
+          "completed": 12,
+          "correct": 10,
+          "mean_seconds": 28.349916746416667,
+          "median_seconds": 24.78449908350001,
+          "task_state_or_data_correct": 10,
+          "input_tokens": 780303,
+          "uncached_input_tokens": 315919,
+          "output_tokens": 8758,
+          "tool_calls": 48,
+          "batch_calls": 19,
+          "errors": 9,
+          "cost_usd": null,
+          "tasks": {
+            "delayed-report": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 9.570170624666673
+            },
+            "long-controls": {
+              "correct": 1,
+              "n": 3,
+              "mean_seconds": 47.106165264
+            },
+            "public-read": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 10.336735916666658
+            },
+            "reservation": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 46.386595180333345
+            }
+          }
+        },
+        "candidate": {
+          "completed": 12,
+          "correct": 12,
+          "mean_seconds": 23.702435302000005,
+          "median_seconds": 20.65770497900003,
+          "task_state_or_data_correct": 12,
+          "input_tokens": 605341,
+          "uncached_input_tokens": 283549,
+          "output_tokens": 7514,
+          "tool_calls": 49,
+          "batch_calls": 23,
+          "errors": 12,
+          "cost_usd": null,
+          "tasks": {
+            "delayed-report": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 9.739758472333342
+            },
+            "long-controls": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 30.376808416666666
+            },
+            "public-read": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 11.261570472000011
+            },
+            "reservation": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 43.431603847
+            }
+          }
+        }
+      }
+    },
+    "limitation": "Native model timings are development evidence only: compiled-directory fingerprint changed during the run; source and dependency audits stayed stable."
+  },
+  {
+    "round": "batching-round2",
+    "candidate_revision": "48abc9b21140add352ea3f9090e34e46ca7e7a14",
+    "summary": {
+      "DeepSeek V4.1 Flash": {
+        "baseline": {
+          "completed": 12,
+          "correct": 8,
+          "mean_seconds": 21.390888961999995,
+          "median_seconds": 16.660562499999973,
+          "task_state_or_data_correct": 10,
+          "input_tokens": 623151,
+          "uncached_input_tokens": 50351,
+          "output_tokens": 36615,
+          "tool_calls": 79,
+          "batch_calls": 25,
+          "errors": 7,
+          "cost_usd": 0.03124005,
+          "tasks": {
+            "delayed-report": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 8.538625902999998
+            },
+            "long-controls": {
+              "correct": 1,
+              "n": 3,
+              "mean_seconds": 32.22709468066667
+            },
+            "public-read": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 4.376815597333315
+            },
+            "reservation": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 40.421019667
+            }
+          }
+        },
+        "candidate": {
+          "completed": 12,
+          "correct": 6,
+          "mean_seconds": 22.505775187333345,
+          "median_seconds": 17.958956500000028,
+          "task_state_or_data_correct": 12,
+          "input_tokens": 478236,
+          "uncached_input_tokens": 40476,
+          "output_tokens": 20586,
+          "tool_calls": 71,
+          "batch_calls": 33,
+          "errors": 15,
+          "cost_usd": 0.01973628,
+          "tasks": {
+            "delayed-report": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 24.66955843033333
+            },
+            "long-controls": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 23.264898347000006
+            },
+            "public-read": {
+              "correct": 0,
+              "n": 3,
+              "mean_seconds": 3.748254194333373
+            },
+            "reservation": {
+              "correct": 1,
+              "n": 3,
+              "mean_seconds": 38.34038977766668
+            }
+          }
+        }
+      },
+      "GPT-5.6 Sol": {
+        "baseline": {
+          "completed": 12,
+          "correct": 11,
+          "mean_seconds": 22.845875048500005,
+          "median_seconds": 18.384514708000005,
+          "task_state_or_data_correct": 11,
+          "input_tokens": 712875,
+          "uncached_input_tokens": 311211,
+          "output_tokens": 8161,
+          "tool_calls": 49,
+          "batch_calls": 25,
+          "errors": 10,
+          "cost_usd": null,
+          "tasks": {
+            "delayed-report": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 10.002755319333344
+            },
+            "long-controls": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 24.443363471666682
+            },
+            "public-read": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 10.50658534733332
+            },
+            "reservation": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 46.43079605566668
+            }
+          }
+        },
+        "candidate": {
+          "completed": 12,
+          "correct": 11,
+          "mean_seconds": 23.36148427075,
+          "median_seconds": 15.530978020499997,
+          "task_state_or_data_correct": 11,
+          "input_tokens": 864717,
+          "uncached_input_tokens": 304333,
+          "output_tokens": 8521,
+          "tool_calls": 50,
+          "batch_calls": 21,
+          "errors": 8,
+          "cost_usd": null,
+          "tasks": {
+            "delayed-report": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 10.489469528000017
+            },
+            "long-controls": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 39.386422833
+            },
+            "public-read": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 8.549768777666662
+            },
+            "reservation": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 35.02027594433332
+            }
+          }
+        }
+      }
+    },
+    "limitation": "All 48 model trials completed with stable source/build/dependency/harness fingerprints."
+  },
+  {
+    "round": "batching-round3",
+    "candidate_revision": "bbac4e66404ceed8615406beb52e1b824aae9644",
+    "summary": {
+      "DeepSeek V4.1 Flash": {
+        "baseline": {
+          "completed": 12,
+          "correct": 10,
+          "mean_seconds": 20.402564940666664,
+          "median_seconds": 21.260867186999988,
+          "task_state_or_data_correct": 11,
+          "input_tokens": 561396,
+          "uncached_input_tokens": 47988,
+          "output_tokens": 26764,
+          "tool_calls": 77,
+          "batch_calls": 24,
+          "errors": 10,
+          "cost_usd": 0.024796824,
+          "tasks": {
+            "delayed-report": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 15.05424155533334
+            },
+            "long-controls": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 25.599278416333327
+            },
+            "public-read": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 2.9140263049999873
+            },
+            "reservation": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 38.042713486
+            }
+          }
+        },
+        "candidate": {
+          "completed": 12,
+          "correct": 8,
+          "mean_seconds": 18.18907898591667,
+          "median_seconds": 16.663003541500004,
+          "task_state_or_data_correct": 11,
+          "input_tokens": 495297,
+          "uncached_input_tokens": 41281,
+          "output_tokens": 20627,
+          "tool_calls": 74,
+          "batch_calls": 25,
+          "errors": 12,
+          "cost_usd": 0.019930398,
+          "tasks": {
+            "delayed-report": {
+              "correct": 1,
+              "n": 3,
+              "mean_seconds": 9.97466420800001
+            },
+            "long-controls": {
+              "correct": 1,
+              "n": 3,
+              "mean_seconds": 32.33508640266666
+            },
+            "public-read": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 3.1739518053333353
+            },
+            "reservation": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 27.272613527666664
+            }
+          }
+        }
+      }
+    },
+    "limitation": "All 24 direct DeepSeek trials completed with stable fingerprints; the native repeat was cancelled during its first trial."
+  }
+]

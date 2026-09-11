@@ -478,7 +478,7 @@ plain JSON; frames with nothing to report are omitted.
 | --- | --- |
 | `overlays.dismiss()` | Close obstructing cookie-consent and promotional overlays — for cookie banners it prefers a reject/essential-only button and falls back to accept; promos get close/no-thanks. Only layers whose text matches consent or promo patterns are considered, so a task-critical dialog is never dismissed. Returns `{dismissed: [{kind, label}]}` — `kind` is `"cookie"` or `"promotion"`, `label` is the clicked control's label. |
 | `controls.inspect()` | Report the exact state of every form control — inputs, selects, textareas, and ARIA checkbox/combobox/listbox/radio/slider/spinbutton/switch roles. Returns `{frames: [{url, controls}]}`; each control carries `type`, `label`, `value` (`[redacted]` for passwords), `checked`, `selected`/`pressed`/`ariaChecked`, `min`/`max`/`step`, `disabled`, `visible`, and `options` for selects. Use it to prove a required filter or facet is actually active rather than inferring that from the results. |
-| `controls.directory()` | Return the full semantic action directory, independent of the smaller automatic `result.ui` budget. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
+| `controls.directory({query}?)` | Return a semantic action directory, independent of the smaller automatic `result.ui` budget. An optional string or string array `query` matches labels/names before the directory limit, so distant controls can be found together. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
 | `controls.batch()` | Execute one guarded semantic UI transaction on a site without a first-party batch protocol. Targets use ARIA ref, role/name, label, text, placeholder, test id, or CSS; an optional unique frame name/URL fragment scopes an iframe. Interactions auto-wait and ambiguous targets fail closed. |
 | `media.inspect()` | Report every `<video>` and `<audio>` element with its playback state. Returns `{frames: [{url, media}]}`; each item carries `kind`, `title` (aria-label, title attribute, or nearby caption/heading), `source`, `paused`, `ended`, `currentTime`, `duration`, `readyState`, `visible`, plus the frame's `documentTitle` and visible `headings`. Use it to match what is actually playing against the requested item before claiming playback. |
 
@@ -513,28 +513,59 @@ duplicate. Add `frameName` or `frameUrlIncludes` to target one already loaded
 iframe. Open shadow roots work through Playwright's normal locator behavior.
 
 Interaction actions require `allowWrites:true`. Mark a consequential operation
-with `irreversible:true` to also require `allowIrreversible:true`. A batch that
+with `irreversible:true` to also require `allowIrreversible:true`. By default, a batch that
 interacts must end in `read` or `readUrl`; the last result is the transaction's
 verification boundary and must supply a non-empty expected substring in
 `value`. The batch fails unless that expected text, form value, or URL is
 observed on the final operation's specified target (`readUrl` checks the active
-page URL). Page-wide directory evidence never substitutes for that target.
+page URL). Form reads use live values; select text contains only selected option labels,
+not unselected choices or stale textarea markup. Page-wide directory evidence never substitutes for that target.
+Asserted reads wait for that specific result, with no blanket network-idle wait
+when the expectation was not already visible before the batch. A pre-existing
+matching message retains the bounded settling check to avoid reading stale success.
+Form-value reads after writes also retain that check: an edited field does not
+acknowledge a later submission.
+Choose an expectation that proves the intended change. Unasserted intermediate
+reads retain their bounded settling wait. `returnDirectory:true` returns a fresh
+directory immediately after verification; callers needing a settling window
+can explicitly set `directoryWaitMs` (0–5000 ms).
+When the resulting text is unknown, pass `observe:true` instead of guessing a
+final expectation. This permits a batch ending in an interaction or an unasserted
+read, then waits for tracked document/fetch/XHR activity to settle (bounded at
+2.5 seconds) and always returns a fresh `ui` directory, even with
+`returnDirectory:false`. The result has `verification:"observed"`: assess the
+returned evidence before claiming success. It does not assert that the application
+finished; slower or timer-driven updates may require a subsequent read. Any
+explicit read expectations are still enforced. All write, password, ambiguity,
+and irreversible-action guards still apply.
+
 Password fields reject `fill` by default. A credential
 provided explicitly in the current task may use `allowPasswordFill:true`;
 stored or generated credentials must use the trusted credential helpers so the
-secret never enters model context. Operations run in list order with a 40 ms
-default minimum interval (configurable from 0–1000 ms), Playwright auto-waiting,
+secret never enters model context. Operations run in list order without added pacing delays by default
+(`minIntervalMs` remains configurable from 0–1000 ms), Playwright auto-waiting,
 a unique-match check immediately before every action, and stop-on-first-error
-semantics. The result is `{protocol:'ui-batch/1', pageUpdated, durationMs,
+semantics. Action values are validated before the first write. On failure,
+completed operation IDs are reported; earlier writes are not rolled back.
+Inspect the failed step before retrying, and do not replay completed writes.
+The result is `{protocol:'ui-batch/1', pageUpdated, durationMs,
 results}`.
 
 The MCP `browser_batch` tool exposes the same path without model-authored
 JavaScript. Passing `{url}` opens an unvisited page and returns its action
-directory. Passing `operations` executes them, briefly waits for relevant
-navigation/fetch and semantic state to settle, then returns refreshed
-`controls` and `evidence`. Put the required expected result in the `value` of
-the final `read`/`readUrl`; the final proof screenshot is captured only after
-that visible result is observed. For a password explicitly supplied in
+directory. Passing `{discover:true}` collects current-page targets in one call
+without navigating or changing page state. Add `query: ["Email", "Region", "Save"]`
+to find several needed controls together before applying the directory limit.
+The same filter is available as `controls.directory({query})`, and with `{url, query}`
+when opening a page; `{url, discover:true}` explicitly returns the full directory. Omit it for general discovery; action buttons receive space
+in both the full and compact directories even after a long list of fields.
+Copy the needed targets into a
+second call with `operations`; actions execute in order and auto-wait for each
+target. After the expected final state is observed, the tool returns fresh
+`controls` and `evidence` without waiting for unrelated background requests. Put the required expected result in the `value` of
+the final `read`/`readUrl`, or set `observe:true` for an unknown outcome and assess
+its returned evidence. `proof:true` captures the final UI after the assertion or
+bounded observation; an observational screenshot alone does not assert success. For a password explicitly supplied in
 the task, set `allowPasswords:true`; saved and generated credentials still use
 `browser_login`.
 

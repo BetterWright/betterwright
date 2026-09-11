@@ -12,6 +12,8 @@ test("automatic discovery suppresses only a returned UI directory", () => {
   }
   assert.equal(hasReturnedUIDirectory({ protocol: "betterwright-ui/1", controls: [] }), true);
   assert.equal(hasReturnedUIDirectory({ protocol: "betterwright-ui/1" }), false);
+  assert.equal(hasReturnedUIDirectory({ ui: { protocol: "betterwright-ui/1", controls: [] } }), true);
+  assert.equal(hasReturnedUIDirectory({ ui: { controls: [] } }), false);
 });
 
 test("automatic UI has a hard budget without changing exact targets or the full directory", () => {
@@ -35,4 +37,17 @@ test("automatic UI has a hard budget without changing exact targets or the full 
   }
   assert.deepEqual(compact.evidence, directory.evidence);
   assert.equal(JSON.stringify(directory), before);
+});
+
+
+test("automatic discovery keeps short select options for the next action batch", () => {
+  const directory = {
+    protocol: "betterwright-ui/1", tool: "browser_batch", truncated: false,
+    controls: [{ target: { label: "Region", exact: true }, actions: ["select", "read"],
+      options: [["North", "n", true], ["South", "s", false]] }],
+    evidence: [],
+  };
+  const result = compactAutomaticUI(directory);
+  assert.deepEqual(result.controls, directory.controls);
+  assert.equal(result.truncated, false);
 });

@@ -4511,3 +4511,271 @@ test("optional ad blocker covers pages, nested frames and popups while preservin
     }
   } finally { await site.close(); }
 });
+
+
+test("UI discovery feeds an ordered batch while unrelated requests stay pending", opts, async () => {
+  let backgroundFinished = false;
+  const server = await listen((request, response) => {
+    if (request.url === "/background") {
+      const timer = setTimeout(() => { backgroundFinished = true; response.end("done"); }, 4_000);
+      response.on("close", () => clearTimeout(timer));
+      return;
+    }
+    if (request.url !== "/batch") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end(`<label>Name <input></label><label>Region <select><option value="n">North</option><option value="s">South</option></select></label><button>Save</button><output role="status">Waiting</output><script>
+      document.querySelector('button').onclick = () => {
+        fetch('/background');
+        setTimeout(() => document.querySelector('output').textContent = 'Saved ' + document.querySelector('input').value + ' ' + document.querySelector('select').value, 80);
+      };
+    </script>`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const discovered = await bw.run(`await page.goto('${server.origin}/batch'); return controls.directory();`);
+    assert.equal(discovered.ok, true, discovered.error);
+    assert.equal(discovered.ui, undefined);
+    const directory = discovered.result;
+    const [name, region, save] = directory.controls;
+    assert.deepEqual(region.options, [["North", "n", true], ["South", "s", false]]);
+    const operations = [
+      { id: "name", action: "fill", target: name.target, value: "Riley" },
+      { id: "region", action: "select", target: region.target, value: "s" },
+      { id: "save", action: "click", target: save.target },
+      { id: "verify", action: "read", target: directory.evidence[0].target, value: "Saved Riley s" },
+    ];
+    const result = await bw.run(`return controls.batch(${JSON.stringify(operations)}, {allowWrites:true, returnDirectory:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, "Saved Riley s");
+    assert.equal(backgroundFinished, false, "verification must not wait for unrelated background requests");
+    assert.equal(result.result.ui.controls[0].value, "Riley");
+    const actual = await bw.run(`return { name: await page.getByLabel('Name').inputValue(), region: await page.getByLabel('Region').inputValue() };`);
+    assert.deepEqual(actual.result, { name: "Riley", region: "s" });
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("zero-pacing batches auto-wait for later controls and stop on ambiguity", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<button id="next">Continue</button><div id="details"></div><output role="status">Waiting</output><script>document.querySelector("#next").onclick=()=>setTimeout(()=>{document.querySelector("#details").innerHTML="<label>Code <input></label><button id=finish>Finish</button>"; document.querySelector("#finish").onclick=()=>document.querySelector("output").textContent="Done "+document.querySelector("input").value},100)</script>');
+      return controls.batch([
+        {id:'next', action:'click', target:{role:'button', name:'Continue', exact:true}},
+        {id:'code', action:'fill', target:{label:'Code', exact:true}, value:'C-42'},
+        {id:'finish', action:'click', target:{role:'button', name:'Finish', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Done C-42'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, "Done C-42");
+    const failed = await bw.run(`
+      await page.setContent('<label>Name <input></label><button>Save</button><button>Save</button><output role="status">Waiting</output>');
+      return controls.batch([
+        {id:'name', action:'fill', target:{label:'Name'}, value:'Kept'},
+        {id:'save', action:'click', target:{role:'button', name:'Save', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Saved'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(failed.ok, false);
+    assert.match(failed.error, /matched 2 elements/);
+    assert.match(failed.error, /Completed operations: \["name"\]/);
+    const actual = await bw.run(`return await page.getByLabel('Name').inputValue()`);
+    assert.equal(actual.result, "Kept");
+  } finally {
+    await bw.close();
+  }
+});
+
+
+test("long-form discovery finds distant fields and keeps the submit button", opts, async () => {
+  let submissions = 0;
+  let saved;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      let data = "";
+      request.on("data", (chunk) => { data += chunk; });
+      request.on("end", () => { submissions++; saved = JSON.parse(data); response.end("ok"); });
+      return;
+    }
+    if (request.url !== "/preferences") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    const fields = Array.from({length:80}, (_, i) => `<label>Preference ${i + 1}<select name="p${i + 1}"><option>Daily</option><option>Weekly</option><option>Off</option></select></label>`).join("");
+    response.end(`<form>${fields}<button>Save preferences</button></form><output role="status"></output><script>document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch(location.pathname,{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});document.querySelector('output').textContent='Saved successfully'}</script>`);
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const opened = await bw.run(`await page.goto('${server.origin}/preferences'); return page.url()`);
+    assert.equal(opened.ok, true, opened.error);
+    assert.ok(opened.ui.controls.some((control) => control.target.name === "Save preferences"));
+    const found = await bw.run(`return controls.directory({query:['Preference 73', 'Preference 79', 'Save preferences']});`);
+    assert.equal(found.ok, true, found.error);
+    assert.equal(found.result.truncated, false);
+    assert.equal(found.result.controls.length, 3);
+    assert.equal(submissions, 0);
+    const [first, second, save] = found.result.controls;
+    const operations = [
+      {id:'first', action:'select', target:first.target, value:'Off'},
+      {id:'second', action:'select', target:second.target, value:'Weekly'},
+      {id:'save', action:'click', target:save.target},
+      {id:'verify', action:'read', target:{role:'status'}, value:'Saved successfully'},
+    ];
+    const result = await bw.run(`return controls.batch(${JSON.stringify(operations)}, {allowWrites:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(submissions, 1);
+    assert.equal(Object.keys(saved).length, 80);
+    for (let i = 1; i <= 80; i++) assert.equal(saved[`p${i}`], i === 73 ? "Off" : i === 79 ? "Weekly" : "Daily");
+    const invalid = await bw.run(`return controls.directory({query:42});`);
+    assert.equal(invalid.ok, false);
+    assert.match(invalid.error, /query must be/);
+  } finally { await bw.close(); await server.close(); }
+});
+
+
+test("a success message already visible before a batch does not bypass pending writes", opts, async () => {
+  let committed = false;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      setTimeout(() => { committed = true; response.end("ok"); }, 350);
+      return;
+    }
+    if (request.url !== "/save-again") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end('<button onclick="fetch(location.pathname,{method:\'POST\'})">Save</button><output role="status">Saved</output>');
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/save-again');
+      return controls.batch([
+        {id:'save', action:'click', target:{role:'button', name:'Save', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Saved'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(committed, true, "a pre-existing success message must not skip a pending write");
+  } finally { await bw.close(); await server.close(); }
+});
+
+
+test("query discovery preserves duplicate target positions before filtering and truncation", opts, async () => {
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const opened = await bw.run(String.raw`
+      await page.setContent('<button hidden aria-label="Submit">Hidden</button>' +
+        Array.from({length:120}, (_, i) => '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send item '+i+'</button>').join('') +
+        '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send invoice</button><output role="status">Waiting</output>');
+      return controls.directory({query:'invoice'});
+    `);
+    assert.equal(opened.ok, true, opened.error);
+    assert.equal(opened.result.controls.length, 1);
+    const target = opened.result.controls[0].target;
+    assert.deepEqual(target, {label:'Submit', exact:true, nth:121});
+    const result = await bw.run(`return controls.batch([
+      {id:'send', action:'click', target:${JSON.stringify(target)}},
+      {id:'verify', action:'read', target:{role:'status'}, value:'Send invoice'},
+    ], {allowWrites:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, 'Send invoice');
+  } finally { await bw.close(); }
+});
+
+
+test("observation returns delayed server evidence without inventing a confirmation", opts, async () => {
+  let commits = 0;
+  const receipt = `Receipt ${Date.now()}`;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      setTimeout(() => { commits++; response.end(receipt); }, 300);
+      return;
+    }
+    if (request.url !== "/observe") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end(`<button>Submit</button><output role="status">Waiting</output><script>
+      document.querySelector('button').onclick = async () => {
+        const response = await fetch(location.pathname,{method:'POST'});
+        document.querySelector('output').textContent = await response.text();
+      };
+    </script>`);
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/observe');
+      return controls.batch([
+        {id:'submit', action:'click', target:{role:'button',name:'Submit',exact:true}},
+      ], {allowWrites:true, observe:true, returnDirectory:false});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(commits, 1);
+    assert.equal(result.result.verification, "observed");
+    assert.equal(result.result.results.submit.clicked, true);
+    assert.ok(result.result.ui.evidence.some((entry) => entry.text === receipt));
+    const asserted = await bw.run(`return controls.batch([
+      {id:'verify',action:'read',target:{role:'status'},value:'impossible confirmation'},
+    ], {observe:true});`);
+    assert.equal(asserted.ok, false, "observation must still enforce supplied assertions");
+    assert.match(asserted.error, /impossible confirmation/);
+    const password = await bw.run(`
+      await page.setContent('<label>Password <input type="password"></label>');
+      return controls.batch([{id:'secret',action:'fill',target:{label:'Password'},value:'test-only'}], {allowWrites:true,observe:true});
+    `);
+    assert.equal(password.ok, false);
+    assert.match(password.error, /password/i);
+  } finally { await bw.close(); await server.close(); }
+});
+
+
+test("batch reads assert live values and selected labels rather than inactive markup", opts, async () => {
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.setContent('<label>Phase <select><option value="waiting">Waiting</option><option value="ready">Ready label</option></select></label><label>Notes <textarea>Original note</textarea></label>');
+      await page.evaluate(() => {
+        document.querySelector('textarea').value = 'Edited note';
+        setTimeout(() => document.querySelector('select').value = 'ready', 150);
+        setTimeout(() => document.querySelector('textarea').value = 'Original note', 300);
+      });
+      return controls.batch([
+        {id:'phase',action:'read',target:{role:'combobox',name:'Phase',exact:true},value:'Ready label'},
+        {id:'notes',action:'read',target:{role:'textbox',name:'Notes',exact:true},value:'Original note'},
+      ]);
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.phase.value, 'ready', 'an unselected option must not satisfy a read');
+    assert.equal(result.result.results.phase.text, 'Ready label');
+    assert.equal(result.result.results.notes.value, 'Original note', 'initial textarea markup must not satisfy a read');
+  } finally { await bw.close(); }
+});
+
+
+test("reading an edited field does not bypass a subsequent pending submission", opts, async () => {
+  let committed = false;
+  const server = await listen((request, response) => {
+    if (request.method === 'POST') {
+      setTimeout(() => {committed = true; response.end('ok');}, 350);
+      return;
+    }
+    if (request.url !== '/field-submit') {response.writeHead(404).end(); return;}
+    response.setHeader('content-type','text/html');
+    response.end(`<label>Name <input value="Before"></label><button>Submit</button><script>
+      document.querySelector('button').onclick = () => fetch(location.pathname,{method:'POST'});
+    </script>`);
+  });
+  const bw = new BetterWright({home:tempHome(),headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/field-submit');
+      return controls.batch([
+        {id:'edit',action:'fill',target:{label:'Name',exact:true},value:'After'},
+        {id:'submit',action:'click',target:{role:'button',name:'Submit',exact:true}},
+        {id:'verify',action:'read',target:{label:'Name',exact:true},value:'After'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok,true,result.error);
+    assert.equal(result.result.results.verify.value,'After');
+    assert.equal(committed,true,'a field edited before Submit must not bypass that pending write');
+  } finally {await bw.close();await server.close();}
+});
