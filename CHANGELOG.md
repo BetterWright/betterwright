@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-09-11
+
 ### Changed
 
 - Run UI batches without added per-operation pacing. Asserted reads wait on
@@ -16,7 +18,6 @@ Releases before 1.1.3 predate this file; their notes live on the
   return immediately unless the caller requests a settling window.
 - Retain short select option lists in compact discovery and suppress duplicate
   directories returned in a batch envelope.
-
 - Default sandbox navigation to `domcontentloaded` so slow subresources do not
   hold up agent actions. Explicit load modes and timeouts remain supported;
   wait on the relevant locator before reading dynamic page or frame state.
@@ -32,7 +33,9 @@ Releases before 1.1.3 predate this file; their notes live on the
   ready for an ordered action-and-verification batch in the next call. Optional
   `query` names find several controls together before truncation; discovery
   reserves space for action buttons on long forms.
-
+- Explicit batch observation with `observe:true` returns fresh UI and marks
+  verification as observed when the outcome cannot be asserted in advance.
+  Default write batches still require a final asserted read or URL check.
 - Per-call `automaticUI: false` / `run --no-auto-ui` for agents returning scoped
   page observations. It omits successful automatic UI catalogs while preserving
   on-demand discovery, first-party workflows, failure evidence, and warnings.
@@ -41,7 +44,11 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 - Validate all batch action values before the first write and report completed
   operation IDs on failure so agents can avoid replaying completed writes.
-
+- Keep duplicate target positions stable across filtered and truncated
+  discovery, including repeated labels and placeholders.
+- Assert live input and textarea values and selected option labels. Preserve
+  bounded settling after writes when a field value or pre-existing success
+  message cannot confirm a pending submission.
 - Align setup, security, browser, SDK, and agent documentation with current
   network-policy defaults, remote-browser limits, session lifetimes, result
   bounds, cancellation, live-view access, and conditional skill loading.
@@ -1563,7 +1570,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/BetterWright/betterwright/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/BetterWright/betterwright/compare/v2.5.2...v2.6.0
 [2.5.2]: https://github.com/BetterWright/betterwright/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/BetterWright/betterwright/compare/v2.5.0...v2.5.1
