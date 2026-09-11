@@ -37,8 +37,8 @@ betterwright init
 the agent skill into whichever hosts it finds on this machine, and then loads a
 real page to confirm the path works end to end. It is safe to re-run — it
 reports what is already done and changes only what is not. Add `--yes` to skip
-the prompts (CI, scripts), or `--skip-agents` to leave your agent configuration
-alone.
+the prompts (CI, scripts), `--skip-browser` to leave the managed browser
+alone, or `--skip-agents` to leave your agent configuration alone.
 
 The individual steps remain available when you want them:
 

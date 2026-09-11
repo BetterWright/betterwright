@@ -112,8 +112,8 @@ reCAPTCHA v2 escalated to an image grid that requires vision. The report prints
 | `launchIdentity` | `true` | Coherent locale/timezone identity layer. CLI: `--no-launch-identity` |
 | `upstreamProxy` | - | `http://` / `socks5://` egress proxy. CLI: `--upstream-proxy` |
 | `geoip` | `false` | Locale/timezone from egress IP. CLI: `--geoip` |
-| `locale` | - | Explicit BCP 47 locale. CLI: `--locale` |
-| `timezone` | - | Explicit IANA timezone. CLI: `--timezone` |
+| `locale` | - | Explicit BCP 47 locale. CLI: `--locale`; MCP: `BETTERWRIGHT_LOCALE` |
+| `timezone` | - | Explicit IANA timezone. CLI: `--timezone`; MCP: `BETTERWRIGHT_TIMEZONE` |
 | `platform` | host | Identity platform pin (default: the real host OS). CLI: `--platform` |
 | `headedInvisible` | `false` | Off-screen headed window. CLI: `--headed-invisible` |
 | `stealthRuntimeFix` | `false` | Optional patchright isolated-world execution |
