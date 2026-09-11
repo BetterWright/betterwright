@@ -29,6 +29,10 @@ await bw.run(`
   to a file and replaced with `{truncated: true, preview, fullOutputPath}`.
   That file contains the bounded summary, not the original unbounded value.
 
+`betterwright run` prints compact JSON when stdout is piped, preserving every
+field while avoiding repeated indentation in agent observations. Terminal output
+is indented by default; pass `--pretty` to retain indentation in a pipe or file.
+
 ## Pages
 
 | Global | Description |
@@ -43,6 +47,14 @@ await bw.run(`
 Pages persist across `run()` calls within the same session, so an agent can
 open a tab in one step and act on it in the next. Popups and
 `target=_blank` links are adopted automatically and appear in `pages`.
+
+Sandbox navigation (`page.goto`, `frame.goto`, `page.reload`, `page.goBack`,
+`page.goForward`, and `openPage(url)`) defaults to `waitUntil: 'domcontentloaded'`.
+Unlike Playwright's `load` default, this does not wait for every image or other
+subresource. Wait for the relevant locator before reading dynamic results.
+Explicit `waitUntil` and `timeout` options are preserved; use
+`{waitUntil: 'load'}` when the task requires all load-event resources.
+`waitForLoadState()` and `setContent()` retain their Playwright behavior.
 
 By default, idle headless pages are parked after a short delay between calls:
 their timers, animation frames, and animation timelines pause, then resume
@@ -131,6 +143,28 @@ before verifying a representation you have not observed.
 The automatic UI directory also carries visible item context, cart/output
 summaries, and target handles for empty live-status regions. These are read
 targets, not a prediction of the eventual result text.
+
+On sites without WebAgents, the automatic fallback is offered once per origin
+and pathname. Structured extractions, short acknowledgements, and summarized
+Playwright handles still receive discovery context; an extracted object does
+not establish that the caller has enough actionable state. When the snippet
+returns a `betterwright-ui/1` directory itself, the automatic duplicate is
+omitted. First-party WebAgents discovery is unchanged.
+
+The automatic directory is limited to 2,400 JSON characters before envelope
+redaction. It includes up to two evidence entries, omits select-option lists,
+and drops whole controls to fit; exact target strings are never shortened.
+`truncated: true` signals omitted data. Call `controls.directory()` for the
+full discovery limits and option lists, or use a scoped snapshot. Returning
+that directory does not append another automatic copy. Failure evidence uses
+the separate limits below.
+
+Agents returning their own scoped observations can use
+`bw.run(code, {automaticUI: false})` or `betterwright run --no-auto-ui` to omit
+the automatic UI catalog on that successful call. This does not consume its
+one-time announcement: a later default call can still receive it. On-demand
+`controls.directory()`/`snapshot()`, WebAgents discovery, challenge reporting,
+failure evidence, and redaction continue to operate normally.
 
 On an ordinary snippet failure, a live page may return a partial `ui.evidence`
 directory: at most four 300-character excerpts, collected within a 200ms budget.
@@ -444,7 +478,7 @@ plain JSON; frames with nothing to report are omitted.
 | --- | --- |
 | `overlays.dismiss()` | Close obstructing cookie-consent and promotional overlays — for cookie banners it prefers a reject/essential-only button and falls back to accept; promos get close/no-thanks. Only layers whose text matches consent or promo patterns are considered, so a task-critical dialog is never dismissed. Returns `{dismissed: [{kind, label}]}` — `kind` is `"cookie"` or `"promotion"`, `label` is the clicked control's label. |
 | `controls.inspect()` | Report the exact state of every form control — inputs, selects, textareas, and ARIA checkbox/combobox/listbox/radio/slider/spinbutton/switch roles. Returns `{frames: [{url, controls}]}`; each control carries `type`, `label`, `value` (`[redacted]` for passwords), `checked`, `selected`/`pressed`/`ariaChecked`, `min`/`max`/`step`, `disabled`, `visible`, and `options` for selects. Use it to prove a required filter or facet is actually active rather than inferring that from the results. |
-| `controls.directory()` | Return the token-small semantic action directory BetterWright automatically attaches as `result.ui` after first navigation on a site without a first-party workflow. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
+| `controls.directory()` | Return the full semantic action directory, independent of the smaller automatic `result.ui` budget. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
 | `controls.batch()` | Execute one guarded semantic UI transaction on a site without a first-party batch protocol. Targets use ARIA ref, role/name, label, text, placeholder, test id, or CSS; an optional unique frame name/URL fragment scopes an iframe. Interactions auto-wait and ambiguous targets fail closed. |
 | `media.inspect()` | Report every `<video>` and `<audio>` element with its playback state. Returns `{frames: [{url, media}]}`; each item carries `kind`, `title` (aria-label, title attribute, or nearby caption/heading), `source`, `paused`, `ended`, `currentTime`, `duration`, `readyState`, `visible`, plus the frame's `documentTitle` and visible `headings`. Use it to match what is actually playing against the requested item before claiming playback. |
 

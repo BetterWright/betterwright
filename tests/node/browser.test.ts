@@ -1741,6 +1741,27 @@ test("failed verification returns bounded observed evidence without replaying ac
   }
 });
 
+test("CLI run preserves JSON values in compact and explicit pretty output", opts, async () => {
+  const home = tempHome();
+  const cli = path.resolve(import.meta.dirname, "../../dist/bin/betterwright.js");
+  const code = 'return { nested: { text: "hello\\nworld" }, items: [1, 2] }';
+  const run = (extra) => spawnSync(process.execPath, [cli, "run", "--no-daemon", ...extra, "-c", code], {
+    encoding: "utf8", timeout: 20_000, env: { ...process.env, BETTERWRIGHT_HOME: home },
+  });
+  const compact = run([]);
+  const pretty = run(["--pretty"]);
+  assert.equal(compact.status, 0, compact.stderr);
+  assert.equal(pretty.status, 0, pretty.stderr);
+  assert.equal(compact.stdout.trim().split("\n").length, 1);
+  assert.ok(pretty.stdout.trim().split("\n").length > 1);
+  const decoded = JSON.parse(compact.stdout);
+  const indented = JSON.parse(pretty.stdout);
+  assert.equal(decoded.ok, true);
+  assert.deepEqual(decoded.result, { nested: { text: "hello\nworld" }, items: [1, 2] });
+  assert.deepEqual(decoded.result, indented.result);
+  assert.deepEqual(Object.keys(decoded).sort(), Object.keys(indented).sort());
+});
+
 test("ordinary navigation attaches one compact UI directory automatically", opts, async () => {
   let probes = 0;
   const site = await listen((request, response) => {
@@ -1775,6 +1796,89 @@ test("ordinary navigation attaches one compact UI directory automatically", opts
     assert.equal(nextPath.ui.protocol, "betterwright-ui/1");
     assert.equal(probes, 2);
   } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("automatic UI avoids duplicate observations and bounds fallback context", opts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url === "/webagents.md" || request.url === "/.well-known/webagents.json") {
+      response.writeHead(404).end("missing");
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end(`<h1>Catalog</h1><div role="status">Catalog ready</div>${Array.from({ length: 40 }, (_, i) =>
+      `<label>Product ${i}<select><option>${"Long option ".repeat(12)}</option><option>Second</option></select></label>`).join("")}`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true, policy: new NetworkPolicy({ allowLoopback: true }) });
+  try {
+    const extracted = await bw.run(`await page.goto('${site.origin}/observed'); return { heading: await page.locator('h1').innerText() }`);
+    assert.equal(extracted.ok, true, extracted.error);
+    assert.deepEqual(extracted.result, { heading: "Catalog" });
+    assert.equal(extracted.ui.protocol, "betterwright-ui/1");
+    assert.ok(JSON.stringify(extracted.ui).length <= 2_400);
+    assert.equal((await bw.run("return page.url()")).ui, undefined);
+
+    const fallback = await bw.run(`return await page.goto('${site.origin}/unobserved')`);
+    assert.equal(fallback.ok, true, fallback.error);
+    assert.equal(fallback.result.type, "Response");
+    assert.ok(JSON.stringify(fallback.ui).length <= 2_400);
+    assert.equal(fallback.ui.truncated, true);
+    assert.ok(fallback.ui.controls.length > 0 && fallback.ui.controls.length < 40);
+    const full = await bw.run("const directory = await controls.directory(); return { count: directory.controls.length, first: directory.controls[0] }");
+    assert.equal(full.ok, true, full.error);
+    assert.equal(full.result.count, 36);
+    assert.equal(full.result.first.options.length, 2);
+    assert.deepEqual(fallback.ui.controls[0].target, full.result.first.target);
+    assert.equal(full.ui, undefined);
+    const returned = await bw.run(`await page.goto('${site.origin}/explicit-directory'); return await controls.directory()`);
+    assert.equal(returned.ok, true, returned.error);
+    assert.equal(returned.ui, undefined, "do not append another directory even if the full result spills");
+
+    const lean = await bw.run(`await page.goto('${site.origin}/lean'); return { heading: await page.locator('h1').innerText() }`, { automaticUI: false });
+    assert.equal(lean.ok, true, lean.error);
+    assert.equal(lean.ui, undefined);
+    const resumed = await bw.run("return page.url()");
+    assert.equal(resumed.ui.protocol, "betterwright-ui/1", "opt-out must not consume the announcement");
+    const failed = await bw.run("throw new Error('required check failed')", { automaticUI: false });
+    assert.equal(failed.ok, false);
+    assert.ok(failed.ui.evidence.some((entry) => entry.text.includes("Catalog ready")));
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("default navigation reaches a usable document while subresources are still loading", opts, async () => {
+  const pending = [];
+  const site = await listen((request, response) => {
+    if (request.url === "/slow.png") {
+      pending.push(response);
+      return;
+    }
+    if (request.url === "/webagents.md" || request.url === "/.well-known/webagents.json") {
+      response.writeHead(404).end("missing");
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end('<h1>Ready</h1><img src="/slow.png">');
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true, policy: new NetworkPolicy({ allowLoopback: true }) });
+  try {
+    const opened = await bw.run(`await page.goto('${site.origin}/default', { timeout: 2000 }); return { heading: await page.locator('h1').innerText() }`);
+    assert.equal(opened.ok, true, opened.error);
+    assert.deepEqual(opened.result, { heading: "Ready" });
+    assert.ok(pending.length > 0, "the subresource is still pending");
+    const reloaded = await bw.run("await page.reload({ timeout: 2000 }); return { heading: await page.locator('h1').innerText() }");
+    assert.equal(reloaded.ok, true, reloaded.error);
+    const tab = await bw.run(`const tab = await openPage('${site.origin}/tab', { timeout: 2000 }); return { heading: await tab.locator('h1').innerText() }`);
+    assert.equal(tab.ok, true, tab.error);
+    const explicit = await bw.run(`await page.goto('${site.origin}/explicit', { waitUntil: 'load', timeout: 300 }); return 'loaded'`);
+    assert.equal(explicit.ok, false);
+    assert.match(explicit.error, /Timeout.*300ms/i);
+  } finally {
+    for (const response of pending) response.end();
     await bw.close();
     await site.close();
   }
@@ -1867,7 +1971,7 @@ test("WebAgents auto-discovery executes one same-origin operation DAG", opts, as
     policy: new NetworkPolicy({ allowLoopback: true }),
   });
   try {
-    const opened = await bw.run(`await page.goto('${site.origin}/tickets'); return page.url()`);
+    const opened = await bw.run(`await page.goto('${site.origin}/tickets'); return page.url()`, { automaticUI: false });
     assert.equal(opened.ok, true, opened.error);
     assert.equal(opened.webagents.protocol, "webagents/0.1");
     assert.deepEqual(opened.webagents.actions.map((action) => action.name), ["resolve", "status"]);
@@ -2544,6 +2648,8 @@ test("bot challenges in a cross-origin frame are detected", opts, async () => {
   try {
     const result = await bw.run(`
       await page.goto(${JSON.stringify(site.origin)});
+      // DOMContentLoaded does not imply that a cross-origin frame is ready.
+      await page.frameLocator('iframe').getByRole('heading', { name: 'Verify you are human', exact: true }).waitFor();
       const frames = page.frames();
       return frames.map(frame => frame.url());
     `);

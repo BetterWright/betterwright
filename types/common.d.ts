@@ -82,6 +82,9 @@ export interface RunOptions {
   note?: string;
   timeout?: number;
   approvedDownloads?: boolean;
+  /** Attach automatic UI discovery on successful calls (default true).
+   * False leaves on-demand discovery, WebAgents and failure evidence available. */
+  automaticUI?: boolean;
 }
 
 export interface FillCredentialOptions {
