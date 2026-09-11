@@ -41,6 +41,9 @@ whole path works by loading a real page.
 | [WebMCP page tools](browser-api.md#page-published-webmcp-tools) | Typed capabilities published by the current page; discovery, safe invocation, and timeout cancellation |
 | [Skill packs](skills.md) | Per-site / per-password-manager packs, plus the host e2e-review playbook loaded only when a review is requested |
 | [Agent guidance](agent-prompt.md) | The operator prompt and its guardrail options |
+| [Session recording](recording.md) | MP4/WebM capture of the current tab from the CLI, a snippet, or MCP |
+| [Ad blocking](ad-blocking.md) | The default-on Ghostery engine, its filter cache, and how to turn it off |
+| [Electron hosting](electron-host.md) | Drive a host-owned Electron tab through the same policy guard |
 
 ## Under the hood
 
@@ -52,3 +55,13 @@ whole path works by loading a real page.
 | [Chromium fork](chromium-fork.md) | BetterWright's own Chromium build: farbling, discovery |
 | [Chromium fork patches](chromium-fork-patches.md) | What each source patch in the pinned Chromium 151 build changes, and why |
 | [Headed / headless](attach-mode.md) | Display modes over one persistent profile |
+| [Runtime performance](runtime-performance.md) | Measured scan and Linux renderer improvements, with reproducer benchmarks |
+
+## Reference
+
+| Page | What it covers |
+| --- | --- |
+| [CLI reference](cli.md) | Every `betterwright` command and flag |
+| [Environment variables](environment.md) | Every `BETTERWRIGHT_*` variable, grouped by what it controls |
+| [Performance audit](performance-audit.md) | The dated measurement report behind the 2.3.0 efficiency work |
+| [Embedded browser verification](embedded-browser-verification.md) | The dated verification report for the Electron adapter |

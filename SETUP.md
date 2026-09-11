@@ -197,6 +197,7 @@ The extension supports these optional host environment variables:
 | `BETTERWRIGHT_PI_AUTO_SCREENSHOT` | Attach the active page after a call that produced no image; defaults to true. |
 | `BETTERWRIGHT_PI_TIMEOUT_SECONDS` | Per-snippet BetterWright timeout. |
 | `BETTERWRIGHT_PI_DOWNLOAD_POLICY` | `ask`, `allow`, or `deny`; non-interactive `ask` mode fails closed. |
+| `BETTERWRIGHT_PI_REQUIRE_EVIDENCE` | When set, `browser` and `browser_download` refuse to run until `browser_evidence` has been initialized with every atomic task requirement. |
 
 Pi package extensions execute with host privileges, while model-authored browser
 code still runs inside BetterWright's guarded worker. Review package source and
@@ -393,6 +394,7 @@ or the MCP env vars):
 | Allow an otherwise-blocked host | `--allow-host staging.internal` / `allowHosts: ["staging.internal"]` | `BETTERWRIGHT_ALLOW_HOSTS=staging.internal` |
 | Block specific sites | `--block-host ads.example.com` / `blockHosts: [...]` | `BETTERWRIGHT_BLOCK_HOSTS=ads.example.com` |
 | `browser_download` may save files; the `browser` tool may not | `downloadPolicy: "ask"` (default) | `BETTERWRIGHT_DOWNLOAD_POLICY=ask` |
+| Approve downloads for one run | `--approve-downloads` / `approvedDownloads: true` | (the `browser_download` tool call is the grant) |
 | Allow downloads from any run | `downloadPolicy: "allow"` | `BETTERWRIGHT_DOWNLOAD_POLICY=allow` |
 | Disable all downloads | `downloadPolicy: "deny"` | `BETTERWRIGHT_DOWNLOAD_POLICY=deny` |
 | Block public search-result UIs | `publicSearchPolicy: "block"` | `BETTERWRIGHT_PUBLIC_SEARCH_POLICY=block` |
