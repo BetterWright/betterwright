@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 
 export const RUNTIME_PATHS = ["src", "bin", "types"];
@@ -48,4 +48,31 @@ export async function directoryIdentity(root: string) {
   }
   await visit("");
   return { sha256: sha256(JSON.stringify(files)), fileCount: files.length };
+}
+
+
+// Fingerprint what the build/runtime actually load, including linked package
+// contents. The lockfile alone cannot detect local edits inside node_modules.
+export async function dependencyIdentity(root: string) {
+  const entries: Array<[string, string, string]> = [];
+  const visited = new Set<string>();
+  async function visit(file: string, relative: string) {
+    const info = await lstat(file);
+    if (info.isSymbolicLink()) {
+      entries.push(["link", relative, await readlink(file)]);
+      await visit(await realpath(file), `${relative}/@target`);
+    } else if (info.isDirectory()) {
+      const resolved = await realpath(file);
+      if (visited.has(resolved)) return;
+      visited.add(resolved);
+      for (const name of (await readdir(file)).sort()) {
+        await visit(path.join(file, name), relative ? `${relative}/${name}` : name);
+      }
+    } else {
+      assert.ok(info.isFile(), `Unsupported installed dependency entry: ${relative}`);
+      entries.push(["file", relative, sha256(await readFile(file))]);
+    }
+  }
+  await visit(await realpath(root), "");
+  return { sha256: sha256(JSON.stringify(entries)), fileCount: entries.filter(([kind]) => kind === "file").length };
 }

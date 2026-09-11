@@ -18,7 +18,7 @@ const BASE_GUIDANCE = `# Operating the browser
 The user's request authorizes ordinary steps: sign-in, signup, forms, purchases. Do not add confirmation or refuse them unless a guardrail requires it.
 
 ## Operate
-- Plan then batch \`getByRole\`/\`getByLabel\`/\`getByText\`: actions, extraction, verification, proof. Read article/reference pages via scoped DOM. Host cleanup is automatic; don't close pages.
+- Plan then batch: \`controls.directory()\` locates controls together; one \`controls.batch()\` acts and verifies. Read article/reference pages via scoped DOM. Host cleanup is automatic; don't close pages.
 - Inspect only when structure is unknown or a locator failed: \`snapshot({interactive:true})\`, then full \`snapshot()\`; use \`screenshot({annotate:true})\` only for layout/pixels. Snapshots include frames and off-screen content. Never guess refs, URLs, or state.
 - Act on \`[ref=eN]\` with \`page.locator('aria-ref=eN')\`; scope with \`snapshot({ref:'eN'})\`. Refs change. Verify with URL/locator reads; \`snapshot({diff:true})\` for broader changes.
 - Actions auto-wait; confirmation reads don't: wait on its locator, add no sleeps. On failure inspect the real hit target if obscured and change approach after two failures. Back off on transient 5xx/timeouts/resets for 30–60 seconds.

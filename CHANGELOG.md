@@ -11,6 +11,12 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Changed
 
+- Run UI batches without added per-operation pacing. Asserted reads wait on
+  their expected result instead of unrelated network traffic; fresh directories
+  return immediately unless the caller requests a settling window.
+- Retain short select option lists in compact discovery and suppress duplicate
+  directories returned in a batch envelope.
+
 - Default sandbox navigation to `domcontentloaded` so slow subresources do not
   hold up agent actions. Explicit load modes and timeouts remain supported;
   wait on the relevant locator before reading dynamic page or frame state.
@@ -22,11 +28,17 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Added
 
+- `browser_batch {discover:true}` collects current-page targets in one call,
+  ready for an ordered action-and-verification batch in the next call.
+
 - Per-call `automaticUI: false` / `run --no-auto-ui` for agents returning scoped
   page observations. It omits successful automatic UI catalogs while preserving
   on-demand discovery, first-party workflows, failure evidence, and warnings.
 
 ### Fixed
+
+- Validate all batch action values before the first write and report completed
+  operation IDs on failure so agents can avoid replaying completed writes.
 
 - Align setup, security, browser, SDK, and agent documentation with current
   network-policy defaults, remote-browser limits, session lifetimes, result

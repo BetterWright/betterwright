@@ -36,6 +36,7 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("webagents.discover()"));
   assert.ok(compact.includes("webagents.batch(operations,{allowWrites:true})"));
   assert.ok(compact.includes("controls.batch({operations,allowWrites:true})"));
+  assert.ok(compact.includes("controls.directory()"));
   assert.ok(compact.includes("webmcp.tools()"));
   assert.ok(compact.includes("allowAutosubmit:true"));
   assert.ok(compact.includes("host's approval-gated download surface"));

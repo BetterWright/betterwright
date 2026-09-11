@@ -239,12 +239,33 @@ async function assertNotPassword(locator, operationId, allowPasswordFill) {
   }
 }
 
+// Validate every action value before the first write, so a malformed later
+// operation cannot leave an avoidable partial submission behind.
+function validateActionValue(action: string, value: UntrustedValue, id: string) {
+  if (action === "fill" && (!isString(value) || value.length > MAX_TEXT_CHARS)) {
+    throw new TypeError(`UI batch operation ${JSON.stringify(id)} fill value must be a string of at most ${MAX_TEXT_CHARS} characters.`);
+  }
+  if (action === "select") {
+    const values = Array.isArray(value) ? value : [value];
+    if (!values.length || values.length > 50 || values.some((entry) => !isString(entry) || !entry.length || entry.length > 500)) {
+      throw new TypeError(`UI batch operation ${JSON.stringify(id)} select value must be a string or a bounded string array.`);
+    }
+  }
+  if (action === "press") boundedString(value, `UI batch operation ${JSON.stringify(id)} key`, 100);
+  if (READ_ACTIONS.has(action) && value !== undefined) {
+    const maximum = action === "readUrl" ? 2_000 : MAX_TEXT_CHARS;
+    if (!isString(value) || !value.trim() || value.length > maximum) {
+      throw new TypeError(`UI batch operation ${JSON.stringify(id)} expected value must be a non-empty string of at most ${maximum} characters.`);
+    }
+  }
+}
+
 function normalizeOptions(value: UntrustedValue) {
   if (value === undefined) {
     return {
       allowWrites: false,
       allowIrreversible: false,
-      minIntervalMs: 40,
+      minIntervalMs: 0,
       returnDirectory: false,
       directoryWaitMs: 0,
       allowPasswordFill: false,
@@ -268,9 +289,9 @@ function normalizeOptions(value: UntrustedValue) {
   return {
     allowWrites: untrustedField(value, "allowWrites") === true,
     allowIrreversible: untrustedField(value, "allowIrreversible") === true,
-    minIntervalMs: pacing === undefined ? 40 : Number(pacing),
+    minIntervalMs: pacing === undefined ? 0 : Number(pacing),
     returnDirectory,
-    directoryWaitMs: directoryWait === undefined ? 2_500 : Number(directoryWait),
+    directoryWaitMs: directoryWait === undefined ? 0 : Number(directoryWait),
     allowPasswordFill: untrustedField(value, "allowPasswordFill") === true,
   };
 }
@@ -279,6 +300,7 @@ async function refreshedActionDirectory(page, waitMs: number, activity: BatchAct
   const deadline = Date.now() + waitMs;
   const minimumUntil = Date.now() + Math.min(125, waitMs);
   let directory = await inspectActionDirectory(page);
+  if (waitMs === 0) return directory;
   let signature = JSON.stringify(directory);
   let stableSince = Date.now();
   do {
@@ -349,7 +371,9 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
     if (action !== "readUrl" && !isRecord(target)) {
       throw new TypeError(`UI batch operation ${JSON.stringify(id)} requires a target.`);
     }
-    return { id, action, target, value: untrustedField(value, "value"), irreversible };
+    const actionValue = untrustedField(value, "value");
+    validateActionValue(action, actionValue, id);
+    return { id, action, target, value: actionValue, irreversible };
   });
   const hasWrites = operations.some((operation) => !READ_ACTIONS.has(operation.action));
   const finalOperation = operations.at(-1);
@@ -390,7 +414,9 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
       const operationStartedAt = Date.now();
       try {
         if (READ_ACTIONS.has(operation.action) && needsSettle) {
-          await settleAfterWrites(activity);
+          // An asserted read waits for its own visible result. Unrelated
+          // background requests must not delay an already verified batch.
+          if (operation.value === undefined) await settleAfterWrites(activity);
           needsSettle = false;
         }
         if (operation.action === "readUrl") {
@@ -430,7 +456,7 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
         if (!READ_ACTIONS.has(operation.action)) needsSettle = true;
       } catch (error) {
         throw new Error(
-          `UI batch operation ${JSON.stringify(operation.id)} (${operation.action}) failed: ${error?.message || error}`,
+          `UI batch operation ${JSON.stringify(operation.id)} (${operation.action}) failed: ${error?.message || error}. Completed operations: ${JSON.stringify([...results.keys()])}. Earlier writes are not rolled back; inspect the failed step before retrying.`,
         );
       } finally {
         const result = results.get(operation.id);

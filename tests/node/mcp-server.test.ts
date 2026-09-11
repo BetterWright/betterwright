@@ -1047,3 +1047,24 @@ test("MCP protocol roundtrip: deny still blocks browser_download", async () => {
     await session.close();
   }
 });
+
+
+test("MCP browser_batch discovers current targets without navigation or writes", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({
+    browser: { vault: false, async run(code, options) {
+      calls.push({ code, options });
+      return { ok: true, result: { protocol: "betterwright-ui/1", controls: [] } };
+    } }, downloadPolicy: "deny",
+  });
+  const response = await handlers.callTool({ params: {
+    name: "browser_batch", arguments: { discover: true, session: "existing" },
+  } });
+  assert.equal(response.isError, undefined);
+  assert.deepEqual(calls, [{ code: "return controls.directory();", options: { session: "existing", note: undefined } }]);
+  for (const args of [{ discover: true, url: "https://example.com" }, { discover: true, operations: [] }]) {
+    const invalid = await handlers.callTool({ params: { name: "browser_batch", arguments: args } });
+    assert.equal(invalid.isError, true);
+  }
+  assert.equal(calls.length, 1);
+});

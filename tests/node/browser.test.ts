@@ -4511,3 +4511,80 @@ test("optional ad blocker covers pages, nested frames and popups while preservin
     }
   } finally { await site.close(); }
 });
+
+
+test("UI discovery feeds an ordered batch while unrelated requests stay pending", opts, async () => {
+  let backgroundFinished = false;
+  const server = await listen((request, response) => {
+    if (request.url === "/background") {
+      const timer = setTimeout(() => { backgroundFinished = true; response.end("done"); }, 4_000);
+      response.on("close", () => clearTimeout(timer));
+      return;
+    }
+    if (request.url !== "/batch") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end(`<label>Name <input></label><label>Region <select><option value="n">North</option><option value="s">South</option></select></label><button>Save</button><output role="status">Waiting</output><script>
+      document.querySelector('button').onclick = () => {
+        fetch('/background');
+        setTimeout(() => document.querySelector('output').textContent = 'Saved ' + document.querySelector('input').value + ' ' + document.querySelector('select').value, 80);
+      };
+    </script>`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const discovered = await bw.run(`await page.goto('${server.origin}/batch'); return controls.directory();`);
+    assert.equal(discovered.ok, true, discovered.error);
+    assert.equal(discovered.ui, undefined);
+    const directory = discovered.result;
+    const [name, region, save] = directory.controls;
+    assert.deepEqual(region.options, [["North", "n", true], ["South", "s", false]]);
+    const operations = [
+      { id: "name", action: "fill", target: name.target, value: "Riley" },
+      { id: "region", action: "select", target: region.target, value: "s" },
+      { id: "save", action: "click", target: save.target },
+      { id: "verify", action: "read", target: directory.evidence[0].target, value: "Saved Riley s" },
+    ];
+    const result = await bw.run(`return controls.batch(${JSON.stringify(operations)}, {allowWrites:true, returnDirectory:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, "Saved Riley s");
+    assert.equal(backgroundFinished, false, "verification must not wait for unrelated background requests");
+    assert.equal(result.result.ui.controls[0].value, "Riley");
+    const actual = await bw.run(`return { name: await page.getByLabel('Name').inputValue(), region: await page.getByLabel('Region').inputValue() };`);
+    assert.deepEqual(actual.result, { name: "Riley", region: "s" });
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("zero-pacing batches auto-wait for later controls and stop on ambiguity", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<button id="next">Continue</button><div id="details"></div><output role="status">Waiting</output><script>document.querySelector("#next").onclick=()=>setTimeout(()=>{document.querySelector("#details").innerHTML="<label>Code <input></label><button id=finish>Finish</button>"; document.querySelector("#finish").onclick=()=>document.querySelector("output").textContent="Done "+document.querySelector("input").value},100)</script>');
+      return controls.batch([
+        {id:'next', action:'click', target:{role:'button', name:'Continue', exact:true}},
+        {id:'code', action:'fill', target:{label:'Code', exact:true}, value:'C-42'},
+        {id:'finish', action:'click', target:{role:'button', name:'Finish', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Done C-42'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, "Done C-42");
+    const failed = await bw.run(`
+      await page.setContent('<label>Name <input></label><button>Save</button><button>Save</button><output role="status">Waiting</output>');
+      return controls.batch([
+        {id:'name', action:'fill', target:{label:'Name'}, value:'Kept'},
+        {id:'save', action:'click', target:{role:'button', name:'Save', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Saved'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(failed.ok, false);
+    assert.match(failed.error, /matched 2 elements/);
+    assert.match(failed.error, /Completed operations: \["name"\]/);
+    const actual = await bw.run(`return await page.getByLabel('Name').inputValue()`);
+    assert.equal(actual.result, "Kept");
+  } finally {
+    await bw.close();
+  }
+});
