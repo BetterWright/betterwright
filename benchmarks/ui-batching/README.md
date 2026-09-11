@@ -1,13 +1,13 @@
 # UI batching measurements
 
-Measured merged main (`c0408cf39b1fec5ce16201e2a71d7cedd95189ee`) against `bbac4e66404ceed8615406beb52e1b824aae9644` with the same local Chromium binary. Each runtime fixture runs once for warmup and ten measured repetitions per build and execution mode, alternating build and mode order. All **160 measured cases passed** independent final-state assertions.
+Measured merged main (`c0408cf39b1fec5ce16201e2a71d7cedd95189ee`) against `8596d5e43a0b04ec451c0b5df32899a4f7ee15ab` with the same local Chromium binary. Each runtime fixture runs once for warmup and ten measured repetitions per build and execution mode, alternating build and mode order. All **160 measured cases passed** independent final-state assertions.
 
 | Fixture | Main batch median | Updated batch median | Reduction | Individual calls → batch calls |
 |---|---:|---:|---:|---:|
-| form | 521.1 ms | 101.9 ms | 80.5% | 6 → 2 |
-| deferred | 1322.3 ms | 227.1 ms | 82.8% | 4 → 2 |
-| wizard | 662.7 ms | 331.4 ms | 50.0% | 5 → 2 |
-| frame | 508.2 ms | 122.2 ms | 76.0% | 5 → 2 |
+| form | 532.7 ms | 106.6 ms | 80.0% | 6 → 2 |
+| deferred | 1324.5 ms | 224.3 ms | 83.1% | 4 → 2 |
+| wizard | 674.0 ms | 331.6 ms | 50.8% | 5 → 2 |
+| frame | 519.5 ms | 120.4 ms | 76.8% | 5 → 2 |
 
 The fixtures cover text/select/checkbox controls, a delayed result while an unrelated request remains pending, a page that reveals a later button, and an iframe form. Every measured batch ends with an expected result read. Observation mode is separately covered by a Chromium regression with a delayed, server-generated receipt, and is available to the model trials below.
 
@@ -21,12 +21,12 @@ Strict success requires the fixture oracle (including exactly one submission/sav
 
 | Model | Build | Strict success | Mean | Median | Input tokens | Uncached input | Output tokens | Calls / errors | API cost |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| DeepSeek V4.1 Flash | Main | 10/12 | 20.40 s | 21.26 s | 561,396 | 47,988 | 26,764 | 77 / 10 | $0.024797 |
-| DeepSeek V4.1 Flash | Updated | 8/12 | 18.19 s | 16.66 s | 495,297 | 41,281 | 20,627 | 74 / 12 | $0.019930 |
+| DeepSeek V4.1 Flash | Main | 6/12 | 21.16 s | 14.52 s | 599,537 | 50,545 | 26,665 | 76 / 9 | $0.025228 |
+| DeepSeek V4.1 Flash | Updated | 12/12 | 16.89 s | 13.60 s | 403,484 | 41,116 | 15,856 | 56 / 10 | $0.016768 |
 
-DeepSeek uses its direct API (`deepseek-flash`, V4.1 Flash, high thinking; the provider maps medium to high). A native Sol repeat was stopped during its first trial and is excluded from this final comparison; earlier completed trials remain in the development evidence. DeepSeek cost is calculated from reported cache-hit/miss/output usage and the applicable rates at request time from [official pricing](https://api-docs.deepseek.com/quick_start/pricing/), rather than a character estimate. Model/provider load and cache warmth can affect both latency and cost.
+DeepSeek uses its direct API (`deepseek-flash`, V4.1 Flash, high thinking; the provider maps medium to high). This revision is evaluated only with direct DeepSeek. The preceding native Sol repeat was stopped during its first trial; no further Sol evaluations ran. Earlier completed trials remain in the development evidence. DeepSeek cost is calculated from reported cache-hit/miss/output usage and the applicable rates at request time from [official pricing](https://api-docs.deepseek.com/quick_start/pricing/), rather than a character estimate. Model/provider load and cache warmth can affect both latency and cost.
 
-**The final model comparison is not an overall correctness win:** strict success falls from 10/12 to 8/12. Both builds reach the required task state/data in 11/12 trials, but unfinished responses and JSON-format errors still fail strict scoring. Aggregate cost per strict success is $0.002480 for main versus $0.002491 for the update.
+**The update improves mean time and aggregate cost without lowering strict completion in this limited trial set.** Strict completion is 6/12 for main and 12/12 for the update. Required task state/data is correct in 9/12 and 12/12 respectively. Unfinished responses and incorrect requested formats still fail strict scoring. Aggregate cost per strict success is $0.004205 versus $0.001397.
 
 The preference fixture resets displayed fields on reload, so reloading to verify persistence can induce duplicate saves and fail its exactly-once oracle. This is a fixture limitation as well as a recovery challenge. There is one real public-page task; these measurements do not establish performance across all sites or models. Earlier development rounds are included in `development-results.json` rather than selecting the most favorable round. Native round one's compiled-directory fingerprint changed, so its timings are excluded from the primary comparison.
 

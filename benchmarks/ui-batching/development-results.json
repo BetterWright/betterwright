@@ -1,6 +1,7 @@
 [
   {
     "round": "batching-round1",
+    "candidate_revision": "b514bb6e6b373918f054df7d91bea051c2d013ef",
     "summary": {
       "DeepSeek V4.1 Flash": {
         "baseline": {
@@ -155,6 +156,7 @@
   },
   {
     "round": "batching-round2",
+    "candidate_revision": "48abc9b21140add352ea3f9090e34e46ca7e7a14",
     "summary": {
       "DeepSeek V4.1 Flash": {
         "baseline": {
@@ -306,5 +308,86 @@
       }
     },
     "limitation": "All 48 model trials completed with stable source/build/dependency/harness fingerprints."
+  },
+  {
+    "round": "batching-round3",
+    "candidate_revision": "bbac4e66404ceed8615406beb52e1b824aae9644",
+    "summary": {
+      "DeepSeek V4.1 Flash": {
+        "baseline": {
+          "completed": 12,
+          "correct": 10,
+          "mean_seconds": 20.402564940666664,
+          "median_seconds": 21.260867186999988,
+          "task_state_or_data_correct": 11,
+          "input_tokens": 561396,
+          "uncached_input_tokens": 47988,
+          "output_tokens": 26764,
+          "tool_calls": 77,
+          "batch_calls": 24,
+          "errors": 10,
+          "cost_usd": 0.024796824,
+          "tasks": {
+            "delayed-report": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 15.05424155533334
+            },
+            "long-controls": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 25.599278416333327
+            },
+            "public-read": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 2.9140263049999873
+            },
+            "reservation": {
+              "correct": 2,
+              "n": 3,
+              "mean_seconds": 38.042713486
+            }
+          }
+        },
+        "candidate": {
+          "completed": 12,
+          "correct": 8,
+          "mean_seconds": 18.18907898591667,
+          "median_seconds": 16.663003541500004,
+          "task_state_or_data_correct": 11,
+          "input_tokens": 495297,
+          "uncached_input_tokens": 41281,
+          "output_tokens": 20627,
+          "tool_calls": 74,
+          "batch_calls": 25,
+          "errors": 12,
+          "cost_usd": 0.019930398,
+          "tasks": {
+            "delayed-report": {
+              "correct": 1,
+              "n": 3,
+              "mean_seconds": 9.97466420800001
+            },
+            "long-controls": {
+              "correct": 1,
+              "n": 3,
+              "mean_seconds": 32.33508640266666
+            },
+            "public-read": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 3.1739518053333353
+            },
+            "reservation": {
+              "correct": 3,
+              "n": 3,
+              "mean_seconds": 27.272613527666664
+            }
+          }
+        }
+      }
+    },
+    "limitation": "All 24 direct DeepSeek trials completed with stable fingerprints; the native repeat was cancelled during its first trial."
   }
 ]
