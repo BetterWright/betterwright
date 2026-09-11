@@ -139,8 +139,8 @@ function targetLocator(page, targetValue, operationId) {
   }
   const nthValue = untrustedField(targetValue, "nth");
   if (nthValue !== undefined) {
-    if (!isNumber(nthValue) || !Number.isInteger(nthValue) || nthValue < 0 || nthValue > 99) {
-      throw new RangeError(`UI batch operation ${JSON.stringify(operationId)} target nth must be an integer from 0 to 99.`);
+    if (!isNumber(nthValue) || !Number.isSafeInteger(nthValue) || nthValue < 0) {
+      throw new RangeError(`UI batch operation ${JSON.stringify(operationId)} target nth must be a non-negative safe integer.`);
     }
     locator = locator.nth(nthValue);
   }

@@ -4665,14 +4665,14 @@ test("query discovery preserves duplicate target positions before filtering and 
   try {
     const opened = await bw.run(String.raw`
       await page.setContent('<button hidden aria-label="Submit">Hidden</button>' +
-        Array.from({length:45}, (_, i) => '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send item '+i+'</button>').join('') +
+        Array.from({length:120}, (_, i) => '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send item '+i+'</button>').join('') +
         '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send invoice</button><output role="status">Waiting</output>');
       return controls.directory({query:'invoice'});
     `);
     assert.equal(opened.ok, true, opened.error);
     assert.equal(opened.result.controls.length, 1);
     const target = opened.result.controls[0].target;
-    assert.deepEqual(target, {label:'Submit', exact:true, nth:46});
+    assert.deepEqual(target, {label:'Submit', exact:true, nth:121});
     const result = await bw.run(`return controls.batch([
       {id:'send', action:'click', target:${JSON.stringify(target)}},
       {id:'verify', action:'read', target:{role:'status'}, value:'Send invoice'},
