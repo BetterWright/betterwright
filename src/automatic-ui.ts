@@ -31,7 +31,9 @@ export function compactAutomaticUI(directory: ActionDirectory) {
     if (!fits()) compact.evidence.pop();
   }
   if (compact.evidence.length < directory.evidence.length) compact.truncated = true;
-  for (const entry of directory.controls) {
+  const actionButton = (entry) => entry.actions.includes("click") && entry.target.role !== "link";
+  const ordered = [...directory.controls.filter(actionButton), ...directory.controls.filter((entry) => !actionButton(entry))];
+  for (const entry of ordered) {
     const { options, ...control } = entry;
 
     // Keep small option lists when they fit: dropping every option forces
@@ -46,5 +48,7 @@ export function compactAutomaticUI(directory: ActionDirectory) {
       compact.truncated = true;
     }
   }
+  // Preserve DOM order in the public result after allocating the budget.
+  compact.controls.sort((a, b) => directory.controls.findIndex((entry) => entry.target === a.target) - directory.controls.findIndex((entry) => entry.target === b.target));
   return compact;
 }

@@ -478,7 +478,7 @@ plain JSON; frames with nothing to report are omitted.
 | --- | --- |
 | `overlays.dismiss()` | Close obstructing cookie-consent and promotional overlays — for cookie banners it prefers a reject/essential-only button and falls back to accept; promos get close/no-thanks. Only layers whose text matches consent or promo patterns are considered, so a task-critical dialog is never dismissed. Returns `{dismissed: [{kind, label}]}` — `kind` is `"cookie"` or `"promotion"`, `label` is the clicked control's label. |
 | `controls.inspect()` | Report the exact state of every form control — inputs, selects, textareas, and ARIA checkbox/combobox/listbox/radio/slider/spinbutton/switch roles. Returns `{frames: [{url, controls}]}`; each control carries `type`, `label`, `value` (`[redacted]` for passwords), `checked`, `selected`/`pressed`/`ariaChecked`, `min`/`max`/`step`, `disabled`, `visible`, and `options` for selects. Use it to prove a required filter or facet is actually active rather than inferring that from the results. |
-| `controls.directory()` | Return the full semantic action directory, independent of the smaller automatic `result.ui` budget. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
+| `controls.directory({query}?)` | Return a semantic action directory, independent of the smaller automatic `result.ui` budget. An optional string or string array `query` matches labels/names before the directory limit, so distant controls can be found together. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
 | `controls.batch()` | Execute one guarded semantic UI transaction on a site without a first-party batch protocol. Targets use ARIA ref, role/name, label, text, placeholder, test id, or CSS; an optional unique frame name/URL fragment scopes an iframe. Interactions auto-wait and ambiguous targets fail closed. |
 | `media.inspect()` | Report every `<video>` and `<audio>` element with its playback state. Returns `{frames: [{url, media}]}`; each item carries `kind`, `title` (aria-label, title attribute, or nearby caption/heading), `source`, `paused`, `ended`, `currentTime`, `duration`, `readyState`, `visible`, plus the frame's `documentTitle` and visible `headings`. Use it to match what is actually playing against the requested item before claiming playback. |
 
@@ -539,7 +539,12 @@ results}`.
 The MCP `browser_batch` tool exposes the same path without model-authored
 JavaScript. Passing `{url}` opens an unvisited page and returns its action
 directory. Passing `{discover:true}` collects current-page targets in one call
-without navigating or changing page state. Copy the needed targets into a
+without navigating or changing page state. Add `query: ["Email", "Region", "Save"]`
+to find several needed controls together before applying the directory limit.
+The same filter is available as `controls.directory({query})`, and with `{url, query}`
+when opening a page. Omit it for general discovery; action buttons receive space
+in both the full and compact directories even after a long list of fields.
+Copy the needed targets into a
 second call with `operations`; actions execute in order and auto-wait for each
 target. After the expected final state is observed, the tool returns fresh
 `controls` and `evidence` without waiting for unrelated background requests. Put the required expected result in the `value` of

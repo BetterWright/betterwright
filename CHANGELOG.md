@@ -29,7 +29,9 @@ Releases before 1.1.3 predate this file; their notes live on the
 ### Added
 
 - `browser_batch {discover:true}` collects current-page targets in one call,
-  ready for an ordered action-and-verification batch in the next call.
+  ready for an ordered action-and-verification batch in the next call. Optional
+  `query` names find several controls together before truncation; discovery
+  reserves space for action buttons on long forms.
 
 - Per-call `automaticUI: false` / `run --no-auto-ui` for agents returning scoped
   page observations. It omits successful automatic UI catalogs while preserving

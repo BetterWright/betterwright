@@ -15,8 +15,8 @@ assert.ok(values.baseline && values.candidate && values.output, "Pass --baseline
 const executable = process.env.BETTERWRIGHT_CHROMIUM_PATH;
 assert.ok(executable, "Set BETTERWRIGHT_CHROMIUM_PATH to a shared browser executable");
 const roots = { baseline: path.resolve(values.baseline), candidate: path.resolve(values.candidate) };
-const baseline = sourceIdentity(roots.baseline).head;
-type Identity = ReturnType<typeof sourceIdentity> & { dependencies: Awaited<ReturnType<typeof dependencyIdentity>>; build: Awaited<ReturnType<typeof directoryIdentity>> };
+const baseline = (await sourceIdentity(roots.baseline)).head;
+type Identity = Awaited<ReturnType<typeof sourceIdentity>> & { dependencies: Awaited<ReturnType<typeof dependencyIdentity>>; build: Awaited<ReturnType<typeof directoryIdentity>> };
 const identities: Record<string, Identity> = {};
 const browsers: Record<string, { run(code: string): Promise<any>; close(): Promise<void> }> = {};
 const homes: string[] = [];
@@ -31,10 +31,10 @@ const harnessSha256 = await harnessHash();
 const fixture = await startBatchFixtures();
 try {
   for (const [variant, root] of Object.entries(roots)) {
-    const source = sourceIdentity(root, baseline);
+    const source = await sourceIdentity(root, baseline);
     const dependencies = await dependencyIdentity(path.join(root, "node_modules"));
     execFileSync(process.execPath, ["run", "build"], { cwd: root, stdio: "pipe" });
-    assert.deepEqual(sourceIdentity(root, baseline), source);
+    assert.deepEqual(await sourceIdentity(root, baseline), source);
     identities[variant] = { ...source, dependencies, build: await directoryIdentity(path.join(root, "dist")) };
     const { BetterWright } = await import(pathToFileURL(path.join(root, "dist/src/index.js")).href);
     const home = await mkdtemp(path.join(os.tmpdir(), "bw-ui-batch-"));
@@ -92,7 +92,7 @@ try {
   for (const home of homes) await rm(home, { recursive: true, force: true });
 }
 for (const [variant, root] of Object.entries(roots)) {
-  const current = sourceIdentity(root, baseline);
+  const current = await sourceIdentity(root, baseline);
   assert.equal(current.head, identities[variant].head);
   assertSameSource(identities[variant], current);
   assert.deepEqual(await directoryIdentity(path.join(root, "dist")), identities[variant].build);

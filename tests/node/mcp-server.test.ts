@@ -1068,3 +1068,21 @@ test("MCP browser_batch discovers current targets without navigation or writes",
   }
   assert.equal(calls.length, 1);
 });
+
+
+test("MCP forwards multi-target discovery filters and rejects them on writes", async () => {
+  const calls = [];
+  const handlers = _createMcpHandlersForTest({browser:{vault:false, async run(code) {
+    calls.push(code); return {ok:true, result:{protocol:"betterwright-ui/1", controls:[]}};
+  }}, downloadPolicy:"deny"});
+  const args = {discover:true, query:["Email", "Save"]};
+  const result = await handlers.callTool({params:{name:"browser_batch", arguments:args}});
+  assert.equal(result.isError, undefined);
+  assert.equal(calls[0], 'return controls.directory({"query":["Email","Save"]});');
+  const opened = await handlers.callTool({params:{name:"browser_batch", arguments:{url:"https://example.com", query:args.query}}});
+  assert.equal(opened.isError, undefined);
+  assert.equal(calls[1], 'await page.goto("https://example.com"); return controls.directory({"query":["Email","Save"]});');
+  const invalid = await handlers.callTool({params:{name:"browser_batch", arguments:{query:args.query, operations:[]}}});
+  assert.equal(invalid.isError, true);
+  assert.equal(calls.length, 2);
+});

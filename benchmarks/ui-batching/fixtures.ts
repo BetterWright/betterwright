@@ -42,7 +42,7 @@ const label = (name) => ({ label: name, exact: true });
 const button = (name) => ({ role: "button", name, exact: true });
 export const batchWorkloads = {
   form: { expected: "Saved Riley s true", operations: [
-    op("name", "fill", label("Name"), "Riley"), op("region", "select", label("Region"), "s"),
+    op("name", "fill", label("Name"), "Riley"), op("region", "select", { role: "combobox", name: "Region", exact: true }, "s"),
     op("digest", "check", label("Digest")), op("save", "click", button("Save")),
     op("verify", "read", { role: "status" }, "Saved Riley s true"),
   ] },
@@ -56,7 +56,7 @@ export const batchWorkloads = {
   ] },
   frame: { expected: "Applied Review High", operations: [
     op("message", "fill", { ...label("Message"), frameName: "settings" }, "Review"),
-    op("priority", "select", { ...label("Priority"), frameName: "settings" }, "High"),
+    op("priority", "select", { role: "combobox", name: "Priority", exact: true, frameName: "settings" }, "High"),
     op("apply", "click", { ...button("Apply"), frameName: "settings" }),
     op("verify", "read", { role: "status", frameName: "settings" }, "Applied Review High"),
   ] },

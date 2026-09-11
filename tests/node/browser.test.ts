@@ -4588,3 +4588,47 @@ test("zero-pacing batches auto-wait for later controls and stop on ambiguity", o
     await bw.close();
   }
 });
+
+
+test("long-form discovery finds distant fields and keeps the submit button", opts, async () => {
+  let submissions = 0;
+  let saved;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      let data = "";
+      request.on("data", (chunk) => { data += chunk; });
+      request.on("end", () => { submissions++; saved = JSON.parse(data); response.end("ok"); });
+      return;
+    }
+    if (request.url !== "/preferences") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    const fields = Array.from({length:80}, (_, i) => `<label>Preference ${i + 1}<select name="p${i + 1}"><option>Daily</option><option>Weekly</option><option>Off</option></select></label>`).join("");
+    response.end(`<form>${fields}<button>Save preferences</button></form><output role="status"></output><script>document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch(location.pathname,{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});document.querySelector('output').textContent='Saved successfully'}</script>`);
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const opened = await bw.run(`await page.goto('${server.origin}/preferences'); return page.url()`);
+    assert.equal(opened.ok, true, opened.error);
+    assert.ok(opened.ui.controls.some((control) => control.target.name === "Save preferences"));
+    const found = await bw.run(`return controls.directory({query:['Preference 73', 'Preference 79', 'Save preferences']});`);
+    assert.equal(found.ok, true, found.error);
+    assert.equal(found.result.truncated, false);
+    assert.equal(found.result.controls.length, 3);
+    assert.equal(submissions, 0);
+    const [first, second, save] = found.result.controls;
+    const operations = [
+      {id:'first', action:'select', target:first.target, value:'Off'},
+      {id:'second', action:'select', target:second.target, value:'Weekly'},
+      {id:'save', action:'click', target:save.target},
+      {id:'verify', action:'read', target:{role:'status'}, value:'Saved successfully'},
+    ];
+    const result = await bw.run(`return controls.batch(${JSON.stringify(operations)}, {allowWrites:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(submissions, 1);
+    assert.equal(Object.keys(saved).length, 80);
+    for (let i = 1; i <= 80; i++) assert.equal(saved[`p${i}`], i === 73 ? "Off" : i === 79 ? "Weekly" : "Daily");
+    const invalid = await bw.run(`return controls.directory({query:42});`);
+    assert.equal(invalid.ok, false);
+    assert.match(invalid.error, /query must be/);
+  } finally { await bw.close(); await server.close(); }
+});

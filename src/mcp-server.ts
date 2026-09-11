@@ -242,7 +242,7 @@ Plan then batch: browser_batch {url} returns result.webagents or result.ui. Run 
 page.locator('aria-ref=eN') acts; snapshot({ref}) scopes. Verify with short URL/locator reads; snapshot({diff: true}) for broader state. Put screenshot({kind: 'proof'}) inside the final verifying call.
 Challenge: keep page; captcha.solve() first; on 'processing', open crop then captcha.solve({tiles:[indexes]}). Replacement photo grids are the same stage. Max three distinct challenge types; rejection = stop/alternate/handoff. Verify cleared; replay only if idempotent/provably incomplete. Never duplicate a submission, purchase, or message.`;
 
-const BROWSER_BATCH_DESCRIPTION = `Open with {url} or inspect with {discover:true}. Default for ordinary forms: copy targets into one operations call; actions auto-wait without pacing. Mutations/proof return fresh controls/evidence. Target: ref, role (+ name), label, text, placeholder, testId, css; optional exact/nth/frame. Mutating batches require allowWrites=true. Task-supplied passwords need allowPasswords=true; stored ones use browser_login. Mutations end in read/readUrl with a non-empty expected value on that target. proof=true only there. Missing target: snapshot. Ambiguity fails.`;
+const BROWSER_BATCH_DESCRIPTION = `Open {url} or inspect {discover:true}; query:[names] narrows discovery. Default for ordinary forms: copy targets into one operations call; actions auto-wait. Mutations/proof return fresh controls/evidence. Target: ref, role (+ name), label, text, placeholder, testId, css; optional exact/nth/frame. Mutating batches require allowWrites=true. Task-supplied passwords need allowPasswords=true; stored ones use browser_login. Mutations end in read/readUrl with a non-empty expected value on that target. proof=true only there. Missing target: snapshot. Ambiguity fails.`;
 
 const BROWSER_BATCH_INPUT_SCHEMA = {
   type: "object",
@@ -252,7 +252,8 @@ const BROWSER_BATCH_INPUT_SCHEMA = {
       type: "string",
       description: "URL to open; omit operations.",
     },
-    discover: { type: "boolean", description: "Current-page targets; omit operations." },
+    discover: { type: "boolean" },
+    query: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 500 }, description: "Find these labels/names before truncation." },
     operations: {
       type: "array",
       minItems: 1,
@@ -270,14 +271,14 @@ const BROWSER_BATCH_INPUT_SCHEMA = {
             type: "object",
           },
           value: { description: "Action value; read/readUrl await this substring." },
-          irreversible: { type: "boolean", default: false },
+          irreversible: { type: "boolean" },
         },
         required: ["id", "action"],
       },
     },
-    allowWrites: { type: "boolean", default: false },
-    allowIrreversible: { type: "boolean", default: false },
-    allowPasswords: { type: "boolean", default: false },
+    allowWrites: { type: "boolean" },
+    allowIrreversible: { type: "boolean" },
+    allowPasswords: { type: "boolean" },
     minIntervalMs: {
       type: "integer",
       minimum: 0,
@@ -286,13 +287,11 @@ const BROWSER_BATCH_INPUT_SCHEMA = {
     },
     proof: {
       type: "boolean",
-      default: false,
     },
     session: {
       type: "string",
-      default: "default",
     },
-    note: { type: "string", default: "" },
+    note: { type: "string" },
   },
 };
 
@@ -556,6 +555,9 @@ function createMcpHandlers({ browser, downloadPolicy, liveView = liveViewFromEnv
         if (name === "browser_batch") {
           const openUrl = String(args.url || "").trim();
           const discover = args.discover === true;
+          if (args.query !== undefined && !openUrl && !discover) {
+            throw new TypeError("browser_batch query requires url or discover:true.");
+          }
           if (openUrl && discover) {
             throw new TypeError("browser_batch accepts either url or discover, not both.");
           }
@@ -579,9 +581,9 @@ function createMcpHandlers({ browser, downloadPolicy, liveView = liveViewFromEnv
             .replace(/\u2029/g, "\\u2029");
           if (openUrl || discover) {
             const result = await browser.run(
-              openUrl
+              openUrl && args.query === undefined
                 ? `await page.goto(${encode(openUrl)}); return page.url();`
-                : "return controls.directory();",
+                : `${openUrl ? `await page.goto(${encode(openUrl)}); ` : ""}return controls.directory(${args.query === undefined ? "" : encode({ query: args.query })});`,
               options,
             );
             const chat = await drainViewerChat();

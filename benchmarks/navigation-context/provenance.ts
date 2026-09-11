@@ -1,32 +1,35 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execute = promisify(execFile);
 
 export const RUNTIME_PATHS = ["src", "bin", "types"];
 export const SOURCE_PATHS = [...RUNTIME_PATHS, "scripts", "package.json", "bun.lock", ".bun-version", "tsconfig.json", "tsconfig.tools.json", "SKILL.md"];
 export const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 
-export function sourceIdentity(root: string, baselineHead?: string) {
-  const git = (args: string[]) => execFileSync("git", args, { cwd: root });
-  const head = git(["rev-parse", "HEAD"]).toString().trim();
+export async function sourceIdentity(root: string, baselineHead?: string) {
+  const git = async (args: string[]) => (await execute("git", args, { cwd: root, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 })).stdout;
+  const head = (await git(["rev-parse", "HEAD"])).toString().trim();
   const baseline = baselineHead ?? head;
   assert.match(baseline, /^[a-f0-9]{40}$/i, "The baseline must be an immutable commit ID");
-  git(["cat-file", "-e", `${baseline}^{commit}`]);
-  const dirty = git(["status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", ...SOURCE_PATHS]).toString().trim();
+  await git(["cat-file", "-e", `${baseline}^{commit}`]);
+  const dirty = (await git(["status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", ...SOURCE_PATHS])).toString().trim();
   assert.equal(dirty, "", `Commit or remove changed source/build inputs before benchmarking:\n${dirty}`);
   return {
     head,
     baselineHead: baseline,
     // Tree entries include every committed input, including added files. This
     // stays stable when a later commit only publishes benchmark measurements.
-    sourceTreeSha256: sha256(git(["ls-tree", "-r", "-z", head, "--", ...SOURCE_PATHS])),
-    diffSha256: sha256(git(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--binary", baseline, head, "--", ...RUNTIME_PATHS])),
+    sourceTreeSha256: sha256(await git(["ls-tree", "-r", "-z", head, "--", ...SOURCE_PATHS])),
+    diffSha256: sha256(await git(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--binary", baseline, head, "--", ...RUNTIME_PATHS])),
   };
 }
 
-export type SourceIdentity = ReturnType<typeof sourceIdentity>;
+export type SourceIdentity = Awaited<ReturnType<typeof sourceIdentity>>;
 
 export function assertSameSource(recorded: SourceIdentity, current: SourceIdentity) {
   assert.equal(current.baselineHead, recorded.baselineHead, "The declared baseline changed");
