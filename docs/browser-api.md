@@ -513,7 +513,7 @@ duplicate. Add `frameName` or `frameUrlIncludes` to target one already loaded
 iframe. Open shadow roots work through Playwright's normal locator behavior.
 
 Interaction actions require `allowWrites:true`. Mark a consequential operation
-with `irreversible:true` to also require `allowIrreversible:true`. A batch that
+with `irreversible:true` to also require `allowIrreversible:true`. By default, a batch that
 interacts must end in `read` or `readUrl`; the last result is the transaction's
 verification boundary and must supply a non-empty expected substring in
 `value`. The batch fails unless that expected text, form value, or URL is
@@ -526,6 +526,16 @@ Choose an expectation that proves the intended change. Unasserted intermediate
 reads retain their bounded settling wait. `returnDirectory:true` returns a fresh
 directory immediately after verification; callers needing a settling window
 can explicitly set `directoryWaitMs` (0–5000 ms).
+When the resulting text is unknown, pass `observe:true` instead of guessing a
+final expectation. This permits a batch ending in an interaction or an unasserted
+read, then waits for tracked document/fetch/XHR activity to settle (bounded at
+2.5 seconds) and always returns a fresh `ui` directory, even with
+`returnDirectory:false`. The result has `verification:"observed"`: assess the
+returned evidence before claiming success. It does not assert that the application
+finished; slower or timer-driven updates may require a subsequent read. Any
+explicit read expectations are still enforced. All write, password, ambiguity,
+and irreversible-action guards still apply.
+
 Password fields reject `fill` by default. A credential
 provided explicitly in the current task may use `allowPasswordFill:true`;
 stored or generated credentials must use the trusted credential helpers so the
@@ -544,14 +554,15 @@ directory. Passing `{discover:true}` collects current-page targets in one call
 without navigating or changing page state. Add `query: ["Email", "Region", "Save"]`
 to find several needed controls together before applying the directory limit.
 The same filter is available as `controls.directory({query})`, and with `{url, query}`
-when opening a page. Omit it for general discovery; action buttons receive space
+when opening a page; `{url, discover:true}` explicitly returns the full directory. Omit it for general discovery; action buttons receive space
 in both the full and compact directories even after a long list of fields.
 Copy the needed targets into a
 second call with `operations`; actions execute in order and auto-wait for each
 target. After the expected final state is observed, the tool returns fresh
 `controls` and `evidence` without waiting for unrelated background requests. Put the required expected result in the `value` of
-the final `read`/`readUrl`; the final proof screenshot is captured only after
-that visible result is observed. For a password explicitly supplied in
+the final `read`/`readUrl`, or set `observe:true` for an unknown outcome and assess
+its returned evidence. `proof:true` captures the final UI after the assertion or
+bounded observation; an observational screenshot alone does not assert success. For a password explicitly supplied in
 the task, set `allowPasswords:true`; saved and generated credentials still use
 `browser_login`.
 

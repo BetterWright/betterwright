@@ -242,8 +242,8 @@ compact `ui` action directory. Copy its normalized targets into one
 visible evidence. Use an interactive snapshot only if the directory omitted a
 required target. The helper retains Playwright auto-waiting, rejects ambiguity
 and password fills by default, requires explicit write opt-in, and accepts a
-mutation only when the final `read`/`readUrl` supplies and observes a non-empty
-expected value. See
+mutation with a final asserted `read`/`readUrl`, or explicit `observe:true` to
+return fresh evidence for the caller to assess when the outcome text is unknown. See
 [semantic UI batches](browser-api.md#semantic-ui-batches-for-ordinary-sites).
 
 Use `webmcp.tools()` to discover typed tools registered by the current page and

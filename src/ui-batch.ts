@@ -289,6 +289,7 @@ function normalizeOptions(value: UntrustedValue) {
       returnDirectory: false,
       directoryWaitMs: 0,
       allowPasswordFill: false,
+      observe: false,
     };
   }
   if (!isRecord(value)) throw new TypeError("controls.batch options must be an object.");
@@ -313,6 +314,7 @@ function normalizeOptions(value: UntrustedValue) {
     returnDirectory,
     directoryWaitMs: directoryWait === undefined ? 0 : Number(directoryWait),
     allowPasswordFill: untrustedField(value, "allowPasswordFill") === true,
+    observe: untrustedField(value, "observe") === true,
   };
 }
 
@@ -397,15 +399,15 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
   });
   const hasWrites = operations.some((operation) => !READ_ACTIONS.has(operation.action));
   const finalOperation = operations.at(-1);
-  if (hasWrites && !READ_ACTIONS.has(finalOperation?.action || "")) {
-    throw new Error("A mutating controls.batch transaction must end with read or readUrl verification.");
+  if (hasWrites && !options.observe && !READ_ACTIONS.has(finalOperation?.action || "")) {
+    throw new Error("A mutating controls.batch transaction must end with read or readUrl verification, or use observe:true for fresh evidence.");
   }
   if (
-    hasWrites &&
+    hasWrites && !options.observe &&
     (!isString(finalOperation?.value) || !finalOperation.value.trim())
   ) {
     throw new Error(
-      "A mutating controls.batch transaction's final read/readUrl must include a non-empty expected value.",
+      "A mutating controls.batch transaction's final read/readUrl must include a non-empty expected value, or use observe:true for fresh evidence.",
     );
   }
 
@@ -491,7 +493,9 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
         if (result) result.durationMs = Date.now() - operationStartedAt;
       }
     }
-    const ui = options.returnDirectory && hasWrites
+    // Observation is bounded evidence collection, not an assertion of success.
+    if (options.observe && needsSettle) await settleAfterWrites(activity);
+    const ui = (options.returnDirectory && hasWrites) || options.observe
       ? await refreshedActionDirectory(page, options.directoryWaitMs, activity)
       : undefined;
     const outcome: any = {
@@ -500,6 +504,7 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
       durationMs: Date.now() - startedAt,
       results: Object.fromEntries(results),
     };
+    if (options.observe) outcome.verification = "observed";
     if (ui) outcome.ui = ui;
     return outcome;
   } finally {

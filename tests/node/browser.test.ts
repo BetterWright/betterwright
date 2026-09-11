@@ -4681,3 +4681,48 @@ test("query discovery preserves duplicate target positions before filtering and 
     assert.equal(result.result.results.verify.text, 'Send invoice');
   } finally { await bw.close(); }
 });
+
+
+test("observation returns delayed server evidence without inventing a confirmation", opts, async () => {
+  let commits = 0;
+  const receipt = `Receipt ${Date.now()}`;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      setTimeout(() => { commits++; response.end(receipt); }, 300);
+      return;
+    }
+    if (request.url !== "/observe") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end(`<button>Submit</button><output role="status">Waiting</output><script>
+      document.querySelector('button').onclick = async () => {
+        const response = await fetch(location.pathname,{method:'POST'});
+        document.querySelector('output').textContent = await response.text();
+      };
+    </script>`);
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/observe');
+      return controls.batch([
+        {id:'submit', action:'click', target:{role:'button',name:'Submit',exact:true}},
+      ], {allowWrites:true, observe:true, returnDirectory:false});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(commits, 1);
+    assert.equal(result.result.verification, "observed");
+    assert.equal(result.result.results.submit.clicked, true);
+    assert.ok(result.result.ui.evidence.some((entry) => entry.text === receipt));
+    const asserted = await bw.run(`return controls.batch([
+      {id:'verify',action:'read',target:{role:'status'},value:'impossible confirmation'},
+    ], {observe:true});`);
+    assert.equal(asserted.ok, false, "observation must still enforce supplied assertions");
+    assert.match(asserted.error, /impossible confirmation/);
+    const password = await bw.run(`
+      await page.setContent('<label>Password <input type="password"></label>');
+      return controls.batch([{id:'secret',action:'fill',target:{label:'Password'},value:'test-only'}], {allowWrites:true,observe:true});
+    `);
+    assert.equal(password.ok, false);
+    assert.match(password.error, /password/i);
+  } finally { await bw.close(); await server.close(); }
+});

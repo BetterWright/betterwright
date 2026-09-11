@@ -40,3 +40,13 @@ test("batch stops after a failure and identifies completed operations", async ()
   ], { allowWrites: true }), /Completed operations: \["first"\].*not rolled back/);
   assert.deepEqual(actions, ["click", "click"]);
 });
+
+
+test("observation does not bypass write authorization or expected-value validation", async () => {
+  const click = {id:"submit", action:"click", target:{role:"button"}};
+  await assert.rejects(executeUIBatch({}, [click], {observe:true}), /allowWrites:true/);
+  await assert.rejects(executeUIBatch({}, [{...click, irreversible:true}], {observe:true, allowWrites:true}), /allowIrreversible:true/);
+  await assert.rejects(executeUIBatch({}, [click], {allowWrites:true}), /must end with read/);
+  await assert.rejects(executeUIBatch({}, [click, {id:"read",action:"readUrl"}], {allowWrites:true}), /expected value/);
+  await assert.rejects(executeUIBatch({}, [click, {id:"read",action:"readUrl",value:""}], {observe:true,allowWrites:true}), /expected value/);
+});
