@@ -4726,3 +4726,56 @@ test("observation returns delayed server evidence without inventing a confirmati
     assert.match(password.error, /password/i);
   } finally { await bw.close(); await server.close(); }
 });
+
+
+test("batch reads assert live values and selected labels rather than inactive markup", opts, async () => {
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.setContent('<label>Phase <select><option value="waiting">Waiting</option><option value="ready">Ready label</option></select></label><label>Notes <textarea>Original note</textarea></label>');
+      await page.evaluate(() => {
+        document.querySelector('textarea').value = 'Edited note';
+        setTimeout(() => document.querySelector('select').value = 'ready', 150);
+        setTimeout(() => document.querySelector('textarea').value = 'Original note', 300);
+      });
+      return controls.batch([
+        {id:'phase',action:'read',target:{role:'combobox',name:'Phase',exact:true},value:'Ready label'},
+        {id:'notes',action:'read',target:{role:'textbox',name:'Notes',exact:true},value:'Original note'},
+      ]);
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.phase.value, 'ready', 'an unselected option must not satisfy a read');
+    assert.equal(result.result.results.phase.text, 'Ready label');
+    assert.equal(result.result.results.notes.value, 'Original note', 'initial textarea markup must not satisfy a read');
+  } finally { await bw.close(); }
+});
+
+
+test("reading an edited field does not bypass a subsequent pending submission", opts, async () => {
+  let committed = false;
+  const server = await listen((request, response) => {
+    if (request.method === 'POST') {
+      setTimeout(() => {committed = true; response.end('ok');}, 350);
+      return;
+    }
+    if (request.url !== '/field-submit') {response.writeHead(404).end(); return;}
+    response.setHeader('content-type','text/html');
+    response.end(`<label>Name <input value="Before"></label><button>Submit</button><script>
+      document.querySelector('button').onclick = () => fetch(location.pathname,{method:'POST'});
+    </script>`);
+  });
+  const bw = new BetterWright({home:tempHome(),headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/field-submit');
+      return controls.batch([
+        {id:'edit',action:'fill',target:{label:'Name',exact:true},value:'After'},
+        {id:'submit',action:'click',target:{role:'button',name:'Submit',exact:true}},
+        {id:'verify',action:'read',target:{label:'Name',exact:true},value:'After'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok,true,result.error);
+    assert.equal(result.result.results.verify.value,'After');
+    assert.equal(committed,true,'a field edited before Submit must not bypass that pending write');
+  } finally {await bw.close();await server.close();}
+});

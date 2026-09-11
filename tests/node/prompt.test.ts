@@ -10,8 +10,9 @@ test("default prompt is permissive", () => {
   // Preserve that gain: critical behavior belongs below, not in explanation.
   assert.ok(prompt.length < 4_200, `default prompt grew to ${prompt.length} characters`);
   assert.ok(compact.includes("discover missing tool names once"));
-  assert.ok(compact.includes("Print one result representation in the requested format"));
+  assert.ok(compact.includes("Match requested response formats exactly"));
   assert.ok(compact.includes("`observe:true` and assess evidence"));
+  assert.ok(compact.includes("Failed proof does not undo writes; retry only the failed step"));
   assert.ok(compact.includes("never conflicting same-tab actions"));
   assert.ok(compact.includes("not bare getByRole or page.snapshot()"));
   assert.ok(compact.includes("request authorizes ordinary steps"));

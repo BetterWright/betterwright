@@ -162,36 +162,40 @@ async function exactLocator(page, target, operationId) {
   return locator;
 }
 
-async function readLocator(locator) {
-  await locator.waitFor({ state: "visible" });
-  return locator.evaluate((element) => {
-    const input = element instanceof HTMLInputElement ? element : null;
-    const valueControl = element instanceof HTMLInputElement ||
-        element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement
-      ? element
-      : null;
-    const disableable = valueControl || element instanceof HTMLButtonElement
-      ? element
-      : null;
-    const text = element instanceof HTMLElement
-      ? (element.innerText || element.textContent || "").trim()
-      : (element.textContent || "").trim();
-    return {
-      tag: element.tagName.toLowerCase(),
-      text: text.slice(0, 4_000),
-      value: input?.type === "password"
-        ? "[redacted]"
-        : valueControl
-          ? String(valueControl.value ?? "").slice(0, 4_000)
-          : undefined,
-      checked: input && ["checkbox", "radio"].includes(input.type) ? input.checked : undefined,
-      disabled: disableable ? disableable.matches(":disabled") : undefined,
-      ariaLabel: element.getAttribute("aria-label") || undefined,
-    };
-  });
+// Runs in the page realm. A value assertion must inspect live control state,
+// not a textarea's initial markup or an unselected option's text.
+function readElement(element) {
+  const input = element instanceof HTMLInputElement ? element : null;
+  const select = element instanceof HTMLSelectElement ? element : null;
+  const valueControl = input || select || (element instanceof HTMLTextAreaElement ? element : null);
+  const disableable = valueControl || (element instanceof HTMLButtonElement ? element : null);
+  const text = select
+    ? Array.from(select.selectedOptions, (option) => option.textContent || "").join("\n").trim()
+    : valueControl
+      ? ""
+      : (element instanceof HTMLElement ? (element.innerText || element.textContent || "") : (element.textContent || "")).trim();
+  return {
+    tag: element.tagName.toLowerCase(),
+    text: text.slice(0, 4_000),
+    value: input?.type === "password"
+      ? "[redacted]"
+      : valueControl ? String(valueControl.value ?? "").slice(0, 4_000) : undefined,
+    checked: input && ["checkbox", "radio"].includes(input.type) ? input.checked : undefined,
+    disabled: disableable ? disableable.matches(":disabled") : undefined,
+    ariaLabel: element.getAttribute("aria-label") || undefined,
+  };
 }
 
-async function readLocatorWhen(locator, expected, operationId) {
+function matchesExpected(result, expected: string) {
+  return [result.text, result.value].some((value) => isString(value) && value.includes(expected));
+}
+
+async function readLocator(locator) {
+  await locator.waitFor({ state: "visible" });
+  return locator.evaluate(readElement);
+}
+
+async function readLocatorWhen(locator, expected, operationId, unsettledWrites?: BatchActivity) {
   if (expected === undefined) return readLocator(locator);
   if (!isString(expected) || !expected.trim() || expected.length > MAX_TEXT_CHARS) {
     throw new TypeError(
@@ -202,7 +206,14 @@ async function readLocatorWhen(locator, expected, operationId) {
   let result;
   do {
     result = await readLocator(locator);
-    if ([result.text, result.value].some((value) => isString(value) && value.includes(expected))) {
+    // A changed field value may precede a later submission in this batch.
+    // Reading it is not acknowledgement that the submission has finished.
+    if (unsettledWrites && result.value !== undefined) {
+      await settleAfterWrites(unsettledWrites);
+      result = await readLocator(locator);
+    }
+    unsettledWrites = undefined;
+    if (matchesExpected(result, expected)) {
       return result;
     }
     await hostDelay(25);
@@ -235,13 +246,7 @@ async function expectationAlreadyVisible(page, operation) {
   try {
     const locator = targetLocator(page, operation.target, operation.id);
     if (await locator.count() !== 1 || !await locator.isVisible()) return false;
-    return await locator.evaluate((element, expected) => {
-      const text = (element instanceof HTMLElement ? element.innerText : element.textContent) || "";
-      const control = element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement;
-      const password = element instanceof HTMLInputElement && element.type === "password";
-      const value = password ? "[redacted]" : control ? String(element.value ?? "") : "";
-      return [text.trim().slice(0, 4_000), value.slice(0, 4_000)].some((item) => item.includes(expected));
-    }, operation.value, { timeout: 100 });
+    return matchesExpected(await locator.evaluate(readElement, undefined, { timeout: 100 }), operation.value);
   } catch {
     // Controls revealed by earlier steps need no pre-batch match. Their real
     // lookup still auto-waits and checks uniqueness at the operation boundary.
@@ -441,12 +446,14 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
       if (index && options.minIntervalMs) await hostDelay(options.minIntervalMs);
       const operationStartedAt = Date.now();
       try {
+        let unsettledReadWrites: BatchActivity | undefined;
         if (READ_ACTIONS.has(operation.action) && needsSettle) {
           // An asserted read waits for its own visible result. Unrelated
           // background requests must not delay an already verified batch.
           // A message already present before the write is not fresh evidence;
           // retain the bounded settling check for that case.
           if (operation.value === undefined || alreadyVisible.has(operation.id)) await settleAfterWrites(activity);
+          else unsettledReadWrites = activity;
           needsSettle = false;
         }
         if (operation.action === "readUrl") {
@@ -481,7 +488,7 @@ export async function executeUIBatch(page, operationsValue: UntrustedValue, opti
           await locator.press(key);
           results.set(operation.id, { pressed: key });
         } else {
-          results.set(operation.id, await readLocatorWhen(locator, operation.value, operation.id));
+          results.set(operation.id, await readLocatorWhen(locator, operation.value, operation.id, unsettledReadWrites));
         }
         if (!READ_ACTIONS.has(operation.action)) needsSettle = true;
       } catch (error) {
