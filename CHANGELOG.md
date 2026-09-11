@@ -9,6 +9,28 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-09-11
+
+### Added
+
+- `docs/cli.md`, a reference for every command and flag, and
+  `docs/environment.md`, a reference for every user-facing `BETTERWRIGHT_*`
+  variable with defaults and scope.
+- JSDoc across the public type declarations (network policy, prompt
+  guardrails, Pi extension, captcha solver, client, auth, challenge scan,
+  credential capture, recording) so editor hover shows the documented
+  semantics.
+
+### Fixed
+
+- Documentation gaps: the index now links the recording, ad-blocking,
+  Electron hosting, and runtime-performance pages; `run --approve-downloads`,
+  `init --skip-browser`, `BETTERWRIGHT_PI_REQUIRE_EVIDENCE`, and the MCP-only
+  `BETTERWRIGHT_LOCALE`/`BETTERWRIGHT_TIMEZONE` are documented; `automaticUI`
+  appears in the `run()` signature in docs/javascript.md.
+- `sortTilesReadingOrder` keeps required box coordinates in the public
+  declarations, matching the runtime.
+
 ## [2.7.0] - 2026-09-11
 
 ### Changed
@@ -1570,7 +1592,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.1...HEAD
+[2.7.1]: https://github.com/BetterWright/betterwright/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/BetterWright/betterwright/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/BetterWright/betterwright/compare/v2.5.2...v2.6.0
 [2.5.2]: https://github.com/BetterWright/betterwright/compare/v2.5.1...v2.5.2
