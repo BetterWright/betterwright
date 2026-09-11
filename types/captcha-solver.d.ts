@@ -124,7 +124,7 @@ export function dedupeBoxes(
 ): Array<{ x: number; y: number; width: number; height: number }>;
 /** Order rectangles top-to-bottom, left-to-right within a row. */
 export function sortTilesReadingOrder(
-  boxes?: Array<{ x?: number; y?: number; width?: number; height?: number }>,
+  boxes?: Array<{ x: number; y: number; width: number; height: number }>,
   yTolerance?: number,
 ): Array<{ x: number; y: number; width: number; height: number }>;
 /** Find groups of similar-sized boxes; how a tile grid is located. */
