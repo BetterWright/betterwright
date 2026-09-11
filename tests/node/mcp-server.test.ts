@@ -401,7 +401,7 @@ test("the advertised MCP tool list stays inside its context budget", async () =>
   assert.match(text("browser"), /webmcp\.tools\(\)\/webmcp\.invoke\(\)/);
   assert.match(text("browser"), /autosubmit requires explicit opt-in/);
   assert.match(text("browser"), /use browser_batch/i);
-  assert.match(text("browser"), /browser_batch \{url\}/i);
+  assert.match(text("browser"), /browser_batch \{url,query:\[names\]\}/i);
   assert.match(text("browser_batch"), /Default for ordinary forms/);
   assert.match(text("browser_batch"), /ordinary forms/);
   assert.match(text("browser_batch"), /role \(\+ name\), label, text/);
