@@ -1,0 +1,1772 @@
+{
+  "startedAt": "2026-09-11T04:57:56.555Z",
+  "finishedAt": "2026-09-11T04:59:04.343Z",
+  "config": {
+    "repetitions": 10,
+    "warmups": 1,
+    "alternatingOrder": true,
+    "modelRequests": 0,
+    "backgroundDelayMs": 800
+  },
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "bun": "1.4.0"
+  },
+  "identities": {
+    "baseline": {
+      "head": "c0408cf39b1fec5ce16201e2a71d7cedd95189ee",
+      "baselineHead": "c0408cf39b1fec5ce16201e2a71d7cedd95189ee",
+      "sourceTreeSha256": "cb6359a5a7fafd3f1a4208faf32dab03e16b776039cad04b7371be6c9c1af7b4",
+      "diffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "dependencies": {
+        "sha256": "c6a1b9cac341ad068a3587e6c7140c6ad59081291770b71aaa415e3ab1e0bd7a",
+        "fileCount": 6373
+      },
+      "build": {
+        "sha256": "7f25256b58540720c371e2f0945f1a99923ea1c98098c9fa6c6d1f023c4ed75e",
+        "fileCount": 92
+      }
+    },
+    "candidate": {
+      "head": "bbac4e66404ceed8615406beb52e1b824aae9644",
+      "baselineHead": "c0408cf39b1fec5ce16201e2a71d7cedd95189ee",
+      "sourceTreeSha256": "efdf4c2f5e2e86ad51796cd6379a27d95abcc7072807c7469d2d1cec2ab20430",
+      "diffSha256": "234a8d92b5f3bd6c4898d398f1ea2d2a54f42be5503466a7a4eb802927382029",
+      "dependencies": {
+        "sha256": "c6a1b9cac341ad068a3587e6c7140c6ad59081291770b71aaa415e3ab1e0bd7a",
+        "fileCount": 6373
+      },
+      "build": {
+        "sha256": "8375132552edec1788261495c8a54fb410bd6f6516a68c830fb09db705d309cc",
+        "fileCount": 92
+      }
+    }
+  },
+  "browserSha256": "0c942f4891ea6bf8c83fe9ff278b1a032c40033aa769ae69f7fd83021f98fb24",
+  "harnessSha256": "aea6c6cb8e96006a9bc6f6490e354e6d8270b7cb150ea99844579ccf80bb79c5",
+  "summary": {
+    "form": {
+      "baseline": {
+        "batch": {
+          "medianMs": 521.0531040000005,
+          "calls": 2,
+          "medianOutputChars": 1883.5,
+          "passed": 10
+        },
+        "individual": {
+          "medianMs": 97.69714549999844,
+          "calls": 6,
+          "medianOutputChars": 1804,
+          "passed": 10
+        }
+      },
+      "candidate": {
+        "batch": {
+          "medianMs": 101.85435399999915,
+          "calls": 2,
+          "medianOutputChars": 1880,
+          "passed": 10
+        },
+        "individual": {
+          "medianMs": 93.47735399999783,
+          "calls": 6,
+          "medianOutputChars": 1802,
+          "passed": 10
+        }
+      }
+    },
+    "deferred": {
+      "baseline": {
+        "batch": {
+          "medianMs": 1322.3066039999976,
+          "calls": 2,
+          "medianOutputChars": 1349.5,
+          "passed": 10
+        },
+        "individual": {
+          "medianMs": 258.09368750000067,
+          "calls": 4,
+          "medianOutputChars": 1182,
+          "passed": 10
+        }
+      },
+      "candidate": {
+        "batch": {
+          "medianMs": 227.0535415000013,
+          "calls": 2,
+          "medianOutputChars": 1347,
+          "passed": 10
+        },
+        "individual": {
+          "medianMs": 260.62225000000035,
+          "calls": 4,
+          "medianOutputChars": 1184,
+          "passed": 10
+        }
+      }
+    },
+    "wizard": {
+      "baseline": {
+        "batch": {
+          "medianMs": 662.711354,
+          "calls": 2,
+          "medianOutputChars": 1448.5,
+          "passed": 10
+        },
+        "individual": {
+          "medianMs": 371.76018750000185,
+          "calls": 5,
+          "medianOutputChars": 1366,
+          "passed": 10
+        }
+      },
+      "candidate": {
+        "batch": {
+          "medianMs": 331.41674950000015,
+          "calls": 2,
+          "medianOutputChars": 1447,
+          "passed": 10
+        },
+        "individual": {
+          "medianMs": 275.35312499999964,
+          "calls": 5,
+          "medianOutputChars": 1365,
+          "passed": 10
+        }
+      }
+    },
+    "frame": {
+      "baseline": {
+        "batch": {
+          "medianMs": 508.15537499999937,
+          "calls": 2,
+          "medianOutputChars": 1733,
+          "passed": 10
+        },
+        "individual": {
+          "medianMs": 113.10781199999474,
+          "calls": 5,
+          "medianOutputChars": 1548,
+          "passed": 10
+        }
+      },
+      "candidate": {
+        "batch": {
+          "medianMs": 122.18152099999679,
+          "calls": 2,
+          "medianOutputChars": 1729,
+          "passed": 10
+        },
+        "individual": {
+          "medianMs": 117.101458000001,
+          "calls": 5,
+          "medianOutputChars": 1548,
+          "passed": 10
+        }
+      }
+    }
+  },
+  "samples": [
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 0,
+      "elapsedMs": 545.3354999999992,
+      "calls": 2,
+      "outputChars": 1883,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 0,
+      "elapsedMs": 116.35241700000006,
+      "calls": 2,
+      "outputChars": 1878,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 0,
+      "elapsedMs": 87.08629199999996,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 0,
+      "elapsedMs": 91.88141699999869,
+      "calls": 6,
+      "outputChars": 1802,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 0,
+      "elapsedMs": 1319.7340839999997,
+      "calls": 2,
+      "outputChars": 1347,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 0,
+      "elapsedMs": 235.0817500000012,
+      "calls": 2,
+      "outputChars": 1347,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 0,
+      "elapsedMs": 356.8384160000005,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 0,
+      "elapsedMs": 360.03108299999985,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 0,
+      "elapsedMs": 662.8364170000004,
+      "calls": 2,
+      "outputChars": 1449,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 0,
+      "elapsedMs": 392.52229100000113,
+      "calls": 2,
+      "outputChars": 1447,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 0,
+      "elapsedMs": 266.24895800000013,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 0,
+      "elapsedMs": 270.794167,
+      "calls": 5,
+      "outputChars": 1364,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 0,
+      "elapsedMs": 508.2712499999998,
+      "calls": 2,
+      "outputChars": 1731,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 0,
+      "elapsedMs": 127.4432080000006,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 0,
+      "elapsedMs": 113.94504199999938,
+      "calls": 5,
+      "outputChars": 1544,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 0,
+      "elapsedMs": 113.58166599999822,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 1,
+      "elapsedMs": 96.15787500000079,
+      "calls": 6,
+      "outputChars": 1802,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 1,
+      "elapsedMs": 100.56374999999753,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 1,
+      "elapsedMs": 118.48054099999717,
+      "calls": 2,
+      "outputChars": 1880,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 1,
+      "elapsedMs": 518.6429580000004,
+      "calls": 2,
+      "outputChars": 1885,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 1,
+      "elapsedMs": 264.59362500000134,
+      "calls": 4,
+      "outputChars": 1182,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 1,
+      "elapsedMs": 363.30687500000204,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 1,
+      "elapsedMs": 227.15670800000225,
+      "calls": 2,
+      "outputChars": 1347,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 1,
+      "elapsedMs": 1318.554415999999,
+      "calls": 2,
+      "outputChars": 1346,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 1,
+      "elapsedMs": 388.66329100000075,
+      "calls": 5,
+      "outputChars": 1364,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 1,
+      "elapsedMs": 372.39862500000163,
+      "calls": 5,
+      "outputChars": 1364,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 1,
+      "elapsedMs": 267.96229200000016,
+      "calls": 2,
+      "outputChars": 1447,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 1,
+      "elapsedMs": 678.8195830000004,
+      "calls": 2,
+      "outputChars": 1448,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 1,
+      "elapsedMs": 134.4857919999995,
+      "calls": 5,
+      "outputChars": 1550,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 1,
+      "elapsedMs": 127.19412499999817,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 1,
+      "elapsedMs": 115.03766600000017,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 1,
+      "elapsedMs": 515.8060829999995,
+      "calls": 2,
+      "outputChars": 1733,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 2,
+      "elapsedMs": 523.4632500000007,
+      "calls": 2,
+      "outputChars": 1883,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 2,
+      "elapsedMs": 103.85870800000339,
+      "calls": 2,
+      "outputChars": 1880,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 2,
+      "elapsedMs": 102.40095900000233,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 2,
+      "elapsedMs": 90.3614579999994,
+      "calls": 6,
+      "outputChars": 1802,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 2,
+      "elapsedMs": 1326.0301670000008,
+      "calls": 2,
+      "outputChars": 1350,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 2,
+      "elapsedMs": 232.4057909999974,
+      "calls": 2,
+      "outputChars": 1347,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 2,
+      "elapsedMs": 251.24070799999754,
+      "calls": 4,
+      "outputChars": 1180,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 2,
+      "elapsedMs": 361.59408299999996,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 2,
+      "elapsedMs": 662.5862909999996,
+      "calls": 2,
+      "outputChars": 1448,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 2,
+      "elapsedMs": 368.17120799999975,
+      "calls": 2,
+      "outputChars": 1445,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 2,
+      "elapsedMs": 371.12175000000207,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 2,
+      "elapsedMs": 275.07504100000006,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 2,
+      "elapsedMs": 512.7466249999998,
+      "calls": 2,
+      "outputChars": 1733,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 2,
+      "elapsedMs": 118.65237500000148,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 2,
+      "elapsedMs": 111.5791250000002,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 2,
+      "elapsedMs": 107.4105419999978,
+      "calls": 5,
+      "outputChars": 1546,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 3,
+      "elapsedMs": 95.07329099999697,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 3,
+      "elapsedMs": 90.46979199999987,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 3,
+      "elapsedMs": 93.19958399999814,
+      "calls": 2,
+      "outputChars": 1880,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 3,
+      "elapsedMs": 512.6730420000022,
+      "calls": 2,
+      "outputChars": 1884,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 3,
+      "elapsedMs": 250.60725000000093,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 3,
+      "elapsedMs": 256.1935000000012,
+      "calls": 4,
+      "outputChars": 1182,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 3,
+      "elapsedMs": 226.4791669999977,
+      "calls": 2,
+      "outputChars": 1345,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 3,
+      "elapsedMs": 1325.427832999998,
+      "calls": 2,
+      "outputChars": 1348,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 3,
+      "elapsedMs": 291.7383750000008,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 3,
+      "elapsedMs": 463.36287500000253,
+      "calls": 5,
+      "outputChars": 1367,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 3,
+      "elapsedMs": 373.47358299999905,
+      "calls": 2,
+      "outputChars": 1447,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 3,
+      "elapsedMs": 664.0196250000008,
+      "calls": 2,
+      "outputChars": 1448,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 3,
+      "elapsedMs": 122.40812500000175,
+      "calls": 5,
+      "outputChars": 1546,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 3,
+      "elapsedMs": 127.52562500000204,
+      "calls": 5,
+      "outputChars": 1550,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 3,
+      "elapsedMs": 113.07283299999835,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 3,
+      "elapsedMs": 500.63412499999686,
+      "calls": 2,
+      "outputChars": 1733,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 4,
+      "elapsedMs": 550.5136669999993,
+      "calls": 2,
+      "outputChars": 1883,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 4,
+      "elapsedMs": 113.63137500000448,
+      "calls": 2,
+      "outputChars": 1880,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 4,
+      "elapsedMs": 92.65058300000237,
+      "calls": 6,
+      "outputChars": 1802,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 4,
+      "elapsedMs": 90.63562499999534,
+      "calls": 6,
+      "outputChars": 1800,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 4,
+      "elapsedMs": 1321.8339579999956,
+      "calls": 2,
+      "outputChars": 1350,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 4,
+      "elapsedMs": 244.75250000000233,
+      "calls": 2,
+      "outputChars": 1343,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 4,
+      "elapsedMs": 373.4317080000037,
+      "calls": 4,
+      "outputChars": 1182,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 4,
+      "elapsedMs": 253.2752909999981,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 4,
+      "elapsedMs": 657.520749999996,
+      "calls": 2,
+      "outputChars": 1449,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 4,
+      "elapsedMs": 294.66229100000055,
+      "calls": 2,
+      "outputChars": 1447,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 4,
+      "elapsedMs": 369.4783749999988,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 4,
+      "elapsedMs": 275.6312089999992,
+      "calls": 5,
+      "outputChars": 1364,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 4,
+      "elapsedMs": 517.3631670000032,
+      "calls": 2,
+      "outputChars": 1731,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 4,
+      "elapsedMs": 117.56470799999806,
+      "calls": 2,
+      "outputChars": 1727,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 4,
+      "elapsedMs": 112.48116599999776,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 4,
+      "elapsedMs": 117.34779100000014,
+      "calls": 5,
+      "outputChars": 1551,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 5,
+      "elapsedMs": 101.71016699999745,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 5,
+      "elapsedMs": 99.70299999999406,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 5,
+      "elapsedMs": 100.87912499999948,
+      "calls": 2,
+      "outputChars": 1880,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 5,
+      "elapsedMs": 526.6074159999989,
+      "calls": 2,
+      "outputChars": 1884,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 5,
+      "elapsedMs": 256.65087499999936,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 5,
+      "elapsedMs": 259.9938750000001,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 5,
+      "elapsedMs": 223.66916700000002,
+      "calls": 2,
+      "outputChars": 1345,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 5,
+      "elapsedMs": 1332.1061249999984,
+      "calls": 2,
+      "outputChars": 1350,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 5,
+      "elapsedMs": 266.6142089999994,
+      "calls": 5,
+      "outputChars": 1364,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 5,
+      "elapsedMs": 377.5284580000007,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 5,
+      "elapsedMs": 266.42412499999773,
+      "calls": 2,
+      "outputChars": 1443,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 5,
+      "elapsedMs": 685.2376250000016,
+      "calls": 2,
+      "outputChars": 1449,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 5,
+      "elapsedMs": 128.08608399999503,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 5,
+      "elapsedMs": 106.18374999999651,
+      "calls": 5,
+      "outputChars": 1550,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 5,
+      "elapsedMs": 132.745041999995,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 5,
+      "elapsedMs": 507.0993329999983,
+      "calls": 2,
+      "outputChars": 1733,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 6,
+      "elapsedMs": 531.747457999998,
+      "calls": 2,
+      "outputChars": 1883,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 6,
+      "elapsedMs": 102.82958299999882,
+      "calls": 2,
+      "outputChars": 1880,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 6,
+      "elapsedMs": 93.80741700000362,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 6,
+      "elapsedMs": 97.44041699999798,
+      "calls": 6,
+      "outputChars": 1802,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 6,
+      "elapsedMs": 1322.9553749999977,
+      "calls": 2,
+      "outputChars": 1350,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 6,
+      "elapsedMs": 226.95037500000035,
+      "calls": 2,
+      "outputChars": 1347,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 6,
+      "elapsedMs": 246.58324999999604,
+      "calls": 4,
+      "outputChars": 1182,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 6,
+      "elapsedMs": 356.45587499999965,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 6,
+      "elapsedMs": 659.2786669999987,
+      "calls": 2,
+      "outputChars": 1449,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 6,
+      "elapsedMs": 385.15533300000243,
+      "calls": 2,
+      "outputChars": 1445,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 6,
+      "elapsedMs": 370.5082089999996,
+      "calls": 5,
+      "outputChars": 1364,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 6,
+      "elapsedMs": 267.3063750000001,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 6,
+      "elapsedMs": 511.5774170000004,
+      "calls": 2,
+      "outputChars": 1733,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 6,
+      "elapsedMs": 130.01674999999523,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 6,
+      "elapsedMs": 111.05020799999329,
+      "calls": 5,
+      "outputChars": 1550,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 6,
+      "elapsedMs": 114.31979200000205,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 7,
+      "elapsedMs": 90.24149999999645,
+      "calls": 6,
+      "outputChars": 1802,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 7,
+      "elapsedMs": 107.39616700000624,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 7,
+      "elapsedMs": 97.24762499999633,
+      "calls": 2,
+      "outputChars": 1880,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 7,
+      "elapsedMs": 518.150625000002,
+      "calls": 2,
+      "outputChars": 1884,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 7,
+      "elapsedMs": 253.01966600000014,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 7,
+      "elapsedMs": 253.0582080000022,
+      "calls": 4,
+      "outputChars": 1180,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 7,
+      "elapsedMs": 221.17104099999415,
+      "calls": 2,
+      "outputChars": 1347,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 7,
+      "elapsedMs": 1284.1338329999999,
+      "calls": 2,
+      "outputChars": 1349,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 7,
+      "elapsedMs": 278.79149999999936,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 7,
+      "elapsedMs": 278.59979100000055,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 7,
+      "elapsedMs": 261.9783749999988,
+      "calls": 2,
+      "outputChars": 1447,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 7,
+      "elapsedMs": 694.1477080000041,
+      "calls": 2,
+      "outputChars": 1449,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 7,
+      "elapsedMs": 121.55887499999517,
+      "calls": 5,
+      "outputChars": 1546,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 7,
+      "elapsedMs": 104.22070800000074,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 7,
+      "elapsedMs": 111.6350839999941,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 7,
+      "elapsedMs": 496.2235409999994,
+      "calls": 2,
+      "outputChars": 1733,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 8,
+      "elapsedMs": 512.9429999999993,
+      "calls": 2,
+      "outputChars": 1883,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 8,
+      "elapsedMs": 97.97812500000146,
+      "calls": 2,
+      "outputChars": 1878,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 8,
+      "elapsedMs": 95.69129100000282,
+      "calls": 6,
+      "outputChars": 1800,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 8,
+      "elapsedMs": 89.03004099999816,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 8,
+      "elapsedMs": 1311.9922089999964,
+      "calls": 2,
+      "outputChars": 1350,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 8,
+      "elapsedMs": 243.47704199999862,
+      "calls": 2,
+      "outputChars": 1347,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 8,
+      "elapsedMs": 358.2931249999965,
+      "calls": 4,
+      "outputChars": 1184,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 8,
+      "elapsedMs": 265.98625000000175,
+      "calls": 4,
+      "outputChars": 1182,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 8,
+      "elapsedMs": 653.8483340000021,
+      "calls": 2,
+      "outputChars": 1448,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 8,
+      "elapsedMs": 382.28904099999636,
+      "calls": 2,
+      "outputChars": 1447,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 8,
+      "elapsedMs": 379.83679100000154,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 8,
+      "elapsedMs": 288.4733750000014,
+      "calls": 5,
+      "outputChars": 1364,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 8,
+      "elapsedMs": 508.03949999999895,
+      "calls": 2,
+      "outputChars": 1733,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 8,
+      "elapsedMs": 142.0691250000018,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 8,
+      "elapsedMs": 116.82979199999681,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 8,
+      "elapsedMs": 114.03720800000156,
+      "calls": 5,
+      "outputChars": 1548,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 9,
+      "elapsedMs": 97.99116700000013,
+      "calls": 6,
+      "outputChars": 1802,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "form",
+      "repetition": 9,
+      "elapsedMs": 106.70837500000198,
+      "calls": 6,
+      "outputChars": 1804,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 9,
+      "elapsedMs": 100.4287089999998,
+      "calls": 2,
+      "outputChars": 1880,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "form",
+      "repetition": 9,
+      "elapsedMs": 515.5784580000036,
+      "calls": 2,
+      "outputChars": 1884,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 9,
+      "elapsedMs": 246.5945830000055,
+      "calls": 4,
+      "outputChars": 1182,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "deferred",
+      "repetition": 9,
+      "elapsedMs": 255.42954100000497,
+      "calls": 4,
+      "outputChars": 1180,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 9,
+      "elapsedMs": 224.19837499999994,
+      "calls": 2,
+      "outputChars": 1347,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "deferred",
+      "repetition": 9,
+      "elapsedMs": 1322.7792499999996,
+      "calls": 2,
+      "outputChars": 1348,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 9,
+      "elapsedMs": 268.5020420000001,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "wizard",
+      "repetition": 9,
+      "elapsedMs": 381.6705000000002,
+      "calls": 5,
+      "outputChars": 1366,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 9,
+      "elapsedMs": 267.8310000000056,
+      "calls": 2,
+      "outputChars": 1445,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "wizard",
+      "repetition": 9,
+      "elapsedMs": 650.8219589999935,
+      "calls": 2,
+      "outputChars": 1448,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 9,
+      "elapsedMs": 116.85512500000186,
+      "calls": 5,
+      "outputChars": 1550,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "individual",
+      "workload": "frame",
+      "repetition": 9,
+      "elapsedMs": 113.73445799999172,
+      "calls": 5,
+      "outputChars": 1550,
+      "correct": true
+    },
+    {
+      "variant": "candidate",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 9,
+      "elapsedMs": 125.7106669999921,
+      "calls": 2,
+      "outputChars": 1729,
+      "correct": true
+    },
+    {
+      "variant": "baseline",
+      "mode": "batch",
+      "workload": "frame",
+      "repetition": 9,
+      "elapsedMs": 501.80599999999686,
+      "calls": 2,
+      "outputChars": 1731,
+      "correct": true
+    }
+  ]
+}
