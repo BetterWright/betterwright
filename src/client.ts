@@ -16,7 +16,7 @@ import type { HostConnection, HostTarget } from "../types/host.js";
 // The published declarations are hand-written (see AGENTS.md). Typing the
 // implementation against them turns a drift between the two into a compile
 // error instead of something only a consumer would notice.
-import type { BetterWrightOptions, LiveViewOptions } from "../types/public.js";
+import type { BetterWrightOptions, CookieSyncResult, LiveViewOptions } from "../types/public.js";
 import { resolveAdBlock } from "./ad-block-config.js";
 import {
   configuredDefaultProvider,
@@ -1248,16 +1248,17 @@ export class BetterWright {
       };
     }
     if (!extracted.cookies.length) {
-      return {
+      const empty: Extract<CookieSyncResult, { ok: true }> = {
         ok: true,
         synced: 0,
         selected: extracted.selected,
         skipped: extracted.skipped,
         source: extracted.source,
         target: consentTarget || (this.hostTarget ? "host" : "local"),
-        ...(this.hostTarget ? { cookieImportDomains: [] } : {}),
         warnings: extracted.warnings,
       };
+      if (this.hostTarget) empty.cookieImportDomains = [];
+      return empty;
     }
 
     const config = await this._prepare();
