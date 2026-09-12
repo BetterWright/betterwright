@@ -9,6 +9,28 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.7.2] - 2026-09-12
+
+### Security
+
+- Upgrade the managed BetterChromium browser to Chromium `153.0.8010.36`,
+  including the upstream fixes for CVE-2026-85046 and CVE-2026-87491 (#188).
+  Run `betterwright setup` or `betterwright update` after updating the package.
+  Electron hosts, explicit browser paths, and remote providers require their
+  own browser updates.
+
+### Fixed
+
+- Replace older or unverified managed browser installations automatically.
+  Setup records the verified release and checksum; default discovery refuses
+  a stale installation and gives setup guidance.
+- Stage and validate browser updates before replacing the installed tree.
+  A failed download preserves existing files, and setup recovers an interrupted
+  directory swap before requiring network access.
+- Package the native browser's runtime dependencies and matching Windows
+  assembly manifest, including the Linux launcher and sandbox helper.
+- Correct the Electron host-owned tab integration documentation (#187).
+
 ## [2.7.1] - 2026-09-11
 
 ### Added
@@ -1592,7 +1614,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.2...HEAD
+[2.7.2]: https://github.com/BetterWright/betterwright/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/BetterWright/betterwright/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/BetterWright/betterwright/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/BetterWright/betterwright/compare/v2.5.2...v2.6.0
