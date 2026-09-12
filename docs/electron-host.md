@@ -108,3 +108,48 @@ account is required.
 The existing `full-stack-e2e-review` skill and proof screenshot support remain
 available. Hosts still implement their own subagent scheduling and chat image
 rendering; BetterWright supplies browser evidence, not a chat UI.
+
+## Migrating from `hostOwnedTarget` + `provider` (2.4.x)
+
+2.4.x accepted a hand-rolled loopback CDP bridge:
+
+```js
+const connection = await openMyConnection(contents); // host code
+const browser = new BetterWright({
+  provider: connection.provider,   // { cdpUrl, headers }
+  hostOwnedTarget: true,
+  downloadPolicy: "deny",
+  credentialCapture: false,
+});
+```
+
+Since 2.5.0 the adapter owns that bridge. The equivalent is:
+
+```js
+configureElectronNetwork(); // before app.ready
+const browser = new BetterWright({
+  hostTarget: createElectronHostTarget({ contents, signal: takeover.signal }),
+  headless: false,
+  parkBackgroundPages: false,
+});
+```
+
+Behavior differences to expect:
+
+- The leased session's traffic now passes through BetterWright's policy-checked
+  SOCKS guard (`session.setProxy`), including subresource loads that bypass
+  Playwright routing. The old `provider:` path was the documented guard
+  exception; the adapter closes it. `configureElectronNetwork()` must run
+  before `app.ready` so QUIC and non-proxied WebRTC UDP cannot leak around it.
+- `downloadPolicy: "deny"` and `credentialCapture: false` are implied on host
+  targets and no longer need to be passed. Downloads are denied by the adapter
+  itself (`will-download`), before the worker's CDP byte limit.
+- `hostUploadFiles` still applies, matched against the adapter's `uploadFiles`.
+- `syncCookies` works on a leased tab with `cookieImport: true` in the adapter
+  options; it needs no `cloudConsent`, reports `target: "host"`, and returns
+  `cookieImportDomains` for scoping the granted session access.
+- `browser.run(code, { automaticUI: false })` omits the automatic UI catalog
+  on calls that do not need it; it defaults to on.
+- The hand-rolled bridge (capability-authenticated loopback WebSocket, CDP
+  allowlist, per-tab cookie scoping) is upstream's `electron-connection.ts` —
+  delete the local copy once migrated.
