@@ -109,21 +109,22 @@ The existing `full-stack-e2e-review` skill and proof screenshot support remain
 available. Hosts still implement their own subagent scheduling and chat image
 rendering; BetterWright supplies browser evidence, not a chat UI.
 
-## Migrating from `hostOwnedTarget` + `provider` (2.4.x)
+## Migrating from a custom CDP bridge
 
-2.4.x accepted a hand-rolled loopback CDP bridge:
+Hosts that attach through a custom loopback CDP bridge can migrate to the
+`betterwright/electron` adapter introduced in 2.5.0. For example, a custom
+bridge might be used like this:
 
 ```js
 const connection = await openMyConnection(contents); // host code
 const browser = new BetterWright({
   provider: connection.provider,   // { cdpUrl, headers }
-  hostOwnedTarget: true,
   downloadPolicy: "deny",
   credentialCapture: false,
 });
 ```
 
-Since 2.5.0 the adapter owns that bridge. The equivalent is:
+Replace the custom bridge with the adapter:
 
 ```js
 configureElectronNetwork(); // before app.ready
@@ -144,7 +145,8 @@ Behavior differences to expect:
 - `downloadPolicy: "deny"` and `credentialCapture: false` are implied on host
   targets and no longer need to be passed. Downloads are denied by the adapter
   itself (`will-download`), before the worker's CDP byte limit.
-- `hostUploadFiles` still applies, matched against the adapter's `uploadFiles`.
+- For uploads, pass the same approved paths in BetterWright's `hostUploadFiles`
+  and the adapter's `uploadFiles`.
 - `syncCookies` on a leased tab requires the host-target Cookie Sync fix
   ([#186](https://github.com/BetterWright/betterwright/pull/186), unreleased as
   of 2.7.1). With it, pass `cookieImport: true` in the adapter options; the
@@ -154,6 +156,6 @@ Behavior differences to expect:
   `Cookie Sync to cdp:127.0.0.1:1 requires consent for that exact target.`
 - `browser.run(code, { automaticUI: false })` omits the automatic UI catalog
   on calls that do not need it; it defaults to on.
-- The hand-rolled bridge (capability-authenticated loopback WebSocket, CDP
-  allowlist, per-tab cookie scoping) is upstream's `electron-connection.ts` —
-  delete the local copy once migrated.
+- The adapter owns the capability-authenticated loopback WebSocket, CDP
+  allowlist, and per-tab cookie scoping in `electron-connection.ts`. Remove the
+  corresponding custom bridge once migrated.
