@@ -1,3 +1,8 @@
+// Hand-written declarations for the package root ("betterwright"). Every
+// public symbol lives beside its implementation module; this file re-exports
+// them so `import { ... } from "betterwright"` works. The behavior contract
+// behind these symbols is documented in docs/, not repeated here.
+
 export {
   claudeModel,
   codexModel,
@@ -27,6 +32,10 @@ export {
   loadGrokAuth,
   loginProvider,
 } from "./auth.js";
+// The local CAPTCHA solver's stage classification, tile geometry, and blob
+// helpers. Exported for hosts and tests that need the same primitives the
+// worker's captcha.* helpers are built on; most consumers only need the
+// sandbox helpers documented in docs/captcha.md.
 export {
   buildSolveResult,
   CAPTCHA_SOLVE_STATUSES,
@@ -53,13 +62,18 @@ export {
 } from "./captcha-solver.js";
 export { detectBotChallenge } from "./challenges.js";
 export { BetterWright, BrowserError } from "./client.js";
+
+/** Local browsers readable as a cookie-sync source. */
 export function listCookieSourceBrowsers(): Promise<
   import("./public.js").CookieSourceBrowser[]
 >;
+
+/** Profiles inside one source browser, for `syncCookies({ source })`. */
 export function listCookieSourceProfiles(
   browser: string,
   options?: { timeoutMs?: number },
 ): Promise<import("./public.js").CookieSourceProfile[]>;
+
 export { METADATA_ADDRESSES, METADATA_HOSTNAMES, NetworkPolicy } from "./policy.js";
 export {
   piImageArtifacts,

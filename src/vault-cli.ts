@@ -25,6 +25,7 @@ import { flagValue, positionalArgs } from "./cli-flags.js";
 import { wantsHelp } from "./cli-help.js";
 import { cliPaint, paintedError, paintedLog } from "./cli-theme.js";
 import { defaultHome } from "./home.js";
+import { promptSecret } from "./secret-prompt.js";
 import { createLocalCredentialVault, VAULT_CATEGORIES } from "./vault.js";
 import {
   DEFAULT_KEY_DELAY_MS,
@@ -40,6 +41,11 @@ const REVEAL_ESCAPE_HATCH = "BETTERWRIGHT_VAULT_ALLOW_NON_INTERACTIVE";
 
 export const VAULT_USAGE = `Usage: betterwright vault <command>
 
+  status                                   master-password protection and lock state
+  setup                                    set a master password (hidden terminal prompt)
+  unlock                                   unlock the selected session daemon
+  lock                                     lock this vault across all profiles/processes
+  settings [agent-use|offer-save|autosave on|off]  inspect or change saving preferences
   list [--query <text>] [--category <c>]   saved credentials (metadata only)
   show <id> [--reveal]                     one credential; --reveal prints the password
   get <id>                                 alias for show
@@ -206,8 +212,9 @@ async function confirm(question) {
  */
 export async function runVaultCommand(rest: any[] = [], io: any = {}) {
   const fail = io.error || paintedError(cliPaint({ stream: process.stderr }));
+  const vault = createLocalCredentialVault({ home: io.home || defaultHome() });
   try {
-    return await dispatchVaultCommand(rest, io);
+    return await dispatchVaultCommand(rest, { ...io, vault });
   } catch (error) {
     // A mistyped flag should read like a mistyped flag, not like a crash. The
     // vault's own errors already say what went wrong in a sentence; the codes
@@ -218,11 +225,13 @@ export async function runVaultCommand(rest: any[] = [], io: any = {}) {
     }
     if (error?.code === "VAULT_KEY_MISSING") {
       fail(
-        "vault.key and vault.enc must be kept together — restore the key from your backup, " +
+        "The matching key and vault.enc must be kept together: restore master-key.json for a protected vault, or vault.key for a legacy vault, " +
           "or delete both to start a new vault (the saved passwords are unrecoverable without it).",
       );
     }
     return 1;
+  } finally {
+    vault.dispose();
   }
 }
 
@@ -233,10 +242,67 @@ async function dispatchVaultCommand(rest, io) {
   const json = flags.has("--json");
   const positional = positionalArgs(rest);
   const [subcommand = "list", target] = positional;
-  const vault = createLocalCredentialVault({ home: io.home || defaultHome() });
+  const vault = io.vault;
+  const readPassword = io.readPassword || promptSecret;
 
   if (wantsHelp(rest) || subcommand === "help") {
     log(cliPaint().help(VAULT_USAGE));
+    return 0;
+  }
+
+  if (["status", "setup", "unlock", "lock"].includes(subcommand)) {
+    if (target) throw new Error("This command takes no password arguments. Use the hidden terminal prompt.");
+    let result;
+    if (subcommand === "status") {
+      result = await vault.ownerStatus();
+      const daemon = await io.daemonStatus?.();
+      if (daemon?.available) result = { ...result, locked: daemon.locked };
+    }
+    else if (subcommand === "lock") result = await vault.ownerLock();
+    else {
+      let password = await readPassword("Master password: ");
+      try {
+        if (subcommand === "setup") {
+          let confirmation = await readPassword("Confirm master password: ");
+          const matches = password === confirmation;
+          confirmation = "";
+          if (!matches) throw new Error("Master passwords do not match.");
+          await vault.ownerSetupMaster(password);
+          result = await vault.ownerLock();
+        } else {
+          if (!io.unlockDaemon) throw new Error("Unlock requires a persistent session daemon.");
+          await vault.ownerUnlock(password);
+          result = await io.unlockDaemon(password);
+          if (result?.ok === false) throw new Error(result.error || "Session vault unlock failed.");
+        }
+      } finally { password = ""; }
+    }
+    log(json ? JSON.stringify(result, null, 2) :
+      `Master password: ${result.configured ? "configured" : "not configured"}. Vault: ${result.locked ? "locked" : "unlocked"}.`);
+    return 0;
+  }
+
+  if (!["path", "audit"].includes(subcommand) && (await vault.ownerStatus()).locked) {
+    let password = await readPassword("Master password: ");
+    try { await vault.ownerUnlock(password); } finally { password = ""; }
+  }
+
+  if (subcommand === "settings") {
+    const settings = await vault.ownerSettings();
+    if (target) {
+      const value = positional[2];
+      if (!["on", "off"].includes(value) || positional.length !== 3) {
+        throw new Error("Use vault settings <agent-use|offer-save|autosave> <on|off>.");
+      }
+      if (target === "agent-use") settings.agentUse = value === "on";
+      else if (target === "offer-save") settings.offerSave = value === "on";
+      else if (target === "autosave") settings.autosave = value === "on";
+      else throw new Error("Unknown vault setting. Choose agent-use, offer-save, or autosave.");
+      if (target === "offer-save" && !settings.offerSave) settings.autosave = false;
+      await vault.ownerConfigure(settings);
+    }
+    log(json ? JSON.stringify(settings, null, 2) :
+      `Agent use: ${settings.agentUse ? "on" : "off"}. Offer save: ${settings.offerSave ? "on" : "off"}. Autosave: ${settings.autosave ? "on" : "off"}.`);
     return 0;
   }
 
@@ -247,7 +313,9 @@ async function dispatchVaultCommand(rest, io) {
     }
     log(vault.dir);
     log("  vault.enc    AES-256-GCM record table");
-    log("  vault.key    the key that decrypts it — back this up with vault.enc, or lose both");
+    log("  master-key.json  wrapped key when master-password protection is configured");
+    log("  vault.key    legacy key, removed after master-password setup");
+    log("  back this up: vault.enc together with master-key.json, or vault.key for a legacy vault");
     log("  audit.jsonl  metadata-only activity log");
     return 0;
   }

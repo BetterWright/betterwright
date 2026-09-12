@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import type { HostConnection, HostTarget } from "../types/host.js";
 // The published declarations are hand-written (see AGENTS.md). Typing the
 // implementation against them turns a drift between the two into a compile
 // error instead of something only a consumer would notice.
@@ -51,7 +52,7 @@ import {
   type UntrustedValue,
   untrustedField,
 } from "./untrusted-value.js";
-import { createLocalCredentialVault } from "./vault.js";
+import { createLocalCredentialVault, LocalCredentialVault } from "./vault.js";
 
 const WORKER_PATH = fileURLToPath(new URL("./worker.js", import.meta.url));
 // The lane host-wide calls (live view, worker revival) queue on. A session can
@@ -296,6 +297,7 @@ function stealthDriverAvailable() {
 
 /** A persistent, policy-guarded Playwright browser. */
 export class BetterWright {
+  #ownsVault = false;
   declare home: string;
   declare profile: string | null;
   declare policy: NetworkPolicy;
@@ -303,6 +305,9 @@ export class BetterWright {
   declare credentialCapture: boolean;
   declare browserFlavor: "chromium-fork";
   declare provider: any;
+  declare hostTarget: HostTarget | undefined;
+  declare hostUploadFiles: readonly string[];
+  private readonly hostConnections = new WeakMap<object, HostConnection>();
   declare headless: boolean;
   declare searchMinIntervalMs: number;
   declare publicSearchPolicy: "block" | "allow";
@@ -452,6 +457,14 @@ export class BetterWright {
    *   machine on the network. Pass `{host:"127.0.0.1"}` for loopback-only.
    */
   constructor(options: BetterWrightOptions = {}) {
+    this.hostTarget = options.hostTarget;
+    this.hostUploadFiles = options.hostUploadFiles ?? [];
+    if (this.hostTarget && (!isCallable(this.hostTarget.connect) || options.provider != null)) {
+      throw new TypeError("hostTarget requires connect() and cannot be combined with provider.");
+    }
+    if (!Array.isArray(this.hostUploadFiles) || this.hostUploadFiles.some(file => !isString(file) || !path.isAbsolute(file)) || (this.hostUploadFiles.length && !this.hostTarget)) {
+      throw new TypeError("Host uploads require hostTarget and absolute staged paths.");
+    }
     this.home = options.home || defaultHome();
     // null == the historical `browser/profile`. A validated name scopes the
     // profile directory and, through it, the profile lock — nothing else.
@@ -467,6 +480,7 @@ export class BetterWright {
         );
     } else {
       this.vault = createLocalCredentialVault({ home: this.home });
+      this.#ownsVault = true;
     }
     this.credentialCapture = this.vault
       ? options.credentialCapture !== false
@@ -579,7 +593,9 @@ export class BetterWright {
       artifactsDir: artifacts,
       downloadsDir: downloads,
       browserFlavor: this.browserFlavor,
-      provider: this.provider,
+      provider: this.hostTarget ? { cdpUrl: "ws://127.0.0.1:1" } : this.provider,
+      hostOwnedTarget: Boolean(this.hostTarget),
+      hostUploadFiles: this.hostUploadFiles,
       stealthRuntimeFix: this.stealthRuntimeFix,
       launchIdentity: this.launchIdentity,
       fingerprintNoise: this.fingerprintNoise,
@@ -593,10 +609,10 @@ export class BetterWright {
       parkBackgroundPages: this.parkBackgroundPages,
       headless: this.headless,
       adBlock: this.adBlock,
-      credentialCapture: this.credentialCapture,
+      credentialCapture: this.hostTarget ? false : this.credentialCapture,
       searchMinIntervalMs: this.searchMinIntervalMs,
       publicSearchPolicy: this.publicSearchPolicy,
-      downloadPolicy: this.downloadPolicy,
+      downloadPolicy: this.hostTarget ? "deny" : this.downloadPolicy,
       outputLimit: 12_000,
       maxArtifactBytes: 100 * 1024 * 1024,
       maxDownloadBytes: 50 * 1024 * 1024,
@@ -626,6 +642,7 @@ export class BetterWright {
       ...process.env,
       NODE_NO_WARNINGS: "1",
     };
+    if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = "1";
     // Playwright's pw:protocol debug scope logs complete CDP payloads. The
     // worker handles cookies and vault fills, so host DEBUG settings must not
     // turn its stderr into a secret side channel.
@@ -661,7 +678,7 @@ export class BetterWright {
       process.execPath,
       [...bunInheritedExecArgv(env), ...execArgv, WORKER_PATH],
       {
-      cwd: path.dirname(WORKER_PATH),
+      cwd: process.versions.electron ? this._workerConfig().runtimeDir : path.dirname(WORKER_PATH),
       stdio: ["pipe", "pipe", "pipe"],
       env,
     });
@@ -761,6 +778,8 @@ export class BetterWright {
           }
         } finally {
           clearTimeout(drainTimer);
+          await this.hostConnections.get(child)?.close().catch(() => {});
+          this.hostConnections.delete(child);
           await this._resetVaultRedactionForWorker(child);
           resolveWorkerClose();
           // Unexpected death (crash, OOM-kill) while a live view is up:
@@ -826,7 +845,9 @@ export class BetterWright {
     const key = String(id || "");
     const recovery = this._pendingCredentialRecoveries.get(key);
     if (!recovery) return message;
-    this._pendingCredentialRecoveries.delete(key);
+    // Cancellation ignores worker results until teardown finishes. Keep recovery
+    // available for its final abort envelope, including a late successful reply.
+    if (!this._pending.get(key)?.preserveRecovery) this._pendingCredentialRecoveries.delete(key);
     if (message?.ok !== false) return message;
     return { ...message, pendingCredential: recovery };
   }
@@ -852,6 +873,7 @@ export class BetterWright {
     // pending until this hook settles, so a replacement cannot claim ownership
     // while an older generation's asynchronous reset is still running.
     this._vaultRedactionOwner = null;
+    if (this.hostTarget) return;
     try {
       await this.vault?.resetRedactionSecrets?.();
     } catch {
@@ -895,12 +917,43 @@ export class BetterWright {
     try {
       const payload = message.payload || {};
       let result;
-      if (message.method === "guard") {
+      if (message.method === "host_connect") {
+        if (!this.hostTarget) throw new Error("Host target unavailable.");
+        const proxyUrl = String(payload.proxyUrl || "");
+        if (!/^socks5:\/\/127\.0\.0\.1:[1-9][0-9]*$/.test(proxyUrl)) throw new Error("Invalid host guard endpoint.");
+        // A failed CDP attachment can leave this worker alive. A later explicit
+        // run may reconnect, but only after the previous lease has drained.
+        const previous = this.hostConnections.get(child);
+        if (previous) {
+          await previous.close();
+          this.hostConnections.delete(child);
+        }
+        if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
+          throw new Error("Host worker stopped during connection.");
+        }
+        const connection = await this.hostTarget.connect({ proxyUrl });
+        if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
+          await connection.close();
+          throw new Error("Host worker stopped during connection.");
+        }
+        this.hostConnections.set(child, connection);
+        result = connection.provider;
+      } else if (message.method === "guard") {
         const { url, ...details } = payload;
         // Copy rather than annotate: policy.check may return a shared or frozen
         // object, and `cacheable` is an envelope field, not part of the public
         // NetworkDecision the policy produced.
         result = { ...this.policy.check(url, details), cacheable: this._policyCacheable };
+      } else if (message.method === "vault_capture_save") {
+        if (!this.vault || this.hostTarget) throw new Error("Credential capture is unavailable.");
+        result = this.vault.ownerCapture
+          ? await this.vault.ownerCapture(payload.payload, payload.origin)
+          : await this.vault.handleRequest("save", payload.payload, payload.origin);
+      } else if (message.method === "vault_capture_policy") {
+        const protection = await this.vault?.ownerStatus?.();
+        const settings = await this.vault?.ownerSettings?.();
+        result = { offerSave: !protection?.locked && settings?.offerSave !== false,
+          autosave: settings?.autosave === true };
       } else if (message.method === "vault") {
         if (!this.vault)
           throw new Error(
@@ -908,6 +961,9 @@ export class BetterWright {
               "or use an unlocked password-manager extension's autofill instead.",
           );
         const action = String(payload.action || "");
+        if (this.hostTarget && !["list", "list-pending"].includes(action)) {
+          throw new Error("Host-owned browser credential access is metadata-only.");
+        }
         const requestPayload = { ...(payload.payload || {}) };
         if (
           action === "generate" &&
@@ -1086,9 +1142,16 @@ export class BetterWright {
   /**
    * Execute one Playwright snippet and resolve with a result object.
    * @param {string} code asynchronous Playwright JavaScript
-   * @param {object} [options] { session, note, timeout, approvedDownloads }
+   * @param {object} [options] { session, note, timeout, approvedDownloads, automaticUI }
    */
   run(code, options: any = {}) {
+    if (this.hostTarget) return this._enqueueExclusive(() => {
+      const execute = (signal?: AbortSignal) => this._runNow(code, {
+        ...options,
+        signal: signal && options.signal ? AbortSignal.any([signal, options.signal]) : signal ?? options.signal,
+      });
+      return this.hostTarget.run ? this.hostTarget.run(execute) : execute();
+    });
     return this._enqueue(options?.session, () => this._runNow(code, options));
   }
 
@@ -1136,6 +1199,22 @@ export class BetterWright {
     return this._enqueueExclusive(() => this._syncCookiesNow(options));
   }
 
+  /** Owner control only; deliberately absent from the worker's snippet bindings. */
+  async vaultStatus() {
+    if (!this.vault?.ownerStatus) return { available: false };
+    return { available: true, ...await this.vault.ownerStatus() };
+  }
+
+  async unlockVault(options: { password: string }) {
+    if (!this.vault?.ownerUnlock) throw new Error("This vault does not support master-password unlock.");
+    return this.vault.ownerUnlock(options?.password);
+  }
+
+  async lockVault() {
+    if (!this.vault?.ownerLock) throw new Error("This vault does not support locking.");
+    return this.vault.ownerLock();
+  }
+
   async _syncCookiesNow(options) {
     if (this._closed) {
       return { ok: false, error: "This browser has been closed." };
@@ -1160,7 +1239,13 @@ export class BetterWright {
     try {
       extracted = await this._extractCookieSync(normalized);
     } catch (error) {
-      return { ok: false, error: String(error?.message || error) };
+      return {
+        ok: false,
+        error: "Cookie Sync could not read the selected local browser profile.",
+        cookieReaderCode: error?.cookieReaderCode || "reader_unavailable",
+        cookiePermissionDenied: error?.cookiePermissionDenied === true,
+        cookieReaderStage: error?.cookieReaderStage,
+      };
     }
     if (!extracted.cookies.length) {
       return {
@@ -1315,8 +1400,11 @@ export class BetterWright {
   }
 
   async _runNow(code, options) {
+    if (options.signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
     if (!isString(code) || !code.trim())
       return { ok: false, error: "code must be a non-empty string" };
+    if (options.automaticUI !== undefined && !isBoolean(options.automaticUI))
+      return { ok: false, error: "automaticUI must be a boolean" };
     const timeoutSeconds = Math.max(Number(options.timeout) || this.defaultTimeout, 5);
     const config = await this._prepare();
     return this._dispatch(
@@ -1325,10 +1413,12 @@ export class BetterWright {
         sessionId: String(options.session || "default"),
         code,
         approvedDownloads: options.approvedDownloads === true,
+        automaticUI: options.automaticUI !== false,
         timeoutMs: timeoutSeconds * 1000,
         config,
       },
       timeoutSeconds,
+      options.signal,
     );
   }
 
@@ -1535,6 +1625,13 @@ export class BetterWright {
   }
 
   async _prepareNow() {
+    // Host teardown can finish before the worker receives CDP's close event.
+    // Retire that worker before sending the next explicit operation, rather
+    // than letting it reuse stale handles or replaying a failed operation.
+    const child = this._process;
+    if (child && this.hostConnections.get(child)?.closed === true) {
+      await this.close({ child, restart: true });
+    }
     const config = this._workerConfig();
     if (
       this._process &&
@@ -1568,21 +1665,42 @@ export class BetterWright {
   /** Send one worker command keyed by a fresh id and await its result envelope,
    * restarting the worker on timeout and applying vault redaction on the way
    * out. Shared by run() and fillCredential(). */
-  async _dispatch(message, timeoutSeconds): Promise<any> {
+  async _dispatch(message, timeoutSeconds, signal?: AbortSignal): Promise<any> {
+    if (signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
     this._dispatchSeq += 1;
     const id = `${process.pid}-${this._dispatchSeq}`;
     const child = this._process;
     const response: any = await new Promise<any>((resolve) => {
       let settled = false;
       let timer;
+      let aborting = false;
+      const finishAbort = (error, errorCode) => {
+        const result = this._attachPendingCredentialRecovery(id, {
+          ok: false, error, errorCode, effectMayHaveCommitted: true,
+        });
+        this._pendingCredentialRecoveries.delete(id);
+        done(result);
+      };
+      const onAbort = () => {
+        aborting = true;
+        this._pending.get(id).preserveRecovery = true;
+        clearTimeout(timer);
+        void this.close({ child, restart: true }).then(() => {
+          finishAbort("Browser operation aborted.", "BW_ABORTED");
+        }, () => {
+          finishAbort("Browser operation aborted; teardown failed.", "BW_ABORT_TEARDOWN_FAILED");
+        });
+      };
       const done = (result) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         this._pending.delete(id);
         resolve(result);
       };
-      this._pending.set(id, { child, done });
+      this._pending.set(id, { child, done: (result) => { if (!aborting) done(result); } });
+      signal?.addEventListener("abort", onAbort, { once: true });
       timer = setTimeout(async () => {
         await this.close({ child, preservePending: true, restart: true });
         this._scheduleLiveViewRevival();
@@ -1663,7 +1781,10 @@ export class BetterWright {
     // and the next call brings a replacement up; a call from another session
     // that lands in between must wait for that replacement, not be told the
     // browser is gone.
-    if (!restart) this._closed = true;
+    if (!restart) {
+      this._closed = true;
+      if (this.#ownsVault && this.vault instanceof LocalCredentialVault) this.vault.dispose();
+    }
     const child = requestedChild || this._process;
     const closesActiveWorker = !requestedChild || this._process === child;
     if (closesActiveWorker) {

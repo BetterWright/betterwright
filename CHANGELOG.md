@@ -9,6 +9,158 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-09-11
+
+### Added
+
+- `docs/cli.md`, a reference for every command and flag, and
+  `docs/environment.md`, a reference for every user-facing `BETTERWRIGHT_*`
+  variable with defaults and scope.
+- JSDoc across the public type declarations (network policy, prompt
+  guardrails, Pi extension, captcha solver, client, auth, challenge scan,
+  credential capture, recording) so editor hover shows the documented
+  semantics.
+
+### Fixed
+
+- Documentation gaps: the index now links the recording, ad-blocking,
+  Electron hosting, and runtime-performance pages; `run --approve-downloads`,
+  `init --skip-browser`, `BETTERWRIGHT_PI_REQUIRE_EVIDENCE`, and the MCP-only
+  `BETTERWRIGHT_LOCALE`/`BETTERWRIGHT_TIMEZONE` are documented; `automaticUI`
+  appears in the `run()` signature in docs/javascript.md.
+- `sortTilesReadingOrder` keeps required box coordinates in the public
+  declarations, matching the runtime.
+
+## [2.7.0] - 2026-09-11
+
+### Changed
+
+- Run UI batches without added per-operation pacing. Asserted reads wait on
+  their expected result instead of unrelated network traffic; fresh directories
+  return immediately unless the caller requests a settling window.
+- Retain short select option lists in compact discovery and suppress duplicate
+  directories returned in a batch envelope.
+- Default sandbox navigation to `domcontentloaded` so slow subresources do not
+  hold up agent actions. Explicit load modes and timeouts remain supported;
+  wait on the relevant locator before reading dynamic page or frame state.
+- Limit automatic UI discovery to 2,400 JSON characters and omit it when a
+  snippet returns the full `betterwright-ui/1` directory itself.
+  `controls.directory()` retains the full discovery limits and option lists.
+- Print compact JSON for piped `betterwright run` output without dropping any
+  fields. Terminal output stays indented; `--pretty` also indents piped output.
+
+### Added
+
+- `browser_batch {discover:true}` collects current-page targets in one call,
+  ready for an ordered action-and-verification batch in the next call. Optional
+  `query` names find several controls together before truncation; discovery
+  reserves space for action buttons on long forms.
+- Explicit batch observation with `observe:true` returns fresh UI and marks
+  verification as observed when the outcome cannot be asserted in advance.
+  Default write batches still require a final asserted read or URL check.
+- Per-call `automaticUI: false` / `run --no-auto-ui` for agents returning scoped
+  page observations. It omits successful automatic UI catalogs while preserving
+  on-demand discovery, first-party workflows, failure evidence, and warnings.
+
+### Fixed
+
+- Validate all batch action values before the first write and report completed
+  operation IDs on failure so agents can avoid replaying completed writes.
+- Keep duplicate target positions stable across filtered and truncated
+  discovery, including repeated labels and placeholders.
+- Assert live input and textarea values and selected option labels. Preserve
+  bounded settling after writes when a field value or pre-existing success
+  message cannot confirm a pending submission.
+- Align setup, security, browser, SDK, and agent documentation with current
+  network-policy defaults, remote-browser limits, session lifetimes, result
+  bounds, cancellation, live-view access, and conditional skill loading.
+- Correct the semantic UI batch example and MCP CLI help inventory, and
+  distinguish historical Chromium patch measurements from current launch
+  defaults.
+- Accept synchronous callbacks in the `withBrowser` declarations and include
+  the existing large-output spill wrapper in successful `RunResult` types.
+- Refresh vulnerable transitive dependencies in the development lockfile
+  without changing the pinned browser or runtime dependencies.
+
+## [2.6.0] - 2026-09-09
+
+### Added
+
+- A bounded completion consistency check for checkout tasks in the built-in
+  agent. It compares current and earlier UI evidence, can inspect full or scoped
+  receipt snapshots, and accounts for verification turns in usage totals.
+  Read-only inspections cannot execute checker-authored actions; duplicate or
+  exhausted inspections stop, and failed checks do not reopen actions under
+  configured guardrails. Purchase authorization remains unchanged by default.
+- Conditional checkout-verification and browser-console skills. Console
+  guidance uses existing bounded history APIs without adding console output to
+  ordinary browser results.
+- Bounded, redacted UI evidence on ordinary failed browser snippets, plus short
+  product/table context and status text in interactive observations.
+
+### Changed
+
+- Reduce repeated agent, tool, and checkout instructions. Batch known work
+  without treating partial extraction as a completed answer.
+
+### Fixed
+
+- Improve cart verification guidance for repeated item names, numeric quantity
+  cells, duplicate product names, delayed confirmations, and stale receipts.
+  Keep action, confirmation waits, and visible proof together without replaying
+  uncertain submissions or inventing order IDs. Completion checks now approve
+  only their input candidate; checker-authored corrections require a separate
+  bounded check before they can become the final answer.
+- Distinguish CAPTCHA interaction outcomes and token receipt from server-side
+  acceptance in live-test reporting and documentation.
+
+## [2.5.2] - 2026-09-09
+
+### Fixed
+
+- Refresh the JavaScript API reference with default-on ad blocking, Electron
+  hosting requirements, and trusted vault status, unlock, lock, and saved-login
+  settings. Clarify daemon versus SDK unlock lifetimes and locking limits.
+
+## [2.5.1] - 2026-09-09
+
+### Added
+
+- Master-password protection for the local vault, with hidden CLI prompts,
+  timed unlocks, cross-process locking, and trusted SDK controls.
+- Separate saved-login settings for agent access, capture, and human autosave.
+  No new MCP password-management tools are exposed.
+
+### Fixed
+
+- Preserve existing credentials and pending logins during master-password setup.
+- Keep autofill origin-scoped and retain secret redaction after locking.
+- Report actionable cookie-import permission and profile-discovery errors.
+
+## [2.5.0] - 2026-09-09
+
+### Added
+
+- Optional `betterwright/electron` adapter for a host-owned tab, with scoped
+  transport, network policy enforcement, cancellation, native input and clipboard,
+  approved file uploads, native PDF export, and disconnect without closing the tab.
+- `betterwright/capture` for host-native save prompts and awaitable capture cleanup.
+- Host-provided vault encryption keys and explicit captured-secret redaction.
+- Isolated Electron and packaged-ASAR end-to-end fixtures.
+
+### Fixed
+
+- Cancellation preserves pending generated-credential recovery details, including
+  when worker teardown fails.
+- Failed host attachments can reconnect on the next explicit run after the old
+  connection drains. Unexpected debugger detach closes the transport and settles
+  pending operations without closing the host tab.
+- Empty array results are preserved instead of being dropped as empty diagnostics.
+- Failed keyboard chords release modifiers before the next action.
+- Cookie import errors expose safe permission and failure-stage diagnostics.
+- Browser guidance avoids repeated discovery, duplicate output and unnecessary
+  snapshots while retaining batching and the existing context-size limits.
+
 ## [2.4.0] - 2026-09-06
 
 ### Added
@@ -1440,7 +1592,13 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.1...HEAD
+[2.7.1]: https://github.com/BetterWright/betterwright/compare/v2.7.0...v2.7.1
+[2.7.0]: https://github.com/BetterWright/betterwright/compare/v2.6.0...v2.7.0
+[2.6.0]: https://github.com/BetterWright/betterwright/compare/v2.5.2...v2.6.0
+[2.5.2]: https://github.com/BetterWright/betterwright/compare/v2.5.1...v2.5.2
+[2.5.1]: https://github.com/BetterWright/betterwright/compare/v2.5.0...v2.5.1
+[2.5.0]: https://github.com/BetterWright/betterwright/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/BetterWright/betterwright/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/BetterWright/betterwright/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/BetterWright/betterwright/compare/v2.1.0...v2.2.0

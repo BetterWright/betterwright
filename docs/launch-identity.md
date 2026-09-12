@@ -38,20 +38,25 @@ plugins, hardware, automation markers, and client hints.
 | Platform | `--fingerprint-platform=<host>` — the real host OS |
 | GPU, plugins, hardware | Fork source-level fingerprint patches |
 | JavaScript APIs | Left native; no replacement getters or functions |
-| Service workers | Allowed natively; traffic still crosses the policy guard |
+| Service workers | Blocked in new contexts while default-on ad blocking is enabled; allowed when it is disabled. Existing remote contexts have [coverage limits](ad-blocking.md#filtering) |
 
-Forcing page-world values made a synthetic probe look perfect once, but live
-reCAPTCHA checks stalled. Leaving the APIs native restored server-verified
-`0.9` in both true-headless and headed modes.
+In the recorded identity comparison, forcing page-world values made a synthetic
+probe look perfect, but live reCAPTCHA checks stalled. Leaving the APIs native
+restored server-verified `0.9` in both true-headless and headed modes. These
+were demo observations, not an acceptance guarantee for future runs or sites.
 
 ## Launch modes
 
-- **Headless** (default): a real `--headless` fork process with a realistic
+- **Headless** (CLI default): a real `--headless` fork process with a realistic
   desktop viewport. This is not an off-screen headed substitute.
 - **Headed** (`--headed`): a normal visible browser window.
 - **Headed-invisible** (`headedInvisible: true` / `--headed-invisible`): a
   headed window parked off-screen for workflows that explicitly need native
   window compositing.
+
+The JavaScript SDK instead defaults to `headless: "auto"`: headed when a
+display is available, headless otherwise. Pass `true` or `false` to pin it.
+See [display detection](attach-mode.md#choosing-the-display-mode).
 
 ## Egress proxy
 
@@ -72,7 +77,7 @@ const browser = new BetterWright({
 
 ## Verification
 
-Compile the harness first with `bun run build`.
+Build the runtime and type-check the harness first with `bun run build:harness`.
 
 ```bash
 bun research/stealth-report.ts
@@ -81,7 +86,9 @@ bun research/stealth-report.ts --live --site recaptcha-v3-score
 ```
 
 The local fixture checks roughly 30 browser surfaces against stock-Chrome
-behavior. Live acceptance uses server-verified score endpoints:
+behavior. The table records earlier runs against server-verified score
+endpoints; it is not a verification of the current release or a promise that
+another session will receive the same scores:
 
 | Check | True headless | Headed |
 | --- | --- | --- |
@@ -89,11 +96,11 @@ behavior. Live acceptance uses server-verified score endpoints:
 | `antcpt.com/score_detector` | 0.9 | 0.9 |
 | `democaptcha.com` | 0.9 | 0.9 |
 
-`recaptcha-demo.appspot.com` is not an acceptance gate. Its widget currently
-reports that the site exceeded its Enterprise free quota, so an unresolved
-request there does not establish browser detection.
+`recaptcha-demo.appspot.com` was not an acceptance gate in those runs. Its widget
+reported that the site exceeded its Enterprise free quota, so an unresolved
+request there did not establish browser detection.
 
-Interactive CAPTCHA issuance is a separate gate. In the current public-demo
+Interactive CAPTCHA issuance is a separate gate. In those recorded public-demo
 runs, Turnstile remained at `processing` without a token in both modes, while
 reCAPTCHA v2 escalated to an image grid that requires vision. The report prints
 `tokenIssued` explicitly so those outcomes cannot be mistaken for a pass.
@@ -105,8 +112,8 @@ reCAPTCHA v2 escalated to an image grid that requires vision. The report prints
 | `launchIdentity` | `true` | Coherent locale/timezone identity layer. CLI: `--no-launch-identity` |
 | `upstreamProxy` | - | `http://` / `socks5://` egress proxy. CLI: `--upstream-proxy` |
 | `geoip` | `false` | Locale/timezone from egress IP. CLI: `--geoip` |
-| `locale` | - | Explicit BCP 47 locale. CLI: `--locale` |
-| `timezone` | - | Explicit IANA timezone. CLI: `--timezone` |
+| `locale` | - | Explicit BCP 47 locale. CLI: `--locale`; MCP: `BETTERWRIGHT_LOCALE` |
+| `timezone` | - | Explicit IANA timezone. CLI: `--timezone`; MCP: `BETTERWRIGHT_TIMEZONE` |
 | `platform` | host | Identity platform pin (default: the real host OS). CLI: `--platform` |
 | `headedInvisible` | `false` | Off-screen headed window. CLI: `--headed-invisible` |
 | `stealthRuntimeFix` | `false` | Optional patchright isolated-world execution |

@@ -236,6 +236,8 @@ Options:
   --no-ad-block           disable blocking, overriding the environment
   --headed               show the browser window
   --close                close the session after this call
+  --pretty               indent JSON even when stdout is piped (terminals indent by default)
+  --no-auto-ui           omit automatic UI catalogs on successful calls; discovery remains on demand
   --approve-downloads    allow downloads for this one run
   --no-daemon            do not use the background session daemon
   --stealth              isolated-world driver (needs patchright-core)
@@ -358,7 +360,11 @@ results hint at packs matching the open page; this is how you read one yourself.
   mcp: `Usage: betterwright mcp [--check] [--ad-block | --no-ad-block]
 
 Serve BetterWright over the Model Context Protocol on stdio. Exposes browser,
-browser_login, browser_download, browser_handoff, and browser_doctor.
+browser_batch, browser_download, browser_record, browser_handoff, and
+browser_doctor, plus browser_login when the credential vault is enabled.
+
+browser_batch runs guarded UI batches (docs/browser-api.md).
+browser_record controls local video recording (docs/recording.md).
 
   --check   verify the server can start, then exit — use this to debug a
             client that shows no BetterWright tools

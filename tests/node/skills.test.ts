@@ -170,6 +170,35 @@ test("user packs override packaged packs and broken packs are surfaced", async (
   }
 });
 
+test("browser-console guidance is bounded and loads only for debugging tasks", () => {
+  const skill = readSkill("browser-console");
+  assert.ok(skill.body.length < 1_600);
+  assert.match(skill.body, /page.consoleMessages\(scope\)/);
+  assert.match(skill.body, /page.pageErrors\(scope\)/);
+  assert.match(skill.body, /since-navigation/);
+  assert.match(skill.body, /slice\(-10\)/);
+  assert.match(skill.body, /slice\(-5\)/);
+  assert.match(skill.body, /Never replay a submission/);
+  assert.ok(matchSkillsForText("Check the browser console for errors").some((entry) => entry.name === skill.name));
+  assert.ok(matchSkillsForText("Debug this page").some((entry) => entry.name === skill.name));
+  for (const task of ["Read example.com", "Buy a game console", "Find a notebook under $20"]) {
+    assert.ok(!matchSkillsForText(task).some((entry) => entry.name === skill.name));
+  }
+});
+
+test("checkout verification guidance is conditional and covers actual quantity formats", () => {
+  const skill = readSkill("checkout-verification");
+  assert.ok(skill.body.length < 2_000);
+  assert.match(skill.body, /Notebook, Notebook, Pen/);
+  assert.match(skill.body, /number of rows is not the quantity/);
+  assert.match(skill.body, /fresh positive confirmation, not the whole page/);
+  assert.match(skill.body, /Never resubmit/);
+  assert.ok(matchSkillsForText("Put two notebooks in the cart and submit exactly once").some(entry => entry.name === skill.name));
+  for (const task of ["Read example.com", "Check browser console errors", "Compare three products"]) {
+    assert.ok(!matchSkillsForText(task).some(entry => entry.name === skill.name));
+  }
+});
+
 test("keyword and URL matching drive hints with readable paths", () => {
   const skills = listSkills();
   const forLogin = matchSkillsForText("Please log in to my account", skills).map(

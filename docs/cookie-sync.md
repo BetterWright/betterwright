@@ -52,6 +52,12 @@ and the target identity. Cookie names and values are never returned. The
 `synced` count is verified against the target store rather than assumed from a
 successful CDP call.
 
+On macOS, a permission-denied result requires Full Disk Access for the app
+running BetterWright. Restart that app after granting access, then retry.
+Profile-discovery failures are reported separately from an empty profile list.
+Neither failure means cookies were imported. The source browser does not need
+to be closed; OS permission and native-reader failures are not bypassed.
+
 Before writing, BetterWright reads the target cookie jar and refuses a batch
 whose projected occupancy crosses conservative Chromium limits. This avoids
 triggering Chromium's per-site or global eviction. After writing, it verifies

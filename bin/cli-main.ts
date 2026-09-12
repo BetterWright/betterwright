@@ -603,7 +603,7 @@ async function acquireRunBrowser(flags) {
   };
 }
 
-type CliRunOptions = { session: string; approvedDownloads?: boolean };
+type CliRunOptions = { session: string; approvedDownloads?: boolean; automaticUI?: boolean };
 
 async function cmdRun(arg, flags) {
   const code = await readSnippet(arg);
@@ -616,11 +616,15 @@ async function cmdRun(arg, flags) {
       session: acquired.session,
     };
     if (flags.has("--approve-downloads")) runOptions.approvedDownloads = true;
+    if (flags.has("--no-auto-ui")) runOptions.automaticUI = false;
     const result = await acquired.browser.run(code, runOptions);
     if (acquired.viaDaemon) result.session = acquired.session;
     if (acquired.warning)
       result.warnings = [...(result.warnings || []), acquired.warning];
-    console.log(JSON.stringify(result, null, 2));
+    // Agent hosts usually pipe stdout and send it back to a model. Preserve
+    // every field without charging for indentation on every browser turn.
+    const pretty = flags.has("--pretty") || process.stdout.isTTY;
+    console.log(JSON.stringify(result, null, pretty ? 2 : undefined));
     return result.ok ? 0 : 1;
   } finally {
     await acquired.cleanup({ closeSession: flags.has("--close") });
@@ -2245,7 +2249,22 @@ export async function runCli() {
       return cmdCookies(rest, flags);
     case "vault": {
       const { runVaultCommand } = await import("../src/vault-cli.js");
-      return runVaultCommand(rest);
+      return runVaultCommand(rest, {
+        daemonStatus: async () => {
+          const outcome = await connectSessionDaemon({ cliPath: CLI_PATH,
+            config: daemonConfigFromFlags(flags), spawnIfNeeded: false });
+          if (!outcome.ok) return null;
+          try { return await createDaemonBrowser(outcome.channel).vaultStatus(); }
+          finally { outcome.channel.end(); }
+        },
+        unlockDaemon: async (password: string) => {
+          const acquired = await acquireRunBrowser(flags);
+          try {
+            if (!acquired.viaDaemon) throw new Error("Unlock requires the persistent session daemon; retry without --no-daemon.");
+            return await acquired.browser.unlockVault({ password });
+          } finally { await acquired.cleanup(); }
+        },
+      });
     }
     case "run":
       return cmdRun(positional, flags);
@@ -2332,4 +2351,3 @@ if (invokedAsCliMain()) {
     },
   );
 }
-

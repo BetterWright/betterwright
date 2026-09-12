@@ -8,5 +8,5 @@
     "skipLibCheck": false,
     "types": []
   },
-  "include": ["package.test.ts"]
+  "include": ["package.test.ts", "sdk-callbacks.test.ts", "spill-result.test.ts", "automatic-ui.test.ts", "captcha-solver.test.ts"]
 }

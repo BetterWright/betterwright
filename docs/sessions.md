@@ -66,10 +66,12 @@ betterwright close --all     # stops every profile's daemon
 `BETTERWRIGHT_PROFILE=social` sets the identity for a whole shell (and is the
 only way to set it for the MCP server); `--profile` beats it. Both run at once
 and both stay signed in, because each profile locks its own directory under
-`$BETTERWRIGHT_HOME/browser/profiles/`. Two runs of the *same*
-profile still serialize: the second gets an isolated, signed-out ephemeral
-profile, exactly as two runs of the default profile do. Omitting `--profile`
-keeps the single default profile and the daemon it already had. The vault is
+`$BETTERWRIGHT_HOME/browser/profiles/`. Ordinary CLI calls for the same profile
+share its daemon: different sessions run concurrently, and calls within one
+session serialize. If independent browser workers compete for the same profile
+directory instead, the second gets an isolated, signed-out ephemeral profile.
+Omitting `--profile` keeps the single default profile and the daemon it already
+had. The vault is
 shared, so a credential saved once fills in any profile.
 
 ## Stopping a run
@@ -117,10 +119,12 @@ use — same `0600` socket, same same-user-only rule. Without this the daemon
 died on `listen` and every command silently fell back to a private,
 non-persistent browser. Sessions
 are **collaboration scopes, not a security boundary**: any client that can open
-the socket can drive any session. What *is* a boundary is the worker process —
-model-authored snippets run there, not in the daemon, and never see Node's
-`process`, module loader, filesystem, or the route APIs that enforce the
-network policy. See [architecture.md](architecture.md).
+the socket can drive any session. The separate worker provides lifecycle and
+fault isolation from the daemon. Its snippet globals omit Node's `process`,
+module loader, filesystem, and routing APIs, but those facades and `node:vm`
+are defense in depth, not a security boundary against adversarial JavaScript.
+The relied-upon controls are at the browser and network layers, with the
+remote-provider limitations described in [architecture.md](architecture.md).
 
 ## Diagnosing
 

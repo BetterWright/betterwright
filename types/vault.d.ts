@@ -10,6 +10,12 @@ export type VaultCategory =
 
 export type VaultMatchMode = "base-domain" | "host" | "exact-origin" | "never";
 
+export interface VaultSettings {
+  agentUse: boolean;
+  offerSave: boolean;
+  autosave: boolean;
+}
+
 /**
  * A JSON value as accepted for credential `fields`: the vault clones and
  * bounds every stored field, so nothing beyond plain JSON survives a save.
@@ -23,6 +29,10 @@ export type VaultJsonValue =
   | { [key: string]: VaultJsonValue };
 
 export interface LocalCredentialVaultOptions {
+  /** Master-password unlock lifetime in milliseconds, 1..86400000. Default 15 minutes. */
+  autoLockMs?: number;
+  /** Host-owned encryption key. Return fresh 32-byte storage; the vault zeroes it. */
+  keyProvider?: () => Promise<Uint8Array>;
   /** Exact vault directory. Takes precedence over `home`. */
   dir?: string;
   /** BetterWright home directory; the vault is stored in its `vault` child. */
@@ -132,6 +142,18 @@ export class LocalCredentialVault {
   readonly lockTimeoutMs: number;
   readonly staleLockMs: number;
 
+  ownerStatus(): Promise<{ configured: boolean; locked: boolean; osProtected: boolean; exists: boolean }>;
+  /** Trusted host only. Never pass a master password through model-authored code. */
+  ownerSetupMaster(password: string): Promise<{ configured: boolean; locked: boolean; osProtected: boolean }>;
+  ownerUnlock(password: string): Promise<{ configured: boolean; locked: boolean; osProtected: boolean }>;
+  /** Revokes cached unlocks in every process sharing this directory. */
+  ownerLock(): Promise<{ configured: boolean; locked: boolean; osProtected: boolean }>;
+  dispose(): void;
+  ownerSettings(): Promise<VaultSettings>;
+  ownerConfigure(settings: VaultSettings): Promise<VaultSettings>;
+  /** Trusted capture sensor only; never expose this method to a model. */
+  ownerCapture(payload: Record<string, UntrustedValue>, origin: string): Promise<UntrustedValue>;
+
   handleRequest(
     action:
       | "list"
@@ -150,6 +172,8 @@ export class LocalCredentialVault {
 
   /** Return a cloned value with every active secret replaced. */
   redact<T>(value: T): T;
+  /** Keep host-captured credentials redacted for as long as their pages remain alive. */
+  trackRedactionSecret(value: string): void;
 
   /** Clear tracked material after every page in the owning worker is closed. */
   resetRedactionSecrets(): void;

@@ -115,10 +115,12 @@ WebGL fallback, and the missing-device warning appears in run results and
 worker's local SOCKS guard.
 
 **Profiles are not interchangeable across Chromium majors.** A profile upgraded
-by a newer Chromium cannot be opened by an older one; BetterWright preserves
-the newer profile and opens the older browser in a stable nested compatibility
-profile. Sign-ins in the original profile are not copied, but new
-compatibility sign-ins persist across restarts.
+by a newer Chromium cannot be opened by an older one. Managed launch refuses
+that downgrade rather than creating a compatibility profile automatically.
+Preserve the old profile and select a fresh named `--profile` or a separate
+`BETTERWRIGHT_HOME`, or move aside only the profile directory named in the error
+and sign in again. Browser sign-ins are not copied; vault credentials remain
+outside the browser profile and survive moving it.
 
 **Match timezone/locale to egress** (or enable `geoip` with `upstreamProxy`).
 Nothing in the fork hard-codes Singapore or any other region — pin whatever

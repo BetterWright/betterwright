@@ -7,15 +7,18 @@ import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
+import { fromPath } from "rookie-cookies";
 import { AD_BLOCK_CACHE_FILE } from "../../dist/src/ad-blocker.js";
-
+import { normalizeCookieSnapshot, normalizeCookieSyncOptions } from "../../dist/src/cookie-sync.js";
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
 import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
 import { isBoolean, isCallable, isString } from "../../dist/src/untrusted-value.js";
+import { createLocalCredentialVault } from "../../dist/src/vault.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 const browserStatus = await doctorReport();
@@ -862,6 +865,77 @@ test("setInputFiles only reads files from the artifact root", opts, async () => 
   }
 });
 
+test("master-protected autofill survives migration, locks, unlocks, and browser restart", opts, async () => {
+  const secret = "synthetic-autofill-secret";
+  const master = "synthetic master password for autofill";
+  let accepted = 0;
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", "text/html");
+    if (request.method === "POST") {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        const fields = new URLSearchParams(body);
+        const valid = fields.get("username") === "fixture" && fields.get("password") === secret;
+        if (valid) accepted += 1;
+        response.end(valid ? "<h1>Signed in</h1>" : "<h1>Rejected</h1>");
+      });
+      return;
+    }
+    response.end(`<form method="post"><label>Username<input name="username" autocomplete="username"></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password"></label>
+      <input name="future" type="password" autocomplete="new-password" hidden>
+      <button type="submit">Sign in</button></form>`);
+  });
+  const home = tempHome();
+  const owner = createLocalCredentialVault({ home });
+  const browser = new BetterWright({ home, headless: true, adBlock: false });
+  try {
+    const saved = await owner.handleRequest("save", { username: "fixture", password: secret, matchMode: "exact-origin" }, server.origin);
+    await owner.ownerSetupMaster(master);
+    const opened = await browser.run(`await page.goto(${JSON.stringify(server.origin)}); return true;`);
+    assert.equal(opened.ok, true, opened.error);
+    const locked = await browser.fillCredential({ id: saved.id, submit: true });
+    assert.equal(locked.ok, false);
+    assert.match(locked.error, /locked/i);
+    assert.equal(accepted, 0);
+    await browser.unlockVault({ password: master });
+    const filled = await browser.fillCredential({ id: saved.id, submit: true });
+    assert.equal(filled.ok, true, filled.error);
+    const signedIn = await browser.run("await page.getByRole('heading', {name: 'Signed in'}).waitFor(); return true;");
+    assert.equal(signedIn.ok, true, signedIn.error);
+    assert.equal(accepted, 1);
+    assert.equal(JSON.stringify(filled).includes(secret), false);
+    await owner.ownerLock();
+    assert.equal((await browser.vaultStatus()).locked, true);
+    await browser.unlockVault({ password: master });
+    await browser.run(`await page.goto(${JSON.stringify(server.origin)});`);
+    const handlers = _createMcpHandlersForTest({ browser, downloadPolicy: "deny" });
+    const mcp = await handlers.callTool({ params: { name: "browser_login", arguments: { id: saved.id, submit: true } } });
+    assert.notEqual(mcp.isError, true);
+    const mcpResult = JSON.parse(mcp.content[0].text);
+    assert.equal(mcpResult.ok, true, mcpResult.error);
+    assert.equal(JSON.stringify(mcp).includes(secret), false);
+    await browser.run("await page.getByRole('heading', {name: 'Signed in'}).waitFor();");
+    assert.equal(accepted, 2);
+    await browser.close();
+    const restarted = new BetterWright({ home, headless: true, adBlock: false });
+    try {
+      assert.equal((await restarted.vaultStatus()).locked, true);
+      await restarted.unlockVault({ password: master });
+      await restarted.run(`await page.goto(${JSON.stringify(server.origin)});`);
+      const again = await restarted.fillCredential({ id: saved.id, submit: true });
+      assert.equal(again.ok, true, again.error);
+      await restarted.run("await page.getByRole('heading', {name: 'Signed in'}).waitFor();");
+      assert.equal(accepted, 3);
+    } finally { await restarted.close(); }
+  } finally {
+    owner.dispose();
+    await browser.close();
+    await server.close();
+  }
+});
+
 test("model-authored credentials.fill types the secret without returning it", opts, async () => {
   const secret = "vault-secret-value";
   const server = await listen((_request, response) => {
@@ -1503,6 +1577,191 @@ test("controls.batch runs a guarded semantic UI transaction and waits for verifi
   }
 });
 
+test("interactive snapshots expose product context and changing confirmation text", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const first = await bw.run(`
+      await page.setContent('<ul><li>Blue notebook $12 <button>Add notebook</button></li></ul><p role="status">Cart empty</p><p>Unrelated background prose</p>');
+      return snapshot({interactive: true});
+    `);
+    assert.equal(first.ok, true, first.error);
+    assert.match(first.result, /Blue notebook \$12/);
+    assert.match(first.result, /Cart empty/);
+    assert.doesNotMatch(first.result, /Unrelated background prose/);
+    const changed = await bw.run(`
+      await page.getByRole('status').evaluate(el => { el.textContent = 'Order 42 confirmed: $27'; });
+      return snapshot({interactive: true, diff: true});
+    `);
+    assert.equal(changed.ok, true, changed.error);
+    assert.match(changed.result, /Order 42 confirmed: \$27/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("action directories retain visible product context without repeating it or dumping articles", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<article><h2>Blue notebook</h2><p>$12 <span hidden>hidden-price-$99</span></p><button>Add notebook</button><button>More details</button></article><article><p>' + 'Unrelated article prose '.repeat(100) + '</p><a href="#read">Read article</a></article>');
+      return controls.directory();
+    `);
+    assert.equal(result.ok, true, result.error);
+    const controls = result.result.controls;
+    assert.equal(controls.find(entry => entry.target.name === 'Add notebook').context, 'Blue notebook $12');
+    assert.ok(!controls.find(entry => entry.target.name === 'More details').context);
+    assert.ok(!controls.find(entry => entry.target.name === 'Read article').context);
+    assert.ok(!JSON.stringify(controls).includes('hidden-price'));
+    assert.ok(!JSON.stringify(controls).includes('Unrelated article prose'));
+  } finally {
+    await bw.close();
+  }
+});
+
+test("checkout inspection covers plain, framed, shadow, and oversized receipt pages", opts, async () => {
+  const receipt = '<p class="receipt">Order NEW-123 accepted. Two notebooks and one pen. Total $27.</p>';
+  const pages = {
+    plain: `<main>${receipt}</main>`,
+    framed: `<iframe srcdoc="${receipt.replaceAll('"', '&quot;')}"></iframe>`,
+    shadow: '<section id="host"></section>',
+    oversized: `<main>${Array.from({ length: 250 }, (_, i) => `<p>Catalog item ${i}: ${'Description '.repeat(10)}</p>`).join('')}${receipt}</main>`,
+    crowded: `${Array.from({ length: 16 }, (_, i) => `<p role="status">Inventory area ${i}: available</p>`).join('')}${receipt}`,
+  };
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false });
+  try {
+    for (const [kind, html] of Object.entries(pages)) {
+      const prepared = await bw.run(`
+        await page.setContent(${JSON.stringify(html)});
+        ${kind === 'shadow' ? `await page.evaluate(markup => document.querySelector('#host').attachShadow({mode: 'open'}).innerHTML = markup, ${JSON.stringify(receipt)});` : ''}
+        return await controls.directory();
+      `);
+      assert.equal(prepared.ok, true, prepared.error);
+      if (kind === 'crowded') {
+        assert.equal(prepared.result.evidence.length, 12);
+        assert.ok(prepared.result.evidence.every(entry => !entry.text.includes('NEW-123')));
+      } else assert.deepEqual(prepared.result.evidence, []);
+      let checks = 0;
+      const model = {
+        async complete(request) {
+          if (request.tools.length) return { text: "Order NEW-123 accepted", toolCalls: [] };
+          checks++;
+          const input = JSON.parse(request.messages[0].text);
+          if (kind === 'crowded') assert.equal(input.evidence.document, undefined);
+          else assert.match(input.evidence.document, kind === 'oversized' ? /over the 3000 limit/ : /Order NEW-123 accepted/);
+          const observations = input.observations || [];
+          if (!observations.length) return { text: JSON.stringify({ complete: false, inspect: {} }), toolCalls: [] };
+          const last = observations.at(-1);
+          assert.equal(last.ok, true);
+          if (kind === 'oversized' && observations.length === 1) {
+            assert.match(last.content, /over the 6000 limit/);
+            return { text: JSON.stringify({ complete: false, inspect: { selector: '.receipt' } }), toolCalls: [] };
+          }
+          assert.match(last.content, /Order NEW-123 accepted/);
+          return { text: JSON.stringify({ complete: true }), toolCalls: [] };
+        },
+      };
+      const result = await runAgentTask({ task: "Check the displayed checkout receipt without making changes", model, browser: bw, liveView: false });
+      assert.equal(result.ok, true, `${kind}: ${result.answer}`);
+      assert.equal(result.answer, "Order NEW-123 accepted");
+      assert.equal(checks, kind === 'oversized' ? 3 : 2);
+      assert.equal(result.toolCalls, 0);
+    }
+  } finally {
+    await bw.close();
+  }
+});
+
+test("failed verification returns bounded observed evidence without replaying actions", opts, async () => {
+  let submissions = 0;
+  const server = await listen((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    if (request.url === '/submit') {
+      submissions++;
+      setTimeout(() => response.end('Order 42 confirmed: $27'), 100);
+      return;
+    }
+    response.end(`<p id="cart">Cart: Blue notebook, Blue notebook, Black pen; Total $27</p>
+      <p role="status" id="status"></p><button>Submit</button><script>
+      document.querySelector('button').onclick = async () => {
+        document.querySelector('#status').textContent = await fetch('/submit').then(r => r.text());
+      };
+      </script>`);
+  });
+  const bw = new BetterWright({
+    home: tempHome(), headless: true,
+    vault: { async handleRequest(_action, _payload, origin) { return { id: 'evidence-fixture', origin }; } },
+  });
+  try {
+    const first = await bw.run(`await page.goto(${JSON.stringify(server.origin)}); return 'ready'`);
+    assert.equal(first.ok, true, first.error);
+    assert.ok(first.ui.evidence.some(entry => entry.target.css === '#cart' && entry.text.includes('Blue notebook')));
+    assert.ok(first.ui.evidence.some(entry => entry.target.css === '#status' && entry.text === ''));
+    const incorrect = await bw.run(`throw new Error('Expected a quantity format that was never observed')`);
+    assert.equal(incorrect.ok, false);
+    assert.ok(incorrect.ui.evidence.some(entry => entry.text.includes('Blue notebook, Blue notebook')));
+    assert.equal(submissions, 0);
+
+    const result = await bw.run(`
+      await page.getByRole('button', {name: 'Submit', exact: true}).click();
+      await page.getByText('Order confirmed', {exact: true}).waitFor({timeout: 500});
+    `);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /waitFor/);
+    assert.equal(submissions, 1);
+    assert.ok(result.ui.evidence.some(entry => entry.target.css === '#status' && entry.text === 'Order 42 confirmed: $27'));
+    assert.deepEqual(result.ui.controls, []);
+    assert.equal(result.ui.truncated, true);
+
+    const success = await bw.run(`return await page.getByRole('status').innerText()`);
+    assert.equal(success.ok, true, success.error);
+    assert.equal(success.result, 'Order 42 confirmed: $27');
+    assert.ok(!('ui' in success));
+    assert.equal(submissions, 1);
+
+    const bounded = await bw.run(`
+      await page.setContent(Array.from({length: 12}, (_, i) => '<p role="status" id="result-' + i + '">' + 'x'.repeat(1_000) + '</p>').join(''));
+      throw new Error('test failure');
+    `);
+    assert.equal(bounded.ok, false);
+    assert.equal(bounded.ui.evidence.length, 4);
+    assert.ok(bounded.ui.evidence.every(entry => entry.text.length <= 300));
+
+    const secret = 'verification-evidence-synthetic-secret-0123456';
+    const redacted = await bw.run(`
+      await credentials.save({category: 'api-credential', fields: {secret: ${JSON.stringify(secret)}}});
+      await page.setContent(${JSON.stringify(`<p role="status">${secret}</p>`)});
+      throw new Error('test failure');
+    `);
+    assert.equal(redacted.ok, false);
+    assert.ok(redacted.ui.evidence.length > 0);
+    assert.ok(!JSON.stringify(redacted).includes(secret));
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("CLI run preserves JSON values in compact and explicit pretty output", opts, async () => {
+  const home = tempHome();
+  const cli = path.resolve(import.meta.dirname, "../../dist/bin/betterwright.js");
+  const code = 'return { nested: { text: "hello\\nworld" }, items: [1, 2] }';
+  const run = (extra) => spawnSync(process.execPath, [cli, "run", "--no-daemon", ...extra, "-c", code], {
+    encoding: "utf8", timeout: 20_000, env: { ...process.env, BETTERWRIGHT_HOME: home },
+  });
+  const compact = run([]);
+  const pretty = run(["--pretty"]);
+  assert.equal(compact.status, 0, compact.stderr);
+  assert.equal(pretty.status, 0, pretty.stderr);
+  assert.equal(compact.stdout.trim().split("\n").length, 1);
+  assert.ok(pretty.stdout.trim().split("\n").length > 1);
+  const decoded = JSON.parse(compact.stdout);
+  const indented = JSON.parse(pretty.stdout);
+  assert.equal(decoded.ok, true);
+  assert.deepEqual(decoded.result, { nested: { text: "hello\nworld" }, items: [1, 2] });
+  assert.deepEqual(decoded.result, indented.result);
+  assert.deepEqual(Object.keys(decoded).sort(), Object.keys(indented).sort());
+});
+
 test("ordinary navigation attaches one compact UI directory automatically", opts, async () => {
   let probes = 0;
   const site = await listen((request, response) => {
@@ -1537,6 +1796,89 @@ test("ordinary navigation attaches one compact UI directory automatically", opts
     assert.equal(nextPath.ui.protocol, "betterwright-ui/1");
     assert.equal(probes, 2);
   } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("automatic UI avoids duplicate observations and bounds fallback context", opts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url === "/webagents.md" || request.url === "/.well-known/webagents.json") {
+      response.writeHead(404).end("missing");
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end(`<h1>Catalog</h1><div role="status">Catalog ready</div>${Array.from({ length: 40 }, (_, i) =>
+      `<label>Product ${i}<select><option>${"Long option ".repeat(12)}</option><option>Second</option></select></label>`).join("")}`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true, policy: new NetworkPolicy({ allowLoopback: true }) });
+  try {
+    const extracted = await bw.run(`await page.goto('${site.origin}/observed'); return { heading: await page.locator('h1').innerText() }`);
+    assert.equal(extracted.ok, true, extracted.error);
+    assert.deepEqual(extracted.result, { heading: "Catalog" });
+    assert.equal(extracted.ui.protocol, "betterwright-ui/1");
+    assert.ok(JSON.stringify(extracted.ui).length <= 2_400);
+    assert.equal((await bw.run("return page.url()")).ui, undefined);
+
+    const fallback = await bw.run(`return await page.goto('${site.origin}/unobserved')`);
+    assert.equal(fallback.ok, true, fallback.error);
+    assert.equal(fallback.result.type, "Response");
+    assert.ok(JSON.stringify(fallback.ui).length <= 2_400);
+    assert.equal(fallback.ui.truncated, true);
+    assert.ok(fallback.ui.controls.length > 0 && fallback.ui.controls.length < 40);
+    const full = await bw.run("const directory = await controls.directory(); return { count: directory.controls.length, first: directory.controls[0] }");
+    assert.equal(full.ok, true, full.error);
+    assert.equal(full.result.count, 36);
+    assert.equal(full.result.first.options.length, 2);
+    assert.deepEqual(fallback.ui.controls[0].target, full.result.first.target);
+    assert.equal(full.ui, undefined);
+    const returned = await bw.run(`await page.goto('${site.origin}/explicit-directory'); return await controls.directory()`);
+    assert.equal(returned.ok, true, returned.error);
+    assert.equal(returned.ui, undefined, "do not append another directory even if the full result spills");
+
+    const lean = await bw.run(`await page.goto('${site.origin}/lean'); return { heading: await page.locator('h1').innerText() }`, { automaticUI: false });
+    assert.equal(lean.ok, true, lean.error);
+    assert.equal(lean.ui, undefined);
+    const resumed = await bw.run("return page.url()");
+    assert.equal(resumed.ui.protocol, "betterwright-ui/1", "opt-out must not consume the announcement");
+    const failed = await bw.run("throw new Error('required check failed')", { automaticUI: false });
+    assert.equal(failed.ok, false);
+    assert.ok(failed.ui.evidence.some((entry) => entry.text.includes("Catalog ready")));
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("default navigation reaches a usable document while subresources are still loading", opts, async () => {
+  const pending = [];
+  const site = await listen((request, response) => {
+    if (request.url === "/slow.png") {
+      pending.push(response);
+      return;
+    }
+    if (request.url === "/webagents.md" || request.url === "/.well-known/webagents.json") {
+      response.writeHead(404).end("missing");
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end('<h1>Ready</h1><img src="/slow.png">');
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true, policy: new NetworkPolicy({ allowLoopback: true }) });
+  try {
+    const opened = await bw.run(`await page.goto('${site.origin}/default', { timeout: 2000 }); return { heading: await page.locator('h1').innerText() }`);
+    assert.equal(opened.ok, true, opened.error);
+    assert.deepEqual(opened.result, { heading: "Ready" });
+    assert.ok(pending.length > 0, "the subresource is still pending");
+    const reloaded = await bw.run("await page.reload({ timeout: 2000 }); return { heading: await page.locator('h1').innerText() }");
+    assert.equal(reloaded.ok, true, reloaded.error);
+    const tab = await bw.run(`const tab = await openPage('${site.origin}/tab', { timeout: 2000 }); return { heading: await tab.locator('h1').innerText() }`);
+    assert.equal(tab.ok, true, tab.error);
+    const explicit = await bw.run(`await page.goto('${site.origin}/explicit', { waitUntil: 'load', timeout: 300 }); return 'loaded'`);
+    assert.equal(explicit.ok, false);
+    assert.match(explicit.error, /Timeout.*300ms/i);
+  } finally {
+    for (const response of pending) response.end();
     await bw.close();
     await site.close();
   }
@@ -1629,7 +1971,7 @@ test("WebAgents auto-discovery executes one same-origin operation DAG", opts, as
     policy: new NetworkPolicy({ allowLoopback: true }),
   });
   try {
-    const opened = await bw.run(`await page.goto('${site.origin}/tickets'); return page.url()`);
+    const opened = await bw.run(`await page.goto('${site.origin}/tickets'); return page.url()`, { automaticUI: false });
     assert.equal(opened.ok, true, opened.error);
     assert.equal(opened.webagents.protocol, "webagents/0.1");
     assert.deepEqual(opened.webagents.actions.map((action) => action.name), ["resolve", "status"]);
@@ -2133,6 +2475,63 @@ test("downloadPolicy deny rejects even trusted approval", opts, async () => {
   }
 });
 
+test("agent waits for an off-screen confirmation and captures viewport proof in one turn", opts, async () => {
+  let submissions = 0;
+  const server = await listen((request, response) => {
+    if (request.url === "/submit") {
+      submissions++;
+      setTimeout(() => response.end("Order 1 confirmed: $27"), 150);
+      return;
+    }
+    response.setHeader("content-type", "text/html");
+    response.end(`<!doctype html><style>
+      body { margin: 0; }
+      #spacer { height: 3000px; }
+      #confirmation { height: 100vh; box-sizing: border-box; padding: 20px; background: rgb(12, 186, 120); }
+    </style><button>Place test order</button><div id="spacer"></div><div id="confirmation" role="status"></div>
+    <script>
+      document.querySelector('button').onclick = async () => {
+        document.querySelector('#confirmation').textContent = await fetch('/submit', {method: 'POST'}).then(r => r.text());
+      };
+    </script>`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  const model = scriptedAgentModel([{
+    text: "",
+    toolCalls: [{
+      id: "order",
+      name: "browser",
+      input: { code: `
+        await page.goto(${JSON.stringify(server.origin)});
+        await page.getByRole('button', {name: 'Place test order'}).click();
+        const confirmation = page.getByRole('status').filter({hasText: 'Order 1 confirmed: $27'});
+        await confirmation.waitFor();
+        const text = await confirmation.innerText();
+        await confirmation.scrollIntoViewIfNeeded();
+        await screenshot({kind: 'proof'});
+        return {finalAnswer: text};
+      ` },
+    }],
+  }]);
+  try {
+    const result = await runAgentTask({ task: "Place one test order and prove its confirmation", browser: bw, model });
+    assert.equal(result.ok, true);
+    assert.equal(result.answer, "Order 1 confirmed: $27");
+    assert.equal(result.steps, 1);
+    assert.equal(model.seen.length, 1);
+    assert.equal(submissions, 1);
+    assertRgbaClose(firstPngPixel(result.proof), [12, 186, 120, 255]);
+    const image = fs.readFileSync(result.proof);
+    const viewport = await bw.run("return page.evaluate(() => ({width: innerWidth, height: innerHeight}))");
+    assert.equal(viewport.ok, true, viewport.error);
+    assert.equal(image.readUInt32BE(16), viewport.result.width);
+    assert.equal(image.readUInt32BE(20), viewport.result.height);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
 test("screenshot without an extension still yields a png", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
@@ -2249,6 +2648,8 @@ test("bot challenges in a cross-origin frame are detected", opts, async () => {
   try {
     const result = await bw.run(`
       await page.goto(${JSON.stringify(site.origin)});
+      // DOMContentLoaded does not imply that a cross-origin frame is ready.
+      await page.frameLocator('iframe').getByRole('heading', { name: 'Verify you are human', exact: true }).waitFor();
       const frames = page.frames();
       return frames.map(frame => frame.url());
     `);
@@ -3137,6 +3538,93 @@ test("model code cannot reach CDP or Playwright private channels", opts, async (
   }
 });
 
+test("console history is opt-in, bounded, and scoped to the current navigation", opts, async () => {
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end(request.url === "/first"
+      ? '<script>console.warn("first-warning"); throw new Error("first-error")</script>'
+      : '<script>console.info("second-page")</script>');
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const first = await bw.run(`await page.goto(${JSON.stringify(`${server.origin}/first`)}); return 'loaded'`);
+    assert.equal(first.ok, true, first.error);
+    assert.ok(!("console" in first));
+    const history = await bw.run(`return {
+      console: (await page.consoleMessages({filter: 'since-navigation'})).map(m => ({level: m.type(), text: m.text(), location: m.location()})),
+      errors: (await page.pageErrors({filter: 'since-navigation'})).map(e => e.message),
+    }`);
+    assert.equal(history.ok, true, history.error);
+    assert.ok(history.result.console.some(m => m.text === "first-warning" && m.level === "warning"));
+    assert.ok(history.result.console.some(m => m.location.url === `${server.origin}/first`));
+    assert.ok(history.result.errors.includes("first-error"));
+
+    const noisy = await bw.run(`await page.evaluate(() => {
+      for (let i = 0; i < 220; i++) console.debug('noise-' + i);
+      console.error('latest-error-' + 'x'.repeat(2_000));
+    }); return 'generated'`);
+    assert.equal(noisy.ok, true, noisy.error);
+    assert.ok(!("console" in noisy));
+    const bounded = await bw.run(`const messages = await page.consoleMessages(); return {
+      retained: messages.length,
+      errors: messages.filter(m => m.type() === 'error').slice(-10).map(m => m.text().slice(0, 1_000)),
+    }`);
+    assert.equal(bounded.ok, true, bounded.error);
+    assert.ok(bounded.result.retained <= 200);
+    assert.equal(bounded.result.errors.length, 1);
+    assert.equal(bounded.result.errors[0].length, 1_000);
+    assert.match(bounded.result.errors[0], /^latest-error-/);
+
+    const next = await bw.run(`await page.goto(${JSON.stringify(`${server.origin}/second`)}); return 'loaded'`);
+    assert.equal(next.ok, true, next.error);
+    const scoped = await bw.run(`return {
+      console: (await page.consoleMessages({filter: 'since-navigation'})).map(m => m.text()),
+      errors: (await page.pageErrors({filter: 'since-navigation'})).map(e => e.message),
+    }`);
+    assert.equal(scoped.ok, true, scoped.error);
+    assert.ok(scoped.result.console.includes("second-page"));
+    assert.ok(!scoped.result.console.some(text => /first-warning|latest-error|noise-/.test(text)));
+    assert.deepEqual(scoped.result.errors, []);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("historical console messages and page errors redact handled vault secrets", opts, async () => {
+  const secret = "console-history-synthetic-secret-0123456";
+  const server = await listen((_request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end("<main>Console redaction fixture</main>");
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    vault: { async handleRequest(_action, _payload, origin) { return { id: "console-fixture", origin }; } },
+  });
+  try {
+    const generated = await bw.run(`
+      await page.goto(${JSON.stringify(server.origin)});
+      await credentials.save({category: 'api-credential', fields: {secret: ${JSON.stringify(secret)}}});
+      await page.addScriptTag({content: ${JSON.stringify(`console.error(${JSON.stringify(secret)}); throw new Error(${JSON.stringify(secret)});`)}});
+      return 'generated';
+    `);
+    assert.equal(generated.ok, true, generated.error);
+    const result = await bw.run(`return {
+      console: await page.consoleMessages({filter: 'since-navigation'}),
+      errors: (await page.pageErrors({filter: 'since-navigation'})).map(e => ({message: e.message, stack: e.stack})),
+    }`);
+    assert.equal(result.ok, true, result.error);
+    assert.ok(result.result.console.length > 0);
+    assert.ok(result.result.errors.length > 0);
+    assert.ok(!JSON.stringify(result).includes(secret));
+    assert.match(JSON.stringify(result.result), /REDACTED/i);
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
 test("page.on collects page console and pageerror for the current snippet", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
@@ -3636,6 +4124,45 @@ test("Cookie Sync installs an HttpOnly cookie and persists it across restart", o
   }
 });
 
+test("native Cookie Sync reads a live SQLite WAL and authenticates after target restart", opts, async () => {
+  const home = tempHome();
+  const cookieFile = path.join(home, "cookies.sqlite");
+  const db = new DatabaseSync(cookieFile);
+  const sentinel = "synthetic-native-cookie";
+  db.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE moz_cookies (id INTEGER PRIMARY KEY, originAttributes TEXT NOT NULL DEFAULT '',
+      name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER, lastAccessed INTEGER,
+      creationTime INTEGER, isSecure INTEGER, isHttpOnly INTEGER, inBrowserElement INTEGER,
+      sameSite INTEGER, rawSameSite INTEGER, schemeMap INTEGER);`);
+  db.prepare("INSERT INTO moz_cookies VALUES (1, '', 'native_auth', ?, '127.0.0.1', '/', ?, 0, 0, 0, 1, 0, 1, 1, 1)")
+    .run(sentinel, Math.floor(Date.now() / 1000) + 3600);
+  const server = await listen((request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end(request.headers.cookie?.includes(`native_auth=${sentinel}`) ? "authenticated" : "signed out");
+  });
+  const config = { home, headless: true, adBlock: false, vault: false };
+  const browser = new BetterWright(config);
+  browser._extractCookieSync = async (options) => normalizeCookieSnapshot(
+    await fromPath({ path: cookieFile, timeoutMs: 10000 }), normalizeCookieSyncOptions(options));
+  try {
+    const result = await browser.syncCookies({ source: { browser: "firefox" }, domains: ["127.0.0.1"] });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.synced, 1);
+    assert.equal(JSON.stringify(result).includes(sentinel), false);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM moz_cookies").get().count, 1);
+    const first = await browser.run(`await page.goto(${JSON.stringify(server.origin)}); return page.locator('body').innerText();`);
+    assert.equal(first.ok, true, first.error);
+    assert.equal(first.result, "authenticated");
+    await browser.close();
+    const again = new BetterWright(config);
+    try {
+      const result = await again.run(`await page.goto(${JSON.stringify(server.origin)}); return page.locator('body').innerText();`);
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result, "authenticated");
+    } finally { await again.close(); }
+  } finally { db.close(); await browser.close(); await server.close(); }
+});
+
 test("Cookie Sync refuses a batch that could evict target cookies", opts, async () => {
   const sentinel = `cookie-capacity-${Date.now()}`;
   const home = tempHome();
@@ -3983,4 +4510,272 @@ test("optional ad blocker covers pages, nested frames and popups while preservin
       }
     }
   } finally { await site.close(); }
+});
+
+
+test("UI discovery feeds an ordered batch while unrelated requests stay pending", opts, async () => {
+  let backgroundFinished = false;
+  const server = await listen((request, response) => {
+    if (request.url === "/background") {
+      const timer = setTimeout(() => { backgroundFinished = true; response.end("done"); }, 4_000);
+      response.on("close", () => clearTimeout(timer));
+      return;
+    }
+    if (request.url !== "/batch") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end(`<label>Name <input></label><label>Region <select><option value="n">North</option><option value="s">South</option></select></label><button>Save</button><output role="status">Waiting</output><script>
+      document.querySelector('button').onclick = () => {
+        fetch('/background');
+        setTimeout(() => document.querySelector('output').textContent = 'Saved ' + document.querySelector('input').value + ' ' + document.querySelector('select').value, 80);
+      };
+    </script>`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const discovered = await bw.run(`await page.goto('${server.origin}/batch'); return controls.directory();`);
+    assert.equal(discovered.ok, true, discovered.error);
+    assert.equal(discovered.ui, undefined);
+    const directory = discovered.result;
+    const [name, region, save] = directory.controls;
+    assert.deepEqual(region.options, [["North", "n", true], ["South", "s", false]]);
+    const operations = [
+      { id: "name", action: "fill", target: name.target, value: "Riley" },
+      { id: "region", action: "select", target: region.target, value: "s" },
+      { id: "save", action: "click", target: save.target },
+      { id: "verify", action: "read", target: directory.evidence[0].target, value: "Saved Riley s" },
+    ];
+    const result = await bw.run(`return controls.batch(${JSON.stringify(operations)}, {allowWrites:true, returnDirectory:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, "Saved Riley s");
+    assert.equal(backgroundFinished, false, "verification must not wait for unrelated background requests");
+    assert.equal(result.result.ui.controls[0].value, "Riley");
+    const actual = await bw.run(`return { name: await page.getByLabel('Name').inputValue(), region: await page.getByLabel('Region').inputValue() };`);
+    assert.deepEqual(actual.result, { name: "Riley", region: "s" });
+  } finally {
+    await bw.close();
+    await server.close();
+  }
+});
+
+test("zero-pacing batches auto-wait for later controls and stop on ambiguity", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<button id="next">Continue</button><div id="details"></div><output role="status">Waiting</output><script>document.querySelector("#next").onclick=()=>setTimeout(()=>{document.querySelector("#details").innerHTML="<label>Code <input></label><button id=finish>Finish</button>"; document.querySelector("#finish").onclick=()=>document.querySelector("output").textContent="Done "+document.querySelector("input").value},100)</script>');
+      return controls.batch([
+        {id:'next', action:'click', target:{role:'button', name:'Continue', exact:true}},
+        {id:'code', action:'fill', target:{label:'Code', exact:true}, value:'C-42'},
+        {id:'finish', action:'click', target:{role:'button', name:'Finish', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Done C-42'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, "Done C-42");
+    const failed = await bw.run(`
+      await page.setContent('<label>Name <input></label><button>Save</button><button>Save</button><output role="status">Waiting</output>');
+      return controls.batch([
+        {id:'name', action:'fill', target:{label:'Name'}, value:'Kept'},
+        {id:'save', action:'click', target:{role:'button', name:'Save', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Saved'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(failed.ok, false);
+    assert.match(failed.error, /matched 2 elements/);
+    assert.match(failed.error, /Completed operations: \["name"\]/);
+    const actual = await bw.run(`return await page.getByLabel('Name').inputValue()`);
+    assert.equal(actual.result, "Kept");
+  } finally {
+    await bw.close();
+  }
+});
+
+
+test("long-form discovery finds distant fields and keeps the submit button", opts, async () => {
+  let submissions = 0;
+  let saved;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      let data = "";
+      request.on("data", (chunk) => { data += chunk; });
+      request.on("end", () => { submissions++; saved = JSON.parse(data); response.end("ok"); });
+      return;
+    }
+    if (request.url !== "/preferences") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    const fields = Array.from({length:80}, (_, i) => `<label>Preference ${i + 1}<select name="p${i + 1}"><option>Daily</option><option>Weekly</option><option>Off</option></select></label>`).join("");
+    response.end(`<form>${fields}<button>Save preferences</button></form><output role="status"></output><script>document.querySelector('form').onsubmit=async e=>{e.preventDefault();await fetch(location.pathname,{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});document.querySelector('output').textContent='Saved successfully'}</script>`);
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const opened = await bw.run(`await page.goto('${server.origin}/preferences'); return page.url()`);
+    assert.equal(opened.ok, true, opened.error);
+    assert.ok(opened.ui.controls.some((control) => control.target.name === "Save preferences"));
+    const found = await bw.run(`return controls.directory({query:['Preference 73', 'Preference 79', 'Save preferences']});`);
+    assert.equal(found.ok, true, found.error);
+    assert.equal(found.result.truncated, false);
+    assert.equal(found.result.controls.length, 3);
+    assert.equal(submissions, 0);
+    const [first, second, save] = found.result.controls;
+    const operations = [
+      {id:'first', action:'select', target:first.target, value:'Off'},
+      {id:'second', action:'select', target:second.target, value:'Weekly'},
+      {id:'save', action:'click', target:save.target},
+      {id:'verify', action:'read', target:{role:'status'}, value:'Saved successfully'},
+    ];
+    const result = await bw.run(`return controls.batch(${JSON.stringify(operations)}, {allowWrites:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(submissions, 1);
+    assert.equal(Object.keys(saved).length, 80);
+    for (let i = 1; i <= 80; i++) assert.equal(saved[`p${i}`], i === 73 ? "Off" : i === 79 ? "Weekly" : "Daily");
+    const invalid = await bw.run(`return controls.directory({query:42});`);
+    assert.equal(invalid.ok, false);
+    assert.match(invalid.error, /query must be/);
+  } finally { await bw.close(); await server.close(); }
+});
+
+
+test("a success message already visible before a batch does not bypass pending writes", opts, async () => {
+  let committed = false;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      setTimeout(() => { committed = true; response.end("ok"); }, 350);
+      return;
+    }
+    if (request.url !== "/save-again") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end('<button onclick="fetch(location.pathname,{method:\'POST\'})">Save</button><output role="status">Saved</output>');
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/save-again');
+      return controls.batch([
+        {id:'save', action:'click', target:{role:'button', name:'Save', exact:true}},
+        {id:'verify', action:'read', target:{role:'status'}, value:'Saved'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(committed, true, "a pre-existing success message must not skip a pending write");
+  } finally { await bw.close(); await server.close(); }
+});
+
+
+test("query discovery preserves duplicate target positions before filtering and truncation", opts, async () => {
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const opened = await bw.run(String.raw`
+      await page.setContent('<button hidden aria-label="Submit">Hidden</button>' +
+        Array.from({length:120}, (_, i) => '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send item '+i+'</button>').join('') +
+        '<button aria-label="Submit" onclick="document.querySelector(\'output\').textContent=this.textContent">Send invoice</button><output role="status">Waiting</output>');
+      return controls.directory({query:'invoice'});
+    `);
+    assert.equal(opened.ok, true, opened.error);
+    assert.equal(opened.result.controls.length, 1);
+    const target = opened.result.controls[0].target;
+    assert.deepEqual(target, {label:'Submit', exact:true, nth:121});
+    const result = await bw.run(`return controls.batch([
+      {id:'send', action:'click', target:${JSON.stringify(target)}},
+      {id:'verify', action:'read', target:{role:'status'}, value:'Send invoice'},
+    ], {allowWrites:true});`);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.verify.text, 'Send invoice');
+  } finally { await bw.close(); }
+});
+
+
+test("observation returns delayed server evidence without inventing a confirmation", opts, async () => {
+  let commits = 0;
+  const receipt = `Receipt ${Date.now()}`;
+  const server = await listen((request, response) => {
+    if (request.method === "POST") {
+      setTimeout(() => { commits++; response.end(receipt); }, 300);
+      return;
+    }
+    if (request.url !== "/observe") { response.writeHead(404).end(); return; }
+    response.setHeader("content-type", "text/html");
+    response.end(`<button>Submit</button><output role="status">Waiting</output><script>
+      document.querySelector('button').onclick = async () => {
+        const response = await fetch(location.pathname,{method:'POST'});
+        document.querySelector('output').textContent = await response.text();
+      };
+    </script>`);
+  });
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/observe');
+      return controls.batch([
+        {id:'submit', action:'click', target:{role:'button',name:'Submit',exact:true}},
+      ], {allowWrites:true, observe:true, returnDirectory:false});
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(commits, 1);
+    assert.equal(result.result.verification, "observed");
+    assert.equal(result.result.results.submit.clicked, true);
+    assert.ok(result.result.ui.evidence.some((entry) => entry.text === receipt));
+    const asserted = await bw.run(`return controls.batch([
+      {id:'verify',action:'read',target:{role:'status'},value:'impossible confirmation'},
+    ], {observe:true});`);
+    assert.equal(asserted.ok, false, "observation must still enforce supplied assertions");
+    assert.match(asserted.error, /impossible confirmation/);
+    const password = await bw.run(`
+      await page.setContent('<label>Password <input type="password"></label>');
+      return controls.batch([{id:'secret',action:'fill',target:{label:'Password'},value:'test-only'}], {allowWrites:true,observe:true});
+    `);
+    assert.equal(password.ok, false);
+    assert.match(password.error, /password/i);
+  } finally { await bw.close(); await server.close(); }
+});
+
+
+test("batch reads assert live values and selected labels rather than inactive markup", opts, async () => {
+  const bw = new BetterWright({home:tempHome(), headless:true});
+  try {
+    const result = await bw.run(`
+      await page.setContent('<label>Phase <select><option value="waiting">Waiting</option><option value="ready">Ready label</option></select></label><label>Notes <textarea>Original note</textarea></label>');
+      await page.evaluate(() => {
+        document.querySelector('textarea').value = 'Edited note';
+        setTimeout(() => document.querySelector('select').value = 'ready', 150);
+        setTimeout(() => document.querySelector('textarea').value = 'Original note', 300);
+      });
+      return controls.batch([
+        {id:'phase',action:'read',target:{role:'combobox',name:'Phase',exact:true},value:'Ready label'},
+        {id:'notes',action:'read',target:{role:'textbox',name:'Notes',exact:true},value:'Original note'},
+      ]);
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.results.phase.value, 'ready', 'an unselected option must not satisfy a read');
+    assert.equal(result.result.results.phase.text, 'Ready label');
+    assert.equal(result.result.results.notes.value, 'Original note', 'initial textarea markup must not satisfy a read');
+  } finally { await bw.close(); }
+});
+
+
+test("reading an edited field does not bypass a subsequent pending submission", opts, async () => {
+  let committed = false;
+  const server = await listen((request, response) => {
+    if (request.method === 'POST') {
+      setTimeout(() => {committed = true; response.end('ok');}, 350);
+      return;
+    }
+    if (request.url !== '/field-submit') {response.writeHead(404).end(); return;}
+    response.setHeader('content-type','text/html');
+    response.end(`<label>Name <input value="Before"></label><button>Submit</button><script>
+      document.querySelector('button').onclick = () => fetch(location.pathname,{method:'POST'});
+    </script>`);
+  });
+  const bw = new BetterWright({home:tempHome(),headless:true});
+  try {
+    const result = await bw.run(`
+      await page.goto('${server.origin}/field-submit');
+      return controls.batch([
+        {id:'edit',action:'fill',target:{label:'Name',exact:true},value:'After'},
+        {id:'submit',action:'click',target:{role:'button',name:'Submit',exact:true}},
+        {id:'verify',action:'read',target:{label:'Name',exact:true},value:'After'},
+      ], {allowWrites:true});
+    `);
+    assert.equal(result.ok,true,result.error);
+    assert.equal(result.result.results.verify.value,'After');
+    assert.equal(committed,true,'a field edited before Submit must not bypass that pending write');
+  } finally {await bw.close();await server.close();}
 });

@@ -4,9 +4,14 @@ BetterWright hands a browser to automated, sometimes model-authored, code. Its
 threat model and the controls that enforce it are documented in
 [docs/architecture.md](docs/architecture.md#security-model). In short:
 
-- **The network floor** (metadata endpoints and private networks blocked at the
-  resolver, transport proxy, and policy layers) is the real boundary and fails
-  closed.
+- **The network floor** is the real boundary for locally launched browsers and
+  guarded Electron attachments and fails closed. Cloud metadata is always
+  blocked there; private networks and loopback are allowed by default. Set both
+  `allowPrivateNetwork: false` and `allowLoopback: false` to block those too.
+  Ordinary remote CDP/provider browsers are outside the local transport guard:
+  supported Playwright routing checks still apply, but the transport and
+  DNS-rebinding guarantees do not. See [provider boundaries](docs/browser-providers.md#what-changes-with-a-remote-browser)
+  and [Electron network safety](docs/electron-host.md#ownership-and-network-safety).
 - **The sandbox** removes the escape-hatch APIs from model code as defense in
   depth. It is not, and does not claim to be, a `node:vm` security boundary.
 - **The credential vault** encrypts records at rest, URL-gates login lookup,
@@ -60,9 +65,11 @@ Be clear about what this does and does not change:
   and therefore model-authored snippet code can address — cannot route to.
   Snippets still get metadata only.
 - **It does not defend against a hostile shell.** Anyone who can run
-  `betterwright vault` can already read `vault.key` and `vault.enc` as the same
-  OS user. If you give an agent an unrestricted shell tool on a machine with a
-  populated vault, that agent can read the vault, with or without this command.
+  `betterwright vault` can read a legacy `vault.key` and `vault.enc` as the same
+  OS user. Master-password setup removes that plaintext key and wraps it using
+  scrypt (N=131072, r=8, p=1) and AES-256-GCM. This protects a locked vault's
+  files, not a compromised host: an unrestricted shell can modify the runtime
+  or attack a process after its owner unlocks it.
   Scope the agent's shell, run it as a different OS user, or use an external
   vault adapter whose key material lives somewhere the agent cannot reach.
 
@@ -74,6 +81,11 @@ cannot collect a password by mistake. Overriding it takes a deliberate
 `vault type` are exempt because the secret goes to the clipboard or the focused
 window and never to stdout. Every reveal is written to the metadata-only audit
 log (`betterwright vault audit`).
+
+Unlocks expire after 15 minutes by default. A lock changes the persisted unlock
+epoch, so other instances reject cached keys on their next vault access.
+Already-filled pages and active browser sessions are not revoked by a vault
+lock. Their redaction material remains active until those pages close.
 
 ## Reporting a vulnerability
 

@@ -107,7 +107,7 @@ export type CookieSyncResult =
       warnings?: CookieSyncWarning[];
       profileMode?: "persistent" | "ephemeral";
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; cookieReaderCode?: string; cookiePermissionDenied?: boolean; cookieReaderStage?: string };
 
 export interface CookieSourceBrowser {
   id: string;
@@ -122,6 +122,10 @@ export interface CookieSourceProfile {
 }
 
 export interface BetterWrightOptions {
+  /** Trusted single-tab adapter. Network guard setup is mandatory; model credential writes are disabled. */
+  hostTarget?: import("./host.js").HostTarget;
+  /** Exact staged files a trusted host authorizes for upload. Requires hostTarget. */
+  hostUploadFiles?: readonly string[];
   home?: string;  /**
    * Named persistent browser profile inside the home: a separate identity,
    * with its own cookie jar, its own profile lock, and its own session daemon,
@@ -241,14 +245,14 @@ export interface BetterWrightOptions {
    * A headless Chromium target never becomes hidden — `document.visibilityState`
    * stays `"visible"` for the life of the page — so every open page keeps its
    * frame loop running at the host refresh rate whether or not anything is
-   * driving it. Parking disables page script and pauses animation timelines
-   * once a session's last execution unwinds, and restores both before the next
-   * one begins, so the quiet window is exactly the model's thinking time.
+   * driving it. After a short idle delay, parking freezes the native page
+   * lifecycle and pauses animation timelines. Pending timers and animation-frame
+   * registrations are preserved and resume before the next execution.
    *
-   * Never applies in headed mode or while a live view is streaming. The one
-   * behavior change: a page animated by a `requestAnimationFrame` chain does
-   * not resume that chain after being parked (CSS/Web Animations do). Also
-   * settable per host with `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`.
+   * Never applies in headed mode or while a live view is running; active
+   * recording pages are also exempt. Set false when an application must keep
+   * progressing between calls. Also settable per host with
+   * `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`.
    */
   parkBackgroundPages?: boolean;
   /**

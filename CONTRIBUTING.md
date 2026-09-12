@@ -31,7 +31,10 @@ bun run release:check
 ```
 
 For the complete managed-browser integration suite, install the runtime and run
-`BETTERWRIGHT_REQUIRE_BROWSER=1 BETTERWRIGHT_CHROMIUM_ROOT=off bun run test`.
+`BETTERWRIGHT_REQUIRE_BROWSER=1 bun run test`. Leave
+`BETTERWRIGHT_CHROMIUM_PATH` / `BETTERWRIGHT_CHROMIUM_ROOT` unset to use the
+managed installation, or point them at a real artifact; `off` is no longer
+supported.
 The policy, vault, prompt, and challenge suites run anywhere.
 
 One note on running the suite locally: **do not run the tests as root.**

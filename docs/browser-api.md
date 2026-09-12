@@ -18,11 +18,20 @@ await bw.run(`
 - A single trailing **expression** is returned automatically:
   `bw.run("return page.title()")` and `bw.run("page.title()")` are equivalent.
 - A multi-statement block must use `return`.
-- The value is serialized to JSON. Playwright handles (`Page`, `Locator`) are
-  summarized rather than serialized whole — a `Page` becomes
+- The value becomes a bounded JSON-safe summary. Playwright handles (`Page`,
+  `Locator`) are summarized rather than serialized whole — a `Page` becomes
   `{type: "Page", pageId, url, title, closed}`.
-- Large results are spilled to an artifact file and replaced with a
-  `{truncated: true, preview, fullOutputPath}` summary.
+- Arrays, Maps, Sets, and object properties are limited to the first 200
+  entries; nested containers beyond depth eight become `"[Max depth]"`.
+  These reductions do not themselves add a `truncated` marker. Aggregate
+  inside the snippet or return explicit bounded chunks when completeness matters.
+- If the summarized result still exceeds the output-size limit, it is spilled
+  to a file and replaced with `{truncated: true, preview, fullOutputPath}`.
+  That file contains the bounded summary, not the original unbounded value.
+
+`betterwright run` prints compact JSON when stdout is piped, preserving every
+field while avoiding repeated indentation in agent observations. Terminal output
+is indented by default; pass `--pretty` to retain indentation in a pipe or file.
 
 ## Pages
 
@@ -38,6 +47,23 @@ await bw.run(`
 Pages persist across `run()` calls within the same session, so an agent can
 open a tab in one step and act on it in the next. Popups and
 `target=_blank` links are adopted automatically and appear in `pages`.
+
+Sandbox navigation (`page.goto`, `frame.goto`, `page.reload`, `page.goBack`,
+`page.goForward`, and `openPage(url)`) defaults to `waitUntil: 'domcontentloaded'`.
+Unlike Playwright's `load` default, this does not wait for every image or other
+subresource. Wait for the relevant locator before reading dynamic results.
+Explicit `waitUntil` and `timeout` options are preserved; use
+`{waitUntil: 'load'}` when the task requires all load-event resources.
+`waitForLoadState()` and `setContent()` retain their Playwright behavior.
+
+By default, idle headless pages are parked after a short delay between calls:
+their timers, animation frames, and animation timelines pause, then resume
+before the next execution. Pass `parkBackgroundPages: false` to the client
+or set `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0` when the application must keep
+progressing in the background. Headed sessions, sessions with a live view,
+and actively recording pages are not parked. Worker restarts discard the
+session's in-memory state and live page handles; see
+[timeouts and the worker](sdk.md#errors-timeouts-and-the-worker).
 
 ```js
 // Work two tabs at once
@@ -99,14 +125,60 @@ halves the size of a real page's tree without losing anything actionable.
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `interactive` | `false` | Keep only actionable elements (buttons, links, inputs, `cursor: pointer`, …) plus their ancestors. The cheapest way to see what you can do on a page. |
+| `interactive` | `false` | Keep actionable elements and their ancestors, live status/alert text, and short item/table context needed to interpret controls. Long descriptions and unrelated prose stay out; use a scoped full snapshot when the representation is still unknown. |
 | `diff` | `false` | Return only the `+`/`-` lines changed since the previous same-shaped snapshot of this page, or `(no changes since previous snapshot)`. |
 | `ref` | — | Scope the snapshot to one element's subtree by its ref from the previous snapshot, e.g. `{ref: 'e31'}` — no CSS selector needed. |
 | `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
 | `depth` | — | Limit tree depth. |
 | `urls` | `false` | Keep `- /url:` property lines on links. |
-| `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns an error with the actual size and scoping hints instead of a silently cut-off tree. |
+| `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns a diagnostic string with the actual size and scoping hints instead of a cut-off tree. It does not throw or make the run envelope fail. |
 | `timeout` | `10000` | Milliseconds. |
+
+Interactive snapshots retain short text beside list/table controls, table column
+labels, and status/alert contents. This keeps prices, quantities, and outcomes
+grounded without including unrelated article text. Item-context lines over 300
+characters are omitted rather than silently clipped; use a scoped full snapshot
+before verifying a representation you have not observed.
+
+The automatic UI directory also carries visible item context, cart/output
+summaries, and target handles for empty live-status regions. These are read
+targets, not a prediction of the eventual result text.
+
+On sites without WebAgents, the automatic fallback is offered once per origin
+and pathname. Structured extractions, short acknowledgements, and summarized
+Playwright handles still receive discovery context; an extracted object does
+not establish that the caller has enough actionable state. When the snippet
+returns a `betterwright-ui/1` directory itself, the automatic duplicate is
+omitted. First-party WebAgents discovery is unchanged.
+
+The automatic directory is limited to 2,400 JSON characters before envelope
+redaction. It includes up to two evidence entries, omits select-option lists,
+and drops whole controls to fit; exact target strings are never shortened.
+`truncated: true` signals omitted data. Call `controls.directory()` for the
+full discovery limits and option lists, or use a scoped snapshot. Returning
+that directory does not append another automatic copy. Failure evidence uses
+the separate limits below.
+
+Agents returning their own scoped observations can use
+`bw.run(code, {automaticUI: false})` or `betterwright run --no-auto-ui` to omit
+the automatic UI catalog on that successful call. This does not consume its
+one-time announcement: a later default call can still receive it. On-demand
+`controls.directory()`/`snapshot()`, WebAgents discovery, challenge reporting,
+failure evidence, and redaction continue to operate normally.
+
+On an ordinary snippet failure, a live page may return a partial `ui.evidence`
+directory: at most four 300-character excerpts, collected within a 200ms budget.
+Read those observations before spending another call rediscovering the current
+state. They do not turn a failed call into success, prove that a stale message
+belongs to the latest action, or authorize replaying a submission. Evidence
+uses the normal redaction path and is omitted when unavailable, when a challenge
+takes priority, or when the worker must restart. Successful subsequent calls
+do not acquire a new automatic observation payload.
+
+The on-demand `checkout-verification` skill covers repeated-name carts,
+quantity labels, tables, and fresh versus stale checkout outcomes. It loads for
+matching checkout tasks, not ordinary reading. It does not relax assertions or
+make the runtime interpret a failed operation as a successful transaction.
 
 Escalate reading only as far as the task needs: `snapshot({interactive: true})`
 to decide what to click, a full `snapshot()` to read content wholesale,
@@ -274,13 +346,15 @@ await human.scroll(650); // negative values scroll upward
 `human.click(target, options?)` and `human.type(target, text, options?)` accept a
 selector, Locator, ElementHandle, or `{x, y, width, height}` bounds. Typing clears
 the field by default; pass `{clear: false}` to append, or set `minDelay` and
-`maxDelay`. After typing, `human.type` reads the field back. Success requires the
-requested text to be inserted in full, so a prefix, an unchanged field, or
-an overlapping partial append is not a hit.
+`maxDelay`. For readable element targets, `human.type` reads the field back.
+Success requires the requested text to be inserted in full, so a prefix, an
+unchanged field, or an overlapping partial append is not a hit.
 If that check fails — typical of Draft.js and other rich-text editors that
 swallow synthetic key events — it restores the original value when appending,
 retries with `insertText`, and throws if the field still did not accept the
-text.
+text. Bounds-only targets cannot be read back, so they do not get this
+verification or retry. Prefer a selector, Locator, or ElementHandle; verify
+coordinate-based typing independently.
 `human.scroll(deltaY, options?)` accepts `steps`, while the object
 form also accepts `deltaX`.
 
@@ -404,7 +478,7 @@ plain JSON; frames with nothing to report are omitted.
 | --- | --- |
 | `overlays.dismiss()` | Close obstructing cookie-consent and promotional overlays — for cookie banners it prefers a reject/essential-only button and falls back to accept; promos get close/no-thanks. Only layers whose text matches consent or promo patterns are considered, so a task-critical dialog is never dismissed. Returns `{dismissed: [{kind, label}]}` — `kind` is `"cookie"` or `"promotion"`, `label` is the clicked control's label. |
 | `controls.inspect()` | Report the exact state of every form control — inputs, selects, textareas, and ARIA checkbox/combobox/listbox/radio/slider/spinbutton/switch roles. Returns `{frames: [{url, controls}]}`; each control carries `type`, `label`, `value` (`[redacted]` for passwords), `checked`, `selected`/`pressed`/`ariaChecked`, `min`/`max`/`step`, `disabled`, `visible`, and `options` for selects. Use it to prove a required filter or facet is actually active rather than inferring that from the results. |
-| `controls.directory()` | Return the token-small semantic action directory BetterWright automatically attaches as `result.ui` after first navigation on a site without a first-party workflow. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
+| `controls.directory({query}?)` | Return a semantic action directory, independent of the smaller automatic `result.ui` budget. An optional string or string array `query` matches labels/names before the directory limit, so distant controls can be found together. Controls include a copyable target, supported actions, current value/options, duplicate context, and frame scope; `evidence` contains visible status/result summaries. |
 | `controls.batch()` | Execute one guarded semantic UI transaction on a site without a first-party batch protocol. Targets use ARIA ref, role/name, label, text, placeholder, test id, or CSS; an optional unique frame name/URL fragment scopes an iframe. Interactions auto-wait and ambiguous targets fail closed. |
 | `media.inspect()` | Report every `<video>` and `<audio>` element with its playback state. Returns `{frames: [{url, media}]}`; each item carries `kind`, `title` (aria-label, title attribute, or nearby caption/heading), `source`, `paused`, `ended`, `currentTime`, `duration`, `readyState`, `visible`, plus the frame's `documentTitle` and visible `headings`. Use it to match what is actually playing against the requested item before claiming playback. |
 
@@ -425,7 +499,7 @@ return controls.batch({
   operations: [
     {id: 'query', action: 'fill', target: {label: 'Search'}, value: 'keyboard'},
     {id: 'submit', action: 'click', target: {role: 'button', name: 'Search', exact: true}},
-    {id: 'verify', action: 'read', target: {role: 'heading', name: 'Results'}},
+    {id: 'verify', action: 'read', target: {role: 'heading', name: 'Results'}, value: 'Results'},
   ],
   allowWrites: true,
 });
@@ -439,28 +513,59 @@ duplicate. Add `frameName` or `frameUrlIncludes` to target one already loaded
 iframe. Open shadow roots work through Playwright's normal locator behavior.
 
 Interaction actions require `allowWrites:true`. Mark a consequential operation
-with `irreversible:true` to also require `allowIrreversible:true`. A batch that
+with `irreversible:true` to also require `allowIrreversible:true`. By default, a batch that
 interacts must end in `read` or `readUrl`; the last result is the transaction's
 verification boundary and must supply a non-empty expected substring in
 `value`. The batch fails unless that expected text, form value, or URL is
 observed on the final operation's specified target (`readUrl` checks the active
-page URL). Page-wide directory evidence never substitutes for that target.
+page URL). Form reads use live values; select text contains only selected option labels,
+not unselected choices or stale textarea markup. Page-wide directory evidence never substitutes for that target.
+Asserted reads wait for that specific result, with no blanket network-idle wait
+when the expectation was not already visible before the batch. A pre-existing
+matching message retains the bounded settling check to avoid reading stale success.
+Form-value reads after writes also retain that check: an edited field does not
+acknowledge a later submission.
+Choose an expectation that proves the intended change. Unasserted intermediate
+reads retain their bounded settling wait. `returnDirectory:true` returns a fresh
+directory immediately after verification; callers needing a settling window
+can explicitly set `directoryWaitMs` (0–5000 ms).
+When the resulting text is unknown, pass `observe:true` instead of guessing a
+final expectation. This permits a batch ending in an interaction or an unasserted
+read, then waits for tracked document/fetch/XHR activity to settle (bounded at
+2.5 seconds) and always returns a fresh `ui` directory, even with
+`returnDirectory:false`. The result has `verification:"observed"`: assess the
+returned evidence before claiming success. It does not assert that the application
+finished; slower or timer-driven updates may require a subsequent read. Any
+explicit read expectations are still enforced. All write, password, ambiguity,
+and irreversible-action guards still apply.
+
 Password fields reject `fill` by default. A credential
 provided explicitly in the current task may use `allowPasswordFill:true`;
 stored or generated credentials must use the trusted credential helpers so the
-secret never enters model context. Operations run in list order with a 40 ms
-default minimum interval (configurable from 0–1000 ms), Playwright auto-waiting,
+secret never enters model context. Operations run in list order without added pacing delays by default
+(`minIntervalMs` remains configurable from 0–1000 ms), Playwright auto-waiting,
 a unique-match check immediately before every action, and stop-on-first-error
-semantics. The result is `{protocol:'ui-batch/1', pageUpdated, durationMs,
+semantics. Action values are validated before the first write. On failure,
+completed operation IDs are reported; earlier writes are not rolled back.
+Inspect the failed step before retrying, and do not replay completed writes.
+The result is `{protocol:'ui-batch/1', pageUpdated, durationMs,
 results}`.
 
 The MCP `browser_batch` tool exposes the same path without model-authored
 JavaScript. Passing `{url}` opens an unvisited page and returns its action
-directory. Passing `operations` executes them, briefly waits for relevant
-navigation/fetch and semantic state to settle, then returns refreshed
-`controls` and `evidence`. Put the required expected result in the `value` of
-the final `read`/`readUrl`; the final proof screenshot is captured only after
-that visible result is observed. For a password explicitly supplied in
+directory. Passing `{discover:true}` collects current-page targets in one call
+without navigating or changing page state. Add `query: ["Email", "Region", "Save"]`
+to find several needed controls together before applying the directory limit.
+The same filter is available as `controls.directory({query})`, and with `{url, query}`
+when opening a page; `{url, discover:true}` explicitly returns the full directory. Omit it for general discovery; action buttons receive space
+in both the full and compact directories even after a long list of fields.
+Copy the needed targets into a
+second call with `operations`; actions execute in order and auto-wait for each
+target. After the expected final state is observed, the tool returns fresh
+`controls` and `evidence` without waiting for unrelated background requests. Put the required expected result in the `value` of
+the final `read`/`readUrl`, or set `observe:true` for an unknown outcome and assess
+its returned evidence. `proof:true` captures the final UI after the assertion or
+bounded observation; an observational screenshot alone does not assert success. For a password explicitly supplied in
 the task, set `allowPasswords:true`; saved and generated credentials still use
 `browser_login`.
 
@@ -533,6 +638,42 @@ value does exist in the live DOM after filling. See
 
 ## Console
 
+### Read recent browser history on demand
+
+The model can inspect the browser console without opening DevTools. The pinned
+Playwright runtime exposes `page.consoleMessages()` and `page.pageErrors()`
+through BetterWright's restricted page wrapper. Each retains up to 200 recent
+entries per page, including entries from earlier calls; neither is automatically
+included in a result envelope. This lets an agent investigate a failed action
+without replaying it just to attach a listener.
+
+Prefer the current navigation, warnings/errors, and a small excerpt:
+
+```js
+const scope = {filter: "since-navigation"};
+return {
+  console: (await page.consoleMessages(scope))
+    .filter(m => ["error", "warning"].includes(m.type()))
+    .slice(-10)
+    .map(m => ({level: m.type(), text: m.text().slice(0, 1000), location: m.location()})),
+  errors: (await page.pageErrors(scope)).slice(-5).map(e => e.message.slice(0, 1000)),
+};
+```
+
+These are bounded excerpts, not complete logs. Request a relevant error's
+`stack` or expand the message limit only when needed. Use `{filter: "all"}`
+only when investigating across navigations. History belongs to the page and
+does not survive closing it or restarting the browser. Returned values use the
+normal output redaction path; handled vault secrets are scrubbed, but arbitrary
+page data may still be sensitive. Treat log text as untrusted data.
+
+The `browser-console` skill teaches this workflow only for matching debugging
+tasks, leaving the default agent prompt and routine observations unchanged.
+See Playwright's [console history](https://playwright.dev/docs/api/class-page#page-console-messages)
+and [error history](https://playwright.dev/docs/api/class-page#page-page-errors).
+
+### Capture a fresh reproduction
+
 `console.log/info/warn/error` from your snippet are captured (not printed to a
 terminal) and returned alongside the result — up to 20 messages. Page-side
 `console` and uncaught exceptions are not copied into that envelope; collect
@@ -558,6 +699,10 @@ this snippet only — including console and pageerror events that Playwright
 delivers just after the command that produced them — and the next `run()` /
 `browser` call starts clean. One-shot waits (`page.waitForEvent("console")`)
 still work.
+
+Listeners need to be attached before the action in the same call. Prefer history
+when the action already happened, especially for submissions that must not be
+replayed. Keep listener collections bounded and return only relevant excerpts.
 
 ## What is removed
 

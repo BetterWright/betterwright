@@ -17,6 +17,7 @@ import vm from "node:vm";
 import type { Page } from "playwright-core";
 import { getDomain } from "tldts";
 import type { RecordingStatus } from "../types/recording.js";
+import { compactAutomaticUI, hasReturnedUIDirectory } from "./automatic-ui.js";
 import {
   cookieSyncConsentTarget,
   redactProviderSecrets,
@@ -116,6 +117,7 @@ import {
 import { buildLaunchIdentityPlan, resolveGeoIdentity } from "./launch-identity.js";
 import { createLiveViewServer } from "./live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.js";
+import { applyNavigationDefaults, navigationOptions } from "./navigation-defaults.js";
 import {
   createSnippetPageEvents,
   isSnippetPageEventMethod,
@@ -123,6 +125,7 @@ import {
 import {
   dismissObstructiveOverlays,
   inspectActionDirectory,
+  inspectActionEvidence,
   inspectControls,
   inspectMedia,
 } from "./page-inspect.js";
@@ -636,8 +639,8 @@ function sendResult(message) {
     message.events = [];
     message.pages = (message.pages || []).slice(0, 4);
   }
-  // Empty collections carry no information; both clients default them.
-  for (const key of Object.keys(message)) {
+  // Empty results are meaningful. Only omit optional diagnostic collections.
+  for (const key of ["console", "events", "pages", "artifacts", "warnings", "challenges"]) {
     if (Array.isArray(message[key]) && message[key].length === 0)
       delete message[key];
   }
@@ -927,12 +930,12 @@ function lastModelActivityFor(page, origin) {
   );
 }
 
-function disposeVaultCapture() {
+async function disposeVaultCapture() {
   const capture = vaultCapture;
   vaultCapture = null;
   if (capture) {
     try {
-      capture.dispose();
+      await capture.dispose();
     } catch {
       /* teardown must never block launch or shutdown */
     }
@@ -2254,8 +2257,16 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
     // The guard proxy only bounds locally launched browsers. A remote CDP
     // browser runs on the provider's side of the WebSocket; its traffic never
     // touches this listener, so it is not even started (see the warnings).
-    if (!remoteCdp) {
+    if (!remoteCdp || launchConfig.hostOwnedTarget) {
       transportProxyPort = await guardProxy.ensure();
+    }
+    if (launchConfig.hostOwnedTarget) {
+      const connection = await rpc("host_connect", { proxyUrl: `socks5://127.0.0.1:${transportProxyPort}` }, null);
+      if (!connection?.cdpUrl) throw new Error("Host target connection failed.");
+      providerPlan = { ...providerPlan, cdpUrl: connection.cdpUrl, headers: connection.headers || {}, warnings: [] };
+      providerWarnings = [];
+      backendSelectionNote = "Host-owned tab: network traffic uses the policy guard; tab lifetime belongs to the host.";
+      redactProviderSecrets(trackSecret, providerPlan);
     }
 
     const headless = launchConfig.headless !== false;
@@ -2366,11 +2377,13 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
       try {
         const browser = await chromium.connectOverCDP(
           providerPlan.cdpUrl,
-          Object.keys(providerPlan.headers || {}).length
-            ? { headers: providerPlan.headers }
-            : {},
+          { headers: providerPlan.headers || {}, noDefaults: launchConfig.hostOwnedTarget === true },
         );
         const existing = browser.contexts()[0];
+        if (launchConfig.hostOwnedTarget && (!existing || browser.contexts().length !== 1 || existing.pages().length !== 1)) {
+          await browser.close();
+          throw new Error("Host target must expose exactly one context and one page.");
+        }
         browserContext =
           existing ||
           (await browser.newContext({
@@ -2441,8 +2454,10 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
           ? path.dirname(launchConfig.runtimeDir)
           : path.dirname(profileLock.profileDir);
         vaultCapture = installVaultCapture(launchedContext, {
-          vaultCallAtOrigin: (session, origin, action, payload) =>
-            vaultCallAtOrigin(session, origin, action, payload),
+          capturePolicy: () => rpc("vault_capture_policy", {}, null),
+          vaultCallAtOrigin: (session, origin, action, payload) => action === "save"
+            ? rpc("vault_capture_save", { origin, payload }, null)
+            : vaultCallAtOrigin(session, origin, action, payload),
           sessionForPage: (page) =>
             sessionFor(pageToSession.get(page) || "default"),
           trackSecret,
@@ -2688,6 +2703,11 @@ function assertPageHandle(value, helper) {
 }
 
 function validateMethodPaths(kind, property, args) {
+  if (launchConfig.hostOwnedTarget &&
+      ((kind === "BrowserContext" && ["newPage", "close"].includes(property)) ||
+       (kind === "Page" && property === "close"))) {
+    throw new Error("Host-owned tabs must be opened or closed by the host.");
+  }
   if (kind === "Page" && property === "pdf" && args[0]?.path)
     assertArtifactWritePath(args[0].path);
   if (
@@ -2703,7 +2723,12 @@ function validateMethodPaths(kind, property, args) {
         : args[1];
     const files = Array.isArray(supplied) ? supplied : [supplied];
     for (const file of files) {
-      if (isString(file)) assertReadableBrowserPath(file);
+      if (launchConfig.hostOwnedTarget) {
+        if (!isString(file) || !launchConfig.hostUploadFiles?.includes(file) ||
+            fs.realpathSync(file) !== file || !fs.statSync(file).isFile()) {
+          throw new Error("Host upload requires an exact approved regular staged file.");
+        }
+      } else if (isString(file)) assertReadableBrowserPath(file);
     }
   }
   if (["Page", "Frame"].includes(kind) && property === "goto") {
@@ -2984,6 +3009,7 @@ function wrap(value, realm) {
         const kind = objectKind(value);
         validateMethodArguments(property, prepared);
         validateMethodPaths(kind, property, prepared);
+        applyNavigationDefaults(kind, property, prepared);
         let result;
         if (kind === "Page" && property === "close") {
           result = stopPageRecording(value).then(() => member.apply(value, prepared));
@@ -2995,6 +3021,18 @@ function wrap(value, realm) {
           result = setContentCompatible(value, prepared[0], prepared[1]);
         } else {
           result = member.apply(value, prepared);
+        }
+        if (["Keyboard", "Page", "Frame", "Locator"].includes(kind) &&
+            ["press", "pressSequentially", "type", "fill", "down"].includes(property) && result?.catch) {
+          result = result.catch(async (error) => {
+            // A failed chord can skip Playwright's key-up sequence.
+            const target: any = value;
+            const keyboard = kind === "Keyboard" ? target : kind === "Page" ? target.keyboard : target.page().keyboard;
+            for (const key of ["AltLeft", "AltRight", "ControlLeft", "ControlRight", "MetaLeft", "MetaRight", "ShiftLeft", "ShiftRight"]) {
+              await keyboard.up(key).catch(() => {});
+            }
+            throw error;
+          });
         }
         if (
           ["Request", "Response"].includes(kind) &&
@@ -4745,7 +4783,7 @@ async function unannouncedWebAgentsDirectory(session) {
   return discovered.manifest ? publicWebAgentsManifest(discovered.manifest) : null;
 }
 
-async function unannouncedUIDirectory(session) {
+async function unannouncedUIDirectory(session, result) {
   const page = session.pages.get(session.currentId);
   if (!page || page.isClosed()) return null;
   let key;
@@ -4760,8 +4798,9 @@ async function unannouncedUIDirectory(session) {
   const discovered = pageWebAgentsDiscovery.get(page);
   if (!discovered || discovered.manifest) return null;
   session.uiDirectoryAnnouncedOrigins.add(key);
+  if (hasReturnedUIDirectory(result)) return null;
   const directory = await inspectActionDirectory(page);
-  return directory.controls.length ? directory : null;
+  return directory.controls.length ? compactAutomaticUI(directory) : null;
 }
 
 async function inspectSiteAssets(page) {
@@ -4843,6 +4882,7 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.state = session.state;
   sandbox.pages = realm.makePages(getPages);
   sandbox.openPage = realm.safeFunction(async (url = null, options: any = {}) => {
+    if (launchConfig.hostOwnedTarget) throw new Error("Open another tab through the host.");
     if (session.pages.size >= MAX_PAGES_PER_SESSION) {
       throw new Error(
         `Browser page limit (${MAX_PAGES_PER_SESSION}) reached for this session.`,
@@ -4852,7 +4892,7 @@ function buildSandbox(session, consoleMessages, execution) {
     const page = adoptPage(rawPage, session.id);
     if (url) {
       assertModelNavigationUrl(url);
-      await page.goto(String(url), options);
+      await page.goto(String(url), navigationOptions(options));
     }
     return wrap(page, realm);
   });
@@ -4874,6 +4914,7 @@ function buildSandbox(session, consoleMessages, execution) {
     return wrap(entry[1], realm);
   });
   sandbox.closePage = realm.safeFunction(async (selector) => {
+    if (launchConfig.hostOwnedTarget) throw new Error("Close this tab through the host.");
     const target = selector === undefined ? session.currentId : selector;
     assertPageHandle(target, "closePage");
     const entries = [...session.pages.entries()];
@@ -5138,9 +5179,9 @@ function buildSandbox(session, consoleMessages, execution) {
     const page = await ensureSessionPage(session);
     return inspectControls(page);
   });
-  controls.directory = realm.safeFunction(async () => {
+  controls.directory = realm.safeFunction(async (options) => {
     const page = await ensureSessionPage(session);
-    return inspectActionDirectory(page);
+    return inspectActionDirectory(page, options);
   });
   controls.batch = realm.safeFunction(
     async (operationsValue, optionsValue: any = {}) => {
@@ -7867,9 +7908,9 @@ async function execute(message) {
     const summarized = await summarize(result);
     const challenges = await detectSessionChallenges(session);
     const webagents = await unannouncedWebAgentsDirectory(session).catch(() => null);
-    const ui = webagents
+    const ui = webagents || message.automaticUI === false
       ? null
-      : await unannouncedUIDirectory(session).catch(() => null);
+      : await unannouncedUIDirectory(session, summarized).catch(() => null);
     await enforceArtifactQuota(session);
 
     let publicResult = summarized;
@@ -7964,6 +8005,18 @@ async function execute(message) {
       error: redactText(failure?.message || String(failure)),
       restartWorker,
     };
+    const page = session.pages.get(session.currentId);
+    if (!restartWorker && !challenges.length && page && !page.isClosed()) {
+      const evidence = await Promise.race([
+        inspectActionEvidence(page, { maxEntries: 4, maxTextChars: 300 }),
+        hostDelay(200).then(() => []),
+      ]);
+      if (evidence.length) {
+        Object.assign(failureFields, {
+          ui: { protocol: "betterwright-ui/1", tool: "browser_batch", controls: [], evidence, truncated: true },
+        });
+      }
+    }
     sendResult(
       await buildEnvelope(
         session,
@@ -8253,9 +8306,10 @@ async function performShutdown() {
     /* parent/process exit */
   }
   await closeDownloadGuard();
-  disposeVaultCapture();
+  await disposeVaultCapture();
   try {
-    await browserContext?.close();
+    if (launchConfig?.hostOwnedTarget) await browserContext?.browser()?.close();
+    else await browserContext?.close();
   } catch {
     /* parent/process exit */
   }

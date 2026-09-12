@@ -99,9 +99,11 @@ export interface RunAgentTaskOptions {
   /** Override or disable the built-in vault. Ignored when an external browser is passed. */
   vault?: CredentialVault | false | null;
   /**
-   * Stop the run early: the in-flight model call or browser step is aborted,
-   * the loop returns a partial result with `reason: "interrupted"`, and the
-   * transcript is preserved so the session can pick up where it left off.
+   * Stop the run early and preserve the transcript with `reason: "interrupted"`.
+   * Model requests receive cancellation. An externally supplied browser's
+   * in-flight step is not aborted and may still finish or reach its worker
+   * timeout. A browser created by this loop is closed during cleanup.
+   * Interruption does not roll back page effects; verify state before replaying.
    */
   signal?: AbortSignal;
   onStep?: (event: AgentStepEvent) => void;
@@ -113,8 +115,9 @@ export interface RunAgentTaskOptions {
   /**
    * When provided, the loop exposes an `ask` tool so the model can put a
    * question to the user mid-task; the returned string is fed back as the
-   * answer. Omit it (the `exec` default) to run fully autonomously with no
-   * `ask` tool.
+   * answer. Without it, the loop can still ask through live-view chat when
+   * live view is available and `onStep` can surface the URL. Omit this handler
+   * and set `liveView: false` to disable human-input tools.
    */
   askUser?: (question: {
     question: string;
@@ -156,7 +159,9 @@ export interface AgentResult {
    * "interrupted" (the caller's `signal` stopped the run — the transcript is
    * preserved), "timeout" (wall-clock budget), "context_limit" (transcript
    * budget), "no_progress" (the same browser step failed identically five
-   * times in a row), "max_tokens" (the provider truncated the final response
+   * times in a row, or checkout verification reached an evidence or guardrail
+   * bound without completing),
+   * "max_tokens" (the provider truncated the final response
    * at the output-token limit — `answer` holds the fragment), "refusal" (the
    * model declined the task), "model_error" (a transient provider failure
    * survived the bounded retries — the transcript is preserved).

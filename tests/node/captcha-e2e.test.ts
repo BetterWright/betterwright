@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright } from "../../dist/src/index.js";
 import { isNumber } from "../../dist/src/untrusted-value.js";
+import { classifyCaptchaOutcome } from "./helpers/captcha-outcome.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -551,7 +552,7 @@ test(
           url: page.url(),
           detected,
           solved,
-          hasResponse: await page.locator('textarea[name="g-recaptcha-response"]').inputValue().catch(() => ""),
+          tokenLen: (await page.locator('textarea[name="g-recaptcha-response"]').inputValue().catch(() => "")).length,
         };
       `);
       assert.equal(result.ok, true, result.error);
@@ -562,11 +563,13 @@ test(
       console.log(
         "[live recaptcha]",
         JSON.stringify({
+          outcome: classifyCaptchaOutcome(result.result.solved.status, result.result.solved.stage, result.result.tokenLen),
+          serverAcceptance: "unverified",
           status: result.result.solved.status,
           stage: result.result.solved.stage,
           provider: result.result.solved.provider,
           attempts: result.result.solved.attempts?.length,
-          tokenLen: result.result.hasResponse?.length || 0,
+          tokenLen: result.result.tokenLen,
           present: result.result.detected?.present,
         }),
       );
@@ -587,7 +590,8 @@ test(
         await page.waitForTimeout(2_500);
         const detected = await captcha.detect();
         const solved = await captcha.solve({ timeout: 40_000, maxStages: 3 });
-        return { detected, solved, url: page.url() };
+        const tokenLen = (await page.locator('[name="h-captcha-response"]').inputValue().catch(() => "")).length;
+        return { detected, solved, tokenLen, url: page.url() };
       `);
       assert.equal(result.ok, true, result.error);
       assert.ok(["ready", "processing", "error"].includes(result.result.solved.status));
@@ -595,10 +599,13 @@ test(
       console.log(
         "[live hcaptcha]",
         JSON.stringify({
+          outcome: classifyCaptchaOutcome(result.result.solved.status, result.result.solved.stage, result.result.tokenLen),
+          serverAcceptance: "unverified",
           status: result.result.solved.status,
           stage: result.result.solved.stage,
           provider: result.result.solved.provider,
           widgets: result.result.detected?.widgets?.length,
+          tokenLen: result.result.tokenLen,
         }),
       );
     });
@@ -627,6 +634,8 @@ test(
       console.log(
         "[live turnstile]",
         JSON.stringify({
+          outcome: classifyCaptchaOutcome(result.result.solved.status, result.result.solved.stage, result.result.tokenLen),
+          serverAcceptance: "unverified",
           status: result.result.solved.status,
           stage: result.result.solved.stage,
           provider: result.result.solved.provider,

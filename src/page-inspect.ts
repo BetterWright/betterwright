@@ -1,3 +1,5 @@
+import { isRecord, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
+
 // Page-inspection helpers behind the worker's `overlays`, `controls`, and
 // `media` sandbox globals. Each takes a Playwright page and returns plain
 // JSON; they are kept out of worker.ts so the worker stays orchestration
@@ -176,7 +178,15 @@ export async function inspectControls(page) {
 // WebAgents manifest. It deliberately favors semantic locators that can be
 // copied verbatim into browser_batch and caps link-heavy pages so a generic
 // article never turns into a multi-thousand-token accessibility dump.
-export async function inspectActionDirectory(page) {
+export async function inspectActionDirectory(page, options: UntrustedValue = undefined) {
+  if (options !== undefined && !isRecord(options)) throw new TypeError("controls.directory options must be an object.");
+  const query = untrustedField(options, "query");
+  const queries = query === undefined ? [] : isString(query) ? [query] : query;
+  if (!Array.isArray(queries) || queries.length > 32 || queries.some((entry) =>
+    !isString(entry) || !entry.trim() || entry.length > 500)) {
+    throw new TypeError("controls.directory query must be a string or at most 32 non-empty strings of up to 500 characters.");
+  }
+  const terms = queries.map((entry) => String(entry).trim().toLowerCase());
   const controls: any[] = [];
   let truncated = false;
   const frames = page.frames();
@@ -186,7 +196,7 @@ export async function inspectActionDirectory(page) {
     if (name) frameNames.set(name, (frameNames.get(name) || 0) + 1);
   }
   for (const frame of frames) {
-    const entries = await frame.evaluate(() => {
+    const entries = await frame.evaluate((terms) => {
       const clean = (value, limit = 180) => String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
       const visible = (element) => {
         const style = getComputedStyle(element);
@@ -226,7 +236,7 @@ export async function inspectActionDirectory(page) {
       };
       const contexts = new Map<Element, string>();
       const contextFor = (element) => {
-        let root = element.closest("article,li,[role='listitem'],form,section");
+        let root = element.closest("article,li,[role='listitem'],tr,[role='row'],form,section");
         if (!root) {
           let cursor = element.parentElement;
           for (let depth = 0; cursor && depth < 4; depth += 1, cursor = cursor.parentElement) {
@@ -237,11 +247,18 @@ export async function inspectActionDirectory(page) {
         if (!root) return "";
         const cached = contexts.get(root);
         if (cached !== undefined) return cached;
-        const copy = root.cloneNode(true);
-        for (const control of copy.querySelectorAll(
-          "button,input,select,textarea,[role='button'],[role='link']",
-        )) control.remove();
-        const context = clean(copy.textContent, 180);
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const parts = [];
+        let length = 0;
+        for (let node = walker.nextNode(); node && length < 180; node = walker.nextNode()) {
+          const owner = node.parentElement;
+          if (!owner || !visible(owner) || owner.closest(
+            "button,input,select,textarea,a[href],[role='button'],[role='link'],script,style,noscript",
+          )) continue;
+          const text = clean(node.textContent, 180 - length);
+          if (text) { parts.push(text); length += text.length + 1; }
+        }
+        const context = parts.join(" ");
         contexts.set(root, context);
         return context;
       };
@@ -250,33 +267,70 @@ export async function inspectActionDirectory(page) {
         "[role='button']", "[role='checkbox']", "[role='combobox']",
         "[role='link']", "[role='radio']", "[role='searchbox']",
         "[role='slider']", "[role='spinbutton']", "[role='switch']", "[role='textbox']",
-      ].join(","))].filter(visible);
+      ].join(","))];
       const unique = [...new Set(candidates)].filter((element) =>
         !(element instanceof HTMLInputElement && element.type.toLowerCase() === "file"));
-      const primary = unique.filter((element) => roleFor(element) !== "link");
-      const links = unique.filter((element) => roleFor(element) === "link");
-      const selected = [...primary.slice(0, 36), ...links.slice(0, Math.max(0, 40 - primary.length))].slice(0, 40);
+      const identityFor = (element) => {
+        const role = roleFor(element);
+        const label = labelFor(element);
+        const placeholder = clean(element.getAttribute("placeholder"));
+        const formControl = element instanceof HTMLInputElement ||
+          element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement;
+        const buttonValue = element instanceof HTMLInputElement &&
+          ["button", "submit", "reset", "image"].includes(element.type.toLowerCase())
+          ? element.value
+          : "";
+        const name = clean(
+          element.getAttribute("aria-label") ||
+          label ||
+          element.getAttribute("alt") ||
+          (!formControl && element instanceof HTMLElement ? element.innerText : "") ||
+          buttonValue ||
+          element.getAttribute("title") ||
+          placeholder,
+        );
+        const method = ["combobox", "listbox"].includes(role) ? "role"
+          : label ? "label" : placeholder ? "placeholder" : "role";
+        const identity = method === "label" ? label : method === "placeholder" ? placeholder : `${role}\u0000${name}`;
+        return { role, label, placeholder, name, method, key: `${method}\u0000${identity}` };
+      };
+      // Keep selector positions across the whole frame before filtering or
+      // truncation. Label/placeholder locators also match hidden controls.
+      const identities = new Map(unique.map((element) => [element, identityFor(element)]));
+      const duplicates = new Map<string, Element[]>();
+      for (const element of unique) {
+        const entry = identities.get(element);
+        if (entry.method === "role" && !visible(element)) continue;
+        const group = duplicates.get(entry.key) || [];
+        group.push(element);
+        duplicates.set(entry.key, group);
+      }
+      // Filter before limiting: named controls near the end of a long page
+      // must be discoverable without returning every preceding control.
+      const matching = unique.filter((element) => {
+        if (!visible(element)) return false;
+        if (!terms.length) return true;
+        const text = [identities.get(element).label, element.getAttribute("placeholder"),
+          element.getAttribute("aria-label"), element.getAttribute("title"),
+          element instanceof HTMLElement ? element.innerText : element.textContent,
+        ].join(" ").toLowerCase();
+        return terms.some((term) => text.includes(term));
+      });
+      const primary = matching.filter((element) => identities.get(element).role !== "link");
+      const links = matching.filter((element) => identities.get(element).role === "link");
+      // Reserve action buttons, then fill the remaining slots in DOM order.
+      // Otherwise a submit button after many fields disappears from discovery.
+      const selectedPrimary = new Set(primary.filter((element) => identities.get(element).role === "button").slice(0, 8));
+      for (const element of primary) {
+        if (selectedPrimary.size >= 36) break;
+        selectedPrimary.add(element);
+      }
+      const selected = [...primary.filter((element) => selectedPrimary.has(element)), ...links.slice(0, 40 - selectedPrimary.size)];
       return {
-        total: unique.length,
+        total: matching.length,
         entries: selected.map((element) => {
-          const role = roleFor(element);
-          const label = labelFor(element);
-          const placeholder = clean(element.getAttribute("placeholder"));
-          const formControl = element instanceof HTMLInputElement ||
-            element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement;
-          const buttonValue = element instanceof HTMLInputElement &&
-            ["button", "submit", "reset", "image"].includes(element.type.toLowerCase())
-            ? element.value
-            : "";
-          const name = clean(
-            element.getAttribute("aria-label") ||
-            label ||
-            element.getAttribute("alt") ||
-            (!formControl && element instanceof HTMLElement ? element.innerText : "") ||
-            buttonValue ||
-            element.getAttribute("title") ||
-            placeholder,
-          );
+          const { role, label, placeholder, name, method, key } = identities.get(element);
+          const group = duplicates.get(key) || [element];
           const password = element instanceof HTMLInputElement && element.type.toLowerCase() === "password";
           const value = "value" in element
             ? password ? "[redacted]" : clean(element.value, 240)
@@ -289,6 +343,9 @@ export async function inspectActionDirectory(page) {
             label,
             placeholder,
             name,
+            method,
+            duplicateCount: group.length,
+            index: group.indexOf(element),
             value,
             checked: element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type)
               ? Boolean(element.checked)
@@ -296,34 +353,16 @@ export async function inspectActionDirectory(page) {
             disabled: "disabled" in element ? Boolean(element.disabled) : element.getAttribute("aria-disabled") === "true",
             options,
             context: contextFor(element),
+            itemContext: role !== "link" && Boolean(element.closest("article,li,[role='listitem'],tr,[role='row']")),
           };
         }).filter((entry) => !(["button", "link"].includes(entry.role) && !entry.name)),
       };
-    }).catch(() => ({ total: 0, entries: [] }));
+    }, terms).catch(() => ({ total: 0, entries: [] }));
     if (!entries.entries.length) continue;
     if (entries.total > entries.entries.length) truncated = true;
-    const methodFor = (entry) =>
-      ["combobox", "listbox"].includes(entry.role)
-        ? "role"
-        : entry.label
-          ? "label"
-          : entry.placeholder
-            ? "placeholder"
-            : "role";
-    const duplicateCounts = new Map();
+    const seenContexts = new Set();
     for (const entry of entries.entries) {
-      const method = methodFor(entry);
-      const value = method === "label" ? entry.label : method === "placeholder" ? entry.placeholder : `${entry.role}\u0000${entry.name}`;
-      const key = `${method}\u0000${value}`;
-      duplicateCounts.set(key, (duplicateCounts.get(key) || 0) + 1);
-    }
-    const seen = new Map();
-    for (const entry of entries.entries) {
-      const method = methodFor(entry);
-      const value = method === "label" ? entry.label : method === "placeholder" ? entry.placeholder : `${entry.role}\u0000${entry.name}`;
-      const key = `${method}\u0000${value}`;
-      const index = seen.get(key) || 0;
-      seen.set(key, index + 1);
+      const method = entry.method;
       const target: any = method === "label"
         ? { label: entry.label, exact: true }
         : method === "placeholder"
@@ -331,7 +370,7 @@ export async function inspectActionDirectory(page) {
           : entry.name
             ? { role: entry.role, name: entry.name, exact: true }
             : { role: entry.role, exact: true };
-      if ((duplicateCounts.get(key) || 0) > 1) target.nth = index;
+      if (entry.duplicateCount > 1) target.nth = entry.index;
       if (frame !== page.mainFrame()) {
         const frameName = frame.name();
         if (frameName && frameNames.get(frameName) === 1) target.frameName = frameName;
@@ -347,23 +386,40 @@ export async function inspectActionDirectory(page) {
       if (entry.checked !== undefined) compact.checked = entry.checked;
       if (entry.disabled) compact.disabled = true;
       if (entry.options) compact.options = entry.options;
-      if ((duplicateCounts.get(key) || 0) > 1 && entry.context) compact.context = entry.context;
+      if (entry.context && (entry.duplicateCount > 1 ||
+          (entry.itemContext && !entry.name.includes(entry.context) && !seenContexts.has(entry.context)))) {
+        compact.context = entry.context;
+        seenContexts.add(entry.context);
+      }
       controls.push(compact);
     }
   }
-  const evidence = await page.evaluate(() => {
-    const clean = (value, limit = 500) => String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+  return {
+    protocol: "betterwright-ui/1",
+    tool: "browser_batch",
+    controls,
+    evidence: await inspectActionEvidence(page),
+    truncated,
+  };
+}
+
+export async function inspectActionEvidence(page, { maxEntries = 12, maxTextChars = 500 } = {}) {
+  return page.evaluate(({ maxEntries, maxTextChars }) => {
+    const clean = (value) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxTextChars);
     const visible = (element) => {
       const style = getComputedStyle(element);
       return Boolean(element.getClientRects().length) && style.visibility !== "hidden" && style.display !== "none";
     };
-    const candidates = [...document.querySelectorAll([
+    const candidates = document.querySelectorAll([
       "[role='status']", "[role='alert']", "[aria-live]",
-      "[id*='summary' i]", "[id*='result' i]", "[id*='confirmation' i]",
-    ].join(","))].filter(visible).slice(0, 12);
-    return candidates.flatMap((element) => {
+      "output", "[id*='cart' i]", "[id*='summary' i]", "[id*='result' i]", "[id*='confirmation' i]",
+    ].join(","));
+    const evidence = [];
+    for (const element of candidates) {
+      if (evidence.length >= maxEntries) break;
+      if (!visible(element)) continue;
       const text = clean(element instanceof HTMLElement ? element.innerText : element.textContent);
-      if (!text) return [];
+      if (!text && !element.matches("[role='status'],[role='alert'],[aria-live]")) continue;
       const id = element.getAttribute("id");
       const role = element.getAttribute("role");
       const target = id
@@ -371,16 +427,10 @@ export async function inspectActionDirectory(page) {
         : role
           ? { role }
           : null;
-      return target ? [{ target, text }] : [];
-    });
-  }).catch(() => []);
-  return {
-    protocol: "betterwright-ui/1",
-    tool: "browser_batch",
-    controls,
-    evidence,
-    truncated,
-  };
+      if (target) evidence.push({ target, text });
+    }
+    return evidence;
+  }, { maxEntries, maxTextChars }).catch(() => []);
 }
 
 export async function inspectMedia(page) {

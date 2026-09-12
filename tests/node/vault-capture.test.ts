@@ -129,6 +129,7 @@ async function waitFor(condition, timeoutMs = 2_000) {
 type UntrustedValue = NonNullable<unknown> | null | undefined;
 
 interface HarnessOverrides {
+  capturePolicy?: () => Promise<{ offerSave: boolean; autosave: boolean }>;
   listRecords?: Array<{ username: string }>;
   pendingFails?: boolean;
   pendingRecords?: Array<{ pendingId: string; origin: string; username: string }>;
@@ -142,6 +143,7 @@ function isModelClock(value: number | (() => number) | undefined): value is () =
 }
 
 interface HarnessDeps {
+  capturePolicy?: () => Promise<{ offerSave: boolean; autosave: boolean }>;
   vaultCallAtOrigin: (
     session: UntrustedValue,
     origin: string,
@@ -170,6 +172,7 @@ function makeHarness(overrides: HarnessOverrides = {}) {
   const context = new FakeContext([page]);
   const calls = [];
   const deps: HarnessDeps = {
+    capturePolicy: overrides.capturePolicy,
     vaultCallAtOrigin: async (_session, origin, action, payload) => {
       calls.push({ kind: "vault", origin, action, payload });
       if (action === "list") return { credentials: overrides.listRecords || [] };
@@ -247,6 +250,31 @@ function emitPasswordFormScan(session, present) {
 
 const vaultSaves = (calls) =>
   calls.filter((call) => call.kind === "vault" && call.action === "save");
+
+test("disabled capture policy suppresses prompts and automatic saves", async () => {
+  const harness = makeHarness({ headed: true, modelAt: () => Date.now(),
+    capturePolicy: async () => ({ offerSave: false, autosave: false }) });
+  try {
+    const session = await attached(harness);
+    emitCapture(session);
+    emitNavigation(session, `${ORIGIN}/home`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(vaultSaves(harness.calls).length, 0);
+    assert.equal(session.promptCalls().length, 0);
+  } finally { harness.handle.dispose(); }
+});
+
+test("explicit autosave saves an accepted human login without a prompt", async () => {
+  const harness = makeHarness({ headed: true, modelAt: 0,
+    capturePolicy: async () => ({ offerSave: true, autosave: true }) });
+  try {
+    const session = await attached(harness);
+    emitCapture(session);
+    emitNavigation(session, `${ORIGIN}/home`);
+    assert.equal(await waitFor(() => vaultSaves(harness.calls).length === 1), true);
+    assert.equal(session.promptCalls().length, 0);
+  } finally { harness.handle.dispose(); }
+});
 
 test("model-driven capture is saved silently after navigation", async () => {
   const harness = makeHarness({ headed: false, modelAt: () => Date.now() });
@@ -447,7 +475,7 @@ test("an expired prompt cannot save afterwards", async () => {
 test("dispose detaches sessions and ignores later events", async () => {
   const harness = makeHarness({ headed: true, modelAt: () => Date.now() });
   const session = await attached(harness);
-  harness.handle.dispose();
+  await harness.handle.dispose();
   assert.equal(session.detached, true);
   emitCapture(session);
   emitNavigation(session, `${ORIGIN}/home`);
@@ -483,6 +511,63 @@ test("httpOrigin accepts only parseable http(s) URLs (shared with the worker)", 
   assert.equal(httpOrigin(""), "");
   assert.equal(httpOrigin(null), "");
   assert.equal(httpOrigin(undefined), "");
+});
+
+test("capture disposal waits for an in-flight attachment and is idempotent", async () => {
+  const page = new FakePage({ frame: { id: "frame-1", url: LOGIN_URL } });
+  const context = new FakeContext([page]);
+  const cdp = new FakeCDPSession(page);
+  let release: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  context.newCDPSession = async () => { await gate; return cdp; };
+  const handle = installVaultCapture(context, {});
+  const disposing = handle.dispose();
+  assert.equal(handle.dispose(), disposing);
+  release();
+  await disposing;
+  assert.equal(cdp.detached, true);
+  assert.equal(cdp.evaluateCalls.length, 0);
+  assert.equal(context.listenerCount("page"), 0);
+});
+
+test("native save prompts receive metadata only and cannot save after disposal", async () => {
+  const harness = makeHarness({ headed: true, modelAt: 0 });
+  await harness.handle.dispose();
+  let answer: (choice: string) => void;
+  let request;
+  const ready = new Promise<void>(resolve => {
+    harness.handle = installVaultCapture(harness.context, {
+      ...harness.deps,
+      onReady: resolve,
+      requestSave: metadata => { request = metadata; return new Promise<string>(resolveChoice => { answer = resolveChoice; }); },
+    });
+  });
+  await ready;
+  const session = harness.context.sessions.get(harness.page);
+  emitCapture(session);
+  emitNavigation(session, `${ORIGIN}/home`);
+  assert.equal(await waitFor(() => Boolean(request)), true);
+  assert.deepEqual(Object.keys(request).sort(), ["mode", "origin", "page", "username"]);
+  assert.equal(harness.handle.isBusy(harness.page), true);
+  await harness.handle.dispose();
+  answer("save");
+  await tick();
+  assert.equal(vaultSaves(harness.calls).length, 0);
+});
+
+test("disposal removes the installed sensor and suppresses a pending save", async () => {
+  const harness = makeHarness({ modelAt: () => Date.now() });
+  const cdp = await attached(harness);
+  const commands: string[] = [];
+  const send = cdp.send.bind(cdp);
+  cdp.send = async (method, params) => { commands.push(method); return send(method, params); };
+  emitCapture(cdp);
+  await harness.handle.dispose();
+  assert.ok(commands.includes("Page.removeScriptToEvaluateOnNewDocument"));
+  assert.ok(cdp.evaluateCalls.some(call => call.expression === "globalThis.__bwVaultDispose?.()"));
+  emitNavigation(cdp, `${ORIGIN}/home`);
+  await tick(100);
+  assert.equal(vaultSaves(harness.calls).length, 0);
 });
 
 // `generateAndFill` types its generated secret into the page, so the sensor
