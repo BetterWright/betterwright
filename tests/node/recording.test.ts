@@ -67,8 +67,10 @@ test("a static frame records real elapsed time and stop is idempotent", encoderO
   const cdp = new FakeCdp();
   const notifications = [];
   const recording = await startRecording({ cdp, path: output, options, maxBytes: 1_000_000, onStop: status => notifications.push(status) });
+  t.after(() => recording.stop());
   assert.equal(recording.status().state, "recording");
-  assert.equal(fs.statSync(output).mode & 0o777, 0o600);
+  // Windows reports synthetic POSIX mode bits; NTFS access is controlled by ACLs.
+  if (process.platform !== "win32") assert.equal(fs.statSync(output).mode & 0o777, 0o600);
   await delay(180);
   const first = recording.stop();
   assert.equal(recording.stop(), first);
