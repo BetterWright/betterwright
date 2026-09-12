@@ -145,9 +145,13 @@ Behavior differences to expect:
   targets and no longer need to be passed. Downloads are denied by the adapter
   itself (`will-download`), before the worker's CDP byte limit.
 - `hostUploadFiles` still applies, matched against the adapter's `uploadFiles`.
-- `syncCookies` works on a leased tab with `cookieImport: true` in the adapter
-  options; it needs no `cloudConsent`, reports `target: "host"`, and returns
-  `cookieImportDomains` for scoping the granted session access.
+- `syncCookies` on a leased tab requires the host-target Cookie Sync fix
+  ([#186](https://github.com/BetterWright/betterwright/pull/186), unreleased as
+  of 2.7.1). With it, pass `cookieImport: true` in the adapter options; the
+  call needs no `cloudConsent`, reports `target: "host"`, and returns
+  `cookieImportDomains` for scoping the granted session access. Without it the
+  adapter has no `cookieImport` option and the worker rejects the call with
+  `Cookie Sync to cdp:127.0.0.1:1 requires consent for that exact target.`
 - `browser.run(code, { automaticUI: false })` omits the automatic UI catalog
   on calls that do not need it; it defaults to on.
 - The hand-rolled bridge (capability-authenticated loopback WebSocket, CDP
