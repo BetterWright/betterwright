@@ -9,7 +9,20 @@ Pinned revisions:
 
 ## Checkout and patch
 
-Copy `gclient-153.py` to `<work>/.gclient`, run `gclient sync --no-history`, then:
+Copy `gclient-153.py` to `<work>/.gclient`. Before syncing, apply the small
+`depot-tools-custom-deps.patch` to depot_tools so it honors `custom_deps: None`
+for CIPD packages as well as Git dependencies:
+
+```sh
+git -C /path/to/depot_tools apply /absolute/path/to/betterwright/scripts/chromium/depot-tools-custom-deps.patch
+```
+
+The config omits old Windows Chrome installers used only by upstream updater
+integration tests. They are not inputs to the `chrome` and `inspector-test`
+release targets. The depot_tools revision used for this build is
+`36a8df4ad006eaa0572fb446edb8145fe5403592`.
+
+Run `gclient sync --no-history` and `gclient runhooks`, then:
 
 ```sh
 scripts/chromium/apply-patches.sh <work>/src

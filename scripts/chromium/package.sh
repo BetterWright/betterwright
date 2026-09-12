@@ -4,7 +4,7 @@ platform="${1:?usage: package.sh <linux|mac|win> /path/to/chromium/src/out/dir /
 out="${2:?missing output directory}"
 dest="${3:?missing archive path}"
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-chromium_version="151.0.7922.108"
+chromium_version="153.0.8010.36"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 case "$platform" in

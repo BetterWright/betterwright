@@ -27,7 +27,9 @@ and validates the replacement before swapping the platform directory, then
 records the version, release tag, asset name, and verified checksum in
 `.betterwright-install.json` beside the platform's bundle or binary. `setup` and
 `update` replace older or unverified installations without `--force`; a download
-or extraction failure preserves the previous files.
+or extraction failure preserves the previous files. If the process stops during
+the directory swap, the next setup restores the prior installation before
+attempting any download, including when offline.
 
 Default discovery requires a receipt matching the package's pinned release.
 After updating BetterWright, run `betterwright setup` before launching: an older

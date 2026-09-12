@@ -168,6 +168,17 @@ export async function installChromiumFork({
   const root = defaultChromiumForkRoot({ home });
   const layout = PLATFORM_LAYOUT[key];
   const binaryPath = path.join(root, layout);
+  const platformName = layout.split(path.sep)[0];
+  const platformDir = path.join(root, platformName);
+  const backup = path.join(root, `.previous-${platformName}`);
+
+  // The backup has a stable, platform-specific name so a new process can
+  // recover after termination between the two directory renames. Do this
+  // before downloading: an offline retry must still restore the prior files.
+  if (!fs.existsSync(platformDir) && fs.existsSync(backup)) {
+    fs.renameSync(backup, platformDir);
+    log(`Recovered BetterChromium installation after an interrupted update: ${platformDir}`);
+  }
 
   if (!force && existsSync(binaryPath)) {
     const windowsDll = path.join(path.dirname(binaryPath), "chrome_elf.dll");
@@ -185,6 +196,7 @@ export async function installChromiumFork({
       if (assembly.repaired) {
         log(`Repaired BetterChromium Windows side-by-side manifest: ${assembly.manifest}`);
       }
+      fs.rmSync(backup, { recursive: true, force: true });
       log(`BetterChromium already installed: ${binaryPath}`);
       log(`Re-run with --force to re-download ${BETTERWRIGHT_CHROMIUM_VERSION}.`);
       return { binary: binaryPath, root, skipped: null, alreadyInstalled: true };
@@ -214,7 +226,7 @@ export async function installChromiumFork({
     fs.mkdirSync(root, { recursive: true, mode: 0o755 });
     // Stage on the destination filesystem so promotion uses a directory rename.
     // An extraction/validation failure must not destroy the existing install.
-    stageRoot = fs.mkdtempSync(path.join(root, ".install-"));
+    stageRoot = fs.mkdtempSync(path.join(root, `.install-${platformName}-`));
     const stagedBinary = path.join(stageRoot, layout);
     log(`Extracting into ${stageRoot} ...`);
     extract(zipPath, stageRoot);
@@ -256,24 +268,31 @@ export async function installChromiumFork({
       `${JSON.stringify(chromiumForkInstallReceipt({ platform, arch, releaseTag, assets }), null, 2)}\n`,
       { mode: 0o644 },
     );
-    const platformName = layout.split(path.sep)[0];
-    const platformDir = path.join(root, platformName);
-    const backup = `${stageRoot}-previous`;
     const hadPrevious = fs.existsSync(platformDir);
-    if (hadPrevious) fs.renameSync(platformDir, backup);
+    // If a prior successful promotion left a backup and the current tree now
+    // needs replacement, retain both until the new archive is promoted.
+    const previous = fs.existsSync(backup) ? path.join(stageRoot, "previous") : backup;
+    let movedPrevious = false;
     try {
+      if (hadPrevious) {
+        fs.renameSync(platformDir, previous);
+        movedPrevious = true;
+      }
       fs.renameSync(path.join(stageRoot, platformName), platformDir);
     } catch (error) {
-      if (hadPrevious) {
+      if (movedPrevious) {
         try {
-          fs.renameSync(backup, platformDir);
+          fs.renameSync(previous, platformDir);
         } catch {
-          throw new Error(`Could not promote BetterChromium or restore its prior installation; prior files remain at ${backup}.`, { cause: error });
+          // Keep a failed rollback inside the staging tree for manual recovery.
+          // The stable backup, when present, is recovered on the next setup.
+          stageRoot = undefined;
+          throw new Error(`Could not promote BetterChromium or restore its prior installation; prior files remain at ${previous}.`, { cause: error });
         }
       }
       throw error;
     }
-    if (hadPrevious) fs.rmSync(backup, { recursive: true, force: true });
+    fs.rmSync(backup, { recursive: true, force: true });
     log(`Installed ${binaryPath}`);
     return { binary: binaryPath, root, skipped: null, alreadyInstalled: false };
   } finally {

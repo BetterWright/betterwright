@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
@@ -74,6 +75,12 @@ test("Windows packaging carries Chromium's matching private assembly manifest", 
   const packageScript = fs.readFileSync(
     path.join(ROOT, "scripts", "chromium", "package.sh"),
     "utf8",
+  );
+  const buildVersion = packageScript.match(/chromium_version="([^"]+)"/)?.[1];
+  assert.equal(buildVersion, "153.0.8010.36");
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, "scripts", "chromium", `${buildVersion}.manifest`), "utf8"),
+    windowsVersionAssemblyManifest(buildVersion),
   );
   assert.match(packageScript, /chrome_elf\.dll missing/);
   assert.match(
@@ -399,3 +406,73 @@ for (const failure of ["checksum", "extraction", "missing binary", "missing Wind
     }
   });
 }
+
+for (const point of ["before promotion", "after promotion"]) {
+  test(`setup recovers after process termination ${point} without a network connection`, async () => {
+    const home = makeTempDir("bw-fork-interrupted-");
+    const root = path.join(home, ".betterwright", "chromium");
+    const directory = path.join(root, "linux-x64");
+    const binary = path.join(directory, "betterchromium");
+    const backup = path.join(root, ".previous-linux-x64");
+    const payload = "verified archive";
+    const assets = { "linux-x64": { name: "current.zip", sha256: createHash("sha256").update(payload).digest("hex") } };
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(binary, "prior executable");
+      fs.writeFileSync(chromiumForkReceiptPath(root, "linux", "x64"), JSON.stringify(
+        chromiumForkInstallReceipt({ platform: "linux", arch: "x64", assets }),
+      ));
+      const child = spawnSync(process.execPath, ["-e", `
+        import fs from "node:fs";
+        import path from "node:path";
+        const { installChromiumFork } = await import(${JSON.stringify(pathToFileURL(path.join(ROOT, "dist/src/chromium-fork-install.js")).href)});
+        const rename = fs.renameSync;
+        fs.renameSync = (from, to) => {
+          rename(from, to);
+          if (to === ${JSON.stringify(point === "before promotion" ? backup : directory)}) process.exit(73);
+        };
+        await installChromiumFork({
+          home: ${JSON.stringify(home)}, platform: "linux", arch: "x64", force: true,
+          assets: ${JSON.stringify(assets)}, log() {},
+          download: async (_url, dest) => fs.writeFileSync(dest, ${JSON.stringify(payload)}),
+          extract: (_zip, dest) => {
+            fs.mkdirSync(path.join(dest, "linux-x64"), { recursive: true });
+            fs.writeFileSync(path.join(dest, "linux-x64", "betterchromium"), "replacement executable");
+          },
+        });
+      `], { encoding: "utf8", timeout: 15_000 });
+      assert.equal(child.status, 73, child.stderr);
+      assert.equal(fs.existsSync(backup), true);
+      assert.equal(fs.existsSync(binary), point === "after promotion");
+      const result = await installChromiumFork({
+        home, platform: "linux", arch: "x64", assets, log() {},
+        download: async () => { throw new Error("network unavailable"); },
+      });
+      assert.equal(result.alreadyInstalled, true);
+      assert.equal(fs.readFileSync(binary, "utf8"), point === "before promotion" ? "prior executable" : "replacement executable");
+      assert.equal(fs.existsSync(backup), false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
+
+test("setup restores a stranded stale install before attempting an offline security upgrade", async () => {
+  const home = makeTempDir("bw-fork-stranded-");
+  const root = path.join(home, ".betterwright", "chromium");
+  const backup = path.join(root, ".previous-linux-x64");
+  const binary = path.join(root, "linux-x64", "betterchromium");
+  try {
+    fs.mkdirSync(backup, { recursive: true });
+    fs.writeFileSync(path.join(backup, "betterchromium"), "older executable");
+    await assert.rejects(() => installChromiumFork({
+      home, platform: "linux", arch: "x64", log() {},
+      download: async () => { throw new Error("network unavailable"); },
+    }), /network unavailable/);
+    assert.equal(fs.readFileSync(binary, "utf8"), "older executable");
+    assert.equal(fs.existsSync(backup), false);
+    assert.equal(fs.existsSync(chromiumForkReceiptPath(root, "linux", "x64")), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
