@@ -9,12 +9,8 @@ stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 case "$platform" in
   linux)
-    mkdir -p "$stage/linux-x64"
-    (cd "$out" && cp -a chrome chrome-wrapper chrome-sandbox chrome_crashpad_handler icudtl.dat libEGL.so libGLESv2.so libvk_swiftshader.so resources.pak chrome_100_percent.pak chrome_200_percent.pak headless_command_resources.pak snapshot_blob.bin v8_context_snapshot.bin vk_swiftshader_icd.json product_logo_48.png locales resources "$stage/linux-x64/" 2>/dev/null || true)
-    [[ -x "$stage/linux-x64/chrome" ]] || { echo "staged Linux chrome missing" >&2; exit 1; }
-    mv "$stage/linux-x64/chrome" "$stage/linux-x64/betterchromium"
-    sed -i 's|"$HERE/chrome"|"$HERE/betterchromium"|' "$stage/linux-x64/chrome-wrapper"
-    (cd "$stage" && zip -qry "$dest" linux-x64)
+    python3 "$root/scripts/chromium/package-runtime.py" linux "$out" "$dest"
+    exit
     ;;
   mac)
     cp -a "$out/BetterChromium.app" "$stage/BetterChromium.app"
@@ -24,13 +20,10 @@ case "$platform" in
     (cd "$stage" && zip -qry "$dest" mac-arm64)
     ;;
   win)
-    mkdir -p "$stage/win-x64"
-    cp -a "$out"/. "$stage/win-x64/"
-    [[ -f "$stage/win-x64/chrome.exe" ]] || { echo "staged Windows chrome.exe missing" >&2; exit 1; }
-    [[ -f "$stage/win-x64/chrome_elf.dll" ]] || { echo "staged Windows chrome_elf.dll missing" >&2; exit 1; }
-    mv "$stage/win-x64/chrome.exe" "$stage/win-x64/betterchromium.exe"
-    cp "$root/scripts/chromium/$chromium_version.manifest" "$stage/win-x64/$chromium_version.manifest"
-    (cd "$stage" && zip -qry "$dest" win-x64)
+    # The matching manifest supplies chrome_elf.dll's version-named assembly.
+    python3 "$root/scripts/chromium/package-runtime.py" win "$out" "$dest" \
+      --manifest "$root/scripts/chromium/$chromium_version.manifest"
+    exit
     ;;
   *) echo "unsupported platform: $platform" >&2; exit 1 ;;
 esac

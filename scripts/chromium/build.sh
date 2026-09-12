@@ -14,4 +14,4 @@ command -v gn >/dev/null || { echo "gn is required on PATH" >&2; exit 1; }
 command -v autoninja >/dev/null || { echo "autoninja is required on PATH" >&2; exit 1; }
 mkdir -p "$src/$out"
 cp "$args" "$src/$out/args.gn"
-(cd "$src" && gn gen "$out" && autoninja -C "$out" chrome inspector-test)
+(cd "$src" && gn gen "$out" && gn desc "$out" //chrome:chrome runtime_deps > "$out/betterchromium.runtime_deps" && autoninja -C "$out" chrome inspector-test)

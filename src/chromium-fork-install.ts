@@ -269,26 +269,30 @@ export async function installChromiumFork({
       { mode: 0o644 },
     );
     const hadPrevious = fs.existsSync(platformDir);
-    // If a prior successful promotion left a backup and the current tree now
-    // needs replacement, retain both until the new archive is promoted.
-    const previous = fs.existsSync(backup) ? path.join(stageRoot, "previous") : backup;
+    // Always put the displaced current tree in the stable recovery location.
+    // Rotate an older leftover backup while the current tree is still in place.
+    const olderBackup = path.join(stageRoot, "older-backup");
+    let movedOlderBackup = false;
     let movedPrevious = false;
     try {
+      if (fs.existsSync(backup)) {
+        fs.renameSync(backup, olderBackup);
+        movedOlderBackup = true;
+      }
       if (hadPrevious) {
-        fs.renameSync(platformDir, previous);
+        fs.renameSync(platformDir, backup);
         movedPrevious = true;
       }
       fs.renameSync(path.join(stageRoot, platformName), platformDir);
     } catch (error) {
-      if (movedPrevious) {
-        try {
-          fs.renameSync(previous, platformDir);
-        } catch {
-          // Keep a failed rollback inside the staging tree for manual recovery.
-          // The stable backup, when present, is recovered on the next setup.
-          stageRoot = undefined;
-          throw new Error(`Could not promote BetterChromium or restore its prior installation; prior files remain at ${previous}.`, { cause: error });
-        }
+      try {
+        if (movedPrevious) fs.renameSync(backup, platformDir);
+        if (movedOlderBackup) fs.renameSync(olderBackup, backup);
+      } catch {
+        // Preserve all recovery files if rollback itself fails.
+        const recoveryStage = stageRoot;
+        stageRoot = undefined;
+        throw new Error(`Could not promote BetterChromium or fully restore its prior installation; recovery files remain at ${backup} and ${recoveryStage}.`, { cause: error });
       }
       throw error;
     }

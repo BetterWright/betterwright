@@ -47,6 +47,17 @@ The default profile is a static release build with proprietary Chrome codecs. PG
 
 ## Package
 
+`build.sh` records GN's `chrome` runtime dependencies in
+`<out>/betterchromium.runtime_deps`. The Linux and Windows packager stages only
+that list, validates essential browser files, and writes the zip with Python
+3.11 or newer. It does not copy object files, build caches, or unrelated test
+executables. For a manually invoked build, generate the list first:
+
+```sh
+(cd <work>/src && gn desc out/WinStatic //chrome:chrome runtime_deps > out/WinStatic/betterchromium.runtime_deps)
+```
+
+
 ```sh
 scripts/chromium/package.sh mac <work>/src/out/BetterChromiumStatic /tmp/betterchromium-mac-arm64.zip
 scripts/chromium/package.sh linux <work>/src/out/LinuxStatic /tmp/betterchromium-linux-x64.zip
@@ -55,8 +66,8 @@ scripts/chromium/package.sh win <work>/src/out/WinStatic /tmp/betterchromium-win
 
 The Windows launcher embeds Chromium's normal version-named private assembly
 dependency for `chrome_elf.dll`. Packaging must include the matching
-`win-x64/<version>.manifest`; `package.sh` copies the pinned manifest and fails
-if `chrome_elf.dll` is absent. Omitting that file makes Windows reject the
+`win-x64/<version>.manifest`; `package.sh` supplies the pinned manifest to the
+runtime packager, which fails if `chrome_elf.dll` is absent. Omitting that file makes Windows reject the
 executable during activation-context generation before Chromium starts.
 
 Apple system fonts are never included in public archives. `research/assemble-mac-fonts.sh` remains a private deployment overlay.

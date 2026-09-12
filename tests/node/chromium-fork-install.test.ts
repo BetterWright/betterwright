@@ -82,11 +82,7 @@ test("Windows packaging carries Chromium's matching private assembly manifest", 
     fs.readFileSync(path.join(ROOT, "scripts", "chromium", `${buildVersion}.manifest`), "utf8"),
     windowsVersionAssemblyManifest(buildVersion),
   );
-  assert.match(packageScript, /chrome_elf\.dll missing/);
-  assert.match(
-    packageScript,
-    /cp "\$root\/scripts\/chromium\/\$chromium_version\.manifest" "\$stage\/win-x64\/\$chromium_version\.manifest"/,
-  );
+  assert.match(packageScript, /--manifest "\$root\/scripts\/chromium\/\$chromium_version\.manifest"/);
 });
 
 test("installChromiumFork skips unsupported platforms without a public artifact", async () => {
@@ -407,8 +403,11 @@ for (const failure of ["checksum", "extraction", "missing binary", "missing Wind
   });
 }
 
-for (const point of ["before promotion", "after promotion"]) {
-  test(`setup recovers after process termination ${point} without a network connection`, async () => {
+for (const [point, olderBackup] of [
+  ["before promotion", false], ["after promotion", false],
+  ["before promotion", true], ["after promotion", true],
+]) {
+  test(`setup recovers after process termination ${point} (older backup: ${olderBackup}) without a network connection`, async () => {
     const home = makeTempDir("bw-fork-interrupted-");
     const root = path.join(home, ".betterwright", "chromium");
     const directory = path.join(root, "linux-x64");
@@ -419,6 +418,10 @@ for (const point of ["before promotion", "after promotion"]) {
     try {
       fs.mkdirSync(directory, { recursive: true });
       fs.writeFileSync(binary, "prior executable");
+      if (olderBackup) {
+        fs.mkdirSync(backup);
+        fs.writeFileSync(path.join(backup, "betterchromium"), "outdated executable");
+      }
       fs.writeFileSync(chromiumForkReceiptPath(root, "linux", "x64"), JSON.stringify(
         chromiumForkInstallReceipt({ platform: "linux", arch: "x64", assets }),
       ));
