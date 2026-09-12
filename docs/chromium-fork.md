@@ -81,6 +81,11 @@ BetterWright fails closed instead of silently launching another browser.
 Explicit artifact paths are operator-managed and do not require the managed
 installer's receipt; the operator must keep that browser patched.
 
+Managed browser updates apply only to BetterChromium installed by BetterWright.
+An Electron attachment uses the Chromium embedded in the host's Electron
+version, and a remote CDP connection uses the provider's browser. Upgrade that
+host or provider separately; updating BetterWright does not patch its browser.
+
 Set the backend policy independently of artifact location:
 
 ```bash

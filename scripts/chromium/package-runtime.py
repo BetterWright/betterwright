@@ -39,7 +39,7 @@ def package_runtime(platform, out, destination, manifest):
         if platform == "win":
             required += ["chrome.exe", "chrome.dll", "chrome_elf.dll", "libEGL.dll", "libGLESv2.dll"]
         else:
-            required += ["chrome", "chrome-wrapper", "libEGL.so", "libGLESv2.so", "libvk_swiftshader.so", "vk_swiftshader_icd.json"]
+            required += ["chrome", "chrome-wrapper", "chrome_sandbox", "product_logo_48.png", "libEGL.so", "libGLESv2.so", "libvk_swiftshader.so", "vk_swiftshader_icd.json"]
         for name in required:
             if not (stage / name).is_file():
                 raise ValueError(f"Browser runtime dependency missing: {name}")
@@ -51,7 +51,7 @@ def package_runtime(platform, out, destination, manifest):
         else:
             (stage / "chrome").rename(stage / "betterchromium")
             wrapper = stage / "chrome-wrapper"
-            wrapper.write_text(wrapper.read_text().replace('"$HERE/chrome"', '"$HERE/betterchromium"'))
+            wrapper.write_text(wrapper.read_text(encoding="utf-8").replace('"$HERE/chrome"', '"$HERE/betterchromium"'), encoding="utf-8", newline="\n")
             if (stage / "chrome_sandbox").exists():
                 (stage / "chrome_sandbox").rename(stage / "chrome-sandbox")
 

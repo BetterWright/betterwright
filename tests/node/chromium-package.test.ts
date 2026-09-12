@@ -23,7 +23,7 @@ for (const platform of ["win", "linux"]) {
       const files = ["resources.pak", "icudtl.dat", "locales/en-US.pak", "chrome_100_percent.pak", ...(
         platform === "win"
           ? ["chrome.exe", "chrome.dll", "chrome_elf.dll", "libEGL.dll", "libGLESv2.dll"]
-          : ["chrome", "chrome-wrapper", "chrome_sandbox", "libEGL.so", "libGLESv2.so", "libvk_swiftshader.so", "vk_swiftshader_icd.json"]
+          : ["chrome", "chrome-wrapper", "chrome_sandbox", "product_logo_48.png", "libEGL.so", "libGLESv2.so", "libvk_swiftshader.so", "vk_swiftshader_icd.json"]
       )];
       for (const file of [...files, "obj/large.o", "gen/unrelated.pak", "151.0.7922.108.manifest"]) {
         const target = path.join(out, file);

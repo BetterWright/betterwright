@@ -48,7 +48,8 @@ The default profile is a static release build with proprietary Chrome codecs. PG
 ## Package
 
 `build.sh` records GN's `chrome` runtime dependencies in
-`<out>/betterchromium.runtime_deps`. The Linux and Windows packager stages only
+`<out>/betterchromium.runtime_deps`, adding Linux's wrapper, desktop icon, and
+separately built sandbox helper (GN omits copy-target outputs). The Linux and Windows packager stages only
 that list, validates essential browser files, and writes the zip with Python
 3.11 or newer. It does not copy object files, build caches, or unrelated test
 executables. For a manually invoked build, generate the list first:
@@ -57,6 +58,8 @@ executables. For a manually invoked build, generate the list first:
 (cd <work>/src && gn desc out/WinStatic //chrome:chrome runtime_deps > out/WinStatic/betterchromium.runtime_deps)
 ```
 
+For Linux, also build `chrome_sandbox` and append `chrome-wrapper`,
+`product_logo_48.png`, and `chrome_sandbox` to the runtime list, as `build.sh` does.
 
 ```sh
 scripts/chromium/package.sh mac <work>/src/out/BetterChromiumStatic /tmp/betterchromium-mac-arm64.zip
