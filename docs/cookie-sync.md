@@ -52,6 +52,15 @@ and the target identity. Cookie names and values are never returned. The
 `synced` count is verified against the target store rather than assumed from a
 successful CDP call.
 
+For host-owned targets (`hostTarget`, for example the Electron adapter),
+`syncCookies` needs no `cloudConsent` — the host already owns the tab — and the
+result adds `cookieImportDomains`: the deduplicated domains whose cookies were
+verified stored. A host should use it to scope the session access it just
+granted. The Electron adapter only permits the bounded whole-store reads and
+writes this requires when `createElectronHostTarget({ cookieImport: true })` is
+set; otherwise `Network.getAllCookies`/`Network.setCookies` stay forbidden on
+the leased tab.
+
 On macOS, a permission-denied result requires Full Disk Access for the app
 running BetterWright. Restart that app after granting access, then retry.
 Profile-discovery failures are reported separately from an empty profile list.

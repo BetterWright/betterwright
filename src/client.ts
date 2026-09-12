@@ -1223,7 +1223,7 @@ export class BetterWright {
     let consentTarget;
     try {
       normalized = normalizeCookieSyncOptions(options);
-      consentTarget = cookieSyncConsentTarget(this.provider);
+      consentTarget = this.hostTarget ? null : cookieSyncConsentTarget(this.provider);
       if (consentTarget && normalized.cloudConsent !== consentTarget) {
         return {
           ok: false,
@@ -1254,7 +1254,8 @@ export class BetterWright {
         selected: extracted.selected,
         skipped: extracted.skipped,
         source: extracted.source,
-        target: consentTarget || "local",
+        target: consentTarget || (this.hostTarget ? "host" : "local"),
+        ...(this.hostTarget ? { cookieImportDomains: [] } : {}),
         warnings: extracted.warnings,
       };
     }

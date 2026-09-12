@@ -7673,7 +7673,11 @@ async function cookieSync(message) {
   try {
     let target;
     try {
-      target = cookieSyncConsentTarget(message.config?.provider);
+      // SAFETY: host-owned targets are local and host-trusted; the provider is
+      // a placeholder endpoint, so remote-target cloud consent does not apply.
+      target = launchConfig.hostOwnedTarget
+        ? null
+        : cookieSyncConsentTarget(message.config?.provider);
     } catch {
       sendResult({
         type: "result",
@@ -7770,7 +7774,14 @@ async function cookieSync(message) {
       selected,
       skipped,
       source,
-      target: target || "local",
+      target: target || (launchConfig.hostOwnedTarget ? "host" : "local"),
+      ...(launchConfig.hostOwnedTarget
+        ? {
+            cookieImportDomains: [
+              ...new Set(storedCookies.map((cookie) => cookie.domain)),
+            ],
+          }
+        : {}),
       warnings: [
         ...sanitizedCookieSyncWarnings(message.warnings),
         ...(missingCookies ? [{ code: "target_not_stored", count: missingCookies }] : []),

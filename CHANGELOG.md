@@ -9,6 +9,20 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- `cookieImportDomains` on `CookieSyncResult` for host-owned targets: the
+  deduplicated cookie domains verified stored in the leased tab, restoring the
+  2.4.x field so hosts can scope the session access an import granted.
+- `ElectronHostOptions.cookieImport` opt-in, enabling the bounded cookie-store
+  reads and writes `syncCookies` needs on a leased Electron tab.
+
+### Fixed
+
+- `syncCookies` no longer demands a `cloudConsent` matching the placeholder
+  provider endpoint on host-owned targets; consent is only required for real
+  remote providers, and results report `target: "host"`.
+
 ## [2.7.1] - 2026-09-11
 
 ### Added

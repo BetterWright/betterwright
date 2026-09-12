@@ -104,6 +104,12 @@ export type CookieSyncResult =
       skipped: number;
       source: { browser: string; profile?: string };
       target: string;
+      /**
+       * Host-owned targets (`hostTarget`) only: deduplicated cookie domains
+       * verified present in the leased tab after the sync. Lets the host scope
+       * what session access it just granted. Absent for other targets.
+       */
+      cookieImportDomains?: string[];
       warnings?: CookieSyncWarning[];
       profileMode?: "persistent" | "ephemeral";
     }
