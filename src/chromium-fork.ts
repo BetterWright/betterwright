@@ -299,6 +299,48 @@ export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
   return path.join(home, ".betterwright", "chromium");
 }
 
+/** Identity of an archive verified by the managed installer. */
+export function chromiumForkInstallReceipt({
+  platform = process.platform,
+  arch = process.arch,
+  releaseTag = CHROMIUM_FORK_RELEASE_TAG,
+  assets = CHROMIUM_FORK_ASSETS,
+} = {}) {
+  const asset = assets[`${platform}-${arch}`];
+  if (!asset) return null;
+  return {
+    version: BETTERWRIGHT_CHROMIUM_VERSION,
+    releaseTag,
+    assetName: asset.name,
+    sha256: asset.sha256,
+  };
+}
+
+export function chromiumForkReceiptPath(root, platform, arch) {
+  const layout = PLATFORM_LAYOUT[`${platform}-${arch}`];
+  if (!layout) throw new Error(`No BetterChromium artifact layout for ${platform}-${arch}.`);
+  return path.join(root, layout.split(path.sep)[0], ".betterwright-install.json");
+}
+
+/** Missing receipts (including pre-security-upgrade installs) require setup. */
+export function chromiumForkInstallationMatches({
+  root,
+  platform = process.platform,
+  arch = process.arch,
+  releaseTag = CHROMIUM_FORK_RELEASE_TAG,
+  assets = CHROMIUM_FORK_ASSETS,
+  readFileSync = fs.readFileSync,
+}) {
+  const expected = chromiumForkInstallReceipt({ platform, arch, releaseTag, assets });
+  if (!expected) return false;
+  try {
+    const receipt = JSON.parse(readFileSync(chromiumForkReceiptPath(root, platform, arch), "utf8"));
+    return Object.entries(expected).every(([key, value]) => receipt?.[key] === value);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve the pinned fork binary without changing BetterWright's public API.
  *
@@ -307,7 +349,7 @@ export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
  *     configured-but-missing binary is an error; "off" is rejected as a
  *     leftover fallback toggle).
  *  2. The default root (~/.betterwright/chromium) — if the artifact for this
- *     platform exists there, use it silently.
+ *     platform has a receipt matching the pinned release, use it.
  */
 export function resolveChromiumForkBinary({
   env = process.env,
@@ -362,6 +404,18 @@ export function resolveChromiumForkBinary({
   if (!existsSync(candidate)) {
     if (implicit) return null; // runtime reports the missing required backend
     throw new Error(`BetterChromium binary not found: ${candidate}`);
+  }
+  if (implicit && !chromiumForkInstallationMatches({
+    root,
+    platform,
+    arch,
+    releaseTag: configuredValue(env.BETTERWRIGHT_CHROMIUM_RELEASE_TAG) || CHROMIUM_FORK_RELEASE_TAG,
+    readFileSync,
+  })) {
+    throw new Error(
+      `Managed BetterChromium is outdated or its verified installation receipt is missing. ` +
+        `Run \`betterwright setup\` to install the pinned ${BETTERWRIGHT_CHROMIUM_VERSION} release.`,
+    );
   }
   ensureWindowsChromiumAssembly({
     binaryPath: candidate,

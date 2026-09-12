@@ -22,12 +22,23 @@ Artifacts come from a revisioned GitHub Release tag such as
 `betterchromium-<version>-rN` (see `CHROMIUM_FORK_RELEASE_TAG` /
 `CHROMIUM_FORK_ASSETS` in `src/chromium-fork.ts`). Revisioning keeps older
 published BetterWright packages bound to their original immutable assets.
-Each zip is SHA-256 pinned in the manifest before extract.
+Each zip is SHA-256 pinned in the manifest before extract. The installer stages
+and validates the replacement before swapping the platform directory, then
+records the version, release tag, asset name, and verified checksum in
+`.betterwright-install.json` beside the platform's bundle or binary. `setup` and
+`update` replace older or unverified installations without `--force`; a download
+or extraction failure preserves the previous files.
+
+Default discovery requires a receipt matching the package's pinned release.
+After updating BetterWright, run `betterwright setup` before launching: an older
+binary or a missing/corrupt receipt produces setup guidance instead of running
+an unverified managed browser. Copy the entire platform directory, including
+the receipt, when deploying an installation.
 
 On Windows, BetterChromium also requires Chromium's version-named private
 assembly manifest beside `betterchromium.exe`. BetterWright validates that
 manifest and `chrome_elf.dll` before launch. Managed installs missing the
-manifest from the `151.0.7922.108-r3` archive are repaired deterministically by
+manifest and carrying a matching installation receipt are repaired by
 `setup`, `update`, `doctor`, or the next managed-browser resolution; explicitly
 configured artifact paths are never modified and receive an actionable error.
 If a managed tree is also missing `chrome_elf.dll`, ordinary `setup` treats it
@@ -65,6 +76,8 @@ SHA-256 value pinned in `src/chromium-fork.ts`.
 `BETTERWRIGHT_CHROMIUM_PATH` takes precedence over
 `BETTERWRIGHT_CHROMIUM_ROOT`. Configured paths must be absolute and must exist;
 BetterWright fails closed instead of silently launching another browser.
+Explicit artifact paths are operator-managed and do not require the managed
+installer's receipt; the operator must keep that browser patched.
 
 Set the backend policy independently of artifact location:
 
@@ -81,8 +94,8 @@ with the migration guidance.)
 ## Zero-Config Discovery and Platform Routing
 
 With neither variable set, BetterWright checks the default root
-`~/.betterwright/chromium/` for the current platform's artifact. Found → the
-fork runs with no configuration at all. If the platform is supported but its
+`~/.betterwright/chromium/` for the current platform's artifact and matching
+installation receipt. A verified installation runs with no configuration. If the platform is supported but its
 artifact is missing, launch fails with setup guidance; if the platform has no
 published artifact at all, the error names the provider option.
 

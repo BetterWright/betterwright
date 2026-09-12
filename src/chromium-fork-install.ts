@@ -19,10 +19,12 @@ import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   CHROMIUM_FORK_ASSETS,
   CHROMIUM_FORK_RELEASE_TAG,
+  chromiumForkInstallationMatches,
+  chromiumForkInstallReceipt,
+  chromiumForkReceiptPath,
   defaultChromiumForkRoot,
   ensureWindowsChromiumAssembly,
   PLATFORM_LAYOUT,
-  resolveChromiumForkBinary,
 } from "./chromium-fork.js";
 
 const DEFAULT_REPO = "BetterWright/betterwright";
@@ -173,7 +175,7 @@ export async function installChromiumFork({
       log(
         `BetterChromium installation is incomplete (missing ${windowsDll}); downloading a clean copy.`,
       );
-    } else {
+    } else if (chromiumForkInstallationMatches({ root, platform, arch, releaseTag, assets })) {
       const assembly = ensureWindowsChromiumAssembly({
         binaryPath,
         platform,
@@ -183,26 +185,18 @@ export async function installChromiumFork({
       if (assembly.repaired) {
         log(`Repaired BetterChromium Windows side-by-side manifest: ${assembly.manifest}`);
       }
-      const resolved = resolveChromiumForkBinary({
-        env: {},
-        platform,
-        arch,
-        home,
-        existsSync,
-      });
-      if (resolved) {
-        log(`BetterChromium already installed: ${resolved}`);
-        log(
-          `Re-run with --force to re-download ${BETTERWRIGHT_CHROMIUM_VERSION}.`,
-        );
-        return { binary: resolved, root, skipped: null, alreadyInstalled: true };
-      }
+      log(`BetterChromium already installed: ${binaryPath}`);
+      log(`Re-run with --force to re-download ${BETTERWRIGHT_CHROMIUM_VERSION}.`);
+      return { binary: binaryPath, root, skipped: null, alreadyInstalled: true };
+    } else {
+      log("BetterChromium is outdated or unverified; downloading the pinned release.");
     }
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bw-chromium-"));
   const zipPath = path.join(tmpDir, asset.name);
   const url = releaseDownloadUrl(repo, releaseTag, asset.name);
+  let stageRoot;
 
   try {
     log(`Downloading BetterChromium ${BETTERWRIGHT_CHROMIUM_VERSION}...`);
@@ -218,21 +212,21 @@ export async function installChromiumFork({
     log(`Checksum OK (${actual.slice(0, 12)}…)`);
 
     fs.mkdirSync(root, { recursive: true, mode: 0o755 });
-    // Remove prior platform tree so we don't mix old/new files.
-    const platformDir = path.join(root, layout.split(path.sep)[0]);
-    fs.rmSync(platformDir, { recursive: true, force: true });
+    // Stage on the destination filesystem so promotion uses a directory rename.
+    // An extraction/validation failure must not destroy the existing install.
+    stageRoot = fs.mkdtempSync(path.join(root, ".install-"));
+    const stagedBinary = path.join(stageRoot, layout);
+    log(`Extracting into ${stageRoot} ...`);
+    extract(zipPath, stageRoot);
 
-    log(`Extracting into ${root} ...`);
-    extract(zipPath, root);
-
-    if (!existsSync(binaryPath)) {
+    if (!existsSync(stagedBinary)) {
       throw new Error(
-        `Extract succeeded but binary missing at ${binaryPath}. ` +
+        `Extract succeeded but binary missing at ${stagedBinary}. ` +
           "The release zip layout may not match this BetterWright version.",
       );
     }
     const assembly = ensureWindowsChromiumAssembly({
-      binaryPath,
+      binaryPath: stagedBinary,
       platform,
       repair: true,
       existsSync,
@@ -241,11 +235,11 @@ export async function installChromiumFork({
       log(`Created BetterChromium Windows side-by-side manifest: ${assembly.manifest}`);
     }
     try {
-      fs.chmodSync(binaryPath, 0o755);
+      fs.chmodSync(stagedBinary, 0o755);
     } catch {
       /* best-effort */
     }
-    const sandbox = path.join(path.dirname(binaryPath), "chrome-sandbox");
+    const sandbox = path.join(path.dirname(stagedBinary), "chrome-sandbox");
     if (existsSync(sandbox) && platform === "linux") {
       try {
         fs.chmodSync(sandbox, 0o4755);
@@ -253,13 +247,37 @@ export async function installChromiumFork({
         log(
           "Note: could not setuid chrome-sandbox; if launch fails as non-root, run:",
         );
-        log(`  sudo chmod 4755 ${sandbox}`);
+        log(`  sudo chmod 4755 ${path.join(path.dirname(binaryPath), "chrome-sandbox")}`);
       }
     }
 
+    fs.writeFileSync(
+      chromiumForkReceiptPath(stageRoot, platform, arch),
+      `${JSON.stringify(chromiumForkInstallReceipt({ platform, arch, releaseTag, assets }), null, 2)}\n`,
+      { mode: 0o644 },
+    );
+    const platformName = layout.split(path.sep)[0];
+    const platformDir = path.join(root, platformName);
+    const backup = `${stageRoot}-previous`;
+    const hadPrevious = fs.existsSync(platformDir);
+    if (hadPrevious) fs.renameSync(platformDir, backup);
+    try {
+      fs.renameSync(path.join(stageRoot, platformName), platformDir);
+    } catch (error) {
+      if (hadPrevious) {
+        try {
+          fs.renameSync(backup, platformDir);
+        } catch {
+          throw new Error(`Could not promote BetterChromium or restore its prior installation; prior files remain at ${backup}.`, { cause: error });
+        }
+      }
+      throw error;
+    }
+    if (hadPrevious) fs.rmSync(backup, { recursive: true, force: true });
     log(`Installed ${binaryPath}`);
     return { binary: binaryPath, root, skipped: null, alreadyInstalled: false };
   } finally {
+    if (stageRoot) fs.rmSync(stageRoot, { recursive: true, force: true });
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }

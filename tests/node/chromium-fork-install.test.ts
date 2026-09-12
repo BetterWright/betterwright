@@ -9,6 +9,8 @@ import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   CHROMIUM_FORK_ASSETS,
   CHROMIUM_FORK_RELEASE_TAG,
+  chromiumForkInstallReceipt,
+  chromiumForkReceiptPath,
   windowsVersionAssemblyManifest,
 } from "../../dist/src/chromium-fork.js";
 import {
@@ -128,28 +130,33 @@ test("Windows fork extraction reports tar failures", () => {
   }
 });
 
-test("installChromiumFork short-circuits when already installed", async () => {
-  const home = "/home/deploy";
-  const binary = path.join(home, ".betterwright", "chromium", "linux-x64", "betterchromium");
+test("installChromiumFork short-circuits only for the verified pinned archive", async () => {
+  const home = makeTempDir("bw-fork-current-");
+  const root = path.join(home, ".betterwright", "chromium");
+  const binary = path.join(root, "linux-x64", "betterchromium");
   const logs = [];
-  const result = await installChromiumFork({
-    platform: "linux",
-    arch: "x64",
-    home,
-    force: false,
-    existsSync: (p) => p === binary,
-    log: (line) => logs.push(String(line)),
-    assets: { "linux-x64": { name: "candidate.zip", sha256: "0".repeat(64) } },
-    download: async () => {
-      throw new Error("should not download");
-    },
-  });
-  assert.equal(result.alreadyInstalled, true);
-  assert.equal(result.binary, binary);
-  assert.match(logs.join("\n"), /already installed/);
+  try {
+    fs.mkdirSync(path.dirname(binary), { recursive: true });
+    fs.writeFileSync(binary, "current executable");
+    fs.writeFileSync(chromiumForkReceiptPath(root, "linux", "x64"), JSON.stringify(
+      chromiumForkInstallReceipt({ platform: "linux", arch: "x64" }),
+    ));
+    const result = await installChromiumFork({
+      platform: "linux",
+      arch: "x64",
+      home,
+      log: (line) => logs.push(String(line)),
+      download: async () => { throw new Error("should not download"); },
+    });
+    assert.equal(result.alreadyInstalled, true);
+    assert.equal(result.binary, binary);
+    assert.match(logs.join("\n"), /already installed/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
-test("installChromiumFork repairs an existing r3 Windows layout in place", async () => {
+test("installChromiumFork repairs a verified current Windows layout in place", async () => {
   const home = makeTempDir("bw-fork-win-repair-");
   const directory = path.join(home, ".betterwright", "chromium", "win-x64");
   const binary = path.join(directory, "betterchromium.exe");
@@ -159,6 +166,9 @@ test("installChromiumFork repairs an existing r3 Windows layout in place", async
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(binary, "test executable");
     fs.writeFileSync(path.join(directory, "chrome_elf.dll"), "test dll");
+    fs.writeFileSync(chromiumForkReceiptPath(path.dirname(directory), "win32", "x64"), JSON.stringify(
+      chromiumForkInstallReceipt({ platform: "win32", arch: "x64" }),
+    ));
     const result = await installChromiumFork({
       platform: "win32",
       arch: "x64",
@@ -308,3 +318,84 @@ test("installChromiumFork rejects a SHA-256 mismatch", async () => {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+for (const stale of ["missing receipt", "corrupt receipt", "old version", "old release", "wrong archive", "wrong checksum"]) {
+  test(`setup replaces an existing binary with ${stale} without --force`, async () => {
+    const home = makeTempDir("bw-fork-upgrade-");
+    const root = path.join(home, ".betterwright", "chromium");
+    const binary = path.join(root, "linux-x64", "betterchromium");
+    const payload = Buffer.from("security-update-archive");
+    const sha256 = createHash("sha256").update(payload).digest("hex");
+    const assets = { "linux-x64": { name: "current.zip", sha256 } };
+    const current = chromiumForkInstallReceipt({ platform: "linux", arch: "x64", assets });
+    let downloads = 0;
+    try {
+      fs.mkdirSync(path.dirname(binary), { recursive: true });
+      fs.writeFileSync(binary, "vulnerable executable");
+      fs.writeFileSync(path.join(path.dirname(binary), "obsolete-file"), "old");
+      const receiptPath = chromiumForkReceiptPath(root, "linux", "x64");
+      const old = { ...current };
+      if (stale === "old version") old.version = "150.0.7871.24";
+      if (stale === "old release") old.releaseTag = "prior-release";
+      if (stale === "wrong archive") old.assetName = "other-platform.zip";
+      if (stale === "wrong checksum") old.sha256 = "0".repeat(64);
+      if (stale !== "missing receipt") fs.writeFileSync(receiptPath, stale === "corrupt receipt" ? "{" : JSON.stringify(old));
+      const options = {
+        home, platform: "linux" as const, arch: "x64" as const, assets, log() {},
+        download: async (_url, dest) => { downloads++; fs.writeFileSync(dest, payload); },
+        extract: (_zip, dest) => {
+          // The old tree stays intact until the new archive is fully staged.
+          assert.equal(fs.readFileSync(binary, "utf8"), "vulnerable executable");
+          const out = path.join(dest, "linux-x64", "betterchromium");
+          fs.mkdirSync(path.dirname(out), { recursive: true });
+          fs.writeFileSync(out, "patched executable");
+        },
+      };
+      const result = await installChromiumFork(options);
+      assert.equal(result.alreadyInstalled, false);
+      assert.equal(downloads, 1);
+      assert.equal(fs.readFileSync(binary, "utf8"), "patched executable");
+      assert.equal(fs.existsSync(path.join(path.dirname(binary), "obsolete-file")), false);
+      assert.deepEqual(JSON.parse(fs.readFileSync(receiptPath, "utf8")), current);
+      assert.equal((await installChromiumFork(options)).alreadyInstalled, true);
+      assert.equal(downloads, 1);
+      assert.deepEqual(fs.readdirSync(root), ["linux-x64"]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const failure of ["checksum", "extraction", "missing binary", "missing Windows DLL"]) {
+  test(`failed upgrade (${failure}) preserves the prior browser and receipt`, async () => {
+    const home = makeTempDir("bw-fork-upgrade-failure-");
+    const root = path.join(home, ".betterwright", "chromium");
+    const directory = path.join(root, "win-x64");
+    const binary = path.join(directory, "betterchromium.exe");
+    const receiptPath = chromiumForkReceiptPath(root, "win32", "x64");
+    const payload = Buffer.from("security-update-archive");
+    const sha256 = createHash("sha256").update(payload).digest("hex");
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(binary, "prior executable");
+      fs.writeFileSync(receiptPath, "prior receipt");
+      await assert.rejects(() => installChromiumFork({
+        home, platform: "win32", arch: "x64", log() {},
+        assets: { "win32-x64": { name: "current.zip", sha256 } },
+        download: async (_url, dest) => { fs.writeFileSync(dest, failure === "checksum" ? "bad" : payload); },
+        extract: (_zip, dest) => {
+          if (failure === "extraction") throw new Error("extraction failed");
+          if (failure === "missing binary") return;
+          const out = path.join(dest, "win-x64", "betterchromium.exe");
+          fs.mkdirSync(path.dirname(out), { recursive: true });
+          fs.writeFileSync(out, "incomplete executable");
+        },
+      }), failure === "checksum" ? /SHA-256 mismatch/ : failure === "extraction" ? /extraction failed/ : failure === "missing binary" ? /binary missing/ : /chrome_elf.dll is missing/);
+      assert.equal(fs.readFileSync(binary, "utf8"), "prior executable");
+      assert.equal(fs.readFileSync(receiptPath, "utf8"), "prior receipt");
+      assert.deepEqual(fs.readdirSync(root), ["win-x64"]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
