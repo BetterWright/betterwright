@@ -293,7 +293,7 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   // wheels. Ship a private C/C++ compiler, without sudo or system packages.
   const compilerDirectory = path.join(localRoot(home), "runtimes", `zig-${ZIG_VERSION}`);
   const compilerBin = path.join(compilerDirectory, `zig-x86_64-linux-${ZIG_VERSION}`);
-  if (!await localRuntimeReady(compilerDirectory, `${ZIG_VERSION}-cuda3`, path.join(compilerBin, "zig"), ["version"]) ||
+  if (!await localRuntimeReady(compilerDirectory, `${ZIG_VERSION}-cuda4`, path.join(compilerBin, "zig"), ["version"]) ||
     !fs.existsSync(path.join(compilerBin, "bw-cc")) || !fs.existsSync(path.join(compilerBin, "bw-cxx"))) {
     const archive = await downloadLocalArtifact(ZIG_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
     await stageLocalRuntime(compilerDirectory, async staging => {
@@ -321,15 +321,21 @@ for i,arg in enumerate(args):
                 args[i]=str(candidate.resolve())
                 break
 zig=str(Path(__file__).resolve().parent/"zig")
-os.execv(zig, [zig, sys.argv[1], *args])
+mode=sys.argv[1]
+if any("c++" in arg or "__CUDACC__" in arg or arg.endswith((".cpp", ".cc", ".cu")) for arg in args): mode="c++"
+os.execv(zig, [zig, mode, *args])
 `);
       for (const [name, command] of [["bw-cc", "cc"], ["bw-cxx", "c++"]]) {
         fs.writeFileSync(path.join(path.dirname(zig), name), `#!/bin/sh\nexec python3 "$(dirname "$0")/bw-compiler.py" ${command} "$@"\n`, { mode: 0o700 });
       }
-      fs.writeFileSync(path.join(staging, ".ready"), `${ZIG_VERSION}-cuda3`, { mode: 0o600 });
+      fs.writeFileSync(path.join(staging, ".ready"), `${ZIG_VERSION}-cuda4`, { mode: 0o600 });
     });
   }
-  if (!await localRuntimeReady(directory, VLLM_VERSION, path.join(directory, "venv", "bin", "vllm"))) {
+  const cuda = path.join(directory, "venv", "lib", "python3.12", "site-packages", "nvidia", "cu13");
+  const nvcc = path.join(cuda, "bin", "nvcc"), env = localRuntimeEnvironment(plan, home);
+  const cudaFiles = ["include/cuda_runtime.h", "lib/libcudart.so.13", "lib64/libcudart.so.13"];
+  if (!await localRuntimeReady(directory, VLLM_VERSION, path.join(directory, "venv", "bin", "vllm")) ||
+    !await localRuntimeReady(directory, VLLM_VERSION, nvcc) || !cudaFiles.every(file => fs.existsSync(path.join(cuda, file)))) {
     fs.rmSync(ready, { force: true });
     const uvDirectory = path.join(localRoot(home), "runtimes", `uv-${UV_VERSION}`);
     const archive = await downloadLocalArtifact(UV_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
@@ -348,12 +354,10 @@ os.execv(zig, [zig, sys.argv[1], *args])
     const requirements = path.join(directory, "requirements.txt");
     writePrivate(requirements, LOCAL_VLLM_REQUIREMENTS);
     await runInstall(uv, ["pip", "sync", "--only-binary", ":all:", "--python", path.join(directory, "venv", "bin", "python"), requirements], env);
-    fs.writeFileSync(ready, VLLM_VERSION, { mode: 0o600 });
   }
-  const cuda = path.join(directory, "venv", "lib", "python3.12", "site-packages", "nvidia", "cu13");
   // NVIDIA wheels use lib/ while nvcc and FlashInfer expect lib64/.
   if (!fs.existsSync(path.join(cuda, "lib64"))) fs.symlinkSync("lib", path.join(cuda, "lib64"));
-  const nvcc = path.join(cuda, "bin", "nvcc"), env = localRuntimeEnvironment(plan, home);
+  fs.rmSync(ready, { force: true });
   await runLocalProbe(nvcc, ["--version"], env);
   const check = fs.mkdtempSync(path.join(directory, "cuda-check-"));
   try {
@@ -361,6 +365,7 @@ os.execv(zig, [zig, sys.argv[1], *args])
     writePrivate(source, "#include <cuda_runtime.h>\n__global__ void bw_probe(float *x) { x[0] = 1.0f; }\n");
     await runLocalProbe(nvcc, ["-c", source, `-arch=sm_${Math.round(plan.gpu.compute * 10)}`, "-o", path.join(check, "probe.o")], env, 120_000);
   } finally { fs.rmSync(check, { recursive: true, force: true }); }
+  fs.writeFileSync(ready, VLLM_VERSION, { mode: 0o600 });
   return localRuntimeExecutable(plan, home);
 }
 export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {
