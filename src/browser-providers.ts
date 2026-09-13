@@ -474,6 +474,11 @@ export function browserProviderInfo(name) {
  * A resolution is either synchronous (`plan`, already a CDP endpoint or local
  * binary) or session-minting (`create`, which makes the REST call at launch
  * time so a failed construction never leaves a billed session behind).
+ *
+ * `provider` may also be an array, which resolves to `plans`: an ordered
+ * fallback chain the worker walks at launch, so a provider that is out of
+ * quota, down, or misconfigured falls through to the next candidate instead
+ * of failing the launch.
  */
 export function resolveBrowserProvider(provider, { env = process.env } = {}) {
   if (provider == null || provider === false) {
@@ -482,11 +487,31 @@ export function resolveBrowserProvider(provider, { env = process.env } = {}) {
       ? resolveBrowserProvider({ cdpUrl: shorthand }, { env })
       : null;
   }
+  if (Array.isArray(provider)) {
+    if (!provider.length) {
+      throw new TypeError(
+        "provider as an array must name at least one candidate: " +
+          "[{ provider: <name> }, { cdpUrl: <ws-url> }, { executablePath: <path> }].",
+      );
+    }
+    // Each element validates exactly as it would as a single choice — nested
+    // arrays and nullish entries are rejected by the entry type check rather
+    // than slipping into the env shorthand above.
+    const plans = provider.map((entry) => resolveProviderEntry(entry, env));
+    return plans.length === 1 ? { plan: plans[0] } : { plans };
+  }
+  return { plan: resolveProviderEntry(provider, env) };
+}
+
+// One candidate in a provider selection: a name, an endpoint, or a binary.
+// Unlike resolveBrowserProvider this never consults BETTERWRIGHT_CDP_URL —
+// the shorthand only applies to a whole absent choice.
+function resolveProviderEntry(provider, env) {
   if (isString(provider)) provider = { provider };
   if (!isRecord(provider)) {
     throw new TypeError(
-      "provider must be an object: { executablePath }, { cdpUrl }, or " +
-        "{ provider: <name>, apiKey? }.",
+      "provider must be an object or an ordered array of objects: " +
+        "{ executablePath }, { cdpUrl }, or { provider: <name>, apiKey? }.",
     );
   }
   const executablePath = String(untrustedField(provider, "executablePath") || "").trim();
@@ -499,34 +524,106 @@ export function resolveBrowserProvider(provider, { env = process.env } = {}) {
         "cdpUrl (a CDP WebSocket endpoint), or provider (a cloud browser service).",
     );
   }
-  if (executablePath) return { plan: resolveLocalProvider(executablePath) };
-  if (cdpUrl) return { plan: resolveExplicitCdpProvider(cdpUrl, provider) };
+  if (executablePath) return resolveLocalProvider(executablePath);
+  if (cdpUrl) return resolveExplicitCdpProvider(cdpUrl, provider);
+  if (name === "managed") return { kind: "managed", provider: "managed", warnings: [] };
   const descriptor = PROVIDERS[name];
   if (!descriptor) {
     throw new TypeError(
       `Unknown browser provider ${JSON.stringify(name)}. Supported: ` +
-        `${BROWSER_PROVIDER_NAMES.join(", ")} — or pass { cdpUrl } for any ` +
+        `${BROWSER_PROVIDER_NAMES.join(", ")}, managed — or pass { cdpUrl } for any ` +
         "CDP endpoint (docs: docs/browser-providers.md).",
     );
   }
-  return { plan: resolveNamedProvider(descriptor, name, provider, env) };
+  return resolveNamedProvider(descriptor, name, provider, env);
+}
+
+/**
+ * The ordered candidate list a provider resolution describes: one plan, or a
+ * fallback chain. A null resolution (the implicit managed fork) lists nothing.
+ */
+export function providerResolutionPlans(resolution) {
+  if (!resolution) return [];
+  if (Array.isArray(resolution.plans)) return resolution.plans;
+  return resolution.plan ? [resolution.plan] : [];
+}
+
+/**
+ * Short name for a candidate in error and warning lines: the provider key for
+ * named services, the masked endpoint for raw CDP, a marker for local and
+ * managed browsers. Deliberately not the full connect URL — that can carry a
+ * credential.
+ */
+export function providerPlanLabel(plan) {
+  if (!plan || plan.kind === "managed") return "managed BetterChromium fork";
+  if (plan.kind === "local") return `local Chromium at ${plan.executablePath}`;
+  if (plan.provider === "cdp") return plan.endpointLabel || "CDP endpoint";
+  return plan.provider || "browser provider";
+}
+
+/**
+ * Walk an ordered provider chain until one candidate launches. `attempt`
+ * performs the whole launch for one candidate (session mint included) and
+ * returns whatever the caller needs from the winner.
+ *
+ * Any failure advances to the next candidate — provider errors are not a
+ * typed taxonomy (REST statuses, WebSocket closes, create-session rejections
+ * all surface as plain errors), so classifying "quota" vs "down" would miss
+ * the cases a chain exists for. With one candidate the original error is
+ * rethrown untouched so single-provider messages keep their shape; with a
+ * real chain the error names every candidate tried.
+ */
+export async function runProviderChain(candidates, attempt) {
+  const failures = [];
+  for (const candidate of candidates) {
+    try {
+      const result = await attempt(candidate);
+      return { result, failures };
+    } catch (error) {
+      failures.push({ label: providerPlanLabel(candidate), error });
+    }
+  }
+  if (failures.length === 1) throw failures[0].error;
+  const detail = failures
+    .map(
+      (failure) =>
+        `  ${failure.label}: ${firstLine(failure.error?.message || failure.error)}`,
+    )
+    .join("\n");
+  throw new Error(
+    `Every browser provider in the chain failed:\n${detail}`,
+  );
+}
+
+function firstLine(value) {
+  return String(value || "unknown error").split("\n", 1)[0].trim() || "unknown error";
 }
 
 /**
  * Stable identity a Cookie Sync consent must name. Resolving is deliberately
  * side-effect free here: deferred providers are not created until the worker
  * launches, after both the client and worker have checked this value.
+ *
+ * A fallback chain can land on any of its remote candidates, so consent
+ * covers every remote target in the chain, joined with "+"; a chain that is
+ * all-local needs none.
  */
 export function cookieSyncConsentTarget(provider, { env = process.env } = {}) {
   const resolution = resolveBrowserProvider(provider, { env });
-  const plan = resolution?.plan;
-  if (plan?.kind !== "remote") return null;
-  if (plan.provider !== "cdp") return `provider:${plan.provider}`;
-  try {
-    return `cdp:${new URL(plan.cdpUrl).host.toLowerCase()}`;
-  } catch {
-    throw new TypeError("Cookie Sync could not identify the CDP endpoint.");
+  const targets = [];
+  for (const plan of providerResolutionPlans(resolution)) {
+    if (plan?.kind !== "remote") continue;
+    if (plan.provider !== "cdp") {
+      targets.push(`provider:${plan.provider}`);
+      continue;
+    }
+    try {
+      targets.push(`cdp:${new URL(plan.cdpUrl).host.toLowerCase()}`);
+    } catch {
+      throw new TypeError("Cookie Sync could not identify the CDP endpoint.");
+    }
   }
+  return targets.length ? [...new Set(targets)].join("+") : null;
 }
 
 function resolveLocalProvider(executablePath) {

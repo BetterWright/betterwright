@@ -11,8 +11,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadCodexAuth, loadGrokAuth } from "./auth.js";
-import { configuredDefaultProvider } from "./browser-config.js";
-import { browserProviderInfo, resolveBrowserProvider } from "./browser-providers.js";
+import { configuredDefaultProvider, configuredProviderChain } from "./browser-config.js";
+import {
+  browserProviderInfo,
+  providerPlanLabel,
+  providerResolutionPlans,
+  resolveBrowserProvider,
+} from "./browser-providers.js";
 import { chromiumNeedsSoftwareGpu } from "./browser-runtime.js";
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
@@ -81,14 +86,15 @@ export async function doctorReport() {
   const browser = chromiumForkError ? "unavailable" : browserSelection.browser;
   let provider = null;
   let providerError = null;
+  let providerChain = null;
+  let providerNotes = null;
+  const envShorthand = String(process.env.BETTERWRIGHT_CDP_URL || "").trim();
   try {
     // The same ladder a launch walks: the env shorthand (which
     // resolveBrowserProvider reads itself), then the default persisted by
     // `betterwright configure`. A configured default whose key is missing
     // throws here and is reported as the provider problem it is.
-    const configured = String(process.env.BETTERWRIGHT_CDP_URL || "").trim()
-      ? undefined
-      : configuredDefaultProvider();
+    const configured = envShorthand ? undefined : configuredDefaultProvider();
     const resolved = resolveBrowserProvider(configured ?? undefined);
     if (resolved?.plan) {
       const plan = resolved.plan;
@@ -104,10 +110,30 @@ export async function doctorReport() {
   } catch (error) {
     providerError = error instanceof Error ? error.message : String(error);
   }
+  if (!envShorthand) {
+    // The fallbacks sit beneath the default: report the whole chain so a
+    // dead link (or a skipped one) is visible before a launch finds it.
+    try {
+      const chain = configuredProviderChain();
+      const plans = providerResolutionPlans(
+        resolveBrowserProvider(chain.provider ?? undefined),
+      );
+      if (plans.length > 1) {
+        providerChain = plans.map((entry) => providerPlanLabel(entry));
+      }
+      if (chain.notes.length) providerNotes = chain.notes;
+    } catch (error) {
+      providerError =
+        providerError ||
+        (error instanceof Error ? error.message : String(error));
+    }
+  }
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (provider ? !providerError : browser === "chromium-fork" && !chromiumForkError);
+    (!provider || provider.kind === "managed"
+      ? browser === "chromium-fork" && !chromiumForkError
+      : !providerError);
   return {
     node: process.execPath,
     runtime: runtimeLabel(),
@@ -124,6 +150,8 @@ export async function doctorReport() {
     browser_selection_reason: browserSelection.selectionReason,
     provider,
     provider_error: providerError,
+    provider_chain: providerChain,
+    provider_notes: providerNotes,
     stealth_driver: stealth,
     stealth_available: Boolean(stealth),
     browser,
@@ -301,11 +329,25 @@ export function doctorChecks(
       provider.kind === "remote" ? "warn" : "ok",
       provider.kind === "remote"
         ? `${provider.name || provider.provider} (remote CDP${provider.endpoint ? ` — ${provider.endpoint}` : ""}) — outside the guard proxy`
-        : `custom local Chromium — ${provider.executablePath}`,
+        : provider.kind === "managed"
+          ? "the managed BetterChromium fork"
+          : `custom local Chromium — ${provider.executablePath}`,
       provider.kind === "remote"
         ? "Remote page traffic cannot be network-policy enforced; see docs/browser-providers.md."
         : null,
     );
+    if (report.provider_chain?.length > 1) {
+      add(
+        "Browser",
+        "Fallbacks",
+        "ok",
+        report.provider_chain.slice(1).join(" → "),
+        null,
+      );
+    }
+    for (const note of report.provider_notes || []) {
+      add("Browser", "Fallbacks", "warn", note, null);
+    }
   } else if (report.provider_error) {
     add("Browser", "Provider", "fail", report.provider_error);
   }

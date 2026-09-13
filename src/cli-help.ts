@@ -149,6 +149,12 @@ Options:
   --connect <name>       save that built-in provider's key without making it
                          the launch default (alias: \`configure connect <name>\`)
   --disconnect <name>    forget a saved provider key (alias: disconnect)
+  --browser-fallback <v> add a fallback tried when the default fails to
+                         launch — same <name|wss-url|path> vocabulary as
+                         --browser, repeat to order the chain; a provider's
+                         key comes from its connected account or env var.
+                         "managed" names the managed fork
+  --clear-fallbacks      remove every configured fallback
   --managed, --reset     clear the default; launches use the managed fork again
   --add <name>           add a custom provider named <name>, with
     --cdp-url <template>   its connect URL, where \${apiKey} is replaced with
@@ -161,8 +167,9 @@ Options:
                          browser and print its version
   --no-test              do not offer the connection test in the interactive flow
 
-Precedence at launch: --browser / the provider option, then
-BETTERWRIGHT_CDP_URL, then this default, then the managed fork.
+Precedence at launch: --browser / the provider option (an array is itself an
+ordered chain), then BETTERWRIGHT_CDP_URL, then this default, then each
+fallback in order, then the managed fork.
 Exit code is 0 on success, 1 on a bad value or a failed connection test.
 Details: docs/browser-providers.md`,
 
@@ -247,7 +254,10 @@ Options:
                          \`betterwright configure --add\`) or any wss:// CDP
                          endpoint instead of the managed BetterChromium fork.
                          \`betterwright configure\` sets a default so you do
-                         not have to pass this every time
+                         not have to pass this every time; its
+                         --browser-fallback names providers to try when the
+                         default fails to launch (the SDK's provider option
+                         takes an ordered array for the same thing)
   --browser-key <key>    provider API key (or its env var, e.g.
                          BROWSERBASE_API_KEY); BETTERWRIGHT_CDP_URL is the
                          env shorthand for --browser <url>

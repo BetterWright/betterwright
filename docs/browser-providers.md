@@ -77,9 +77,59 @@ connected accounts stay until `--disconnect`.
 Precedence for one launch, first hit wins:
 
 1. the explicit `provider` option, or `--browser` on the command line
+   (an SDK array is itself an ordered chain — see Fallback chains)
 2. `BETTERWRIGHT_CDP_URL`
-3. the configured default
+3. the configured default, then each configured fallback in order
 4. the managed BetterChromium fork
+
+## Fallback chains
+
+A launch can walk an ordered list of providers instead of one. The first
+candidate that launches wins; a candidate that fails — out of quota, a
+provider outage, a dead endpoint, a missing binary — is released and the next
+one is tried. When every candidate fails, the launch error names each one
+with its own error.
+
+From the SDK, `provider` takes an array:
+
+```ts
+new BetterWright({
+  provider: [
+    { provider: "browserbase" },
+    { provider: "kernel" },
+    { provider: "managed" },   // the managed fork as the last resort
+  ],
+});
+```
+
+Persisted, the chain is `browser.fallbacks` beneath `browser.default` in
+`config.json`; `betterwright configure` writes it:
+
+```bash
+betterwright configure --browser-fallback kernel \
+  --browser-fallback wss://browser.example.com/devtools/abc \
+  --browser-fallback managed
+betterwright configure --clear-fallbacks
+```
+
+Each `--browser-fallback` takes the same `<name|wss-url|path>` vocabulary as
+`--browser`. A named fallback's key comes from its connected account
+(`configure --connect`), its env var, or a `keyEnv`/`apiKey` field written
+into the ref directly. With no configured default the managed fork remains
+the first candidate — `fallbacks` then reads as "the fork first, these after
+it". A fallback that cannot resolve at all (a removed custom provider, an
+unset keyEnv) is skipped with a launch warning rather than failing the
+launch; the configured default still fails hard, because silently degrading
+the choice you asked for would hide a misconfiguration.
+
+Every skipped or failed candidate appears as a warning on the launch's
+result envelope, and `betterwright doctor` lists the resolved chain under
+**Browser → Fallbacks**.
+
+A remote candidate that mints a session but fails to connect releases it
+before the next candidate is tried — a fallback attempt never leaves a billed
+browser running. Cookie Sync consent for a chained launch names every remote
+candidate, joined with `+` (for example `provider:browserbase+provider:kernel`).
 
 ### Custom named providers
 

@@ -1,12 +1,16 @@
 // Persistent browser-provider settings: <home>/config.json, `browser` section.
 //
-// This is where `betterwright configure` writes and every launch reads. Three
+// This is where `betterwright configure` writes and every launch reads. Four
 // things live here:
 //
 //   - `default`: the provider a launch uses when nothing explicit was given —
 //     the same shapes the `provider` option accepts (a named cloud provider,
 //     a CDP endpoint, or a local Chromium binary), plus `keyEnv` so a config
 //     can point at an environment variable instead of storing the key.
+//   - `fallbacks`: ordered refs tried when the default fails to launch, so a
+//     provider that is out of quota or down falls through instead of failing
+//     the session. The same ref shapes as `default`; "managed" names the
+//     managed fork.
 //   - `accounts`: saved API keys for built-in providers, so `boxes` can
 //     start/list/stop sessions without that provider having to be the launch
 //     default. `configure --connect` writes this; a named `--browser` default
@@ -20,9 +24,10 @@
 // the worker's resolveBrowserProvider stays a pure validator with no
 // filesystem access. Precedence for one launch, first hit wins:
 //
-//   explicit `provider` option (CLI --browser included)
+//   explicit `provider` option (CLI --browser included; an array is itself an
+//     ordered chain)
 //   > BETTERWRIGHT_CDP_URL
-//   > config `browser.default`
+//   > config `browser.default`, then each `browser.fallbacks` entry in order
 //   > the managed BetterChromium fork.
 //
 // The config file is written owner-only (writePrivate) because `default` and
@@ -32,7 +37,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { BROWSER_PROVIDER_NAMES, browserProviderInfo } from "./browser-providers.js";
+import {
+  BROWSER_PROVIDER_NAMES,
+  browserProviderInfo,
+  describeCdpUrl,
+  resolveBrowserProvider,
+} from "./browser-providers.js";
 import { writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import {
@@ -85,6 +95,8 @@ export interface DefaultBrowserRef {
 /** The sanitized `browser` section of <home>/config.json. */
 export interface BrowserFileConfig {
   default?: DefaultBrowserRef;
+  /** Providers tried in order when the default fails to launch. */
+  fallbacks?: DefaultBrowserRef[];
   custom: Record<string, CustomProviderDefinition>;
   /** Saved API keys for built-in providers, independent of the launch default. */
   accounts: Record<string, ProviderAccount>;
@@ -195,6 +207,13 @@ export function loadBrowserConfig(home = defaultHome()): BrowserFileConfig {
   if (!isRecord(section)) return config;
   const fallback = cleanDefaultRef(untrustedField(section, "default"));
   if (fallback) config.default = fallback;
+  const fallbacks = untrustedField(section, "fallbacks");
+  if (Array.isArray(fallbacks)) {
+    const cleaned = fallbacks
+      .map((entry) => cleanDefaultRef(entry))
+      .filter((entry): entry is DefaultBrowserRef => Boolean(entry));
+    if (cleaned.length) config.fallbacks = cleaned;
+  }
   const custom = untrustedField(section, "custom");
   if (isRecord(custom)) {
     for (const [name, value] of untrustedEntries(custom)) {
@@ -238,28 +257,58 @@ function writeBrowserSection(home, mutate: (section: Map<string, UntrustedValue>
  */
 export function saveDefaultBrowser(ref: DefaultBrowserRef | null, home = defaultHome()) {
   if (ref != null) {
-    const cleaned = cleanDefaultRef(ref);
-    if (!cleaned) {
-      throw new TypeError(
-        "The default browser must set exactly one of provider, cdpUrl, or executablePath.",
-      );
-    }
-    if (cleaned.provider && !BROWSER_PROVIDER_NAMES.includes(cleaned.provider)) {
-      const custom = loadBrowserConfig(home).custom;
-      if (!custom[cleaned.provider]) {
-        throw new TypeError(
-          `Unknown provider ${JSON.stringify(cleaned.provider)}. Built-in: ` +
-            `${BROWSER_PROVIDER_NAMES.join(", ")}. Add a custom one first ` +
-            "(betterwright configure).",
-        );
-      }
-    }
-    ref = cleaned;
+    ref = cleanDefaultRefOrThrow(ref, "The default browser", loadBrowserConfig(home).custom);
   }
   return writeBrowserSection(home, (section) => {
     if (ref == null) section.delete("default");
     else section.set("default", ref);
   });
+}
+
+/**
+ * Persist (or with null, clear) the ordered fallback providers a launch tries
+ * when the default fails. "managed" is a valid entry — it is how a config
+ * says "the cloud first, the local fork when the cloud is out".
+ */
+export function saveBrowserFallbacks(refs: DefaultBrowserRef[] | null, home = defaultHome()) {
+  let cleaned: DefaultBrowserRef[] = [];
+  if (refs != null) {
+    if (!Array.isArray(refs)) {
+      throw new TypeError("Browser fallbacks must be an array of provider refs.");
+    }
+    const custom = loadBrowserConfig(home).custom;
+    cleaned = refs.map((ref) => cleanDefaultRefOrThrow(ref, "Each fallback", custom));
+  }
+  return writeBrowserSection(home, (section) => {
+    if (refs == null || !cleaned.length) section.delete("fallbacks");
+    else section.set("fallbacks", cleaned);
+  });
+}
+
+function cleanDefaultRefOrThrow(
+  ref: DefaultBrowserRef,
+  what: string,
+  custom: Record<string, CustomProviderDefinition>,
+): DefaultBrowserRef {
+  const cleaned = cleanDefaultRef(ref);
+  if (!cleaned) {
+    throw new TypeError(
+      `${what} must set exactly one of provider, cdpUrl, or executablePath.`,
+    );
+  }
+  if (
+    cleaned.provider &&
+    cleaned.provider !== "managed" &&
+    !BROWSER_PROVIDER_NAMES.includes(cleaned.provider) &&
+    !custom[cleaned.provider]
+  ) {
+    throw new TypeError(
+      `Unknown provider ${JSON.stringify(cleaned.provider)}. Built-in: ` +
+        `${BROWSER_PROVIDER_NAMES.join(", ")}, managed. Add a custom one first ` +
+        "(betterwright configure).",
+    );
+  }
+  return cleaned;
 }
 
 /** Validate and persist a custom named provider. */
@@ -478,7 +527,8 @@ function resolveKey(choiceKey, definitionKeyEnv, definitionKey, env, what) {
  * resolveBrowserProvider accepts, resolving custom names and keyEnv
  * indirection against this home's config. Built-in names, explicit CDP
  * endpoints, and local binaries pass through (with keyEnv resolved to an
- * apiKey when the ref carries one).
+ * apiKey when the ref carries one, and a saved account key filled in when a
+ * built-in names none). An array expands element-wise into a fallback chain.
  *
  * Throws for a named provider that is neither built-in nor configured, and
  * for a custom provider whose template needs a key nobody supplied.
@@ -488,11 +538,45 @@ export function expandProviderChoice(
   { home = defaultHome(), env = process.env, config = null }: any = {},
 ) {
   if (choice == null || choice === false) return choice ?? null;
+  if (Array.isArray(choice)) {
+    if (!choice.length) {
+      throw new TypeError(
+        "provider as an array must name at least one candidate: " +
+          "[{ provider: <name> }, { cdpUrl: <ws-url> }, { executablePath: <path> }].",
+      );
+    }
+    return choice.map((entry) => {
+      // Nullish entries get the same rejection here that the worker's
+      // validator would give — an explicit chain fails at construction,
+      // never mid-launch.
+      if (entry == null || entry === false) {
+        throw new TypeError(
+          "provider chain entries must each set exactly one of " +
+            "provider, cdpUrl, or executablePath.",
+        );
+      }
+      return expandProviderChoice(entry, { home, env, config });
+    });
+  }
   if (isString(choice)) choice = { provider: choice };
   if (!isRecord(choice)) return choice; // let the provider layer report the type error
   const name = cleanString(untrustedField(choice, "provider")).toLowerCase();
   if (!name) return expandKeyEnv(choice, env);
-  if (BROWSER_PROVIDER_NAMES.includes(name)) return expandKeyEnv(choice, env);
+  if (name === "managed") return { provider: "managed" };
+  if (BROWSER_PROVIDER_NAMES.includes(name)) {
+    const expanded = expandKeyEnv(choice, env);
+    if (cleanString(untrustedField(expanded, "apiKey"))) return expanded;
+    // A connected account supplies the key a bare `--browser <name>` or
+    // fallback ref lacks, matching resolveConnectedProvider's precedence
+    // (flag > account > well-known env, which the worker still reads).
+    const browserConfig: BrowserFileConfig = config ?? loadBrowserConfig(home);
+    const account = browserConfig.accounts[name];
+    if (!account) return expanded;
+    const { key } = resolveKey(undefined, account.keyEnv, account.apiKey, env, name);
+    // SAFETY: expanded is a record (isRecord above); the spread only adds the
+    // resolved apiKey field.
+    return key ? { ...(expanded as Record<string, UntrustedValue>), apiKey: key } : expanded;
+  }
 
   const browserConfig: BrowserFileConfig = config ?? loadBrowserConfig(home);
   const definition = browserConfig.custom[name];
@@ -568,4 +652,66 @@ export function configuredDefaultProvider({
   const config = loadBrowserConfig(home);
   if (!config.default) return null;
   return expandProviderChoice(config.default, { home, env, config });
+}
+
+// Human-readable tag for a stored ref, in notes a launch surfaces. cdpUrl is
+// masked because a template-free endpoint can still embed a credential.
+function describeProviderRef(ref: DefaultBrowserRef): string {
+  if (ref.provider) return `provider ${ref.provider}`;
+  if (ref.cdpUrl) return `CDP endpoint ${describeCdpUrl(ref.cdpUrl)}`;
+  return `binary at ${ref.executablePath}`;
+}
+
+/**
+ * The provider chain a launch walks for this home: the persisted default
+ * first, then each configured fallback in order — all expanded against saved
+ * accounts, keyEnv indirection, and custom providers.
+ *
+ * With no default the managed fork is still the first candidate, because
+ * "no default configured" means "the managed fork" everywhere else. A
+ * fallback ref that no longer resolves (a removed custom provider, an unset
+ * keyEnv) is skipped with a note rather than failing the launch — the
+ * default and the remaining fallbacks still apply. The default itself still
+ * throws: it is the choice the user asked for, and silently degrading it to
+ * a fallback would hide a real misconfiguration.
+ *
+ * Returns `{ provider }` in the shapes the `provider` option accepts — a
+ * single expanded object for a one-candidate chain, an array for a real
+ * chain, null for no candidates — plus `notes` for the launch envelope.
+ */
+export function configuredProviderChain({
+  home = defaultHome(),
+  env = process.env,
+}: any = {}) {
+  const config = loadBrowserConfig(home);
+  const notes: string[] = [];
+  const chain: UntrustedValue[] = [];
+  if (config.default) {
+    chain.push(expandProviderChoice(config.default, { home, env, config }));
+  }
+  for (const ref of config.fallbacks || []) {
+    try {
+      const expanded = expandProviderChoice(ref, { home, env, config });
+      // Validation only — no sessions are minted here (create is deferred to
+      // the launch). A ref that cannot produce a launchable plan (bad scheme,
+      // missing key, gone binary) would otherwise poison the whole array in
+      // the worker's validator.
+      resolveBrowserProvider(expanded, { env });
+      chain.push(expanded);
+    } catch (error) {
+      // SAFETY: caught values may be non-Error; the cast only reaches for
+      // .message, and String() renders a missing one as "undefined".
+      const reason = String((error as Error)?.message || error).split("\n", 1)[0];
+      notes.push(`Skipped a browser fallback (${describeProviderRef(ref)}): ${reason}`);
+    }
+  }
+  // With no configured default the managed fork is still the first
+  // candidate — fallbacks read as "the fork first, then these". An empty
+  // chain (no default, and every fallback skipped or absent) resolves to
+  // null: the same managed fork every launch has always implied, without
+  // changing `provider`'s null sentinel for a bare config.
+  if (!config.default && chain.length) chain.unshift({ provider: "managed" });
+  const provider =
+    chain.length === 1 ? chain[0] : chain.length ? chain : null;
+  return { provider, notes };
 }

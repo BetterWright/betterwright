@@ -320,7 +320,7 @@ interface NormalizedDaemonBrowser {
   headedInvisible: boolean;
   platform: "macos" | "windows" | "linux" | null;
   stealthRuntimeFix: boolean;
-  provider: DaemonProviderConfig | null;
+  provider: DaemonProviderConfig | DaemonProviderConfig[] | null;
 }
 
 // `policy` and `browser` are always present in a finished config; they are
@@ -395,8 +395,20 @@ type DaemonProviderConfig = Partial<
   >
 >;
 
-function normalizeDaemonProvider(provider: UntrustedValue): DaemonProviderConfig | null {
+function normalizeDaemonProvider(
+  provider: UntrustedValue,
+): DaemonProviderConfig | DaemonProviderConfig[] | null {
   if (provider == null || provider === false) return null;
+  // An ordered fallback chain: every element normalizes like a single
+  // provider so the signature covers whichever candidate a launch lands on —
+  // a client asking for [kernel, managed] must not reuse a daemon on
+  // [browserbase, managed].
+  if (Array.isArray(provider)) {
+    const chain = provider
+      .map((entry) => normalizeDaemonProvider(entry))
+      .filter((entry): entry is DaemonProviderConfig => Boolean(entry));
+    return chain.length ? chain : null;
+  }
   const record = isString(provider) ? { provider } : provider;
   if (!isObjectPayload(record)) return null;
   const normalized: DaemonProviderConfig = {};
@@ -445,7 +457,7 @@ export async function createBrowserFromDaemonConfig(config) {
     // crossed the daemon boundary as parsed JSON and BetterWright forwards the
     // record opaquely to the worker, which validates provider configs at
     // launch — nothing on this side relies on the asserted field types.
-    options.provider = normalized.browser.provider as BrowserProviderOptions;
+    options.provider = normalized.browser.provider as BrowserProviderOptions | BrowserProviderOptions[];
   }
   return new BetterWright(options);
 }

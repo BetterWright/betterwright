@@ -9,6 +9,25 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- Ordered browser-provider fallback chains. The `provider` option accepts an
+  array of candidates tried in order — a provider that is out of quota, down,
+  or unreachable falls through to the next entry instead of failing the
+  launch. `browser.fallbacks` in `config.json` extends the configured default
+  the same way (`betterwright configure --browser-fallback <name|url|path>`,
+  repeatable; `--clear-fallbacks` removes them). `{ provider: "managed" }`
+  names the managed BetterChromium fork as a chain entry, and a chain with no
+  configured default still tries the fork first. A candidate that mints a
+  remote session but fails to connect releases it before the next candidate
+  runs, and every skipped or failed candidate is listed as a launch warning.
+  `betterwright doctor` reports the resolved chain under **Browser →
+  Fallbacks**. Cookie Sync consent for a chained launch names every remote
+  candidate, joined with `+`.
+- Connected provider accounts now supply the API key for any launch that
+  names the provider — an explicit `provider` option or a fallback ref — not
+  just `boxes`. Precedence stays flag > account > well-known env var.
+
 ## [2.7.3] - 2026-09-13
 
 Version 2.7.2 was held before npm publication to incorporate final review

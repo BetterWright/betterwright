@@ -1,7 +1,7 @@
 // End-to-end Node tests. Skipped unless doctor reports a ready managed browser,
 // so the policy suite still runs on machines without BetterChromium installed.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
@@ -13,7 +13,9 @@ import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
 import { fromPath } from "rookie-cookies";
 import { AD_BLOCK_CACHE_FILE } from "../../dist/src/ad-blocker.js";
+import { saveBrowserFallbacks, saveDefaultBrowser } from "../../dist/src/browser-config.js";
 import { chromiumNeedsSoftwareGpu } from "../../dist/src/browser-runtime.js";
+import { resolveChromiumForkBinary } from "../../dist/src/chromium-fork.js";
 import { normalizeCookieSnapshot, normalizeCookieSyncOptions } from "../../dist/src/cookie-sync.js";
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
@@ -4900,4 +4902,181 @@ test("reading an edited field does not bypass a subsequent pending submission", 
     assert.equal(result.result.results.verify.value,'After');
     assert.equal(committed,true,'a field edited before Submit must not bypass that pending write');
   } finally {await bw.close();await server.close();}
+});
+
+
+// --- Provider fallback chains ------------------------------------------------
+// Ordered `provider` arrays walk candidates at launch: a dead endpoint must
+// fall through to the next entry, a winner's warnings must name what failed,
+// and a fully dead chain must list every candidate it tried. The remote side
+// of these tests is the managed binary itself, spawned with
+// --remote-debugging-port — no cloud account needed.
+
+// A real CDP endpoint: the managed binary with --remote-debugging-port=0
+// prints "DevTools listening on ws://…" on stderr once the socket is live.
+async function spawnCdpEndpoint() {
+  const binary = resolveChromiumForkBinary();
+  const profile = makeTempDir("bw-cdp-profile-");
+  const child = spawn(
+    binary,
+    [
+      "--headless",
+      "--no-first-run",
+      "--remote-debugging-port=0",
+      `--user-data-dir=${profile}`,
+      "about:blank",
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  let stderr = "";
+  const cdpUrl = await new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`CDP endpoint did not start: ${stderr.slice(-400)}`)),
+      20_000,
+    );
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      const match = stderr.match(/DevTools listening on (ws:\/\/\S+)/);
+      if (match) {
+        clearTimeout(timer);
+        resolve(match[1]);
+      }
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(
+        new Error(`BetterChromium exited (${code}) before exposing CDP: ${stderr.slice(-400)}`),
+      );
+    });
+  });
+  return {
+    cdpUrl,
+    async close() {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await Promise.race([
+        once(child, "exit"),
+        new Promise((resolve) => setTimeout(resolve, 5_000)),
+      ]);
+      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    },
+  };
+}
+
+test("provider chain: a dead endpoint falls through to the managed fork", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    provider: [{ cdpUrl: "ws://127.0.0.1:1/unreachable" }, { provider: "managed" }],
+  });
+  try {
+    const result = await bw.run("return 42");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 42);
+    assert.ok(
+      result.warnings.some(
+        (warning) => /127\.0\.0\.1/.test(warning) && /failed to launch/i.test(warning),
+      ),
+      `expected a failed-candidate warning, got ${JSON.stringify(result.warnings)}`,
+    );
+  } finally {
+    await bw.close();
+  }
+});
+
+test("provider chain: a dead endpoint falls through to a real CDP endpoint", opts, async () => {
+  const cdp = await spawnCdpEndpoint();
+  try {
+    const bw = new BetterWright({
+      home: tempHome(),
+      headless: true,
+      provider: [{ cdpUrl: "ws://127.0.0.1:1/dead" }, { cdpUrl: cdp.cdpUrl }],
+    });
+    try {
+      const result = await bw.run(
+        "await page.setContent('<title>fallback landed</title>'); return page.title()",
+      );
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result, "fallback landed");
+      assert.ok(
+        result.warnings.some((warning) => /failed to launch/.test(warning)),
+        `expected a failed-candidate warning, got ${JSON.stringify(result.warnings)}`,
+      );
+      // The winner is remote, so its outside-the-guard warning must ride along.
+      assert.ok(
+        result.warnings.some((warning) => /guard proxy/i.test(warning)),
+        `expected the remote-egress warning, got ${JSON.stringify(result.warnings)}`,
+      );
+    } finally {
+      await bw.close();
+    }
+  } finally {
+    await cdp.close();
+  }
+});
+
+test("provider chain: the first healthy candidate wins and later entries are never tried", opts, async () => {
+  const cdp = await spawnCdpEndpoint();
+  try {
+    const bw = new BetterWright({
+      home: tempHome(),
+      headless: true,
+      provider: [{ cdpUrl: cdp.cdpUrl }, { cdpUrl: "ws://127.0.0.1:1/never-tried" }],
+    });
+    try {
+      const result = await bw.run("return 7");
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result, 7);
+      assert.ok(
+        !result.warnings.some((warning) => /127\.0\.0\.1:1/.test(warning)),
+        `the dead tail entry must not be attempted: ${JSON.stringify(result.warnings)}`,
+      );
+    } finally {
+      await bw.close();
+    }
+  } finally {
+    await cdp.close();
+  }
+});
+
+test("provider chain: a fully dead chain names every candidate it tried", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    provider: [
+      { cdpUrl: "ws://127.0.0.1:1/one" },
+      { cdpUrl: "ws://127.0.0.1:2/two" },
+    ],
+  });
+  try {
+    const result = await bw.run("return 1");
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Every browser provider in the chain failed/);
+    assert.match(result.error, /127\.0\.0\.1:1/);
+    assert.match(result.error, /127\.0\.0\.1:2/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("provider chain: configured fallbacks run after a failing default", opts, async () => {
+  const home = tempHome();
+  saveDefaultBrowser({ cdpUrl: "ws://127.0.0.1:1/default" }, home);
+  saveBrowserFallbacks([{ provider: "managed" }], home);
+  const bw = new BetterWright({ home, headless: true });
+  try {
+    const result = await bw.run("return 'via-fallback'");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, "via-fallback");
+    assert.ok(
+      result.warnings.some((warning) => /failed to launch/i.test(warning)),
+      `expected a failed-candidate warning, got ${JSON.stringify(result.warnings)}`,
+    );
+  } finally {
+    await bw.close();
+    removeBrowserHome(home);
+  }
 });
