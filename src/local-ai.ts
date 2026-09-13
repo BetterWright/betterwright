@@ -130,6 +130,23 @@ export async function detectLocalHardware({ probe = runLocalProbe, platform = pr
 }
 
 export function recommendLocalModel(hardware: LocalHardware, options: LocalSetupOptions = {}): LocalRecommendation {
+  const gpus = [...hardware.gpus].filter(gpu => gpu.memory > 8 * GIB).sort((a, b) => b.memory - a.memory);
+  if (!gpus.length) return recommendOnGpu(hardware, options);
+  let first: LocalRecommendation | null = null;
+  let failure: Error | null = null;
+  for (const gpu of gpus) {
+    try {
+      const candidate = recommendOnGpu({ ...hardware, gpus: [gpu] }, options);
+      first ||= candidate;
+      if (gpu.freeMemory >= candidate.downloadBytes + 2 * GIB) return candidate;
+    } catch (error) { failure ||= error; }
+  }
+  // Preserve a useful headroom error when all otherwise suitable GPUs are
+  // busy; never lower the quant to squeeze onto an occupied accelerator.
+  if (first) return first;
+  throw failure || new Error("No reviewed local model fits the available GPUs.");
+}
+function recommendOnGpu(hardware: LocalHardware, options: LocalSetupOptions): LocalRecommendation {
   const preference = options.preference || "balanced";
   if (!["balanced", "speed", "quality"].includes(preference)) throw new Error("--preference must be balanced, speed, or quality.");
   if (options.acceleration && !["auto", "none", "mtp", "dflash2"].includes(options.acceleration)) throw new Error("--acceleration must be auto, none, mtp, or dflash2.");

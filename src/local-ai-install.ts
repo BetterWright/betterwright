@@ -276,7 +276,7 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   // wheels. Ship a private C/C++ compiler, without sudo or system packages.
   const compilerDirectory = path.join(localRoot(home), "runtimes", `zig-${ZIG_VERSION}`);
   const compilerBin = path.join(compilerDirectory, `zig-x86_64-linux-${ZIG_VERSION}`);
-  if (!await localRuntimeReady(compilerDirectory, `${ZIG_VERSION}-cuda1`, path.join(compilerBin, "zig"), ["version"]) ||
+  if (!await localRuntimeReady(compilerDirectory, `${ZIG_VERSION}-cuda2`, path.join(compilerBin, "zig"), ["version"]) ||
     !fs.existsSync(path.join(compilerBin, "bw-cc")) || !fs.existsSync(path.join(compilerBin, "bw-cxx"))) {
     const archive = await downloadLocalArtifact(ZIG_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
     await stageLocalRuntime(compilerDirectory, async staging => {
@@ -284,15 +284,31 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
       const zig = findExecutable(staging, "zig");
       if (!zig) throw new Error("The pinned compiler archive contains no zig executable.");
       await runLocalProbe(zig, ["version"]);
+      // Zig's GNU -l:filename handling does not consistently search -L
+      // paths. Resolve those exact filenames before invoking its linker.
+      writePrivate(path.join(path.dirname(zig), "bw-compiler.py"), `import os,sys
+from pathlib import Path
+args=sys.argv[2:]
+directories=[]
+for i,arg in enumerate(args):
+    if arg == "-L" and i+1 < len(args): directories.append(args[i+1])
+    elif arg.startswith("-L"): directories.append(arg[2:])
+directories += os.environ.get("LD_LIBRARY_PATH", "").split(":")
+directories += ["/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu", "/usr/local/nvidia/lib64", "/usr/lib/wsl/lib", "/usr/lib64", "/usr/lib"]
+for i,arg in enumerate(args):
+    if arg.startswith("-l:"):
+        for directory in directories:
+            candidate=Path(directory)/arg[3:]
+            if directory and candidate.is_file():
+                args[i]=str(candidate.resolve())
+                break
+zig=str(Path(__file__).resolve().parent/"zig")
+os.execv(zig, [zig, sys.argv[1], *args])
+`);
       for (const [name, command] of [["bw-cc", "cc"], ["bw-cxx", "c++"]]) {
-        fs.writeFileSync(path.join(path.dirname(zig), name), `#!/bin/sh
-for libdir in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/local/nvidia/lib64 /usr/lib/wsl/lib; do
-  if [ -e "$libdir/libcuda.so.1" ]; then set -- "-L$libdir" "$@"; fi
-done
-exec "$(dirname "$0")/zig" ${command} "$@"
-`, { mode: 0o700 });
+        fs.writeFileSync(path.join(path.dirname(zig), name), `#!/bin/sh\nexec python3 "$(dirname "$0")/bw-compiler.py" ${command} "$@"\n`, { mode: 0o700 });
       }
-      fs.writeFileSync(path.join(staging, ".ready"), `${ZIG_VERSION}-cuda1`, { mode: 0o600 });
+      fs.writeFileSync(path.join(staging, ".ready"), `${ZIG_VERSION}-cuda2`, { mode: 0o600 });
     });
   }
   if (!await localRuntimeReady(directory, VLLM_VERSION, path.join(directory, "venv", "bin", "vllm"))) {

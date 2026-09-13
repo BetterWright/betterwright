@@ -82,6 +82,16 @@ test("small devices, CPU-only hosts and combined small GPUs are refused", () => 
   const host = hardware(64, 8, "nvidia"); host.gpus.push({ ...host.gpus[0], id: "CUDA1" });
   assert.throws(() => recommendLocalModel(host), /more than 8 GB/);
 });
+test("automatic selection evaluates model fit on each GPU before choosing a busy larger card", () => {
+  const host = hardware(64, 32, "nvidia", "linux", 12);
+  host.gpus[0].freeMemory = 4 * GIB;
+  host.gpus.push({ ...hardware(64, 16, "nvidia", "linux", 8.9).gpus[0], id: "CUDA1", uuid: "GPU-2345-abcd" });
+  const r = recommendLocalModel(host);
+  assert.equal(r.plan.gpu.id, "CUDA1"); assert.equal(r.model.id, "ornith-9b");
+  assert.equal(r.model.quant, "Q6_K");
+  host.gpus[0].freeMemory = host.gpus[0].memory;
+  assert.equal(recommendLocalModel(host).plan.gpu.id, "CUDA0");
+});
 test("hardware parsers recognize real Metal, Vulkan and CUDA output without counting CPU memory", async () => {
   const gpu = parseNvidiaGpus("0, NVIDIA GeForce RTX 5090, 32768, 30000, 12.0, GPU-1234-abcd")[0];
   assert.equal(gpu.memory, 32 * GIB); assert.equal(gpu.compute, 12);

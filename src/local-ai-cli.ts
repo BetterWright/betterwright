@@ -55,7 +55,14 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
   const connect = dependencies.connect || ensureLocalService, verify = dependencies.verify || verifyLocalModel;
   const status = dependencies.status || localServiceStatus, stop = dependencies.stop || stopLocalServiceIfOwned;
   return withLocalLock(home, "setup", async () => {
-    let hardware = await detect();
+    const running = await status(home);
+    if (running.error) throw new Error(running.error);
+    let managedPlan = null;
+    try { const saved = readLocalPlan(home); if (saved && running.ready && running.planId === localPlanId(saved)) managedPlan = saved; } catch { /* Setup can repair invalid selections. */ }
+    const accountForManagedWeights = (hardware: Awaited<ReturnType<typeof detect>>) => ({ ...hardware, gpus: hardware.gpus.map(gpu =>
+      managedPlan && (gpu.uuid ? gpu.uuid === managedPlan.gpu.uuid : gpu.id === managedPlan.gpu.id)
+        ? { ...gpu, freeMemory: gpu.memory } : gpu) });
+    let hardware = accountForManagedWeights(await detect());
     if (hardware.memory <= 8 * GIB || !((hardware.platform === "darwin" && hardware.arch === "arm64") || (["linux", "win32"].includes(hardware.platform) && hardware.arch === "x64"))) {
       recommendLocalModel(hardware, options); // Fail before installing even a small runtime.
     }
@@ -78,7 +85,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
         executable = await installLlama(hardware.platform, backend, home, log);
         devices = await probe(executable, ["--list-devices"]);
       }
-      hardware = { ...hardware, gpus: parseLlamaDevices(devices, native) };
+      hardware = accountForManagedWeights({ ...hardware, gpus: parseLlamaDevices(devices, native) });
       if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working Metal/Vulkan GPU driver and rerun betterwright --local; no model weights were downloaded.");
     }
     const recommendation = recommendLocalModel(hardware, options);
@@ -89,7 +96,6 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     log(`Source: ${model.repository}@${model.revision.slice(0, 12)}`);
     log(`Model download: ${(recommendation.downloadBytes / GIB).toFixed(2)} GiB including vision support`);
     log(recommendation.reason);
-    const running = await status(home);
     if (running.running && running.planId !== localPlanId(plan)) throw new Error("Another local model is running. Run betterwright local stop, then repeat setup to change models.");
     if (!running.running && plan.gpu.freeMemory < recommendation.downloadBytes + 2 * GIB) throw new Error("There is not enough free accelerator memory for the selected model and context. Close GPU-heavy applications and retry; the recommendation will not silently drop to a lower-quality model.");
     await (dependencies.disk || checkLocalDisk)(plan, home);
