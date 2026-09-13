@@ -239,12 +239,14 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
     });
   } catch { return false; }
 }
-export function llamaRuntimeEnvironment(platform: string, home = defaultHome()): NodeJS.ProcessEnv {
+export function llamaRuntimeEnvironment(platform: string, home = defaultHome(), backend = "vulkan"): NodeJS.ProcessEnv {
   if (platform !== "linux") return { ...process.env };
-  return { ...process.env, LD_LIBRARY_PATH: [path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-linuxCuda`, "app"), path.join(localRoot(home), "runtimes", "linux-libraries-1", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "targets", "x86_64-linux", "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
+  const env: NodeJS.ProcessEnv = { ...process.env, GGML_BACKEND_PATH: path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-linuxCuda`, "app", "libggml-cuda.so"), LD_LIBRARY_PATH: [path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-linuxCuda`, "app"), path.join(localRoot(home), "runtimes", "linux-libraries-1", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "targets", "x86_64-linux", "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
+  if (backend !== "cuda") delete env.GGML_BACKEND_PATH;
+  return env;
 }
 export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
-  if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home);
+  if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home, plan.gpu.backend);
   const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
   const compilerBin = path.join(compiler, "bin");
   const bin = path.join(runtimeDirectory(plan, home), "venv", "bin");
@@ -310,7 +312,7 @@ async function publicLlamaRegistryFetch(): Promise<typeof fetch> {
   };
 }
 export async function installLlamaRuntime(platform: string, backend: string, home = defaultHome(), log: LocalLog = console.log): Promise<string> {
-  const env = llamaRuntimeEnvironment(platform, home);
+  const env = llamaRuntimeEnvironment(platform, home, backend);
   if (platform === "linux") {
     const libraries = path.join(localRoot(home), "runtimes", "linux-libraries-1");
     const ready = path.join(libraries, ".ready");
@@ -341,7 +343,7 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
       const executable = findExecutable(staging, platform === "win32" ? "llama-server.exe" : "llama-server");
       if (!executable) throw new Error("The inference runtime archive contains no llama-server.");
       if (platform !== "win32") fs.chmodSync(executable, 0o755);
-      const probeEnv = platform === "linux" ? { ...env, LD_LIBRARY_PATH: [path.dirname(executable), env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) } : env;
+      const probeEnv = platform === "linux" ? { ...env, GGML_BACKEND_PATH: backend === "cuda" ? path.join(path.dirname(executable), "libggml-cuda.so") : undefined, LD_LIBRARY_PATH: [path.dirname(executable), env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) } : env;
       await runLocalProbe(executable, ["--version"], probeEnv);
       fs.writeFileSync(path.join(staging, ".ready"), LLAMA_VERSION, { mode: 0o600 });
     });

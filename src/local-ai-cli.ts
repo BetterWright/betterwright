@@ -100,7 +100,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
       let devices: string;
       try {
         executable = await installLlama(hardware.platform, backend, home, log);
-        devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home));
+        devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend));
         if (backend === "cuda" && !parseLlamaDevices(devices, native).length) throw new Error(`No usable CUDA device. ${devices.trim().slice(0, 1800)}`);
       }
       catch (error) {
@@ -109,7 +109,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
         log("Checking Vulkan acceleration as a fallback.");
         backend = "vulkan";
         executable = await installLlama(hardware.platform, backend, home, log);
-        devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home));
+        devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend));
       }
       hardware = accountForManagedWeights({ ...hardware, gpus: parseLlamaDevices(devices, native) });
       if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working Metal/Vulkan GPU driver and rerun betterwright --local; no model weights were downloaded.");
