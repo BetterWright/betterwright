@@ -14,6 +14,7 @@ import { isNumber, isString, untrustedField } from "./untrusted-value.js";
 
 export const LLAMA_VERSION = "b10902";
 export const VLLM_VERSION = "0.29.0";
+const VLLM_INSTALL_ID = `${VLLM_VERSION}-${createHash("sha256").update(LOCAL_VLLM_REQUIREMENTS).digest("hex").slice(0, 12)}`;
 const UV_VERSION = "0.12.13";
 export const LOCAL_PYTHON_VERSION = "3.12.13";
 function llamaArchive(name: string, bytes: number, sha256: string): LocalArtifact {
@@ -223,7 +224,7 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
     if (!plan) return false;
     const executable = localRuntimeExecutable(plan, home);
     if (!fs.statSync(executable).isFile() || !fs.statSync(executable).size) return false;
-    const version = plan.runtime === "vllm" ? VLLM_VERSION : LLAMA_VERSION;
+    const version = plan.runtime === "vllm" ? VLLM_INSTALL_ID : LLAMA_VERSION;
     if (fs.readFileSync(path.join(runtimeDirectory(plan, home), ".ready"), "utf8").trim() !== version) return false;
     if (plan.runtime === "vllm") {
       const env = localRuntimeEnvironment(plan, home);
@@ -378,8 +379,8 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   const cuda = path.join(directory, "venv", "lib", "python3.12", "site-packages", "nvidia", "cu13");
   const nvcc = path.join(cuda, "bin", "nvcc"), env = localRuntimeEnvironment(plan, home);
   const cudaFiles = ["include/cuda_runtime.h", "lib/libcudart.so.13", "lib64/libcudart.so.13"];
-  if (!await localRuntimeReady(directory, VLLM_VERSION, path.join(directory, "venv", "bin", "vllm")) ||
-    !await localRuntimeReady(directory, VLLM_VERSION, nvcc) || !cudaFiles.every(file => fs.existsSync(path.join(cuda, file)))) {
+  if (!await localRuntimeReady(directory, VLLM_INSTALL_ID, path.join(directory, "venv", "bin", "vllm")) ||
+    !await localRuntimeReady(directory, VLLM_INSTALL_ID, nvcc) || !cudaFiles.every(file => fs.existsSync(path.join(cuda, file)))) {
     fs.rmSync(ready, { force: true });
     const uvDirectory = path.join(localRoot(home), "runtimes", `uv-${UV_VERSION}`);
     const archive = await downloadLocalArtifact(UV_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
@@ -419,7 +420,7 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
     fs.rmSync(path.join(compilerDirectory, ".ready"), { force: true });
     throw error;
   } finally { fs.rmSync(check, { recursive: true, force: true }); }
-  fs.writeFileSync(ready, VLLM_VERSION, { mode: 0o600 });
+  fs.writeFileSync(ready, VLLM_INSTALL_ID, { mode: 0o600 });
   return localRuntimeExecutable(plan, home);
 }
 export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {
