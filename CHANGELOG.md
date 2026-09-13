@@ -9,7 +9,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
-## [2.7.2] - 2026-09-13
+## [2.7.3] - 2026-09-13
+
+Version 2.7.2 was held before npm publication to incorporate final review
+corrections. This release includes the complete upgrade from 2.7.1.
 
 ### Security
 
@@ -1622,8 +1625,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.2...HEAD
-[2.7.2]: https://github.com/BetterWright/betterwright/compare/v2.7.1...v2.7.2
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.3...HEAD
+[2.7.3]: https://github.com/BetterWright/betterwright/compare/v2.7.1...v2.7.3
 [2.7.1]: https://github.com/BetterWright/betterwright/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/BetterWright/betterwright/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/BetterWright/betterwright/compare/v2.5.2...v2.6.0
