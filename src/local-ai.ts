@@ -83,9 +83,9 @@ export function writeLocalJson(file: string, value: UntrustedValue) {
   fs.renameSync(temporary, file);
 }
 
-export function runLocalProbe(command: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<string> {
+export function runLocalProbe(command: string, args: string[], env: NodeJS.ProcessEnv = process.env, timeoutMs = 20_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile(command, args, { env, encoding: "utf8", timeout: 20_000, killSignal: "SIGKILL", maxBuffer: 2 * 1024 * 1024, windowsHide: true },
+    const child = execFile(command, args, { env, encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 2 * 1024 * 1024, windowsHide: true },
       (error, stdout, stderr) => error ? reject(new Error(`${path.basename(command)} failed: ${String(stderr || error.message).slice(0, 1200)}`)) : resolve(`${stdout}\n${stderr}`));
     child.stdin?.end();
   });

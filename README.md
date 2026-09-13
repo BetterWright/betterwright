@@ -59,7 +59,9 @@ betterwright exec "Open example.com and summarize the page"
 Setup chooses a model, quant, and accelerated runtime for Apple Silicon or a
 supported NVIDIA, AMD, or Intel GPU. It verifies image input and tool calls
 before selecting the local model for the built-in harness. Hardware with 8 GiB
-or less memory is excluded. See [local AI setup](docs/local-ai.md) for hardware,
+or less memory is excluded. Compatible Qwen and Ornith models automatically use
+DFlash2 or MTP acceleration, with draft memory included in the budget.
+See [local AI setup](docs/local-ai.md) for hardware,
 driver requirements, model choices, and validation limits.
 
 ## Connect an existing agent

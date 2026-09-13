@@ -23,7 +23,7 @@ interface LocalService {
   supervisorPid: number;
   childPid: number;
 }
-export interface LocalConnection { baseURL: string; apiKey: string; model: string; }
+export interface LocalConnection { baseURL: string; apiKey: string; model: string; started?: boolean; }
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 function serviceFile(home: string) { return path.join(localRoot(home), "service.json"); }
 function readService(home: string): LocalService | null {
@@ -150,7 +150,7 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
         removeService(existing, home);
       }
       if (status && existing.planId !== planId) throw new Error("Another managed model is running. Run betterwright local stop before changing models.");
-      if (status && untrustedField(status, "ready") === true) return { baseURL: `http://127.0.0.1:${existing.port}/v1`, apiKey: existing.token, model: LOCAL_MODEL_ALIAS };
+      if (status && untrustedField(status, "ready") === true) return { baseURL: `http://127.0.0.1:${existing.port}/v1`, apiKey: existing.token, model: LOCAL_MODEL_ALIAS, started: false };
     }
     localRuntimeExecutable(plan, home);
     for (const { artifact: file, directory } of localInstallArtifacts(plan, home)) {
@@ -179,7 +179,7 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
       const service = readService(home);
       if (service?.planId === planId) {
         const status = await control(service, "status").catch(() => null);
-        if (status && untrustedField(status, "ready") === true) return { baseURL: `http://127.0.0.1:${service.port}/v1`, apiKey: service.token, model: LOCAL_MODEL_ALIAS };
+        if (status && untrustedField(status, "ready") === true) return { baseURL: `http://127.0.0.1:${service.port}/v1`, apiKey: service.token, model: LOCAL_MODEL_ALIAS, started: Boolean(daemon) };
       }
       await pause(500);
     }
@@ -227,46 +227,56 @@ export async function serveLocalAI(planId: string, home = defaultHome(), launch:
   mkdirPrivate(localRoot(home));
   const env: NodeJS.ProcessEnv = { ...localRuntimeEnvironment(plan, home), LLAMA_API_KEY: token, VLLM_API_KEY: token, HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" };
   if (plan.runtime === "vllm" && plan.gpu.uuid) env.CUDA_VISIBLE_DEVICES = plan.gpu.uuid;
-  // API keys stay out of argv/logged launch commands and all status output.
-  child = launch(localRuntimeExecutable(plan, home), localServerArguments(plan, port, home), { env, detached: process.platform !== "win32", stdio: ["ignore", "inherit", "inherit"], windowsHide: true });
-  const childDone = new Promise<void>(resolve => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
-  let probeBusy = false;
-  const probe = setInterval(async () => {
-    if (probeBusy || stopping) return;
-    probeBusy = true;
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/v1/models`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(2000), redirect: "error" });
-      const body: UntrustedValue = await response.json();
-      const models = untrustedField(body, "data");
-      ready = response.ok && Array.isArray(models) && models.some(m => untrustedField(m, "id") === LOCAL_MODEL_ALIAS);
-    } catch { ready = false; }
-    finally { probeBusy = false; }
-  }, 1000);
+  let childDone = Promise.resolve();
+  let probe: ReturnType<typeof setInterval> | null = null;
+  const onSignal = () => void finish();
+  const closed = new Promise<void>(resolve => server.once("close", resolve));
   finish = async () => {
     if (stopping) return;
-    stopping = true; clearInterval(probe);
-    // vLLM has worker descendants. Own a process group on Unix so stop
-    // releases their GPU allocations as well as the HTTP parent.
+    stopping = true;
+    if (probe) clearInterval(probe);
+    // Own the actual child handle/group, including failed state publication.
     const signal = (name: NodeJS.Signals) => {
+      if (!child) return;
       try {
         if (process.platform !== "win32" && child.pid) process.kill(-child.pid, name);
         else if (child.exitCode === null && child.signalCode === null) child.kill(name);
       } catch (error) { if (error?.code !== "ESRCH") throw error; }
     };
-    signal("SIGTERM");
-    const force = setTimeout(() => signal("SIGKILL"), 5000);
-    await childDone; clearTimeout(force);
-    signal("SIGKILL");
-    if (readService(home)?.token === state.token) fs.rmSync(serviceFile(home), { force: true });
-    process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);
-    server.closeAllConnections(); server.close();
+    try {
+      signal("SIGTERM");
+      const force = setTimeout(() => signal("SIGKILL"), 5000);
+      try { await childDone; } finally { clearTimeout(force); }
+      signal("SIGKILL");
+    } finally {
+      if (readService(home)?.token === state.token) fs.rmSync(serviceFile(home), { force: true });
+      fs.rmSync(`${serviceFile(home)}.${process.pid}.tmp`, { force: true });
+      process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);
+      server.closeAllConnections(); server.close();
+    }
   };
-  state.childPid = child.pid || 0;
-  writeLocalJson(serviceFile(home), state);
-  const onSignal = () => void finish();
   process.once("SIGTERM", onSignal);
   process.once("SIGINT", onSignal);
-  void childDone.then(() => finish());
-  await new Promise<void>(resolve => server.once("close", resolve));
+  try {
+    // API keys stay out of argv/logged launch commands and all status output.
+    child = launch(localRuntimeExecutable(plan, home), localServerArguments(plan, port, home), { env, detached: process.platform !== "win32", stdio: ["ignore", "inherit", "inherit"], windowsHide: true });
+    childDone = new Promise<void>(resolve => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
+    state.childPid = child.pid || 0;
+    writeLocalJson(serviceFile(home), state);
+    let probeBusy = false;
+    probe = setInterval(async () => {
+      if (probeBusy || stopping) return;
+      probeBusy = true;
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/models`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(2000), redirect: "error" });
+        const body: UntrustedValue = await response.json();
+        const models = untrustedField(body, "data");
+        ready = response.ok && Array.isArray(models) && models.some(m => untrustedField(m, "id") === LOCAL_MODEL_ALIAS);
+      } catch { ready = false; }
+      finally { probeBusy = false; }
+    }, 1000);
+    void childDone.then(() => finish());
+    await closed;
+  } catch (error) { await finish(); await closed; throw error; }
   return 0;
 }

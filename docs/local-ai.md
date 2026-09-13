@@ -58,12 +58,38 @@ browser memory, using the runtime's Metal working-set limit. Context is 32K on
 smaller accelerators and 64K at 48+ GiB. Other running GPU applications can still
 prevent loading; close them and retry if the free-memory check fails.
 
+Setup also selects compatible speculative decoding automatically. This uses a
+draft head to propose several tokens for the target model to verify:
+
+| Model/runtime | Automatic acceleration |
+| --- | --- |
+| Qwen 27B with vLLM on larger GPUs with sufficient headroom | DFlash2, using the original BF16 drafter from Inco AI |
+| Qwen 27B with vLLM on 32 GiB Blackwell | Built-in MTP, three draft tokens; eager execution avoids CUDA graph memory overhead |
+| Ornith 9B / 35B GGUF | Bundled MTP heads, three draft tokens on the selected accelerator |
+| Nex-N2.5-mini GGUF | No speculative draft: the published weights omit MTP tensors |
+
+The DFlash2 download adds 3.58 GiB and reserves another 2 GiB of workspace. It
+uses the same pinned-download, checksum, resume, and restart verification as
+the target model. MTP weights are already included in the selected Ornith and
+Qwen files. Nex's configuration contains an MTP field, but that alone does not
+provide usable draft weights. Existing Flash Attention, GPU offload, and cache
+tuning still apply to Nex.
+
+Use `--acceleration auto|none|mtp|dflash2` to override the automatic choice.
+Incompatible or oversized drafts are rejected. `none` is useful for comparing
+performance or diagnosing a runtime issue; target weights are reused. Stop the
+runtime before changing acceleration. The final accelerated runtime must pass
+the image/tool-call check before setup changes the harness default. Speed gains
+depend on draft acceptance, prompts, context length, and hardware; no fixed
+speedup multiplier is promised.
+
 ## Choices and lifecycle
 
 ```bash
 betterwright --local --preference speed
 betterwright --local --preference quality
 betterwright --local --model ornith-35b --quant Q5_K_M
+betterwright --local --acceleration auto
 betterwright local plan --json
 betterwright local status --json
 betterwright local stop
@@ -113,7 +139,9 @@ network access continues to follow BetterWright's normal guard policy.
 The catalog pins repository revisions, byte sizes, and SHA-256 hashes. Downloads
 stream to resumable partial files, are verified, then atomically installed.
 Runtime archives are also versioned and checksummed. The vLLM environment pins
-Python 3.12.13 and all 196 Python package versions, installing wheels only. No model repository code
+Python 3.12.13 and all 196 Python package versions, installing wheels only.
+A checksummed private Zig 0.16.0 C/C++ toolchain supports Triton's runtime
+compilation without sudo or a system compiler. No model repository code
 is executed with `trust_remote_code`.
 
 - [Nex-N2.5-mini](https://huggingface.co/nex-agi/Nex-N2.5-mini), using
@@ -123,6 +151,9 @@ is executed with `trust_remote_code`.
   published by the model authors.
 - [Unsloth Qwen3.8-27B NVFP4](https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4)
   and [Qwen's FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8).
+- [Inco AI's DFlash2 drafter](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2),
+  configured using the [vLLM Qwen recipe](https://recipes.vllm.ai/Qwen/Qwen3.8-27B).
+- [llama.cpp speculative decoding](https://github.com/ggml-org/llama.cpp/blob/b10902/docs/speculative.md).
 
 Automated tests cover the hardware/quant matrix, download corruption and resume,
 setup failure behavior, and private service lifecycle. Real acceptance testing

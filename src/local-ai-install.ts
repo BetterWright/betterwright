@@ -221,11 +221,20 @@ export async function stageLocalRuntime(directory: string, populate: (staging: s
     fs.renameSync(staging, directory);
   } finally { fs.rmSync(staging, { recursive: true, force: true }); }
 }
+export async function localRuntimeReady(directory: string, version: string, executable: string | null, args = ["--version"]): Promise<boolean> {
+  try {
+    if (!executable || fs.readFileSync(path.join(directory, ".ready"), "utf8") !== version || !fs.statSync(executable).isFile()) return false;
+    await runLocalProbe(executable, args);
+    return true;
+  } catch { return false; }
+}
 export async function installLlamaRuntime(platform: string, backend: string, home = defaultHome(), log: LocalLog = console.log): Promise<string> {
   const key = llamaRuntimeKey(platform, backend);
   const directory = path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-${key}`);
   const ready = path.join(directory, ".ready");
-  if (!fs.existsSync(ready)) {
+  const name = platform === "win32" ? "llama-server.exe" : "llama-server";
+  const cached = fs.existsSync(directory) ? findExecutable(directory, name) : null;
+  if (!await localRuntimeReady(directory, LLAMA_VERSION, cached)) {
     await stageLocalRuntime(directory, async staging => {
       for (const artifact of LOCAL_RUNTIMES[key]) {
         const archive = await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads"), { log });
@@ -266,7 +275,9 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   // Triton builds a small CUDA launcher even when all Python packages are
   // wheels. Ship a private C/C++ compiler, without sudo or system packages.
   const compilerDirectory = path.join(localRoot(home), "runtimes", `zig-${ZIG_VERSION}`);
-  if (!fs.existsSync(path.join(compilerDirectory, ".ready"))) {
+  const compilerBin = path.join(compilerDirectory, `zig-x86_64-linux-${ZIG_VERSION}`);
+  if (!await localRuntimeReady(compilerDirectory, `${ZIG_VERSION}-cuda1`, path.join(compilerBin, "zig"), ["version"]) ||
+    !fs.existsSync(path.join(compilerBin, "bw-cc")) || !fs.existsSync(path.join(compilerBin, "bw-cxx"))) {
     const archive = await downloadLocalArtifact(ZIG_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
     await stageLocalRuntime(compilerDirectory, async staging => {
       await extractRuntime(archive, staging);
@@ -274,12 +285,18 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
       if (!zig) throw new Error("The pinned compiler archive contains no zig executable.");
       await runLocalProbe(zig, ["version"]);
       for (const [name, command] of [["bw-cc", "cc"], ["bw-cxx", "c++"]]) {
-        fs.writeFileSync(path.join(path.dirname(zig), name), `#!/bin/sh\nexec "$(dirname "$0")/zig" ${command} "$@"\n`, { mode: 0o700 });
+        fs.writeFileSync(path.join(path.dirname(zig), name), `#!/bin/sh
+for libdir in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/local/nvidia/lib64 /usr/lib/wsl/lib; do
+  if [ -e "$libdir/libcuda.so.1" ]; then set -- "-L$libdir" "$@"; fi
+done
+exec "$(dirname "$0")/zig" ${command} "$@"
+`, { mode: 0o700 });
       }
-      fs.writeFileSync(path.join(staging, ".ready"), ZIG_VERSION, { mode: 0o600 });
+      fs.writeFileSync(path.join(staging, ".ready"), `${ZIG_VERSION}-cuda1`, { mode: 0o600 });
     });
   }
-  if (!fs.existsSync(ready)) {
+  if (!await localRuntimeReady(directory, VLLM_VERSION, path.join(directory, "venv", "bin", "vllm"))) {
+    fs.rmSync(ready, { force: true });
     const uvDirectory = path.join(localRoot(home), "runtimes", `uv-${UV_VERSION}`);
     const archive = await downloadLocalArtifact(UV_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
     await stageLocalRuntime(uvDirectory, async staging => {
@@ -293,7 +310,7 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
     const env = { ...process.env, UV_PYTHON_INSTALL_DIR: path.join(localRoot(home), "python"), UV_CACHE_DIR: path.join(localRoot(home), "uv-cache") };
     mkdirPrivate(directory);
     log(`Installing isolated Python ${LOCAL_PYTHON_VERSION} and vLLM ${VLLM_VERSION} (this can take several minutes).`);
-    await runInstall(uv, ["venv", "--python", LOCAL_PYTHON_VERSION, "--managed-python", path.join(directory, "venv")], env);
+    await runInstall(uv, ["venv", "--clear", "--python", LOCAL_PYTHON_VERSION, "--managed-python", path.join(directory, "venv")], env);
     const requirements = path.join(directory, "requirements.txt");
     writePrivate(requirements, LOCAL_VLLM_REQUIREMENTS);
     await runInstall(uv, ["pip", "sync", "--only-binary", ":all:", "--python", path.join(directory, "venv", "bin", "python"), requirements], env);

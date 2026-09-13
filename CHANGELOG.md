@@ -14,6 +14,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 - `betterwright --local`: hardware-aware model and quant selection, private
   Metal/Vulkan/CUDA inference runtimes, resumable checksum-verified downloads,
   and image/tool-call validation before selecting the built-in harness default.
+  Automatically configures DFlash2 or native MTP where compatible, including
+  verified draft downloads, memory headroom, and private compiler tooling.
   Includes `local plan`, `status`, `start`, and `stop`; skills and MCP hosts
   retain their own model configuration. See `docs/local-ai.md` for supported
   hardware and validation limits.

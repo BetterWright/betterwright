@@ -97,8 +97,8 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     if (plan.runtime === "vllm") {
       // Validate both CUDA and the pinned runtime's real argument parser
       // before spending bandwidth on weights. Request logging defaults off.
-      const preflight = "import json,sys,torch; from vllm.entrypoints.launchers.cli_args import make_arg_parser,validate_parsed_serve_args; from vllm.utils.argparse_utils import FlexibleArgumentParser; args=make_arg_parser(FlexibleArgumentParser()).parse_args(json.loads(sys.argv[1])); validate_parsed_serve_args(args); assert not args.enable_log_requests, 'Request logging must be disabled'; assert torch.cuda.is_available(), 'CUDA driver/runtime is unavailable'; print(torch.cuda.get_device_name(0))";
-      await probe(path.join(path.dirname(executable), "python"), ["-c", preflight, JSON.stringify(localServerArguments(plan, 8000, home).slice(1))], { ...localRuntimeEnvironment(plan, home), CUDA_VISIBLE_DEVICES: plan.gpu.uuid });
+      const preflight = "import json,sys,torch; from vllm.entrypoints.launchers.cli_args import make_arg_parser,validate_parsed_serve_args; from vllm.utils.argparse_utils import FlexibleArgumentParser; args=make_arg_parser(FlexibleArgumentParser()).parse_args(json.loads(sys.argv[1])); validate_parsed_serve_args(args); assert not args.enable_log_requests, 'Request logging must be disabled'; assert torch.cuda.is_available(), 'CUDA driver/runtime is unavailable'; from triton.backends.nvidia.driver import CudaUtils; CudaUtils(); print(torch.cuda.get_device_name(0))";
+      await probe(path.join(path.dirname(executable), "python"), ["-c", preflight, JSON.stringify(localServerArguments(plan, 8000, home).slice(1))], { ...localRuntimeEnvironment(plan, home), CUDA_VISIBLE_DEVICES: plan.gpu.uuid }, 120_000);
     }
     for (const { artifact, directory } of localInstallArtifacts(plan, home)) await (dependencies.download || downloadLocalArtifact)(artifact, directory, { log });
     log("Loading the model and checking image input plus tool calls…");
@@ -108,7 +108,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
       await verify(connection);
       writeLocalJson(path.join(localRoot(home), "selection.json"), plan);
     } catch (error) {
-      if (!running.running && connection) await stop(home, connection.apiKey).catch(() => {});
+      if (connection?.started) await stop(home, connection.apiKey).catch(() => {});
       throw error;
     }
     log("Local AI is ready and selected for the BetterWright harness.");

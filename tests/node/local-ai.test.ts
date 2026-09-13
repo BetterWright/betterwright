@@ -9,8 +9,8 @@ import { preferredModelId } from "../../dist/src/doctor.js";
 import { decodeLocalPlan, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
 import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
-import { downloadLocalArtifact, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
-import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService } from "../../dist/src/local-ai-service.js";
+import { downloadLocalArtifact, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService, stopLocalServiceIfOwned } from "../../dist/src/local-ai-service.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "../../dist/src/local-ai-vllm-lock.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -176,6 +176,20 @@ test("setup rejects drivers, small memory and changed running models before weig
   await assert.rejects(setupLocalAI({}, home, quiet, { ...common, detect: async () => hardware(), probe: async () => "MTL0: Apple M4 Max (53084 MiB, 53083 MiB free)", status: async () => ({ running: true, planId: "other" }) }), /Another local model/);
   assert.deepEqual(events, []); assert.equal(readLocalPlan(home), null);
 });
+test("failed setup never stops a concurrently started or reused service", async () => {
+  const home = makeTempDir("bw-local-setup-ownership-");
+  const stopped: string[] = [];
+  const common = { detect: async () => hardware(), installLlama: async () => "llama-server", installRuntime: async () => "llama-server",
+    probe: async () => "MTL0: Apple M4 Max (53084 MiB, 53083 MiB free)", status: async () => ({ running: false }),
+    disk: async () => {}, download: async () => "file", stop: async (_home, token) => { stopped.push(token); return true; },
+    verify: async () => { throw new Error("probe failed"); } };
+  await assert.rejects(setupLocalAI({}, home, quiet, { ...common, connect: async () => { throw new Error("Another managed model is running"); } }), /Another/);
+  for (const started of [false, true]) {
+    await assert.rejects(setupLocalAI({}, home, quiet, { ...common,
+      connect: async () => ({ model: "local", apiKey: started ? "new-owned-key" : "concurrent-key", baseURL: "http://127.0.0.1:1/v1", started }) }), /probe failed/);
+  }
+  assert.deepEqual(stopped, ["new-owned-key"]);
+});
 test("readiness requires a parsed tool call with the actual image color", async () => {
   const connection = { model: "local", apiKey: "private-probe-key", baseURL: "http://127.0.0.1:1234/v1" };
   await verifyLocalModel(connection, async (_url, init) => {
@@ -220,6 +234,8 @@ test("supervisor authenticates control, hides the key and owns child shutdown", 
     let ready = false;
     for (let i = 0; i < 100; i++) { if ((await localServiceStatus(home)).ready) { ready = true; break; } await new Promise(r => setTimeout(r, 50)); }
     assert.ok(ready);
+    assert.equal(await stopLocalServiceIfOwned(home, "another-owner"), false);
+    assert.equal((await localServiceStatus(home)).ready, true);
     const state = JSON.parse(fs.readFileSync(path.join(localRoot(home), "service.json"), "utf8"));
     assert.equal((await fetch(`http://127.0.0.1:${state.controlPort}/stop`, { method: "POST" })).status, 403);
     assert.ok(!JSON.stringify(await localServiceStatus(home)).includes(state.token));
@@ -236,6 +252,23 @@ test("supervisor authenticates control, hides the key and owns child shutdown", 
     assert.ok(child.exitCode !== null || child.signalCode !== null);
     assert.equal((await localServiceStatus(home)).running, false);
   } finally { await stopLocalService(home); child?.kill(); await done; }
+});
+test("failed ownership publication terminates the already spawned inference child", async () => {
+  const home = makeTempDir("bw-local-publication-error-");
+  const plan = { ...recommendLocalModel(hardware()).plan, platform: process.platform, arch: process.arch };
+  const id = localPlanId(plan), runtime = runtimeDirectory(plan, home);
+  fs.mkdirSync(runtime, { recursive: true });
+  fs.writeFileSync(path.join(runtime, process.platform === "win32" ? "llama-server.exe" : "llama-server"), "fixture");
+  writeLocalJson(path.join(localRoot(home), "plans", `${id}.json`), plan);
+  fs.mkdirSync(path.join(localRoot(home), "service.json"));
+  fs.writeFileSync(path.join(localRoot(home), "service.json", "block-rename"), "fixture");
+  let child;
+  await assert.rejects(serveLocalAI(id, home, (_command, _args, options) => {
+    child = spawn(process.execPath, ["--eval", "setInterval(()=>{},1000)"], options);
+    return child;
+  }));
+  assert.ok(child); assert.ok(child.exitCode !== null || child.signalCode !== null);
+  assert.ok(!fs.existsSync(path.join(localRoot(home), `service.json.${process.pid}.tmp`)));
 });
 test("local help and fresh status do not install or initialize integrations", () => {
   const home = makeTempDir("bw-local-cli-");
@@ -277,6 +310,15 @@ test("runtime extraction publishes only validated trees and recovers interrupted
     fs.writeFileSync(path.join(staging, "complete"), "validated");
   });
   assert.deepEqual(fs.readdirSync(directory), ["complete"]);
+});
+test("runtime readiness rejects stale markers and missing or broken executables", async () => {
+  const directory = makeTempDir("bw-local-runtime-ready-");
+  fs.writeFileSync(path.join(directory, ".ready"), "version-1");
+  assert.equal(await localRuntimeReady(directory, "version-1", process.execPath), true);
+  assert.equal(await localRuntimeReady(directory, "version-2", process.execPath), false);
+  assert.equal(await localRuntimeReady(directory, "version-1", path.join(directory, "missing")), false);
+  fs.writeFileSync(path.join(directory, "broken"), "broken");
+  assert.equal(await localRuntimeReady(directory, "version-1", path.join(directory, "broken")), false);
 });
 
 test("Windows retries Vulkan if a CUDA binary starts but cannot enumerate its GPU", async () => {
