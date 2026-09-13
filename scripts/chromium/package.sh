@@ -4,33 +4,41 @@ platform="${1:?usage: package.sh <linux|mac|win> /path/to/chromium/src/out/dir /
 out="${2:?missing output directory}"
 dest="${3:?missing archive path}"
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-chromium_version="151.0.7922.108"
+chromium_version="153.0.8010.36"
 stage="$(mktemp -d)"
-trap 'rm -rf "$stage"' EXIT
+archive_stage=""
+trap 'rm -rf "$stage"; if [[ -n "$archive_stage" ]]; then rm -rf "$archive_stage"; fi' EXIT
 case "$platform" in
   linux)
-    mkdir -p "$stage/linux-x64"
-    (cd "$out" && cp -a chrome chrome-wrapper chrome-sandbox chrome_crashpad_handler icudtl.dat libEGL.so libGLESv2.so libvk_swiftshader.so resources.pak chrome_100_percent.pak chrome_200_percent.pak headless_command_resources.pak snapshot_blob.bin v8_context_snapshot.bin vk_swiftshader_icd.json product_logo_48.png locales resources "$stage/linux-x64/" 2>/dev/null || true)
-    [[ -x "$stage/linux-x64/chrome" ]] || { echo "staged Linux chrome missing" >&2; exit 1; }
-    mv "$stage/linux-x64/chrome" "$stage/linux-x64/betterchromium"
-    sed -i 's|"$HERE/chrome"|"$HERE/betterchromium"|' "$stage/linux-x64/chrome-wrapper"
-    (cd "$stage" && zip -qry "$dest" linux-x64)
+    python3 "$root/scripts/chromium/package-runtime.py" linux "$out" "$dest"
+    exit
     ;;
   mac)
+    if [[ ! -x "$out/BetterChromium.app/Contents/MacOS/BetterChromium" ]]; then
+      echo "Browser runtime dependency missing: BetterChromium.app/Contents/MacOS/BetterChromium" >&2
+      exit 1
+    fi
     cp -a "$out/BetterChromium.app" "$stage/BetterChromium.app"
+    # Finder and synced-folder metadata can make codesign reject a valid build.
+    # Strip it from the staged copy before signing the distribution bundle.
+    xattr -cr "$stage/BetterChromium.app"
     codesign --force --deep --sign - "$stage/BetterChromium.app"
     mkdir -p "$stage/mac-arm64"
     mv "$stage/BetterChromium.app" "$stage/mac-arm64/BetterChromium.app"
-    (cd "$stage" && zip -qry "$dest" mac-arm64)
+    mkdir -p "$(dirname -- "$dest")"
+    dest_parent="$(CDPATH= cd -- "$(dirname -- "$dest")" && pwd)"
+    dest="$dest_parent/$(basename -- "$dest")"
+    archive_stage="$(mktemp -d "$dest_parent/.bw-archive.XXXXXX")"
+    # zip updates existing archives and retains removed files. Build a fresh zip
+    # beside the destination, then atomically replace it only after success.
+    (cd "$stage" && zip -qry "$archive_stage/browser.zip" mac-arm64)
+    mv "$archive_stage/browser.zip" "$dest"
     ;;
   win)
-    mkdir -p "$stage/win-x64"
-    cp -a "$out"/. "$stage/win-x64/"
-    [[ -f "$stage/win-x64/chrome.exe" ]] || { echo "staged Windows chrome.exe missing" >&2; exit 1; }
-    [[ -f "$stage/win-x64/chrome_elf.dll" ]] || { echo "staged Windows chrome_elf.dll missing" >&2; exit 1; }
-    mv "$stage/win-x64/chrome.exe" "$stage/win-x64/betterchromium.exe"
-    cp "$root/scripts/chromium/$chromium_version.manifest" "$stage/win-x64/$chromium_version.manifest"
-    (cd "$stage" && zip -qry "$dest" win-x64)
+    # The matching manifest supplies chrome_elf.dll's version-named assembly.
+    python3 "$root/scripts/chromium/package-runtime.py" win "$out" "$dest" \
+      --manifest "$root/scripts/chromium/$chromium_version.manifest"
+    exit
     ;;
   *) echo "unsupported platform: $platform" >&2; exit 1 ;;
 esac

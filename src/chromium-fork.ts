@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { isCallable } from "./untrusted-value.js";
 
-export const BETTERWRIGHT_CHROMIUM_VERSION = "151.0.7922.108";
+export const BETTERWRIGHT_CHROMIUM_VERSION = "153.0.8010.36";
 
 /**
  * Chromium's Windows launcher uses a private side-by-side assembly to locate
@@ -173,7 +173,7 @@ export const PLATFORM_LAYOUT = Object.freeze({
 });
 
 /** GitHub release that hosts the per-platform fork zip artifacts. */
-export const CHROMIUM_FORK_RELEASE_TAG = `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r3`;
+export const CHROMIUM_FORK_RELEASE_TAG = `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`;
 
 /**
  * Public download manifest for `betterwright update` / default `setup`.
@@ -183,17 +183,17 @@ export const CHROMIUM_FORK_ASSETS = Object.freeze({
   "darwin-arm64": Object.freeze({
     name: "betterchromium-mac-arm64.zip",
     sha256:
-      "22484b810c601697afd7d0a82f39ced7f24ac7d8a2b01e52c5a61e9a6096ec67",
+      "e59b872601542e29c85a22ed8b83a36c9f6fd4ec0523c11253eaff74b279806c",
   }),
   "linux-x64": Object.freeze({
     name: "betterchromium-linux-x64.zip",
     sha256:
-      "3eabe54aae9d8bde34170a6930df21932325be4570baf9d45431baad6cd03d98",
+      "fe7ec75a7bffe7c39de02073bf9592ac490f985b8457d16def2b372305830446",
   }),
   "win32-x64": Object.freeze({
     name: "betterchromium-win-x64.zip",
     sha256:
-      "03d8abb5d6064bbd808cf52c2a327692502c4ca6c565b2e1cdb639200c52dccb",
+      "589246796678e331773ce2a26d572384759f1aa57415418d5ee5685c017c2753",
   }),
 });
 
@@ -299,6 +299,48 @@ export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
   return path.join(home, ".betterwright", "chromium");
 }
 
+/** Identity of an archive verified by the managed installer. */
+export function chromiumForkInstallReceipt({
+  platform = process.platform,
+  arch = process.arch,
+  releaseTag = CHROMIUM_FORK_RELEASE_TAG,
+  assets = CHROMIUM_FORK_ASSETS,
+} = {}) {
+  const asset = assets[`${platform}-${arch}`];
+  if (!asset) return null;
+  return {
+    version: BETTERWRIGHT_CHROMIUM_VERSION,
+    releaseTag,
+    assetName: asset.name,
+    sha256: asset.sha256,
+  };
+}
+
+export function chromiumForkReceiptPath(root, platform, arch) {
+  const layout = PLATFORM_LAYOUT[`${platform}-${arch}`];
+  if (!layout) throw new Error(`No BetterChromium artifact layout for ${platform}-${arch}.`);
+  return path.join(root, layout.split(path.sep)[0], ".betterwright-install.json");
+}
+
+/** Missing receipts (including pre-security-upgrade installs) require setup. */
+export function chromiumForkInstallationMatches({
+  root,
+  platform = process.platform,
+  arch = process.arch,
+  releaseTag = CHROMIUM_FORK_RELEASE_TAG,
+  assets = CHROMIUM_FORK_ASSETS,
+  readFileSync = fs.readFileSync,
+}) {
+  const expected = chromiumForkInstallReceipt({ platform, arch, releaseTag, assets });
+  if (!expected) return false;
+  try {
+    const receipt = JSON.parse(readFileSync(chromiumForkReceiptPath(root, platform, arch), "utf8"));
+    return Object.entries(expected).every(([key, value]) => receipt?.[key] === value);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve the pinned fork binary without changing BetterWright's public API.
  *
@@ -307,7 +349,7 @@ export function defaultChromiumForkRoot({ home = os.homedir() } = {}) {
  *     configured-but-missing binary is an error; "off" is rejected as a
  *     leftover fallback toggle).
  *  2. The default root (~/.betterwright/chromium) — if the artifact for this
- *     platform exists there, use it silently.
+ *     platform has a receipt matching the pinned release, use it.
  */
 export function resolveChromiumForkBinary({
   env = process.env,
@@ -362,6 +404,18 @@ export function resolveChromiumForkBinary({
   if (!existsSync(candidate)) {
     if (implicit) return null; // runtime reports the missing required backend
     throw new Error(`BetterChromium binary not found: ${candidate}`);
+  }
+  if (implicit && !chromiumForkInstallationMatches({
+    root,
+    platform,
+    arch,
+    releaseTag: configuredValue(env.BETTERWRIGHT_CHROMIUM_RELEASE_TAG) || CHROMIUM_FORK_RELEASE_TAG,
+    readFileSync,
+  })) {
+    throw new Error(
+      `Managed BetterChromium is outdated or its verified installation receipt is missing. ` +
+        `Run \`betterwright setup\` to install the pinned ${BETTERWRIGHT_CHROMIUM_VERSION} release.`,
+    );
   }
   ensureWindowsChromiumAssembly({
     binaryPath: candidate,

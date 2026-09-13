@@ -13,6 +13,7 @@ import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
 import { fromPath } from "rookie-cookies";
 import { AD_BLOCK_CACHE_FILE } from "../../dist/src/ad-blocker.js";
+import { chromiumNeedsSoftwareGpu } from "../../dist/src/browser-runtime.js";
 import { normalizeCookieSnapshot, normalizeCookieSyncOptions } from "../../dist/src/cookie-sync.js";
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
@@ -50,6 +51,13 @@ function tempHome() {
   fs.mkdirSync(runtime, { recursive: true });
   fs.writeFileSync(path.join(runtime, AD_BLOCK_CACHE_FILE), PlaywrightBlocker.empty().serialize());
   return home;
+}
+
+function removeBrowserHome(home) {
+  // Windows can briefly retain closed Chromium files (including antivirus
+  // handles). Match the bounded retries used by the shared temp-dir cleanup;
+  // a persistent lock still fails instead of being silently ignored.
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 function firstPngPixel(filePath: string) {
@@ -179,6 +187,63 @@ test("navigate and read the title", opts, async () => {
     assert.equal(result.result, "Example Domain");
   } finally {
     await bw.close();
+  }
+});
+
+test("the managed browser preserves an explicit locale in pages, workers and requests", opts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url === "/worker.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(`postMessage({
+        language: navigator.language,
+        languages: navigator.languages,
+        locale: Intl.DateTimeFormat().resolvedOptions().locale
+      });`);
+      return;
+    }
+    if (request.url === "/headers") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ language: request.headers["accept-language"] }));
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end("<!doctype html><title>Locale fixture</title>");
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    policy: new NetworkPolicy(),
+    headless: true,
+    geoip: false,
+    locale: "fr-FR",
+  });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      return page.evaluate(async () => {
+        const worker = await new Promise((resolve, reject) => {
+          const child = new Worker('/worker.js');
+          child.onmessage = ({ data }) => { child.terminate(); resolve(data); };
+          child.onerror = () => { child.terminate(); reject(new Error('Locale worker failed')); };
+        });
+        return {
+          page: {
+            language: navigator.language,
+            languages: navigator.languages,
+            locale: Intl.DateTimeFormat().resolvedOptions().locale
+          },
+          worker,
+          headers: await fetch('/headers').then(response => response.json())
+        };
+      });
+    `);
+    assert.equal(result.ok, true, result.error);
+    const expected = { language: "fr-FR", languages: ["fr-FR", "fr"], locale: "fr-FR" };
+    assert.deepEqual(result.result.page, expected);
+    assert.deepEqual(result.result.worker, expected);
+    assert.equal(result.result.headers.language, "fr-FR,fr;q=0.9");
+  } finally {
+    await bw.close();
+    await site.close();
   }
 });
 
@@ -340,6 +405,12 @@ test("the selected managed browser keeps WebGL rendering available with a cohere
       assert.doesNotMatch(result.result.webgl2.renderer, /SwiftShader|llvmpipe|softpipe/i, result.result.webgl2.renderer);
       assert.match(result.result.webgl.renderer, /ANGLE/, result.result.webgl.renderer);
       assert.match(result.result.webgl2.renderer, /ANGLE/, result.result.webgl2.renderer);
+      assert.equal(result.result.webgl.vendor, result.result.webgl2.vendor);
+      assert.equal(result.result.webgl.renderer, result.result.webgl2.renderer);
+      if (chromiumNeedsSoftwareGpu()) {
+        assert.equal(result.result.webgl.vendor, "Google Inc. (Intel)");
+        assert.match(result.result.webgl.renderer, /Mesa Intel\(R\) UHD Graphics 620/);
+      }
     } else if (/Macintosh/.test(result.result.webgl.userAgent)) {
       assert.equal(result.result.webgl.platform, "MacIntel");
     } else if (/Windows/.test(result.result.webgl.userAgent)) {
@@ -3932,7 +4003,7 @@ test("two named profiles browse concurrently, both persistent", opts, async () =
     assert.equal(fs.existsSync(path.join(home, "browser", "profile")), false);
   } finally {
     await Promise.all([social.close(), review.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -3979,7 +4050,7 @@ test("cookies are per profile, and survive a restart of the same profile", opts,
   } finally {
     await Promise.all([social.close(), review.close()]);
     await server.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4120,7 +4191,7 @@ test("Cookie Sync installs an HttpOnly cookie and persists it across restart", o
   } finally {
     await browser.close();
     await server.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4193,7 +4264,7 @@ test("Cookie Sync refuses a batch that could evict target cookies", opts, async 
     assert.equal(JSON.stringify(result).includes(sentinel), false);
   } finally {
     await browser.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4232,7 +4303,7 @@ test("Cookie Sync refuses a local ephemeral target profile", opts, async () => {
     assert.equal(retried.profileMode, "persistent");
   } finally {
     await Promise.all([owner.close(), contender.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4295,7 +4366,7 @@ test("Cookie Sync cannot reuse an in-flight ephemeral browser launch", opts, asy
     assert.equal(retried.profileMode, "persistent");
   } finally {
     await Promise.all([owner.close(), contender.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4312,7 +4383,7 @@ test("a second browser on the SAME profile falls back to ephemeral", opts, async
     assert.equal(b.profileMode, "ephemeral");
   } finally {
     await Promise.all([first.close(), second.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4506,7 +4577,7 @@ test("optional ad blocker covers pages, nested frames and popups while preservin
         if (!adBlock) assert.equal(fs.existsSync(path.join(runtime, AD_BLOCK_CACHE_FILE)), false);
       } finally {
         await browser.close();
-        fs.rmSync(home, { recursive: true, force: true });
+        removeBrowserHome(home);
       }
     }
   } finally { await site.close(); }
