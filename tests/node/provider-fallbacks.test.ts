@@ -653,3 +653,32 @@ test("configured skip notes ride the daemon config into the browser", async () =
     else process.env.BETTERWRIGHT_HOME = savedHome;
   }
 });
+
+test("the daemon signature tracks the account behind a flag provider", async () => {
+  const { daemonConfigFromFlags } = await import("../../dist/bin/cli-main.js");
+  const home = makeTempDir("bw-daemon-acct-");
+  const argv = ["bun", "betterwright", "run", "--browser", "steel", "-c", "x"];
+  const sig = () =>
+    daemonConfigSignature(daemonConfigFromFlags(new Set(), { argv, home, env: {} }));
+
+  // A bare --browser expands against the connected account, so changing the
+  // saved key must change the signature — otherwise the CLI reuses a daemon
+  // authenticated with the old credential.
+  saveProviderAccount("steel", { apiKey: "sk-first" }, home);
+  const first = sig();
+  assert.match(first, /sk-first/);
+  saveProviderAccount("steel", { apiKey: "sk-second" }, home);
+  assert.notEqual(sig(), first);
+
+  // An explicit --browser-key still wins over the account.
+  saveProviderAccount("steel", { apiKey: "sk-acct" }, home);
+  const keyed = daemonConfigSignature(
+    daemonConfigFromFlags(new Set(), {
+      argv: [...argv.slice(0, -2), "--browser-key", "sk-flag", "-c", "x"],
+      home,
+      env: {},
+    }),
+  );
+  assert.match(keyed, /sk-flag/);
+  assert.doesNotMatch(keyed, /sk-acct/);
+});

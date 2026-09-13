@@ -549,18 +549,34 @@ export function expandProviderChoice(
   // silently reduced to managed.
   if (name === "managed") return choice;
   if (BROWSER_PROVIDER_NAMES.includes(name)) {
-    const expanded = expandKeyEnv(choice, env);
-    if (cleanString(untrustedField(expanded, "apiKey"))) return expanded;
+    const browserConfig: BrowserFileConfig = config ?? loadBrowserConfig(home);
     // A connected account supplies the key a bare `--browser <name>` or
     // fallback ref lacks, matching resolveConnectedProvider's precedence
     // (flag > account > well-known env, which the worker still reads).
-    const browserConfig: BrowserFileConfig = config ?? loadBrowserConfig(home);
     const account = browserConfig.accounts[name];
-    if (!account) return expanded;
-    const { key } = resolveKey(undefined, account.keyEnv, account.apiKey, env, name);
-    // SAFETY: expanded is a record (isRecord above); the spread only adds the
-    // resolved apiKey field.
-    return key ? { ...(expanded as Record<string, UntrustedValue>), apiKey: key } : expanded;
+    const accountKey = account
+      ? resolveKey(undefined, account.keyEnv, account.apiKey, env, name).key
+      : "";
+    let expanded;
+    try {
+      expanded = expandKeyEnv(choice, env);
+    } catch (error) {
+      // configure writes the same key source to the stored ref and the
+      // account, so a reconnected account must not stay blocked behind the
+      // ref's stale env pointer. Without an account key the original
+      // "not set" error stands.
+      if (!accountKey) throw error;
+      // SAFETY: isRecord(choice) above; the spread only drops keyEnv and
+      // adds the resolved apiKey field.
+      const { keyEnv: _dropped, ...rest } = choice as Record<string, UntrustedValue>;
+      return { ...rest, apiKey: accountKey };
+    }
+    if (cleanString(untrustedField(expanded, "apiKey"))) return expanded;
+    // SAFETY: expanded is a record (expandKeyEnv returns the record or a
+    // spread of it); the spread only adds the resolved apiKey field.
+    return accountKey
+      ? { ...(expanded as Record<string, UntrustedValue>), apiKey: accountKey }
+      : expanded;
   }
 
   const browserConfig: BrowserFileConfig = config ?? loadBrowserConfig(home);

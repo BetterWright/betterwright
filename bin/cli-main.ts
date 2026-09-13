@@ -48,7 +48,10 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { adBlockFromFlags } from "../src/ad-block-config.js";
 import { formatAgentUsage } from "../src/agent-usage.js";
-import { configuredProviderChain } from "../src/browser-config.js";
+import {
+  configuredProviderChain,
+  expandProviderChoice,
+} from "../src/browser-config.js";
 import { chromiumNeedsSoftwareGpu } from "../src/browser-runtime.js";
 import { configuredBrowserBackend } from "../src/chromium-fork.js";
 import {
@@ -561,6 +564,12 @@ export function daemonConfigFromFlags(
       // lines through so daemon and in-process envelopes match.
       if (chain.notes.length) browser.providerChainNotes = chain.notes;
     }
+  } else {
+    // Expand the flag's provider against saved accounts so the resolved
+    // credential participates in the signature — a reconnected account must
+    // not reuse a daemon authenticated with the old key. The daemon's client
+    // expands identically at construction, so flags and signature agree.
+    browser.provider = expandProviderChoice(browser.provider, { home, env });
   }
   return {
     headless: !flags.has("--headed"),

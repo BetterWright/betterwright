@@ -207,6 +207,33 @@ test("expandProviderChoice resolves keyEnv for a stored built-in ref", () => {
   );
 });
 
+test("a connected account rescues a stored ref whose keyEnv is unset", () => {
+  const home = makeTempDir("bw-config-");
+  // configure writes the same key source to the ref and the account; after a
+  // reconnect the account can hold a working key behind the ref's stale
+  // env pointer.
+  saveProviderAccount("steel", { apiKey: "sk-acct" }, home);
+  assert.deepEqual(
+    expandProviderChoice({ provider: "steel", keyEnv: "MISSING_VAR" }, { home, env: {} }),
+    { provider: "steel", apiKey: "sk-acct" },
+  );
+  // Without an account the original "not set" error stands.
+  const bare = makeTempDir("bw-config-");
+  assert.throws(
+    () =>
+      expandProviderChoice({ provider: "steel", keyEnv: "MISSING_VAR" }, { home: bare, env: {} }),
+    /MISSING_VAR, which is not set/,
+  );
+  // A keyEnv that does resolve still wins over the account.
+  assert.deepEqual(
+    expandProviderChoice(
+      { provider: "steel", keyEnv: "SET_VAR" },
+      { home, env: { SET_VAR: "sk-env" } },
+    ),
+    { provider: "steel", apiKey: "sk-env" },
+  );
+});
+
 test("expandProviderChoice expands custom names with key substitution", () => {
   const home = makeTempDir("bw-config-");
   saveCustomProvider(
