@@ -59,8 +59,8 @@ what real Chrome returns for the non-debug parameters. The WebGL2 context
 inherits the same base implementation, so one interception covers both.
 
 Chromium 151 no longer guarantees an automatic software WebGL fallback. The
-r1 Linux BetterChromium binary cannot initialize its bundled SwANGLE renderer
-when no accessible `/dev/dri` render device exists, leaving WebGL blocked. On
+original Chromium 151 r1 Linux archive could not initialize its bundled SwANGLE renderer
+when no accessible `/dev/dri` render device was available, leaving WebGL blocked. On
 GPU-less Linux the fork therefore launches with its software fallback
 (SwiftShader) so WebGL keeps working on the CPU, and `doctor` reports the
 fallback as a warning.

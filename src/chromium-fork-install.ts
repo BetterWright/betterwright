@@ -298,6 +298,7 @@ export async function installChromiumFork({
     }
     fs.rmSync(backup, { recursive: true, force: true });
     log(`Installed ${binaryPath}`);
+    log("Restart running BetterWright applications and browser sessions to use the installed browser.");
     return { binary: binaryPath, root, skipped: null, alreadyInstalled: false };
   } finally {
     if (stageRoot) fs.rmSync(stageRoot, { recursive: true, force: true });

@@ -12,6 +12,10 @@ provider).
 
 ## Install / update
 
+Before upgrading an existing installation, finish active work and close any apps
+using BetterWright. Run `betterwright close --all` to stop CLI browser sessions
+before setup or update. Restart SDK applications afterward to load the new browser.
+
 ```bash
 betterwright update          # download fork → ~/.betterwright/chromium/
 betterwright update --force  # re-fetch + re-verify even if already present

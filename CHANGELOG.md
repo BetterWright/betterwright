@@ -15,7 +15,9 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 - Upgrade the managed BetterChromium browser to Chromium `153.0.8010.36`,
   including the upstream fixes for CVE-2026-85046 and CVE-2026-87491 (#188).
-  Run `betterwright setup` or `betterwright update` after updating the package.
+  After updating the package, stop CLI sessions with `betterwright close --all`
+  and run `betterwright setup` or `betterwright update`. Close SDK applications
+  before installing the browser and restart them afterward.
   Electron hosts, explicit browser paths, and remote providers require their
   own browser updates.
 
