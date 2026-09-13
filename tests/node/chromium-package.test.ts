@@ -12,6 +12,47 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const PYTHON = process.platform === "win32" ? "python" : "python3";
 const PACKAGER = path.join(ROOT, "scripts/chromium/package-runtime.py");
 
+test("native mac packaging replaces removed files and preserves the prior archive on failure", { skip: process.platform !== "darwin" }, () => {
+  const temporary = makeTempDir("bw-package-mac-");
+  try {
+    const out = path.join(temporary, "out");
+    const contents = path.join(out, "BetterChromium.app", "Contents");
+    const executable = path.join(contents, "MacOS", "BetterChromium");
+    const archive = path.join(temporary, "browser.zip");
+    fs.mkdirSync(path.dirname(executable), { recursive: true });
+    fs.copyFileSync("/usr/bin/true", executable);
+    fs.chmodSync(executable, 0o755);
+    fs.writeFileSync(path.join(contents, "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>BetterChromium</string>
+<key>CFBundleIdentifier</key><string>com.betterwright.packaging-test</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>\n`);
+    const obsolete = path.join(contents, "obsolete.txt");
+    fs.writeFileSync(obsolete, "old release only");
+    const packageMac = () => spawnSync("bash", [path.join(ROOT, "scripts/chromium/package.sh"), "mac", out, archive], { encoding: "utf8", timeout: 30_000 });
+    const first = packageMac();
+    assert.equal(first.status, 0, first.stderr);
+    fs.unlinkSync(obsolete);
+    const second = packageMac();
+    assert.equal(second.status, 0, second.stderr);
+    const inspect = spawnSync(PYTHON, ["-c", "import json,sys,zipfile; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))", archive], { encoding: "utf8" });
+    assert.equal(inspect.status, 0, inspect.stderr);
+    const names: string[] = JSON.parse(inspect.stdout);
+    assert.ok(names.includes("mac-arm64/BetterChromium.app/Contents/MacOS/BetterChromium"));
+    assert.ok(!names.some((name) => name.endsWith("/obsolete.txt")));
+    const previous = fs.readFileSync(archive);
+    fs.unlinkSync(executable);
+    const failed = packageMac();
+    assert.notEqual(failed.status, 0);
+    assert.deepEqual(fs.readFileSync(archive), previous);
+    assert.ok(!fs.readdirSync(temporary).some((name) => name.startsWith(".bw-archive.")));
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 for (const platform of ["win", "linux"]) {
   test(`native ${platform} archive includes runtime files and excludes build intermediates`, () => {
     const temporary = makeTempDir("bw-package-");
