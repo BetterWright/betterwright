@@ -14,6 +14,9 @@ case "$platform" in
     ;;
   mac)
     cp -a "$out/BetterChromium.app" "$stage/BetterChromium.app"
+    # Finder and synced-folder metadata can make codesign reject a valid build.
+    # Strip it from the staged copy before signing the distribution bundle.
+    xattr -cr "$stage/BetterChromium.app"
     codesign --force --deep --sign - "$stage/BetterChromium.app"
     mkdir -p "$stage/mac-arm64"
     mv "$stage/BetterChromium.app" "$stage/mac-arm64/BetterChromium.app"
