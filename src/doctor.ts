@@ -336,20 +336,22 @@ export function doctorChecks(
         ? "Remote page traffic cannot be network-policy enforced; see docs/browser-providers.md."
         : null,
     );
-    if (report.provider_chain?.length > 1) {
-      add(
-        "Browser",
-        "Fallbacks",
-        "ok",
-        report.provider_chain.slice(1).join(" → "),
-        null,
-      );
-    }
-    for (const note of report.provider_notes || []) {
-      add("Browser", "Fallbacks", "warn", note, null);
-    }
   } else if (report.provider_error) {
     add("Browser", "Provider", "fail", report.provider_error);
+  }
+  // The chain also exists without a configured default (implicit managed
+  // first), so report it independently of the Provider row.
+  if (report.provider_chain?.length > 1) {
+    add(
+      "Browser",
+      "Fallbacks",
+      "ok",
+      report.provider_chain.slice(1).join(" → "),
+      null,
+    );
+  }
+  for (const note of report.provider_notes || []) {
+    add("Browser", "Fallbacks", "warn", note, null);
   }
 
   if (report.chromium_fork) {
