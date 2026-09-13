@@ -24,9 +24,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/native"
-          gh release download betterchromium-153.0.8010.36-r1 --repo BetterWright/betterwright --pattern betterchromium-linux-x64.zip --pattern betterchromium-linux-x64-validation.tar.gz --dir "$RUNNER_TEMP/native"
+          gh release download betterchromium-153.0.8010.36-r2 --repo BetterWright/betterwright --pattern betterchromium-linux-x64.zip --pattern betterchromium-linux-x64-validation.tar.gz --dir "$RUNNER_TEMP/native"
           cd "$RUNNER_TEMP/native"
-          echo '626cd98b50cac8072630baf02a3ab24b948e29dd3351bf03c2bb74aadf292bc7  betterchromium-linux-x64.zip' | sha256sum -c -
+          echo 'fe7ec75a7bffe7c39de02073bf9592ac490f985b8457d16def2b372305830446  betterchromium-linux-x64.zip' | sha256sum -c -
           echo 'd605712e40d8a15ed59ee9a05339a64bce431b9395c08e25f6cce7f1439bab90  betterchromium-linux-x64-validation.tar.gz' | sha256sum -c -
           unzip -q betterchromium-linux-x64.zip
           tar -xzf betterchromium-linux-x64-validation.tar.gz
