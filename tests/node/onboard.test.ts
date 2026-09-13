@@ -300,6 +300,21 @@ test("doctor surfaces the SwiftShader fallback on GPU-less Linux", () => {
   assert.match(native.fix, /render device/);
 });
 
+test("doctor lists fallbacks and skipped notes without a configured default", () => {
+  const checks = doctorChecks({
+    ...READY_REPORT,
+    provider: null,
+    provider_chain: ["managed BetterChromium fork", "ws://127.0.0.1:1/dead"],
+    provider_notes: ["Skipped a browser fallback (executablePath): missing binary"],
+  });
+  const fallbacks = checks.filter((check) => check.label === "Fallbacks");
+  assert.equal(fallbacks.length, 2);
+  assert.equal(fallbacks[0].status, "ok");
+  assert.match(fallbacks[0].detail, /ws:\/\/127\.0\.0\.1:1\/dead/);
+  assert.equal(fallbacks[1].status, "warn");
+  assert.match(fallbacks[1].detail, /Skipped a browser fallback/);
+});
+
 test("doctor explains provider browsers and the missing artifact", () => {
   const checks = doctorChecks({
     ...READY_REPORT,
