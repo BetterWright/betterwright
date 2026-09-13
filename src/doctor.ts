@@ -25,7 +25,8 @@ import {
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
 import { defaultHome } from "./home.js";
-import { hasLocalSelection, hasValidLocalSelection } from "./local-ai.js";
+import { hasLocalSelection } from "./local-ai.js";
+import { hasReadyLocalInstallation } from "./local-ai-install.js";
 import { installHint, optionalPeerAvailable } from "./optional-peer.js";
 import {
   runtimeFix,
@@ -216,8 +217,8 @@ export function modelReadiness({ env = process.env, auth = null }: any = {}) {
   const grok = auth ? Boolean(auth.grok) : Boolean(loadGrokAuth());
   const sources = [];
   const home = env.BETTERWRIGHT_HOME || defaultHome();
-  const localConfigured = hasLocalSelection(home), localValid = hasValidLocalSelection(home);
-  const localError = localConfigured && !localValid ? "The saved local model selection is invalid." : null;
+  const localConfigured = hasLocalSelection(home), localValid = hasReadyLocalInstallation(home);
+  const localError = localConfigured && !localValid ? "The saved local model selection is invalid or its installation is missing or damaged." : null;
   if (localValid) sources.push("local (managed harness model)");
   if (codex) sources.push("codex (signed in)");
   if (grok) sources.push("grok (signed in)");

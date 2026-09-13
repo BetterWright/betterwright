@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
-import { GIB, type LocalPlan, localInstallArtifacts, localRoot, runLocalProbe } from "./local-ai.js";
+import { GIB, type LocalPlan, localInstallArtifacts, localRoot, readLocalPlan, runLocalProbe } from "./local-ai.js";
 import type { LocalArtifact } from "./local-ai-catalog.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
 import { isNumber, untrustedField } from "./untrusted-value.js";
@@ -194,6 +194,21 @@ export function localRuntimeExecutable(plan: LocalPlan, home = defaultHome()) {
   if (!executable || !fs.existsSync(executable)) throw new Error("The managed local runtime is missing. Run betterwright --local to repair it.");
   return executable;
 }
+/** Cheap diagnostics: full SHA verification remains mandatory at startup. */
+export function hasReadyLocalInstallation(home = defaultHome()): boolean {
+  try {
+    const plan = readLocalPlan(home);
+    if (!plan) return false;
+    const executable = localRuntimeExecutable(plan, home);
+    if (!fs.statSync(executable).isFile() || !fs.statSync(executable).size) return false;
+    const version = plan.runtime === "vllm" ? VLLM_VERSION : LLAMA_VERSION;
+    if (fs.readFileSync(path.join(runtimeDirectory(plan, home), ".ready"), "utf8").trim() !== version) return false;
+    return localInstallArtifacts(plan, home).every(({ artifact, directory }) => {
+      const stat = fs.lstatSync(path.join(directory, artifact.name));
+      return stat.isFile() && stat.size === artifact.bytes;
+    });
+  } catch { return false; }
+}
 export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
   if (plan.runtime !== "vllm") return { ...process.env };
   const compiler = path.join(localRoot(home), "runtimes", `zig-${ZIG_VERSION}`, `zig-x86_64-linux-${ZIG_VERSION}`);
@@ -338,7 +353,14 @@ os.execv(zig, [zig, sys.argv[1], *args])
   const cuda = path.join(directory, "venv", "lib", "python3.12", "site-packages", "nvidia", "cu13");
   // NVIDIA wheels use lib/ while nvcc and FlashInfer expect lib64/.
   if (!fs.existsSync(path.join(cuda, "lib64"))) fs.symlinkSync("lib", path.join(cuda, "lib64"));
-  await runLocalProbe(path.join(cuda, "bin", "nvcc"), ["--version"], localRuntimeEnvironment(plan, home));
+  const nvcc = path.join(cuda, "bin", "nvcc"), env = localRuntimeEnvironment(plan, home);
+  await runLocalProbe(nvcc, ["--version"], env);
+  const check = fs.mkdtempSync(path.join(directory, "cuda-check-"));
+  try {
+    const source = path.join(check, "probe.cu");
+    writePrivate(source, "#include <cuda_runtime.h>\n__global__ void bw_probe(float *x) { x[0] = 1.0f; }\n");
+    await runLocalProbe(nvcc, ["-c", source, `-arch=sm_${Math.round(plan.gpu.compute * 10)}`, "-o", path.join(check, "probe.o")], env, 120_000);
+  } finally { fs.rmSync(check, { recursive: true, force: true }); }
   return localRuntimeExecutable(plan, home);
 }
 export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {

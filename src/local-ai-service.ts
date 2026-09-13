@@ -249,10 +249,13 @@ export async function serveLocalAI(planId: string, home = defaultHome(), launch:
       try { await childDone; } finally { clearTimeout(force); }
       signal("SIGKILL");
     } finally {
-      if (readService(home)?.token === state.token) fs.rmSync(serviceFile(home), { force: true });
-      fs.rmSync(`${serviceFile(home)}.${process.pid}.tmp`, { force: true });
-      process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);
-      server.closeAllConnections(); server.close();
+      try {
+        if (readService(home)?.token === state.token) fs.rmSync(serviceFile(home), { force: true });
+        fs.rmSync(`${serviceFile(home)}.${process.pid}.tmp`, { force: true });
+      } finally {
+        process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);
+        server.closeAllConnections(); server.close();
+      }
     }
   };
   process.once("SIGTERM", onSignal);

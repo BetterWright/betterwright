@@ -1024,8 +1024,8 @@ async function loadModelCatalog(
     sources.map(async (source) => {
       try {
         if (source === "local") {
-          const { hasValidLocalSelection } = await import("../src/local-ai.js");
-          return { source, models: hasValidLocalSelection() ? ["local"] : [], baseURL: undefined };
+          const { hasReadyLocalInstallation } = await import("../src/local-ai-install.js");
+          return { source, models: hasReadyLocalInstallation() ? ["local"] : [], baseURL: undefined };
         }
         const query: CliModelOptions & { source: string; signal?: AbortSignal } = {
           source,

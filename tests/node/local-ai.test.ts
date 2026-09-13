@@ -5,11 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { preferredModelId } from "../../dist/src/doctor.js";
+import { modelReadiness, preferredModelId } from "../../dist/src/doctor.js";
 import { decodeLocalPlan, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
 import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
-import { downloadLocalArtifact, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { downloadLocalArtifact, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService, stopLocalServiceIfOwned } from "../../dist/src/local-ai-service.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "../../dist/src/local-ai-vllm-lock.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
@@ -321,7 +321,10 @@ test("local model discovery normalizes source case without starting inference", 
   const home = makeTempDir("bw-local-model-list-");
   writeLocalJson(path.join(localRoot(home), "selection.json"), recommendLocalModel(hardware()).plan);
   const result = spawnSync(process.execPath, ["dist/bin/betterwright.js", "models", "LOCAL"], { encoding: "utf8", env: { ...process.env, BETTERWRIGHT_HOME: home } });
-  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /local/);
+  assert.equal(result.status, 1); assert.match(result.stderr, /No available models/);
+  const lower = spawnSync(process.execPath, ["dist/bin/betterwright.js", "models", "local"], { encoding: "utf8", env: { ...process.env, BETTERWRIGHT_HOME: home } });
+  assert.equal(result.stdout, lower.stdout);
+  assert.ok(!hasReadyLocalInstallation(home));
   assert.deepEqual(fs.readdirSync(localRoot(home)), ["selection.json"]);
 });
 test("runtime extraction publishes only validated trees and recovers interrupted staging", async () => {
@@ -422,4 +425,29 @@ test("restart verifies file content before launching and only reclaims conclusiv
   await assert.rejects(ensureLocalService(plan, home, 100, async target => { verified++; return verifyLocalArtifact(target, artifact); }), /checksum/);
   assert.equal(verified, 1); assert.ok(!fs.existsSync(path.join(localRoot(home), "service.json")));
   assert.ok(!fs.existsSync(path.join(localRoot(home), "plans")));
+});
+
+test("diagnostics reject missing and truncated installation files while preserving local intent", () => {
+  const home = makeTempDir("bw-local-damaged-");
+  const plan = { ...recommendLocalModel(hardware()).plan, platform: process.platform, arch: process.arch };
+  const model = localModel(plan), original = model.files;
+  const env = { BETTERWRIGHT_HOME: home };
+  writeLocalJson(path.join(localRoot(home), "selection.json"), plan);
+  try {
+    model.files = [artifact]; // Small real files exercise diagnostics without model downloads.
+    assert.ok(modelReadiness({ env, auth: {} }).localError);
+    const runtime = runtimeDirectory(plan, home), directory = modelDirectory(plan, home);
+    fs.mkdirSync(runtime, { recursive: true }); fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(runtime, process.platform === "win32" ? "llama-server.exe" : "llama-server"), "fixture");
+    fs.writeFileSync(path.join(runtime, ".ready"), LLAMA_VERSION);
+    const file = path.join(directory, artifact.name);
+    fs.writeFileSync(file, bytes);
+    assert.ok(hasReadyLocalInstallation(home));
+    assert.ok(modelReadiness({ env, auth: {} }).sources.includes("local (managed harness model)"));
+    fs.truncateSync(file, 1);
+    assert.ok(!hasReadyLocalInstallation(home));
+    fs.rmSync(file);
+    assert.ok(modelReadiness({ env, auth: {} }).localError);
+    assert.equal(preferredModelId({ env, auth: {} }).model, "local");
+  } finally { model.files = original; }
 });
