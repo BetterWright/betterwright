@@ -1,6 +1,6 @@
 # BetterChromium
 
-BetterWright runs the pinned BetterChromium 151 fork while keeping its
+BetterWright runs the pinned BetterChromium 153 fork while keeping its
 public `run()`, `human.*`, `captcha.*`, snapshot, policy, proxy, and vault
 APIs unchanged. On platforms with a checksum-pinned release asset,
 `betterwright setup` / `betterwright update` download the fork into the
@@ -137,6 +137,10 @@ fork hardware GL; without one the fork launches with the SwiftShader software
 WebGL fallback, and the missing-device warning appears in run results and
 `betterwright doctor`. Every network connection still passes through the
 worker's local SOCKS guard.
+
+On Windows, the managed browser selects ANGLE's Direct3D 11 backend. Forcing
+desktop OpenGL can leave accelerated 2D canvas readback blank and WebGPU
+unavailable even when WebGL draws successfully.
 
 **Profiles are not interchangeable across Chromium majors.** A profile upgraded
 by a newer Chromium cannot be opened by an older one. Managed launch refuses

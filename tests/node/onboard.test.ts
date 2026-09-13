@@ -37,7 +37,7 @@ const READY_REPORT = {
   playwright_version: "1.61.1",
   playwright_pinned: "1.61.1",
   chromium_fork: "/x/fork/chrome",
-  chromium_fork_version: "151.0.7922.108",
+  chromium_fork_version: "153.0.8010.36",
   chromium_fork_error: null,
   software_gpu: false,
   browser_selection_reason: "native-available",

@@ -24,7 +24,7 @@ function storedProfileVersion(profileDir, readFileSync = fs.readFileSync) {
  * path as an opaque SIGTRAP). A caller-supplied provider binary can ship an
  * older Chromium than the managed fork, so this turns that latent crash into a
  * clear, actionable error. `runningVersion` is a dotted version like
- * "151.0.7922.108"; a missing or unparseable version, or a fresh profile, is a
+ * "153.0.8010.36"; a missing or unparseable version, or a fresh profile, is a
  * no-op.
  */
 export function assertProfileNotNewer(profileDir, runningVersion) {
@@ -104,7 +104,7 @@ export function chromiumNeedsSoftwareGpu({
 }
 
 /** Managed fork arguments: guarded WebRTC and a stable fingerprint seed. */
-export function managedForkArgs(fingerprintSeed, { softwareGpu = false } = {}) {
+export function managedForkArgs(fingerprintSeed, { softwareGpu = false, platform = process.platform } = {}) {
   return [
     // WebRTC is not represented by Playwright request routing and can
     // otherwise send STUN/data-channel UDP directly around the TCP-only guard
@@ -133,13 +133,15 @@ export function managedForkArgs(fingerprintSeed, { softwareGpu = false } = {}) {
         // even when hardware is present. That trips the fork's integrated-GPU
         // spoof, and the resulting "Intel UHD 620" string contradicts the
         // UA's desktop hardware — exactly the cross-signal inconsistency
-        // PixelScan flags as "Masking detected". Bind the real GL backend so
+        // PixelScan flags as "Masking detected". Bind the native backend so
         // the software default never wins and the genuine GPU is reported.
+        // Windows needs D3D11: forcing desktop OpenGL can break accelerated
+        // 2D canvas readback and WebGPU even while WebGL renders correctly.
         // mergeChromiumArgs drops a same-name caller switch rather than
         // letting it override, so a host that passes its own --use-angle gets
         // this managed value and a chromiumArgs warning naming the dropped
         // switch.
-        ["--use-gl=angle", "--use-angle=gl"]),
+        ["--use-gl=angle", platform === "win32" ? "--use-angle=d3d11" : "--use-angle=gl"]),
     ...(fingerprintSeed ? [`--fingerprint=${fingerprintSeed}`] : []),
   ];
 }
