@@ -252,6 +252,12 @@ export const LOCAL_CUDA_LIBRARIES: LocalArtifact[] = [
     "sha256": "294b789d6bce9944fc5987c86dc1cdcdbc4eb965f559b81749dbf03b43e6c135"
   },
   {
+    "name": "nccl-2.25.1.1-ha44e49d_0.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/nccl-2.25.1.1-ha44e49d_0.conda",
+    "bytes": 184059581,
+    "sha256": "5f6ed4e6fa067e15f3e60ceeb08d543d46fa8780e09f6774571ea0c3a64cc85a"
+  },
+  {
     "name": "libcublas-12.8.4.1-h9ab20c4_1.conda",
     "url": "https://conda.anaconda.org/conda-forge/linux-64/libcublas-12.8.4.1-h9ab20c4_1.conda",
     "bytes": 471593172,

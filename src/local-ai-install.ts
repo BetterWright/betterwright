@@ -323,7 +323,7 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
   }
   if (platform === "linux" && backend === "cuda") {
     const libraries = path.join(localRoot(home), "runtimes", "cuda-libraries-12.8");
-    if (!fs.existsSync(path.join(libraries, ".ready"))) {
+    if (!fs.existsSync(path.join(libraries, ".ready")) || !["libnccl.so.2", "libcublas.so.12", "libcudart.so.12"].every(file => ["lib", "targets/x86_64-linux/lib"].some(dir => fs.existsSync(path.join(libraries, dir, file))))) {
       await installCondaArchives(libraries, LOCAL_CUDA_LIBRARIES, home, log);
       fs.writeFileSync(path.join(libraries, ".ready"), "12.8", { mode: 0o600 });
     }
