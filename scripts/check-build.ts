@@ -99,8 +99,11 @@ else {
 
   for (const executable of ["dist/bin/betterwright.js", "dist/src/worker.js"]) {
     const absolute = path.join(root, executable);
-    const mode = fs.statSync(absolute).mode;
-    if ((mode & 0o111) === 0) failures.push(`${executable} is not executable`);
+    // Windows does not expose POSIX execute bits. Bun launches these scripts
+    // explicitly there; Unix packages still require their executable mode.
+    if (process.platform !== "win32" && (fs.statSync(absolute).mode & 0o111) === 0) {
+      failures.push(`${executable} is not executable`);
+    }
     const shebang = fs.readFileSync(absolute, "utf8").split("\n", 1)[0];
     if (shebang !== "#!/usr/bin/env bun") {
       failures.push(`${executable} shebang must be #!/usr/bin/env bun (found ${shebang})`);
