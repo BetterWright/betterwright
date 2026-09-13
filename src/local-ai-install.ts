@@ -1,17 +1,19 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { mkdirPrivate } from "./fs-private.js";
+import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import { GIB, type LocalPlan, localModel, localRoot, modelDirectory, runLocalProbe } from "./local-ai.js";
 import type { LocalArtifact } from "./local-ai-catalog.js";
+import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
 import { isNumber, untrustedField } from "./untrusted-value.js";
 
 export const LLAMA_VERSION = "b10902";
 export const VLLM_VERSION = "0.29.0";
 const UV_VERSION = "0.12.13";
+export const LOCAL_PYTHON_VERSION = "3.12.13";
 function llamaArchive(name: string, bytes: number, sha256: string): LocalArtifact {
   return { name, bytes, sha256, url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_VERSION}/${name}` };
 }
@@ -27,24 +29,54 @@ const UV_ARCHIVE: LocalArtifact = { name: "uv-x86_64-unknown-linux-gnu.tar.gz", 
   url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz` };
 export type LocalLog = (message: string) => void;
 
-export async function withLocalLock<T>(home: string, name: string, work: () => Promise<T>): Promise<T> {
+/** Publish a complete owner record atomically; stale tombstones prevent late
+ * recoverers from renaming a fresh replacement held by another process. */
+export async function withLocalLock<T>(home: string, name: string, work: () => Promise<T>, waitMs = 0): Promise<T> {
   mkdirPrivate(localRoot(home));
   const lock = path.join(localRoot(home), `${name}.lock`);
-  let fd: number;
-  try { fd = fs.openSync(lock, "wx", 0o600); }
-  catch (error) {
-    if (error?.code !== "EEXIST") throw error;
-    let owner = 0;
-    try { const pid = untrustedField(JSON.parse(fs.readFileSync(lock, "utf8")), "pid"); if (isNumber(pid) && pid > 0) owner = pid; } catch { /* Another process may still be writing the lock. */ }
-    if (owner) {
-      let dead = false;
-      try { process.kill(owner, 0); } catch (probe) { dead = probe?.code === "ESRCH"; }
-      if (dead) { fs.unlinkSync(lock); return withLocalLock(home, name, work); }
+  const candidate = `${lock}.candidate-${process.pid}-${randomBytes(8).toString("hex")}`;
+  mkdirPrivate(candidate);
+  writePrivate(path.join(candidate, "owner.json"), JSON.stringify({ pid: process.pid }));
+  const deadline = Date.now() + waitMs;
+  let acquired = false;
+  try {
+    for (;;) {
+      try { fs.renameSync(candidate, lock); acquired = true; break; }
+      catch (error) {
+        if (!["EEXIST", "ENOTEMPTY", "EPERM", "EACCES", "ENOTDIR", "EISDIR"].includes(error?.code)) throw error;
+        let stat: fs.Stats;
+        try { stat = fs.lstatSync(lock); } catch (readError) { if (readError?.code === "ENOENT") continue; throw readError; }
+        if (stat.isSymbolicLink()) throw new Error("The local AI lock must not be a symbolic link.");
+        let owner = 0;
+        try {
+          const ownerFile = stat.isDirectory() ? path.join(lock, "owner.json") : lock;
+          const pid = untrustedField(JSON.parse(fs.readFileSync(ownerFile, "utf8")), "pid");
+          if (isNumber(pid) && Number.isSafeInteger(pid) && pid > 0) owner = pid;
+        } catch { /* Only abandoned, aged ownerless locks may be reclaimed. */ }
+        let stale = !owner && Date.now() - stat.mtimeMs >= 30_000;
+        if (owner) { try { process.kill(owner, 0); } catch (probe) { stale = probe?.code === "ESRCH"; } }
+        if (stale) {
+          const fingerprint = createHash("sha256").update(`${stat.dev}:${stat.ino}:${stat.birthtimeMs}`).digest("hex").slice(0, 24);
+          const tombstone = `${lock}.stale-${fingerprint}`;
+          try {
+            // Our published directories always contain owner.json. Make an
+            // abandoned empty directory non-empty before retaining it too.
+            if (stat.isDirectory() && fs.readdirSync(lock).length === 0) writePrivate(path.join(lock, "abandoned"), "");
+            fs.renameSync(lock, tombstone);
+            continue;
+          } catch (reclaim) {
+            if (reclaim?.code === "ENOENT") continue;
+            if (!["EEXIST", "ENOTEMPTY", "EPERM", "EACCES", "ENOTDIR", "EISDIR"].includes(reclaim?.code)) throw reclaim;
+          }
+        }
+        if (Date.now() >= deadline) throw new Error(`Local AI ${name} is already in progress. Wait for it to finish and retry.`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
     }
-    throw new Error(`Local AI ${name} is already in progress. Wait for it to finish and retry.`);
+    return await work();
+  } finally {
+    fs.rmSync(acquired ? lock : candidate, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
   }
-  try { fs.writeSync(fd, JSON.stringify({ pid: process.pid })); return await work(); }
-  finally { fs.closeSync(fd); fs.unlinkSync(lock); }
 }
 
 async function hashFile(file: string, hash = createHash("sha256")) {
@@ -178,6 +210,11 @@ function runInstall(command: string, args: string[], env: NodeJS.ProcessEnv): Pr
 export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(), log: LocalLog = console.log) {
   if (plan.runtime !== "vllm") return installLlamaRuntime(plan.platform, plan.gpu.backend, home, log);
   if (process.platform !== "linux" || process.arch !== "x64") throw new Error("The managed vLLM runtime requires Linux x64.");
+  const libc = await runLocalProbe("getconf", ["GNU_LIBC_VERSION"]).catch(() => "");
+  const version = libc.match(/glibc\s+(\d+)\.(\d+)/);
+  if (!version || Number(version[1]) < 2 || Number(version[1]) === 2 && Number(version[2]) < 35) {
+    throw new Error("The pinned vLLM wheels require glibc 2.35 or newer (for example Ubuntu 22.04+). No model weights were downloaded.");
+  }
   const directory = runtimeDirectory(plan, home);
   const ready = path.join(directory, ".ready");
   if (!fs.existsSync(ready)) {
@@ -188,9 +225,11 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
     if (!uv) throw new Error("The pinned uv archive contains no executable.");
     const env = { ...process.env, UV_PYTHON_INSTALL_DIR: path.join(localRoot(home), "python"), UV_CACHE_DIR: path.join(localRoot(home), "uv-cache") };
     mkdirPrivate(directory);
-    log(`Installing isolated Python 3.12 and vLLM ${VLLM_VERSION} (this can take several minutes).`);
-    await runInstall(uv, ["venv", "--python", "3.12", "--managed-python", path.join(directory, "venv")], env);
-    await runInstall(uv, ["pip", "install", "--python", path.join(directory, "venv", "bin", "python"), `vllm==${VLLM_VERSION}`], env);
+    log(`Installing isolated Python ${LOCAL_PYTHON_VERSION} and vLLM ${VLLM_VERSION} (this can take several minutes).`);
+    await runInstall(uv, ["venv", "--python", LOCAL_PYTHON_VERSION, "--managed-python", path.join(directory, "venv")], env);
+    const requirements = path.join(directory, "requirements.txt");
+    writePrivate(requirements, LOCAL_VLLM_REQUIREMENTS);
+    await runInstall(uv, ["pip", "sync", "--only-binary", ":all:", "--python", path.join(directory, "venv", "bin", "python"), requirements], env);
     fs.writeFileSync(ready, VLLM_VERSION, { mode: 0o600 });
   }
   return localRuntimeExecutable(plan, home);

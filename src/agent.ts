@@ -32,7 +32,7 @@ import {
   NetworkPolicy,
 } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
-import { hasLocalSelection } from "./local-ai.js";
+import { hasValidLocalSelection } from "./local-ai.js";
 import { importOptionalPeer } from "./optional-peer.js";
 import { piImageArtifacts, piImageContent } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
@@ -1810,7 +1810,7 @@ export function nativeModelCatalog() {
         "grok-4.3",
     },
   ];
-  if (hasLocalSelection()) models.unshift({ source: "local", model: "local" });
+  if (hasValidLocalSelection()) models.unshift({ source: "local", model: "local" });
   return models;
 }
 

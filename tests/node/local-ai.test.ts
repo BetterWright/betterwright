@@ -6,11 +6,12 @@ import path from "node:path";
 import test from "node:test";
 
 import { preferredModelId } from "../../dist/src/doctor.js";
-import { decodeLocalPlan, detectLocalHardware, GIB, localPlanId, localRoot, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
+import { decodeLocalPlan, detectLocalHardware, GIB, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
 import { LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
-import { downloadLocalArtifact, LOCAL_RUNTIMES, runtimeDirectory, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
-import { localServerArguments, localServiceStatus, serveLocalAI, stopLocalService } from "../../dist/src/local-ai-service.js";
+import { downloadLocalArtifact, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, runtimeDirectory, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService } from "../../dist/src/local-ai-service.js";
+import { LOCAL_VLLM_REQUIREMENTS } from "../../dist/src/local-ai-vllm-lock.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 const quiet = () => {};
@@ -188,6 +189,15 @@ test("supervisor authenticates control, hides the key and owns child shutdown", 
     const state = JSON.parse(fs.readFileSync(path.join(localRoot(home), "service.json"), "utf8"));
     assert.equal((await fetch(`http://127.0.0.1:${state.controlPort}/stop`, { method: "POST" })).status, 403);
     assert.ok(!JSON.stringify(await localServiceStatus(home)).includes(state.token));
+    // An unreachable owner must remain authoritative, even if its API key
+    // no longer authenticates. Never orphan its live child by replacing it.
+    writeLocalJson(path.join(localRoot(home), "service.json"), { ...state, token: "0".repeat(64) });
+    try {
+      await assert.rejects(ensureLocalService(plan, home, 100), /Ownership was retained/);
+      await assert.rejects(stopLocalService(home), /Ownership was retained/);
+      assert.equal((await localServiceStatus(home)).running, true);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(localRoot(home), "service.json"), "utf8")).token, "0".repeat(64));
+    } finally { writeLocalJson(path.join(localRoot(home), "service.json"), state); }
     assert.equal(await stopLocalService(home), true); await done;
     assert.ok(child.exitCode !== null || child.signalCode !== null);
     assert.equal((await localServiceStatus(home)).running, false);
@@ -222,4 +232,58 @@ test("a complete verified partial is installed without another download after a 
   const file = await downloadLocalArtifact(artifact, dir, { fetchImpl: async () => { throw new Error("must stay offline"); }, log: quiet });
   assert.deepEqual(fs.readFileSync(file), bytes); assert.ok(!fs.existsSync(`${file}.part`));
   await assert.rejects(downloadLocalArtifact({ ...artifact, name: ".." }, dir), /manifest/);
+});
+
+test("old ownerless locks recover, while fresh and live owners are never stolen", async () => {
+  const home = makeTempDir("bw-local-abandoned-lock-");
+  fs.mkdirSync(localRoot(home), { recursive: true });
+  const lock = path.join(localRoot(home), "setup.lock");
+  fs.writeFileSync(lock, "");
+  await assert.rejects(withLocalLock(home, "setup", async () => {}), /already in progress/);
+  const past = new Date(Date.now() - 60_000); fs.utimesSync(lock, past, past);
+  let entered = false;
+  await withLocalLock(home, "setup", async () => { entered = true; assert.ok(fs.existsSync(path.join(lock, "owner.json"))); });
+  assert.ok(entered);
+  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid })); fs.utimesSync(lock, past, past);
+  await assert.rejects(withLocalLock(home, "setup", async () => {}), /already in progress/);
+});
+test("stop waits for a startup that has not published service state yet", async () => {
+  const home = makeTempDir("bw-local-stop-race-");
+  let release;
+  const held = withLocalLock(home, "lifecycle", () => new Promise<void>(resolve => { release = resolve; }));
+  let stopped = false;
+  const stop = stopLocalService(home).then(result => { stopped = true; return result; });
+  await new Promise(resolve => setTimeout(resolve, 100)); assert.equal(stopped, false);
+  release(); await held; assert.equal(await stop, false); assert.equal(stopped, true);
+});
+test("an invalid saved local selection cannot silently redirect a task to cloud", () => {
+  const home = makeTempDir("bw-local-invalid-selection-");
+  fs.mkdirSync(localRoot(home), { recursive: true }); fs.writeFileSync(path.join(localRoot(home), "selection.json"), "broken");
+  assert.equal(preferredModelId({ env: { BETTERWRIGHT_HOME: home, OPENAI_API_KEY: "configured-cloud-key" }, auth: {} }).model, "local");
+  assert.throws(() => readLocalPlan(home), /repair/);
+});
+
+test("the isolated vLLM environment pins Python and every resolved dependency", () => {
+  assert.equal(LOCAL_PYTHON_VERSION, "3.12.13");
+  const pins = LOCAL_VLLM_REQUIREMENTS.trim().split("\n");
+  assert.equal(pins.length, 196);
+  assert.ok(pins.includes(`vllm==${VLLM_VERSION}`));
+  for (const pin of pins) assert.match(pin, /^[a-z0-9_.-]+==[a-z0-9.+-]+$/i);
+});
+
+test("restart verifies file content before launching and only reclaims conclusively dead owners", async () => {
+  const home = makeTempDir("bw-local-restart-checksum-");
+  const plan = { ...recommendLocalModel(hardware()).plan, platform: process.platform, arch: process.arch };
+  const runtime = runtimeDirectory(plan, home), directory = modelDirectory(plan, home);
+  fs.mkdirSync(runtime, { recursive: true }); fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(runtime, process.platform === "win32" ? "llama-server.exe" : "llama-server"), "fixture");
+  const file = path.join(directory, localModel(plan).files[0].name);
+  fs.writeFileSync(file, Buffer.alloc(bytes.length)); // Same size, wrong hash.
+  const dead = spawnSync(process.execPath, ["--eval", ""], { encoding: "utf8" });
+  assert.equal(dead.status, 0);
+  writeLocalJson(path.join(localRoot(home), "service.json"), { controlPort: 1, port: 1, planId: localPlanId(plan), token: "1".repeat(64), supervisorPid: dead.pid, childPid: dead.pid });
+  let verified = 0;
+  await assert.rejects(ensureLocalService(plan, home, 100, async target => { verified++; return verifyLocalArtifact(target, artifact); }), /checksum/);
+  assert.equal(verified, 1); assert.ok(!fs.existsSync(path.join(localRoot(home), "service.json")));
+  assert.ok(!fs.existsSync(path.join(localRoot(home), "plans")));
 });

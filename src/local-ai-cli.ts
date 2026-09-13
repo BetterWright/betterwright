@@ -137,6 +137,7 @@ export async function runLocalCommand(args: string[], { home = defaultHome(), lo
     if (command === "stop") { log(await stopLocalService(home) ? "Local AI stopped; model files and harness selection are retained." : "No managed local runtime is running."); return 0; }
     if (command === "start") { await configuredLocalConnection(home); log("Local AI is ready."); return 0; }
     const plan = readLocalPlan(home), status = await localServiceStatus(home);
+    if (status.error && !json) { log(`Local AI: ${status.error}`); return 1; }
     const report = { configured: Boolean(plan), model: plan ? localModel(plan).name : null, quant: plan?.quant || null, runtime: plan?.runtime || null, ...status };
     log(json ? JSON.stringify(report, null, 2) : plan ? `${report.model} · ${report.quant} · ${report.runtime}: ${status.ready ? "ready" : status.running ? "starting" : "stopped (starts when the harness needs it)"}` : "No local model configured. Run betterwright --local.");
     return 0;

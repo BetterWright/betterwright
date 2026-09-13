@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { mkdirPrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import { decodeLocalPlan, type LocalPlan, localModel, localPlanId, localRoot, modelDirectory, readLocalPlan, writeLocalJson } from "./local-ai.js";
-import { localRuntimeExecutable, withLocalLock } from "./local-ai-install.js";
+import { localRuntimeExecutable, verifyLocalArtifact, withLocalLock } from "./local-ai-install.js";
 import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 export const LOCAL_MODEL_ALIAS = "betterwright-local";
@@ -20,6 +20,8 @@ interface LocalService {
   port: number;
   token: string;
   planId: string;
+  supervisorPid: number;
+  childPid: number;
 }
 export interface LocalConnection { baseURL: string; apiKey: string; model: string; }
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -28,9 +30,11 @@ function readService(home: string): LocalService | null {
   try {
     const data: UntrustedValue = JSON.parse(fs.readFileSync(serviceFile(home), "utf8"));
     const controlPort = untrustedField(data, "controlPort"), port = untrustedField(data, "port"), token = untrustedField(data, "token"), planId = untrustedField(data, "planId");
-    if (!isNumber(port) || !Number.isInteger(port) || port < 1 || port > 65535 || !isNumber(controlPort) || !Number.isInteger(controlPort) || controlPort < 1 || controlPort > 65535 ||
+    const supervisorPid = untrustedField(data, "supervisorPid"), childPid = untrustedField(data, "childPid");
+    if (!isNumber(supervisorPid) || !Number.isSafeInteger(supervisorPid) || supervisorPid <= 0 || !isNumber(childPid) || !Number.isSafeInteger(childPid) || childPid < 0 ||
+      !isNumber(port) || !Number.isInteger(port) || port < 1 || port > 65535 || !isNumber(controlPort) || !Number.isInteger(controlPort) || controlPort < 1 || controlPort > 65535 ||
       !isString(token) || !/^[a-f0-9]{64}$/.test(token) || !isString(planId) || !/^[a-f0-9]{24}$/.test(planId)) return null;
-    return { controlPort, port, token, planId };
+    return { controlPort, port, token, planId, supervisorPid, childPid };
   } catch { return null; }
 }
 async function control(service: LocalService, command: "status" | "stop") {
@@ -43,21 +47,47 @@ async function control(service: LocalService, command: "status" | "stop") {
   if (untrustedField(body, "planId") !== service.planId) throw new Error("The saved local runtime identity does not match.");
   return body;
 }
+function processIsGone(pid: number): boolean {
+  if (pid <= 0) return false;
+  try { process.kill(pid, 0); return false; } catch (error) { return error?.code === "ESRCH"; }
+}
+function childGroupIsGone(service: LocalService) {
+  if (process.platform === "win32") return processIsGone(service.childPid);
+  if (service.childPid <= 0) return false;
+  try { process.kill(-service.childPid, 0); return false; } catch (error) { return error?.code === "ESRCH"; }
+}
+function ownersAreGone(service: LocalService) { return processIsGone(service.supervisorPid) && processIsGone(service.childPid) && childGroupIsGone(service); }
+const OWNERSHIP_ERROR = "The local supervisor is unreachable, but its processes may still be alive. Ownership was retained; no replacement was started. Resume or stop the recorded runtime processes, then retry local stop. See local-ai/runtime.log and local-ai/service.json.";
+function removeService(service: LocalService, home: string) {
+  if (readService(home)?.token === service.token) fs.rmSync(serviceFile(home), { force: true });
+}
 export async function localServiceStatus(home = defaultHome()) {
   const service = readService(home);
-  if (!service) return { running: false, ready: false };
+  if (!service) return fs.existsSync(serviceFile(home))
+    ? { running: true, ready: false, error: "Invalid local service state; ownership must be repaired before restart." }
+    : { running: false, ready: false };
   try {
     const status = await control(service, "status");
     return { running: true, ready: untrustedField(status, "ready") === true, planId: service.planId,
       endpoint: `http://127.0.0.1:${service.port}/v1` };
-  } catch { return { running: false, ready: false }; }
+  } catch {
+    return ownersAreGone(service) ? { running: false, ready: false }
+      : { running: true, ready: false, planId: service.planId, error: OWNERSHIP_ERROR };
+  }
 }
 export async function stopLocalService(home = defaultHome()): Promise<boolean> {
+  return withLocalLock(home, "lifecycle", () => stopLocalServiceUnlocked(home), 10 * 60_000 + 10_000);
+}
+async function stopLocalServiceUnlocked(home: string): Promise<boolean> {
   const service = readService(home);
-  if (!service) return false;
-  try { await control(service, "stop"); } catch { return false; }
+  if (!service) {
+    if (fs.existsSync(serviceFile(home))) throw new Error("Invalid local service state; ownership must be repaired before restart.");
+    return false;
+  }
+  try { await control(service, "stop"); }
+  catch { if (ownersAreGone(service)) { removeService(service, home); return false; } throw new Error(OWNERSHIP_ERROR); }
   for (let attempt = 0; attempt < 80; attempt++) {
-    try { await control(service, "status"); } catch { return true; }
+    if (processIsGone(service.childPid) && childGroupIsGone(service) && (!fs.existsSync(serviceFile(home)) || ownersAreGone(service))) { removeService(service, home); return true; }
     await pause(100);
   }
   throw new Error("The local runtime is still shutting down. Check local-ai/runtime.log and retry local stop.");
@@ -80,20 +110,25 @@ export function localServerArguments(plan: LocalPlan, port: number, home = defau
     "--image-max-tokens", "4096", "--jinja", "--reasoning-format", "deepseek", "--no-webui",
     "--chat-template-kwargs", JSON.stringify(plan.modelId === "nex-mini" ? { reasoning_effort: "medium" } : { enable_thinking: false })];
 }
-export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), timeoutMs = 10 * 60_000): Promise<LocalConnection> {
+export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), timeoutMs = 10 * 60_000, verify: typeof verifyLocalArtifact = verifyLocalArtifact): Promise<LocalConnection> {
   if (plan.platform !== process.platform || plan.arch !== process.arch) throw new Error("This local AI installation belongs to different hardware. Run betterwright --local on this machine.");
   const planId = localPlanId(plan);
-  return withLocalLock(home, "start", async () => {
+  return withLocalLock(home, "lifecycle", async () => {
     const existing = readService(home);
+    if (!existing && fs.existsSync(serviceFile(home))) throw new Error("Invalid local service state; ownership must be repaired before restart.");
     if (existing) {
       const status = await control(existing, "status").catch(() => null);
+      if (!status) {
+        if (!ownersAreGone(existing)) throw new Error(OWNERSHIP_ERROR);
+        removeService(existing, home);
+      }
       if (status && existing.planId !== planId) throw new Error("Another managed model is running. Run betterwright local stop before changing models.");
       if (status && untrustedField(status, "ready") === true) return { baseURL: `http://127.0.0.1:${existing.port}/v1`, apiKey: existing.token, model: LOCAL_MODEL_ALIAS };
     }
     localRuntimeExecutable(plan, home);
     for (const file of localModel(plan).files) {
       const target = path.join(modelDirectory(plan, home), file.name);
-      if (!fs.existsSync(target) || fs.statSync(target).size !== file.bytes) throw new Error("Local model files are missing or incomplete. Run betterwright --local to resume setup.");
+      if (!await verify(target, file)) throw new Error("Local model files are missing, incomplete, or failed their checksum. Run betterwright --local to resume setup.");
     }
     writeLocalJson(path.join(localRoot(home), "plans", `${planId}.json`), plan);
     const current = await localServiceStatus(home);
@@ -119,7 +154,7 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
       }
       await pause(500);
     }
-    await stopLocalService(home);
+    await stopLocalServiceUnlocked(home);
     throw new Error(`Local model startup timed out. Check ${path.join(localRoot(home), "runtime.log")}.`);
   });
 }
@@ -159,7 +194,7 @@ export async function serveLocalAI(planId: string, home = defaultHome(), launch:
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const address = server.address();
   if (!address || isString(address)) throw new Error("Could not allocate the local supervisor port.");
-  state = { controlPort: address.port, port, token, planId };
+  state = { controlPort: address.port, port, token, planId, supervisorPid: process.pid, childPid: 0 };
   mkdirPrivate(localRoot(home));
   const env: NodeJS.ProcessEnv = { ...process.env, LLAMA_API_KEY: token, VLLM_API_KEY: token, HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" };
   if (plan.runtime === "vllm" && plan.gpu.uuid) env.CUDA_VISIBLE_DEVICES = plan.gpu.uuid;
@@ -197,6 +232,7 @@ export async function serveLocalAI(planId: string, home = defaultHome(), launch:
     process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);
     server.closeAllConnections(); server.close();
   };
+  state.childPid = child.pid || 0;
   writeLocalJson(serviceFile(home), state);
   const onSignal = () => void finish();
   process.once("SIGTERM", onSignal);

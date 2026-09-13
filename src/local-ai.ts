@@ -188,3 +188,9 @@ export function readLocalPlan(home = defaultHome()): LocalPlan | null {
 export function hasLocalSelection(home = defaultHome()): boolean {
   return fs.existsSync(path.join(localRoot(home), "selection.json"));
 }
+
+/** Listing/readiness can omit damaged plans while the saved local intent
+ * still prevents silently falling back to a cloud model. */
+export function hasValidLocalSelection(home = defaultHome()): boolean {
+  try { return Boolean(readLocalPlan(home)); } catch { return false; }
+}

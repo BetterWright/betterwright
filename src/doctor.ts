@@ -25,7 +25,7 @@ import {
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
 import { defaultHome } from "./home.js";
-import { hasLocalSelection } from "./local-ai.js";
+import { hasLocalSelection, hasValidLocalSelection } from "./local-ai.js";
 import { installHint, optionalPeerAvailable } from "./optional-peer.js";
 import {
   runtimeFix,
@@ -215,7 +215,8 @@ export function modelReadiness({ env = process.env, auth = null }: any = {}) {
   const codex = auth ? Boolean(auth.codex) : Boolean(loadCodexAuth());
   const grok = auth ? Boolean(auth.grok) : Boolean(loadGrokAuth());
   const sources = [];
-  if (hasLocalSelection(env.BETTERWRIGHT_HOME || defaultHome())) sources.push("local (managed harness model)");
+  if (hasLocalSelection(env.BETTERWRIGHT_HOME || defaultHome())) sources.push(hasValidLocalSelection(env.BETTERWRIGHT_HOME || defaultHome())
+    ? "local (managed harness model)" : "local (invalid selection; repair with betterwright --local)");
   if (codex) sources.push("codex (signed in)");
   if (grok) sources.push("grok (signed in)");
   if (env.ANTHROPIC_API_KEY && moduleAvailable("@anthropic-ai/sdk")) {

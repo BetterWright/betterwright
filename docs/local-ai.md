@@ -40,7 +40,8 @@ Vulkan driver/loader is required; Linux binary compatibility is checked before
 weights are downloaded. Windows includes `tar.exe` on supported modern systems.
 Intel Macs, Linux/Windows ARM, and GPUs without a supported accelerated runtime
 are outside this installer. Windows users wanting Qwen's managed vLLM path can
-run BetterWright inside GPU-enabled WSL2.
+run BetterWright inside GPU-enabled WSL2. The pinned vLLM wheels need glibc
+2.35+ (such as Ubuntu 22.04 or newer), which is checked before installation.
 
 `--preference speed` selects Nex on large GPUs and Q4_K_M for GGUF models.
 The default `balanced` preference chooses the highest fitting GGUF quant up to
@@ -81,7 +82,10 @@ that enumeration. It prints the model, source, quant, context, and download size
 selection. A later harness task starts it again automatically. Stop a running
 model before choosing a different one. Repeating setup reuses checksum-verified
 files, resumes partial downloads, and reruns the readiness check. A failed setup
-preserves the previous selection. Concurrent setup/start attempts are locked.
+preserves the previous selection. Concurrent setup/start attempts are locked, and stop waits for an
+in-progress startup before releasing model memory. An invalid saved selection
+produces an explicit repair error; it never silently redirects a local task to
+a configured cloud provider. Select another model explicitly to use it.
 
 Installation lives under `~/.betterwright/local-ai` (or
 `BETTERWRIGHT_HOME/local-ai`). Model downloads need roughly 6–38 GiB depending on
@@ -89,6 +93,12 @@ the quant. The isolated vLLM/Python installation additionally reserves 30 GiB;
 llama.cpp needs much less. Setup checks free disk space with safety headroom and
 never downloads model weights to another machine. To remove the installation,
 stop it, then delete this `local-ai` directory. That also removes the default.
+
+Every fresh model load rechecks the catalog SHA-256 hashes. If a supervisor
+becomes unreachable, startup retains its ownership record and refuses to start
+a replacement until both recorded processes are conclusively gone. Stop never
+kills a process based only on a stale PID. A suspended owner must be resumed
+or its recorded processes stopped before lifecycle commands can recover.
 
 The inference API binds only to `127.0.0.1`, uses a randomly generated private
 key, and has a separate authenticated supervisor for start/status/stop. Status
@@ -101,7 +111,8 @@ network access continues to follow BetterWright's normal guard policy.
 
 The catalog pins repository revisions, byte sizes, and SHA-256 hashes. Downloads
 stream to resumable partial files, are verified, then atomically installed.
-Runtime archives are also versioned and checksummed. No model repository code
+Runtime archives are also versioned and checksummed. The vLLM environment pins
+Python 3.12.13 and all 196 Python package versions, installing wheels only. No model repository code
 is executed with `trust_remote_code`.
 
 - [Nex-N2.5-mini](https://huggingface.co/nex-agi/Nex-N2.5-mini), using

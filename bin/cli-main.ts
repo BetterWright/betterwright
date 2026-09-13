@@ -1015,8 +1015,8 @@ async function loadModelCatalog(
   // error wording cannot drift from `--model source/id` parsing.
   const raw = String(options.source || "").trim();
   if (raw === "local") {
-    const { hasLocalSelection } = await import("../src/local-ai.js");
-    const models = hasLocalSelection() ? ["local"] : [];
+    const { hasValidLocalSelection } = await import("../src/local-ai.js");
+    const models = hasValidLocalSelection() ? ["local"] : [];
     return { entries: models.map(model => ({ source: "local", model })), sources: [{ source: "local", models, error: undefined, baseURL: undefined }] };
   }
   const requested = raw ? endpointSourceName(raw) : "";
