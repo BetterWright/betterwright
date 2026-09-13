@@ -43,6 +43,7 @@ export interface LocalPlan {
   context: number;
   preference: LocalPreference;
   acceleration: LocalAcceleration;
+  accelerationTuned?: boolean;
 }
 export interface LocalRecommendation {
   plan: LocalPlan;
@@ -217,6 +218,7 @@ export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
   }
   return { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform, arch, context,
     acceleration: acceleration === "dflash2" ? "dflash2" : acceleration === "mtp" ? "mtp" : "none",
+    ...(get("accelerationTuned") === true ? { accelerationTuned: true } : {}),
     preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced",
     gpu: { id, name, memory, freeMemory, backend: backend === "metal" ? "metal" : backend === "cuda" ? "cuda" : "vulkan",
       vendor: gpuVendor === "apple" ? "apple" : gpuVendor === "nvidia" ? "nvidia" : gpuVendor === "amd" ? "amd" : gpuVendor === "intel" ? "intel" : "other", compute, uuid } };

@@ -68,6 +68,14 @@ draft head to propose several tokens for the target model to verify:
 | Ornith 9B / 35B GGUF | Bundled MTP heads, three draft tokens on the selected accelerator |
 | Nex-N2.5-mini GGUF | No speculative draft: the published weights omit MTP tensors |
 
+For a first installation using `auto`, setup compares the candidate with ordinary
+decoding on three short synthetic JSON, code, and browser-workflow prompts. It
+keeps the candidate only when average output throughput improves by more than
+5%; otherwise it selects ordinary decoding. The result is saved and reused.
+This adds benchmark requests and model restarts to initial setup. Existing
+selections are never stopped for automatic benchmarking. Explicit `mtp` or
+`dflash2` overrides skip this comparison, while retaining the readiness check.
+
 The DFlash2 download adds 3.58 GiB and reserves another 2 GiB of workspace. It
 uses the same pinned-download, checksum, resume, and restart verification as
 the target model. MTP weights are already included in the selected Ornith and

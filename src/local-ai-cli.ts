@@ -2,11 +2,11 @@ import path from "node:path";
 
 import { flagValue, positionalArgs } from "./cli-flags.js";
 import { defaultHome } from "./home.js";
-import { detectLocalHardware, GIB, type LocalSetupOptions, localInstallArtifacts, localModel, localPlanId, localRoot, parseLlamaDevices, readLocalPlan, recommendLocalModel,
+import { detectLocalHardware, GIB, hasLocalSelection, type LocalSetupOptions, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, readLocalPlan, recommendLocalModel,
   runLocalProbe, writeLocalJson } from "./local-ai.js";
 import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, localRuntimeEnvironment, withLocalLock } from "./local-ai-install.js";
 import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServerArguments, localServiceStatus, stopLocalService, stopLocalServiceIfOwned } from "./local-ai-service.js";
-import { isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
+import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 // A synthetic red image, no browser/profile input. The model must see the
 // image and return a parsed tool call before setup becomes the default.
@@ -37,6 +37,28 @@ export async function verifyLocalModel(connection: LocalConnection, fetchImpl: t
   if (!matched) throw new Error("The local model did not complete the image-and-tool-call check. No harness default was changed. See local-ai/runtime.log.");
 }
 
+/** Short, synthetic browser/code-like turns. Compare both modes on this host. */
+export async function benchmarkLocalModel(connection: LocalConnection, fetchImpl: typeof fetch = fetch): Promise<number> {
+  const prompts = ["Reply with OK.",
+    "Return JSON with an array of 12 objects, each with id (1 through 12), label (item followed by id), and selected (true for even ids). No prose.",
+    "Write JavaScript selectEnabled(records) that returns sorted ids of records where enabled is true. Include six assert examples.",
+    "Write a browser test plan for adding two cart items, removing one, changing quantity, checking total, and cancelling checkout. Include expected results."];
+  const rates: number[] = [];
+  for (const [i, prompt] of prompts.entries()) {
+    const start = performance.now();
+    const response = await fetchImpl(`${connection.baseURL}/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}` }, redirect: "error", signal: AbortSignal.timeout(120_000),
+      body: JSON.stringify({ model: connection.model, temperature: 0, max_tokens: i ? 128 : 8, reasoning_effort: "none",
+        chat_template_kwargs: { enable_thinking: false, reasoning_effort: "none" }, messages: [{ role: "user", content: prompt }] }),
+    });
+    const body: UntrustedValue = await response.json();
+    const tokens = untrustedField(untrustedField(body, "usage"), "completion_tokens");
+    if (!response.ok || !isNumber(tokens) || tokens <= 0) throw new Error("The local acceleration speed check did not receive a valid completion.");
+    if (i) rates.push(tokens * 1000 / Math.max(1, performance.now() - start));
+  }
+  return rates.reduce((sum, rate) => sum + rate, 0) / rates.length;
+}
+
 export interface LocalSetupDependencies {
   detect?: typeof detectLocalHardware;
   installLlama?: typeof installLlamaRuntime;
@@ -48,13 +70,16 @@ export interface LocalSetupDependencies {
   status?: typeof localServiceStatus;
   stop?: typeof stopLocalServiceIfOwned;
   disk?: typeof checkLocalDisk;
+  benchmark?: typeof benchmarkLocalModel;
 }
 export async function setupLocalAI(options: LocalSetupOptions, home = defaultHome(), log: LocalLog = console.log, dependencies: LocalSetupDependencies = {}) {
   const detect = dependencies.detect || detectLocalHardware, probe = dependencies.probe || runLocalProbe;
   const installLlama = dependencies.installLlama || installLlamaRuntime, installRuntime = dependencies.installRuntime || installLocalRuntime;
   const connect = dependencies.connect || ensureLocalService, verify = dependencies.verify || verifyLocalModel;
+  const benchmark = dependencies.benchmark || benchmarkLocalModel;
   const status = dependencies.status || localServiceStatus, stop = dependencies.stop || stopLocalServiceIfOwned;
   return withLocalLock(home, "setup", async () => {
+    const previouslyConfigured = hasLocalSelection(home);
     const running = await status(home);
     if (running.error) throw new Error(running.error);
     let managedPlan = null;
@@ -89,7 +114,24 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
       if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working Metal/Vulkan GPU driver and rerun betterwright --local; no model weights were downloaded.");
     }
     const recommendation = recommendLocalModel(hardware, options);
-    const { plan, model } = recommendation;
+    let { plan } = recommendation;
+    const { model } = recommendation;
+    const automatic = !options.acceleration || options.acceleration === "auto";
+    try {
+      const saved = readLocalPlan(home);
+      if (automatic && saved?.accelerationTuned && modelDirectory(saved, home) === modelDirectory(plan, home) &&
+        saved.context === plan.context && saved.platform === plan.platform && saved.gpu.id === plan.gpu.id && saved.gpu.uuid === plan.gpu.uuid) {
+        plan = { ...plan, acceleration: saved.acceleration, accelerationTuned: true };
+      }
+    } catch { /* Invalid selections remain repairable by setup. */ }
+    const updateRecommendation = () => {
+      const oldDraft = recommendation.plan.acceleration === "dflash2";
+      recommendation.reserveBytes += ((plan.acceleration === "dflash2" ? 1 : 0) - (oldDraft ? 1 : 0)) * 2 * GIB;
+      recommendation.plan = plan;
+      recommendation.downloadBytes = localInstallArtifacts(plan, home).reduce((sum, item) => sum + item.artifact.bytes, 0);
+      if (plan.accelerationTuned) recommendation.reason = `The saved speed check on this hardware selected ${plan.acceleration}. Model quality and the reserved memory budget are unchanged.`;
+    };
+    updateRecommendation();
     log(`Hardware: ${plan.gpu.name} (${(plan.gpu.memory / GIB).toFixed(1)} GiB accelerator memory)`);
     log(`Model: ${model.name} · ${model.quant} · ${plan.runtime} · ${plan.context.toLocaleString()} token context`);
     log(`Acceleration: ${plan.acceleration}`);
@@ -112,6 +154,30 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     try {
       connection = await connect(plan, home);
       await verify(connection);
+      // Only tune a first installation we own. Existing selections may be
+      // serving concurrent tasks, so repeating setup never benchmarks/stops
+      // their service. The selected speed result is retained for later use.
+      if (automatic && !previouslyConfigured && connection.started && plan.acceleration !== "none") {
+        log(`Comparing ${plan.acceleration} with ordinary decoding on synthetic tasks…`);
+        const acceleratedPlan = plan;
+        const acceleratedRate = await benchmark(connection);
+        if (!await stop(home, connection.apiKey)) throw new Error("Local runtime ownership changed during the speed check. Retry setup.");
+        connection = null;
+        plan = { ...plan, acceleration: "none" };
+        connection = await connect(plan, home);
+        await verify(connection);
+        const baselineRate = await benchmark(connection);
+        if (acceleratedRate > baselineRate * 1.05) {
+          if (!await stop(home, connection.apiKey)) throw new Error("Local runtime ownership changed during the speed check. Retry setup.");
+          connection = null;
+          plan = acceleratedPlan;
+          connection = await connect(plan, home);
+          await verify(connection);
+        }
+        plan = { ...plan, accelerationTuned: true };
+        updateRecommendation();
+        log(`Speed check: ${acceleratedPlan.acceleration} ${acceleratedRate.toFixed(1)} vs ordinary ${baselineRate.toFixed(1)} output tokens/s. Selected ${plan.acceleration}.`);
+      }
       writeLocalJson(path.join(localRoot(home), "selection.json"), plan);
     } catch (error) {
       if (connection?.started) await stop(home, connection.apiKey).catch(() => {});

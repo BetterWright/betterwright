@@ -200,6 +200,25 @@ test("failed setup never stops a concurrently started or reused service", async 
   }
   assert.deepEqual(stopped, ["new-owned-key"]);
 });
+test("first automatic setup keeps acceleration only when the measured improvement exceeds noise", async () => {
+  for (const faster of [false, true]) {
+    const home = makeTempDir("bw-local-tune-"), modes: string[] = [], stopped: string[] = [];
+    const dependencies = { detect: async () => hardware(), installLlama: async () => "llama-server", installRuntime: async () => "llama-server",
+      probe: async () => "MTL0: Apple M4 Max (53084 MiB, 53083 MiB free)", status: async () => ({ running: false }),
+      disk: async () => {}, download: async () => "file", verify: async () => {},
+      stop: async (_home, token) => { stopped.push(token); return true; },
+      connect: async plan => { modes.push(plan.acceleration); return { model: "local", apiKey: plan.acceleration, baseURL: "http://127.0.0.1:1/v1", started: true }; },
+      benchmark: async connection => connection.apiKey === "mtp" ? faster ? 150 : 102 : 100 };
+    const result = await setupLocalAI({ model: "ornith-9b" }, home, quiet, dependencies);
+    assert.equal(result.plan.acceleration, faster ? "mtp" : "none");
+    assert.equal(readLocalPlan(home).accelerationTuned, true);
+    assert.deepEqual(modes, faster ? ["mtp", "none", "mtp"] : ["mtp", "none"]);
+    assert.deepEqual(stopped, faster ? ["mtp", "none"] : ["mtp"]);
+    modes.length = 0; stopped.length = 0;
+    await setupLocalAI({ model: "ornith-9b" }, home, quiet, { ...dependencies, benchmark: async () => { throw new Error("Do not retune an existing selection"); } });
+    assert.deepEqual(modes, [faster ? "mtp" : "none"]); assert.deepEqual(stopped, []);
+  }
+});
 test("readiness requires a parsed tool call with the actual image color", async () => {
   const connection = { model: "local", apiKey: "private-probe-key", baseURL: "http://127.0.0.1:1234/v1" };
   await verifyLocalModel(connection, async (_url, init) => {
