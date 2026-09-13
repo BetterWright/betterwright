@@ -118,3 +118,85 @@ export const LOCAL_GCC_ARTIFACTS: LocalArtifact[] = [
     "sha256": "a3964e7050886e2287f80d4a45f4015e4adb172045f982499a7a2c021858848b"
   }
 ];
+
+// Shared libraries for the official Linux Vulkan runtime.
+export const LOCAL_LINUX_LIBRARIES: LocalArtifact[] = [
+  {
+    "name": "libgomp-16.2.0-he0feb66_4.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libgomp-16.2.0-he0feb66_4.conda",
+    "bytes": 639968,
+    "sha256": "0fe5cb8e0752241ab55e11656ed1b9726248b522d23b929fe7c95b83eb55b9bb"
+  },
+  {
+    "name": "_openmp_mutex-4.5-20_gnu.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda",
+    "bytes": 28948,
+    "sha256": "1dd3fffd892081df9726d7eb7e0dea6198962ba775bd88842135a4ddb4deb3c9"
+  },
+  {
+    "name": "libgcc-16.2.0-ha9f2e26_4.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libgcc-16.2.0-ha9f2e26_4.conda",
+    "bytes": 1058083,
+    "sha256": "24090e675d34403b4ee1cd4372d8f6c0937da7ecfd66a19a57cac2ed0f4ea793"
+  },
+  {
+    "name": "xorg-libxau-1.0.12-h7cc23a3_2.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/xorg-libxau-1.0.12-h7cc23a3_2.conda",
+    "bytes": 18793,
+    "sha256": "3ec065b94554dc48a4ca582a960a5484bc166b26e83ce0954653e08d17e8bd53"
+  },
+  {
+    "name": "pthread-stubs-0.4-h7cc23a3_1004.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/pthread-stubs-0.4-h7cc23a3_1004.conda",
+    "bytes": 9630,
+    "sha256": "4a44fd00ea73b79ca2c89b0727b9ccf61c506ead71e67a9abfa4c590042b5a4a"
+  },
+  {
+    "name": "xorg-libxdmcp-1.1.5-hb03c661_2.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/xorg-libxdmcp-1.1.5-hb03c661_2.conda",
+    "bytes": 21120,
+    "sha256": "c50a16c05ccd7fe7dd6d6cfb539f4e9a491d50f9ed7a5c902fec638f7d0d27be"
+  },
+  {
+    "name": "libstdcxx-16.2.0-h934c35e_4.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-16.2.0-h934c35e_4.conda",
+    "bytes": 6613148,
+    "sha256": "40b792b0186c1e8859280a1f6f19a54fc50a11b32724fc7b637009c1a9bd302b"
+  },
+  {
+    "name": "libxcb-1.17.0-hb83e432_2.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libxcb-1.17.0-hb83e432_2.conda",
+    "bytes": 395120,
+    "sha256": "7b49e6fd2a584b7f072943e6adf4149677af5121246975278804782d37752837"
+  },
+  {
+    "name": "xorg-libx11-1.8.13-he1eb515_1.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/xorg-libx11-1.8.13-he1eb515_1.conda",
+    "bytes": 839578,
+    "sha256": "68053eebfa9f0d91666786c8fb5839d989aa9b869add92cb8815228bb2d7302c"
+  },
+  {
+    "name": "xorg-libxrender-0.9.12-hb03c661_1.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/xorg-libxrender-0.9.12-hb03c661_1.conda",
+    "bytes": 34645,
+    "sha256": "6901f91d398811e4ec89d7e20a69abac02a7bfebfaf073338b7ea3d1a99685b7"
+  },
+  {
+    "name": "xorg-libxext-1.3.7-h7cc23a3_1.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/xorg-libxext-1.3.7-h7cc23a3_1.conda",
+    "bytes": 53124,
+    "sha256": "aa9bbe8b278aacc194e280ff5037f9f9a1f2c5b33ed97de8e7f01cfbe90dda43"
+  },
+  {
+    "name": "xorg-libxrandr-1.5.5-h7cc23a3_1.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/xorg-libxrandr-1.5.5-h7cc23a3_1.conda",
+    "bytes": 31106,
+    "sha256": "05a7f25d7f7f5cd32b27a019233ece97167fd8ade255bc13a0e49e53387f4c30"
+  },
+  {
+    "name": "libvulkan-loader-1.4.357.0-h0e34353_2.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libvulkan-loader-1.4.357.0-h0e34353_2.conda",
+    "bytes": 206957,
+    "sha256": "a70c25b66321ee77f9892b205e3247263c400803f543dc8aca53d569a59c5a77"
+  }
+];

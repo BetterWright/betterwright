@@ -11,6 +11,7 @@ import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js"
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
 import { downloadLocalArtifact, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService, stopLocalServiceIfOwned } from "../../dist/src/local-ai-service.js";
+import { LOCAL_GCC_ARTIFACTS } from "../../dist/src/local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "../../dist/src/local-ai-vllm-lock.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -24,6 +25,10 @@ function hardware(memory = 64, vram = memory, vendor = "apple", platform = vendo
 const cases: Array<[string, ReturnType<typeof hardware>, string, string, string]> = [
   ["5090", hardware(64, 32, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
   ["Pro 6000 Blackwell", hardware(128, 96, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
+  ["A10G Ampere", hardware(16, 24, "nvidia", "linux", 8.6), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["A100 Ampere", hardware(128, 80, "nvidia", "linux", 8), "nex-mini", "Q6_K", "llama.cpp"],
+  ["H100 Hopper", hardware(128, 80, "nvidia", "linux", 9), "qwen-27b", "FP8", "vllm"],
+  ["H200 Hopper", hardware(256, 141, "nvidia", "linux", 9), "qwen-27b", "FP8", "vllm"],
   ["RTX 6000 Ada", hardware(128, 48, "nvidia", "linux", 8.9), "qwen-27b", "FP8", "vllm"],
   ["Windows 5090", hardware(64, 32, "nvidia", "win32", 12), "nex-mini", "Q5_K_M", "llama.cpp"],
   ["AMD 12 GB", hardware(32, 12, "amd"), "ornith-9b", "Q6_K", "llama.cpp"],
@@ -113,6 +118,11 @@ test("all catalog downloads are immutable, checksummed and from reviewed publish
   for (const key of Object.keys(LOCAL_RUNTIMES)) for (const file of LOCAL_RUNTIMES[key]) {
     assert.match(file.url, /^https:\/\/github.com\/ggml-org\/llama.cpp\/releases\/download\/b\d+\//);
     assert.match(file.sha256, /^[a-f0-9]{64}$/);
+  }
+  for (const file of LOCAL_GCC_ARTIFACTS) {
+    assert.match(file.url, /^https:\/\/conda\.anaconda\.org\/conda-forge\/(linux-64|noarch)\//);
+    assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);
+    assert.ok(file.url.endsWith(`/${file.name}`));
   }
   for (const file of LOCAL_DFLASH2.files) {
     assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);

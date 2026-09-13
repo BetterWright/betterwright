@@ -29,14 +29,18 @@ model weights, and reports a repairable error when a driver is missing.
 | --- | --- | --- |
 | Linux x64, RTX 5090 / RTX Pro 6000 Blackwell with 32+ GiB | Qwen3.8-27B NVFP4 | vLLM with CUDA |
 | Linux x64, pre-Blackwell NVIDIA with 48+ GiB and FP8 support, such as RTX 6000 Ada | Qwen3.8-27B FP8 | vLLM with CUDA |
+| Linux x64, Ampere (A10G / RTX 30-series / A100) | Ornith 9B or Nex GGUF, according to VRAM | llama.cpp with Vulkan |
 | Apple Silicon with 64+ GiB unified memory | Nex-N2.5-mini GGUF | llama.cpp with Metal |
 | Other supported GPUs with 32+ GiB, including Windows NVIDIA and AMD | Nex-N2.5-mini GGUF | llama.cpp with CUDA or Vulkan |
 | Smaller supported GPUs / Apple Silicon with enough headroom | Ornith-1.5-9B GGUF | llama.cpp with Metal, Vulkan, or CUDA |
 | 8 GiB or less system or accelerator memory; CPU-only | No recommendation | No model installed |
 
+Hopper (H100/H200) and Ada use native FP8 when Qwen fits. Ampere has no
+native FP8/NVFP4 support and uses reviewed GGUF quants instead.
+
 Linux llama.cpp uses Vulkan, covering compatible AMD, NVIDIA, and Intel GPUs.
-Windows x64 tries the CUDA build for NVIDIA and otherwise uses Vulkan. A working
-Vulkan driver/loader is required; Linux binary compatibility is checked before
+Windows x64 tries the CUDA build for NVIDIA and otherwise uses Vulkan. Setup installs a private Vulkan loader and required GNU/X11 libraries. A working
+GPU driver is required; Linux binary compatibility is checked before
 weights are downloaded. Windows includes `tar.exe` on supported modern systems.
 Intel Macs, Linux/Windows ARM, and GPUs without a supported accelerated runtime
 are outside this installer. Windows users wanting Qwen's managed vLLM path can
@@ -180,3 +184,9 @@ refresh, resolve the exact top-level version using pinned uv with
 `pip compile --python-version 3.12.13 --python-platform x86_64-manylinux_2_35
 --only-binary :all: --no-annotate --no-header --strip-extras`, review every changed
 pin in `src/local-ai-vllm-lock.ts`, and repeat fresh GPU acceptance testing.
+
+The GNU compiler lock was resolved with micromamba 2.9.0 for `linux-64`,
+`CONDA_OVERRIDE_GLIBC=2.35`, `gcc_linux-64=14.3.0`, and `gxx_linux-64=14.3.0`
+from conda-forge. Review the complete resolved archive URLs, sizes, and SHA-256
+hashes in `src/local-ai-toolchain-lock.ts` whenever refreshing it. Setup installs
+these verified archives offline; it does not resolve newer compiler packages.

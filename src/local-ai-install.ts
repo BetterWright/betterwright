@@ -8,7 +8,7 @@ import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import { GIB, type LocalPlan, localInstallArtifacts, localRoot, readLocalPlan, runLocalProbe } from "./local-ai.js";
 import type { LocalArtifact } from "./local-ai-catalog.js";
-import { LOCAL_GCC_ARTIFACTS } from "./local-ai-toolchain-lock.js";
+import { LOCAL_GCC_ARTIFACTS, LOCAL_LINUX_LIBRARIES } from "./local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
 import { isNumber, untrustedField } from "./untrusted-value.js";
 
@@ -205,14 +205,22 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
     if (!fs.statSync(executable).isFile() || !fs.statSync(executable).size) return false;
     const version = plan.runtime === "vllm" ? VLLM_VERSION : LLAMA_VERSION;
     if (fs.readFileSync(path.join(runtimeDirectory(plan, home), ".ready"), "utf8").trim() !== version) return false;
+    if (plan.runtime === "vllm") {
+      const env = localRuntimeEnvironment(plan, home);
+      if (!env.CC || !env.CXX || !env.CUDA_HOME || ![env.CC, env.CXX, path.join(env.CUDA_HOME, "bin", "nvcc"), path.join(env.CUDA_HOME, "lib", "libcudart.so.13")].every(file => fs.existsSync(file))) return false;
+    }
     return localInstallArtifacts(plan, home).every(({ artifact, directory }) => {
       const stat = fs.lstatSync(path.join(directory, artifact.name));
       return stat.isFile() && stat.size === artifact.bytes;
     });
   } catch { return false; }
 }
+export function llamaRuntimeEnvironment(platform: string, home = defaultHome()): NodeJS.ProcessEnv {
+  if (platform !== "linux") return { ...process.env };
+  return { ...process.env, LD_LIBRARY_PATH: [path.join(localRoot(home), "runtimes", "linux-libraries-1", "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
+}
 export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
-  if (plan.runtime !== "vllm") return { ...process.env };
+  if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home);
   const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
   const compilerBin = path.join(compiler, "bin");
   const bin = path.join(runtimeDirectory(plan, home), "venv", "bin");
@@ -241,20 +249,47 @@ export async function stageLocalRuntime(directory: string, populate: (staging: s
     fs.renameSync(staging, directory);
   } finally { fs.rmSync(staging, { recursive: true, force: true }); }
 }
-export async function localRuntimeReady(directory: string, version: string, executable: string | null, args = ["--version"]): Promise<boolean> {
+export async function localRuntimeReady(directory: string, version: string, executable: string | null, args = ["--version"], env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   try {
     if (!executable || fs.readFileSync(path.join(directory, ".ready"), "utf8") !== version || !fs.statSync(executable).isFile()) return false;
-    await runLocalProbe(executable, args);
+    await runLocalProbe(executable, args, env);
     return true;
   } catch { return false; }
 }
+async function installCondaArchives(directory: string, artifacts: LocalArtifact[], home: string, log: LocalLog) {
+    const managerDirectory = path.join(localRoot(home), "runtimes", "micromamba-2.9.0");
+    const archive = await downloadLocalArtifact(MICROMAMBA_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
+    await stageLocalRuntime(managerDirectory, async staging => {
+      mkdirPrivate(path.join(staging, "bin"));
+      const manager = path.join(staging, "bin", "micromamba");
+      fs.copyFileSync(archive, manager); fs.chmodSync(manager, 0o700);
+      await runLocalProbe(manager, ["--version"]);
+    });
+    const files: string[] = [];
+    for (const artifact of artifacts) files.push(await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads", "toolchain"), { log }));
+    const manifest = path.join(localRoot(home), "runtimes", `${path.basename(directory)}-explicit.txt`);
+    writePrivate(manifest, `@EXPLICIT\n${files.map(file => pathToFileURL(file).href).join("\n")}\n`);
+    // Conda embeds the installation prefix; build at its final private path.
+    fs.rmSync(directory, { recursive: true, force: true });
+    await runInstall(path.join(managerDirectory, "bin", "micromamba"), ["create", "--no-rc", "--offline", "--yes", "--prefix", directory, "--file", manifest],
+      { ...process.env, MAMBA_ROOT_PREFIX: path.join(localRoot(home), "compiler-cache") });
+}
 export async function installLlamaRuntime(platform: string, backend: string, home = defaultHome(), log: LocalLog = console.log): Promise<string> {
+  const env = llamaRuntimeEnvironment(platform, home);
+  if (platform === "linux") {
+    const libraries = path.join(localRoot(home), "runtimes", "linux-libraries-1");
+    const ready = path.join(libraries, ".ready");
+    if (!fs.existsSync(ready) || !["libgomp.so.1", "libstdc++.so.6", "libvulkan.so.1"].every(file => fs.existsSync(path.join(libraries, "lib", file)))) {
+      await installCondaArchives(libraries, LOCAL_LINUX_LIBRARIES, home, log);
+      fs.writeFileSync(ready, "1", { mode: 0o600 });
+    }
+  }
   const key = llamaRuntimeKey(platform, backend);
   const directory = path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-${key}`);
   const ready = path.join(directory, ".ready");
   const name = platform === "win32" ? "llama-server.exe" : "llama-server";
   const cached = fs.existsSync(directory) ? findExecutable(directory, name) : null;
-  if (!await localRuntimeReady(directory, LLAMA_VERSION, cached)) {
+  if (!await localRuntimeReady(directory, LLAMA_VERSION, cached, ["--version"], env)) {
     await stageLocalRuntime(directory, async staging => {
       for (const artifact of LOCAL_RUNTIMES[key]) {
         const archive = await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads"), { log });
@@ -263,14 +298,14 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
       const executable = findExecutable(staging, platform === "win32" ? "llama-server.exe" : "llama-server");
       if (!executable) throw new Error("The inference runtime archive contains no llama-server.");
       if (platform !== "win32") fs.chmodSync(executable, 0o755);
-      await runLocalProbe(executable, ["--version"]);
+      await runLocalProbe(executable, ["--version"], env);
       fs.writeFileSync(path.join(staging, ".ready"), LLAMA_VERSION, { mode: 0o600 });
     });
   }
   const executable = findExecutable(directory, platform === "win32" ? "llama-server.exe" : "llama-server");
   if (!executable) throw new Error("The inference runtime archive contains no llama-server.");
   if (platform !== "win32") fs.chmodSync(executable, 0o755);
-  await runLocalProbe(executable, ["--version"]);
+  await runLocalProbe(executable, ["--version"], env);
   fs.writeFileSync(ready, LLAMA_VERSION, { mode: 0o600 });
   return executable;
 }
@@ -297,22 +332,7 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   const gcc = path.join(compilerDirectory, "bin", "x86_64-conda-linux-gnu-gcc");
   const gxx = path.join(compilerDirectory, "bin", "x86_64-conda-linux-gnu-g++");
   if (!await localRuntimeReady(compilerDirectory, GCC_VERSION, gcc) || !await localRuntimeReady(compilerDirectory, GCC_VERSION, gxx)) {
-    const managerDirectory = path.join(localRoot(home), "runtimes", "micromamba-2.9.0");
-    const archive = await downloadLocalArtifact(MICROMAMBA_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
-    await stageLocalRuntime(managerDirectory, async staging => {
-      mkdirPrivate(path.join(staging, "bin"));
-      const manager = path.join(staging, "bin", "micromamba");
-      fs.copyFileSync(archive, manager); fs.chmodSync(manager, 0o700);
-      await runLocalProbe(manager, ["--version"]);
-    });
-    const files: string[] = [];
-    for (const artifact of LOCAL_GCC_ARTIFACTS) files.push(await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads", "gcc"), { log }));
-    const manifest = path.join(localRoot(home), "runtimes", "gcc-explicit.txt");
-    writePrivate(manifest, `@EXPLICIT\n${files.map(file => pathToFileURL(file).href).join("\n")}\n`);
-    // Conda embeds the installation prefix; build at its final private path.
-    fs.rmSync(compilerDirectory, { recursive: true, force: true });
-    await runInstall(path.join(managerDirectory, "bin", "micromamba"), ["create", "--no-rc", "--offline", "--yes", "--prefix", compilerDirectory, "--file", manifest],
-      { ...process.env, MAMBA_ROOT_PREFIX: path.join(localRoot(home), "compiler-cache") });
+    await installCondaArchives(compilerDirectory, LOCAL_GCC_ARTIFACTS, home, log);
     await runLocalProbe(gcc, ["--version"]); await runLocalProbe(gxx, ["--version"]);
     fs.writeFileSync(path.join(compilerDirectory, ".ready"), GCC_VERSION, { mode: 0o600 });
   }
@@ -356,6 +376,9 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
     const source = path.join(check, "probe.cu");
     writePrivate(source, "#include <cuda_runtime.h>\n__global__ void bw_probe(float *x) { x[0] = 1.0f; }\n");
     await runLocalProbe(nvcc, ["-c", source, `-arch=sm_${Math.round(plan.gpu.compute * 10)}`, "-o", path.join(check, "probe.o")], env, 120_000);
+  } catch (error) {
+    fs.rmSync(path.join(compilerDirectory, ".ready"), { force: true });
+    throw error;
   } finally { fs.rmSync(check, { recursive: true, force: true }); }
   fs.writeFileSync(ready, VLLM_VERSION, { mode: 0o600 });
   return localRuntimeExecutable(plan, home);

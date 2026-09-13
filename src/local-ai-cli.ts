@@ -4,7 +4,7 @@ import { flagValue, positionalArgs } from "./cli-flags.js";
 import { defaultHome } from "./home.js";
 import { detectLocalHardware, GIB, hasLocalSelection, type LocalSetupOptions, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, readLocalPlan, recommendLocalModel,
   runLocalProbe, writeLocalJson } from "./local-ai.js";
-import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, localRuntimeEnvironment, withLocalLock } from "./local-ai-install.js";
+import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, llamaRuntimeEnvironment, localRuntimeEnvironment, withLocalLock } from "./local-ai-install.js";
 import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServerArguments, localServiceStatus, stopLocalService, stopLocalServiceIfOwned } from "./local-ai-service.js";
 import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
@@ -100,7 +100,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
       let devices: string;
       try {
         executable = await installLlama(hardware.platform, backend, home, log);
-        devices = await probe(executable, ["--list-devices"]);
+        devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home));
         if (backend === "cuda" && !parseLlamaDevices(devices, native).length) throw new Error("No usable CUDA device.");
       }
       catch (error) {
@@ -108,7 +108,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
         log("The CUDA build is unavailable with this driver; checking Vulkan acceleration.");
         backend = "vulkan";
         executable = await installLlama(hardware.platform, backend, home, log);
-        devices = await probe(executable, ["--list-devices"]);
+        devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home));
       }
       hardware = accountForManagedWeights({ ...hardware, gpus: parseLlamaDevices(devices, native) });
       if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working Metal/Vulkan GPU driver and rerun betterwright --local; no model weights were downloaded.");
