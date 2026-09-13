@@ -200,3 +200,61 @@ export const LOCAL_LINUX_LIBRARIES: LocalArtifact[] = [
     "sha256": "a70c25b66321ee77f9892b205e3247263c400803f543dc8aca53d569a59c5a77"
   }
 ];
+
+// NVIDIA CUDA 12.8 libraries matching the official llama.cpp CUDA image.
+export const LOCAL_CUDA_LIBRARIES: LocalArtifact[] = [
+  {
+    "name": "cuda-version-12.8-h5d125a7_3.conda",
+    "url": "https://conda.anaconda.org/conda-forge/noarch/cuda-version-12.8-h5d125a7_3.conda",
+    "bytes": 21086,
+    "sha256": "6f93ceb66267e69728d83cf98673221f6b1f95a3514b3a97777cfd0ef8e24f3f"
+  },
+  {
+    "name": "cuda-cudart_linux-64-12.8.90-h3f2d84a_1.conda",
+    "url": "https://conda.anaconda.org/conda-forge/noarch/cuda-cudart_linux-64-12.8.90-h3f2d84a_1.conda",
+    "bytes": 192766,
+    "sha256": "b8b307d03eb16aa111d244004ac48d1e0d0592ade846566bb392f75c54b6828f"
+  },
+  {
+    "name": "libgomp-16.2.0-he0feb66_4.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libgomp-16.2.0-he0feb66_4.conda",
+    "bytes": 639968,
+    "sha256": "0fe5cb8e0752241ab55e11656ed1b9726248b522d23b929fe7c95b83eb55b9bb"
+  },
+  {
+    "name": "_openmp_mutex-4.5-20_gnu.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda",
+    "bytes": 28948,
+    "sha256": "1dd3fffd892081df9726d7eb7e0dea6198962ba775bd88842135a4ddb4deb3c9"
+  },
+  {
+    "name": "libgcc-16.2.0-ha9f2e26_4.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libgcc-16.2.0-ha9f2e26_4.conda",
+    "bytes": 1058083,
+    "sha256": "24090e675d34403b4ee1cd4372d8f6c0937da7ecfd66a19a57cac2ed0f4ea793"
+  },
+  {
+    "name": "libstdcxx-16.2.0-h934c35e_4.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-16.2.0-h934c35e_4.conda",
+    "bytes": 6613148,
+    "sha256": "40b792b0186c1e8859280a1f6f19a54fc50a11b32724fc7b637009c1a9bd302b"
+  },
+  {
+    "name": "cuda-nvrtc-12.8.93-h5888daf_1.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/cuda-nvrtc-12.8.93-h5888daf_1.conda",
+    "bytes": 66214407,
+    "sha256": "38edf4f501ccbb996cc9f0797fcf404c12d4aeef974308cf8b997b470409c171"
+  },
+  {
+    "name": "cuda-cudart-12.8.90-h5888daf_1.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/cuda-cudart-12.8.90-h5888daf_1.conda",
+    "bytes": 22751,
+    "sha256": "294b789d6bce9944fc5987c86dc1cdcdbc4eb965f559b81749dbf03b43e6c135"
+  },
+  {
+    "name": "libcublas-12.8.4.1-h9ab20c4_1.conda",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/libcublas-12.8.4.1-h9ab20c4_1.conda",
+    "bytes": 471593172,
+    "sha256": "3d3f7344db000feced2f9154cf0b3f3d245a1d317a1981e43b8b15f7baaaf6f1"
+  }
+];

@@ -116,7 +116,7 @@ test("all catalog downloads are immutable, checksummed and from reviewed publish
     }
   }
   for (const key of Object.keys(LOCAL_RUNTIMES)) for (const file of LOCAL_RUNTIMES[key]) {
-    assert.match(file.url, /^https:\/\/github.com\/ggml-org\/llama.cpp\/releases\/download\/b\d+\//);
+    assert.ok(file.url.startsWith("https://github.com/ggml-org/llama.cpp/releases/download/b") || file.url.startsWith("https://ghcr.io/v2/ggml-org/llama.cpp/blobs/sha256:"));
     assert.match(file.sha256, /^[a-f0-9]{64}$/);
   }
   for (const file of LOCAL_GCC_ARTIFACTS) {

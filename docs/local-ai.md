@@ -29,7 +29,7 @@ model weights, and reports a repairable error when a driver is missing.
 | --- | --- | --- |
 | Linux x64, RTX 5090 / RTX Pro 6000 Blackwell with 32+ GiB | Qwen3.8-27B NVFP4 | vLLM with CUDA |
 | Linux x64, pre-Blackwell NVIDIA with 48+ GiB and FP8 support, such as RTX 6000 Ada | Qwen3.8-27B FP8 | vLLM with CUDA |
-| Linux x64, Ampere (A10G / RTX 30-series / A100) | Ornith 9B or Nex GGUF, according to VRAM | llama.cpp with Vulkan |
+| Linux x64, Ampere (A10G / RTX 30-series / A100) | Ornith 9B or Nex GGUF, according to VRAM | llama.cpp with CUDA |
 | Apple Silicon with 64+ GiB unified memory | Nex-N2.5-mini GGUF | llama.cpp with Metal |
 | Other supported GPUs with 32+ GiB, including Windows NVIDIA and AMD | Nex-N2.5-mini GGUF | llama.cpp with CUDA or Vulkan |
 | Smaller supported GPUs / Apple Silicon with enough headroom | Ornith-1.5-9B GGUF | llama.cpp with Metal, Vulkan, or CUDA |
@@ -38,8 +38,11 @@ model weights, and reports a repairable error when a driver is missing.
 Hopper (H100/H200) and Ada use native FP8 when Qwen fits. Ampere has no
 native FP8/NVFP4 support and uses reviewed GGUF quants instead.
 
-Linux llama.cpp uses Vulkan, covering compatible AMD, NVIDIA, and Intel GPUs.
-Windows x64 tries the CUDA build for NVIDIA and otherwise uses Vulkan. Setup installs a private Vulkan loader and required GNU/X11 libraries. A working
+Linux and Windows x64 try CUDA for NVIDIA and fall back to Vulkan when CUDA
+is unavailable. AMD and compatible Intel GPUs use Vulkan. Linux CUDA uses only
+the application layers from the official, pinned llama.cpp CUDA 12.8 image, plus
+verified NVIDIA runtime libraries; it needs neither Docker nor a system CUDA
+toolkit. Setup installs a private Vulkan loader and required GNU/X11 libraries. A working
 GPU driver is required; Linux binary compatibility is checked before
 weights are downloaded. Windows includes `tar.exe` on supported modern systems.
 Intel Macs, Linux/Windows ARM, and GPUs without a supported accelerated runtime

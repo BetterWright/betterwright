@@ -95,7 +95,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     const provisional = native.some(g => g.memory > 8 * GIB) ? recommendLocalModel(hardware, options) : null;
     if (provisional?.plan.runtime !== "vllm") {
       log("Checking the accelerated runtime before downloading model weights…");
-      let backend = hardware.platform === "darwin" ? "metal" : hardware.platform === "win32" && native.some(g => g.vendor === "nvidia" && g.compute >= 7.5) ? "cuda" : "vulkan";
+      let backend = hardware.platform === "darwin" ? "metal" : ["linux", "win32"].includes(hardware.platform) && native.some(g => g.vendor === "nvidia" && g.compute >= 7.5) ? "cuda" : "vulkan";
       let executable: string;
       let devices: string;
       try {

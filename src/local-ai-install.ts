@@ -8,9 +8,9 @@ import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import { GIB, type LocalPlan, localInstallArtifacts, localRoot, readLocalPlan, runLocalProbe } from "./local-ai.js";
 import type { LocalArtifact } from "./local-ai-catalog.js";
-import { LOCAL_GCC_ARTIFACTS, LOCAL_LINUX_LIBRARIES } from "./local-ai-toolchain-lock.js";
+import { LOCAL_CUDA_LIBRARIES, LOCAL_GCC_ARTIFACTS, LOCAL_LINUX_LIBRARIES } from "./local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
-import { isNumber, untrustedField } from "./untrusted-value.js";
+import { isNumber, isString, untrustedField } from "./untrusted-value.js";
 
 export const LLAMA_VERSION = "b10902";
 export const VLLM_VERSION = "0.29.0";
@@ -19,7 +19,23 @@ export const LOCAL_PYTHON_VERSION = "3.12.13";
 function llamaArchive(name: string, bytes: number, sha256: string): LocalArtifact {
   return { name, bytes, sha256, url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_VERSION}/${name}` };
 }
+// Linux CUDA: /app layers from the official b10902 amd64 image, manifest
+// sha256:7c30fc592e6805509120d03944f729dd11c8f2af7cbe373b685ea879a50c18fe.
 export const LOCAL_RUNTIMES = {
+  linuxCuda: [
+  {
+    "name": "llama-b10902-cuda-layer-0.tar.gz",
+    "url": "https://ghcr.io/v2/ggml-org/llama.cpp/blobs/sha256:5b91a136544a7bc33f340d506cd3853c54d1239a165a0c343ab082b78f48f04e",
+    "bytes": 168321277,
+    "sha256": "5b91a136544a7bc33f340d506cd3853c54d1239a165a0c343ab082b78f48f04e"
+  },
+  {
+    "name": "llama-b10902-cuda-layer-1.tar.gz",
+    "url": "https://ghcr.io/v2/ggml-org/llama.cpp/blobs/sha256:9881161edacb96eb2469de404ac9b3b4496ed502449037bc90006e9e492b9e05",
+    "bytes": 25221,
+    "sha256": "9881161edacb96eb2469de404ac9b3b4496ed502449037bc90006e9e492b9e05"
+  }
+],
   metal: [llamaArchive("llama-b10902-bin-macos-arm64.tar.gz", 11140021, "9d6c0ac65ca25c3d2c5173ded6424b0b73ce147090fe56e78d70ae32bbeddfbe")],
   linux: [llamaArchive("llama-b10902-bin-ubuntu-vulkan-x64.tar.gz", 30154951, "ca717eeff2f86b6580e3b5f48b455645eff0cd6d3500a3d5c1e52a32a19c639a")],
   windows: [llamaArchive("llama-b10902-bin-win-vulkan-x64.zip", 31666258, "a75b13adaebbac980f24c52a7485b9620e96e21591da24b5a88142749f0d67c2")],
@@ -174,14 +190,18 @@ export async function downloadLocalArtifact(artifact: LocalArtifact, directory: 
 
 function findExecutable(directory: string, name: string): string | null {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (entry.isFile() && entry.name === name) return path.join(directory, entry.name);
+    if (entry.name === name) {
+      const file = path.join(directory, entry.name);
+      if (entry.isFile()) return file;
+      if (entry.isSymbolicLink() && fs.realpathSync(file).startsWith(`${path.resolve(directory)}${path.sep}`) && fs.statSync(file).isFile()) return file;
+    }
     if (entry.isDirectory()) { const nested = findExecutable(path.join(directory, entry.name), name); if (nested) return nested; }
   }
   return null;
 }
 export function llamaRuntimeKey(platform: string, backend: string): keyof typeof LOCAL_RUNTIMES {
   if (platform === "darwin") return "metal";
-  if (platform === "linux") return "linux";
+  if (platform === "linux") return backend === "cuda" ? "linuxCuda" : "linux";
   if (platform === "win32") return backend === "cuda" ? "cuda" : "windows";
   throw new Error("No managed inference runtime is published for this platform.");
 }
@@ -217,7 +237,7 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
 }
 export function llamaRuntimeEnvironment(platform: string, home = defaultHome()): NodeJS.ProcessEnv {
   if (platform !== "linux") return { ...process.env };
-  return { ...process.env, LD_LIBRARY_PATH: [path.join(localRoot(home), "runtimes", "linux-libraries-1", "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
+  return { ...process.env, LD_LIBRARY_PATH: [path.join(localRoot(home), "runtimes", "linux-libraries-1", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "targets", "x86_64-linux", "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
 }
 export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
   if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home);
@@ -274,6 +294,17 @@ async function installCondaArchives(directory: string, artifacts: LocalArtifact[
     await runInstall(path.join(managerDirectory, "bin", "micromamba"), ["create", "--no-rc", "--offline", "--yes", "--prefix", directory, "--file", manifest],
       { ...process.env, MAMBA_ROOT_PREFIX: path.join(localRoot(home), "compiler-cache") });
 }
+async function publicLlamaRegistryFetch(): Promise<typeof fetch> {
+  const response = await fetch("https://ghcr.io/token?service=ghcr.io&scope=repository%3Aggml-org%2Fllama.cpp%3Apull", { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error("Cannot access the official public llama.cpp runtime registry.");
+  const token = untrustedField(await response.json(), "token");
+  if (!isString(token)) throw new Error("The public runtime registry returned no pull token.");
+  return (input, init) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).origin === "https://ghcr.io") request.headers.set("authorization", `Bearer ${token}`);
+    return fetch(request);
+  };
+}
 export async function installLlamaRuntime(platform: string, backend: string, home = defaultHome(), log: LocalLog = console.log): Promise<string> {
   const env = llamaRuntimeEnvironment(platform, home);
   if (platform === "linux") {
@@ -284,6 +315,13 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
       fs.writeFileSync(ready, "1", { mode: 0o600 });
     }
   }
+  if (platform === "linux" && backend === "cuda") {
+    const libraries = path.join(localRoot(home), "runtimes", "cuda-libraries-12.8");
+    if (!fs.existsSync(path.join(libraries, ".ready"))) {
+      await installCondaArchives(libraries, LOCAL_CUDA_LIBRARIES, home, log);
+      fs.writeFileSync(path.join(libraries, ".ready"), "12.8", { mode: 0o600 });
+    }
+  }
   const key = llamaRuntimeKey(platform, backend);
   const directory = path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-${key}`);
   const ready = path.join(directory, ".ready");
@@ -291,8 +329,9 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
   const cached = fs.existsSync(directory) ? findExecutable(directory, name) : null;
   if (!await localRuntimeReady(directory, LLAMA_VERSION, cached, ["--version"], env)) {
     await stageLocalRuntime(directory, async staging => {
+      const fetchImpl = key === "linuxCuda" ? await publicLlamaRegistryFetch() : fetch;
       for (const artifact of LOCAL_RUNTIMES[key]) {
-        const archive = await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads"), { log });
+        const archive = await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads"), { log, fetchImpl });
         await extractRuntime(archive, staging);
       }
       const executable = findExecutable(staging, platform === "win32" ? "llama-server.exe" : "llama-server");
