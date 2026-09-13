@@ -1,5 +1,5 @@
 // Reviewed model artifacts. Revisions and every downloaded byte are pinned.
-// Quant sources: model authors, NVIDIA, and Bartowski. No sub-3-bit builds.
+// Quant sources: model authors, Unsloth, and Bartowski. No sub-3-bit builds.
 export interface LocalArtifact {
   name: string;
   bytes: number;
@@ -299,98 +299,74 @@ export const LOCAL_MODELS: LocalModel[] = [
     "quant": "NVFP4",
     "bits": 4,
     "runtime": "vllm",
-    "repository": "nvidia/Qwen3.8-27B-NVFP4",
-    "revision": "dbb8f445b3145f8a4c18ddc769f032d57d32867c",
+    "repository": "unsloth/Qwen3.8-27B-NVFP4",
+    "revision": "f0b7c9e722f5565102fff8481c99e4d86ae099c7",
     "files": [
       {
         "name": "chat_template.jinja",
-        "bytes": 8952,
-        "sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/chat_template.jinja"
+        "bytes": 9993,
+        "sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/chat_template.jinja"
       },
       {
         "name": "config.json",
-        "bytes": 87506,
-        "sha256": "71fa01bb64de20971045cd82a82c0ebb25a54e1b0a3f09ef23cf5479e9c54df8",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/config.json"
+        "bytes": 22564,
+        "sha256": "1b3c71868d1299e52df6fc907deb202d5132b1ef0f72aae0ef6d15185dd53a5c",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/config.json"
       },
       {
         "name": "generation_config.json",
         "bytes": 214,
-        "sha256": "8a3a817a9d330f6f9e62f048fe62a48594946c4a5c4cb314a8011316d5094986",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/generation_config.json"
+        "sha256": "d0d0ed2e37cdfafef4a5067d5ea2407b05f4fb50526e47c008a5b235d50240fb",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/generation_config.json"
       },
       {
-        "name": "hf_quant_config.json",
-        "bytes": 53760,
-        "sha256": "5f4aaa9e462ddb26a9790ab459eee69d100b9ade7541f0c86038e925c013f80b",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/hf_quant_config.json"
-      },
-      {
-        "name": "merges.txt",
-        "bytes": 3353259,
-        "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/merges.txt"
-      },
-      {
-        "name": "model-00001-of-00003.safetensors",
-        "bytes": 9965652544,
-        "sha256": "7d0fd155118901373eb0fd13ed3aae68f95be747bc205be72ebc41739c25ee80",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/model-00001-of-00003.safetensors"
-      },
-      {
-        "name": "model-00002-of-00003.safetensors",
-        "bytes": 9985757064,
-        "sha256": "98a7e9486baa860c792c9463a770cb9d017696bdd17606300a5b9334149f4c27",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/model-00002-of-00003.safetensors"
-      },
-      {
-        "name": "model-00003-of-00003.safetensors",
-        "bytes": 1970287672,
-        "sha256": "0506ad35dc21469708e7813bd76c592cef08bd0317b4a1fe899745ebe2435271",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/model-00003-of-00003.safetensors"
+        "name": "model.safetensors",
+        "bytes": 22568192096,
+        "sha256": "c473512c70eace07e2256fe9fd76596ac03e3295bee7d54cfb72676416afcc05",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/model.safetensors"
       },
       {
         "name": "model.safetensors.index.json",
-        "bytes": 214866,
-        "sha256": "7aa103a2582b7d26631988de33dea19e8a308ee9c239e8e14feb374af30905e2",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/model.safetensors.index.json"
+        "bytes": 164371,
+        "sha256": "429430e1b9e65b2cb98eff8cd10a06e70a09cee89c48487a3914684aeb6df57f",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/model.safetensors.index.json"
+      },
+      {
+        "name": "model_mtp.safetensors",
+        "bytes": 849400392,
+        "sha256": "1d8268aa85ace093a561e3e7b63b9d390dac1cd55a90cd55b5ec509c3c9da9fe",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/model_mtp.safetensors"
       },
       {
         "name": "preprocessor_config.json",
         "bytes": 390,
         "sha256": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/preprocessor_config.json"
-      },
-      {
-        "name": "processor_config.json",
-        "bytes": 1191,
-        "sha256": "d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/processor_config.json"
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/preprocessor_config.json"
       },
       {
         "name": "tokenizer.json",
-        "bytes": 12809320,
-        "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/tokenizer.json"
+        "bytes": 19989325,
+        "sha256": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/tokenizer.json"
       },
       {
         "name": "tokenizer_config.json",
-        "bytes": 1121,
-        "sha256": "e5d078b00e6c1223b32444db8c1001dc71d86ceef8ee706b5bf084c3a43a1f9c",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/tokenizer_config.json"
+        "bytes": 1047,
+        "sha256": "529f30018c36dca5387c99b5edf368287f386f2c32d3790aa7141956bc5119fa",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/tokenizer_config.json"
       },
       {
         "name": "video_preprocessor_config.json",
         "bytes": 385,
         "sha256": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/video_preprocessor_config.json"
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/video_preprocessor_config.json"
       },
       {
         "name": "vocab.json",
         "bytes": 6722759,
         "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
-        "url": "https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4/resolve/dbb8f445b3145f8a4c18ddc769f032d57d32867c/vocab.json"
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4/resolve/f0b7c9e722f5565102fff8481c99e4d86ae099c7/vocab.json"
       }
     ]
   },

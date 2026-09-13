@@ -147,7 +147,7 @@ export function recommendLocalModel(hardware: LocalHardware, options: { preferen
     candidates = candidates.filter(m => m.quant.toLowerCase() === options.quant.toLowerCase());
     if (!candidates.length) throw new Error("That quant is not in the reviewed catalog. Supported quants are Q4_K_M, Q5_K_M, Q6_K, Q8_0, NVFP4 and FP8 where compatible; no quant below 3 bits is permitted.");
   } else if (id === "qwen-27b") {
-    candidates = candidates.filter(m => m.quant === (capacity >= 44 * GIB ? "FP8" : "NVFP4"));
+    candidates = candidates.filter(m => m.quant === (gpu.compute >= 10 ? "NVFP4" : "FP8"));
   } else candidates = candidates.filter(m => m.bits <= maxBits);
   if (gpu.compute < 10) candidates = candidates.filter(m => m.quant !== "NVFP4");
   const model = candidates.filter(m => m.files.reduce((n, f) => n + f.bytes, 0) <= budget)

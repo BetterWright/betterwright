@@ -23,7 +23,7 @@ function hardware(memory = 64, vram = memory, vendor = "apple", platform = vendo
 }
 const cases: Array<[string, ReturnType<typeof hardware>, string, string, string]> = [
   ["5090", hardware(64, 32, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
-  ["Pro 6000 Blackwell", hardware(128, 96, "nvidia", "linux", 12), "qwen-27b", "FP8", "vllm"],
+  ["Pro 6000 Blackwell", hardware(128, 96, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
   ["RTX 6000 Ada", hardware(128, 48, "nvidia", "linux", 8.9), "qwen-27b", "FP8", "vllm"],
   ["Windows 5090", hardware(64, 32, "nvidia", "win32", 12), "nex-mini", "Q5_K_M", "llama.cpp"],
   ["AMD 12 GB", hardware(32, 12, "amd"), "ornith-9b", "Q6_K", "llama.cpp"],
@@ -70,7 +70,7 @@ test("hardware parsers recognize real Metal, Vulkan and CUDA output without coun
 test("all catalog downloads are immutable, checksummed and from reviewed publishers", () => {
   for (const model of LOCAL_MODELS) {
     assert.ok(model.bits >= 3); assert.match(model.revision, /^[a-f0-9]{40}$/);
-    assert.match(model.repository, /^(bartowski|ornith-ai|nvidia|Qwen)\//);
+    assert.match(model.repository, /^(bartowski|ornith-ai|unsloth|Qwen)\//);
     if (model.runtime === "llama.cpp") assert.ok(model.files.some(f => f.name.startsWith("mmproj-")));
     for (const file of model.files) {
       assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);

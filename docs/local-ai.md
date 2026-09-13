@@ -27,8 +27,8 @@ model weights, and reports a repairable error when a driver is missing.
 
 | Hardware | Default model | Runtime |
 | --- | --- | --- |
-| Linux x64, RTX 5090 / 32 GiB Blackwell | Qwen3.8-27B NVFP4 | vLLM with CUDA |
-| Linux x64, compatible NVIDIA with 48+ GiB and FP8 support, including RTX Pro 6000 | Qwen3.8-27B FP8 | vLLM with CUDA |
+| Linux x64, RTX 5090 / RTX Pro 6000 Blackwell with 32+ GiB | Qwen3.8-27B NVFP4 | vLLM with CUDA |
+| Linux x64, pre-Blackwell NVIDIA with 48+ GiB and FP8 support, such as RTX 6000 Ada | Qwen3.8-27B FP8 | vLLM with CUDA |
 | Apple Silicon with 64+ GiB unified memory | Nex-N2.5-mini GGUF | llama.cpp with Metal |
 | Other supported GPUs with 32+ GiB, including Windows NVIDIA and AMD | Nex-N2.5-mini GGUF | llama.cpp with CUDA or Vulkan |
 | Smaller supported GPUs / Apple Silicon with enough headroom | Ornith-1.5-9B GGUF | llama.cpp with Metal, Vulkan, or CUDA |
@@ -47,8 +47,9 @@ run BetterWright inside GPU-enabled WSL2. The pinned vLLM wheels need glibc
 The default `balanced` preference chooses the highest fitting GGUF quant up to
 Q6_K; `quality` and machines with at least 90 GiB allow Q8_0. These preferences
 trade weight bandwidth and memory against quantization quality; they are not
-speed benchmark guarantees. FP8 is preferred to NVFP4 where it fits on supported
-NVIDIA hardware. No quant below 3 bits is accepted; the current catalog starts
+speed benchmark guarantees. Unsloth NVFP4 is preferred on Blackwell for native 4-bit acceleration, even
+when FP8 also fits. Compatible older NVIDIA GPUs use FP8. An explicit
+`--quant FP8` remains available on sufficiently large NVIDIA GPUs. No quant below 3 bits is accepted; the current catalog starts
 at 4 bits. Insufficient memory is an error, not a lower-quality automatic fallback.
 
 Memory budgeting includes the vision projector and reserves space for the
@@ -120,7 +121,7 @@ is executed with `trust_remote_code`.
 - [Ornith 9B GGUFs](https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF) and
   [Ornith 35B-A3B GGUFs](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF),
   published by the model authors.
-- [NVIDIA Qwen3.8-27B NVFP4](https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4)
+- [Unsloth Qwen3.8-27B NVFP4](https://huggingface.co/unsloth/Qwen3.8-27B-NVFP4)
   and [Qwen's FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8).
 
 Automated tests cover the hardware/quant matrix, download corruption and resume,
