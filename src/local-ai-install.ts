@@ -30,9 +30,9 @@ const UV_ARCHIVE: LocalArtifact = { name: "uv-x86_64-unknown-linux-gnu.tar.gz", 
   sha256: "745765a3b6e360ad76743599ae5c42e9278c7edf8bbff9fc76d05bf2623a04dd",
   url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz` };
 export const GCC_VERSION = "14.3.0";
-const MICROMAMBA_ARCHIVE: LocalArtifact = { name: "micromamba-2.9.0-0.tar.bz2", bytes: 6988090,
-  sha256: "8761c382127e6363bd9e0a2451aa3ef90d071a79133f736e2f759a3bf13040dd",
-  url: "https://conda.anaconda.org/conda-forge/linux-64/micromamba-2.9.0-0.tar.bz2" };
+const MICROMAMBA_ARCHIVE: LocalArtifact = { name: "micromamba-linux-64", bytes: 18292808,
+  sha256: "366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3",
+  url: "https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-linux-64" };
 export type LocalLog = (message: string) => void;
 
 /** Publish a complete owner record atomically; stale tombstones prevent late
@@ -300,8 +300,10 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
     const managerDirectory = path.join(localRoot(home), "runtimes", "micromamba-2.9.0");
     const archive = await downloadLocalArtifact(MICROMAMBA_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
     await stageLocalRuntime(managerDirectory, async staging => {
-      await extractRuntime(archive, staging);
-      await runLocalProbe(path.join(staging, "bin", "micromamba"), ["--version"]);
+      mkdirPrivate(path.join(staging, "bin"));
+      const manager = path.join(staging, "bin", "micromamba");
+      fs.copyFileSync(archive, manager); fs.chmodSync(manager, 0o700);
+      await runLocalProbe(manager, ["--version"]);
     });
     const files: string[] = [];
     for (const artifact of LOCAL_GCC_ARTIFACTS) files.push(await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads", "gcc"), { log }));
