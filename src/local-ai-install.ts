@@ -41,7 +41,12 @@ export async function withLocalLock<T>(home: string, name: string, work: () => P
   let acquired = false;
   try {
     for (;;) {
-      try { fs.renameSync(candidate, lock); acquired = true; break; }
+      try {
+        // Windows rename may replace a file with a directory. Never use
+        // rename itself to detect a legacy file or an empty lock directory.
+        if (fs.lstatSync(lock, { throwIfNoEntry: false })) throw Object.assign(new Error("Lock exists"), { code: "EEXIST" });
+        fs.renameSync(candidate, lock); acquired = true; break;
+      }
       catch (error) {
         if (!["EEXIST", "ENOTEMPTY", "EPERM", "EACCES", "ENOTDIR", "EISDIR"].includes(error?.code)) throw error;
         let stat: fs.Stats;
@@ -56,6 +61,17 @@ export async function withLocalLock<T>(home: string, name: string, work: () => P
         let stale = !owner && Date.now() - stat.mtimeMs >= 30_000;
         if (owner) { try { process.kill(owner, 0); } catch (probe) { stale = probe?.code === "ESRCH"; } }
         if (stale) {
+          if (stat.isFile()) {
+            // Legacy file locks predate atomic directory publication.
+            // unlink cannot remove a fresh directory lock if another
+            // contender has already recovered and acquired this path.
+            try { fs.unlinkSync(lock); continue; }
+            catch (reclaim) {
+              if (reclaim?.code === "ENOENT") continue;
+              if (fs.lstatSync(lock, { throwIfNoEntry: false })?.isDirectory()) continue;
+              throw reclaim;
+            }
+          }
           const fingerprint = createHash("sha256").update(`${stat.dev}:${stat.ino}:${stat.birthtimeMs}`).digest("hex").slice(0, 24);
           const tombstone = `${lock}.stale-${fingerprint}`;
           try {
