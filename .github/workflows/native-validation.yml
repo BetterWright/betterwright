@@ -1,0 +1,66 @@
+name: Validate native Chromium 153 candidate
+
+on:
+  push:
+    branches: [codex/validate-native-153-linux]
+
+permissions:
+  contents: read
+
+jobs:
+  linux-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run build:harness
+      - name: Download and verify the native candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/native"
+          gh release download betterchromium-153.0.8010.36-r1 --repo BetterWright/betterwright --pattern betterchromium-linux-x64.zip --pattern betterchromium-linux-x64-validation.tar.gz --dir "$RUNNER_TEMP/native"
+          cd "$RUNNER_TEMP/native"
+          echo '626cd98b50cac8072630baf02a3ab24b948e29dd3351bf03c2bb74aadf292bc7  betterchromium-linux-x64.zip' | sha256sum -c -
+          echo 'd605712e40d8a15ed59ee9a05339a64bce431b9395c08e25f6cce7f1439bab90  betterchromium-linux-x64-validation.tar.gz' | sha256sum -c -
+          unzip -q betterchromium-linux-x64.zip
+          tar -xzf betterchromium-linux-x64-validation.tar.gz
+          "$RUNNER_TEMP/native/linux-x64/betterchromium" --version
+          echo "BETTERWRIGHT_CHROMIUM_PATH=$RUNNER_TEMP/native/linux-x64/betterchromium" >> "$GITHUB_ENV"
+      - name: Match the generated validation metadata to the explicit candidate
+        # This branch validates unpublished package inputs. It never changes
+        # source pins or runs the managed installer with incomplete checksums.
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('dist/src/chromium-fork.js')
+          old = 'BETTERWRIGHT_CHROMIUM_VERSION = "151.0.7922.108"'
+          assert p.read_text().count(old) == 1
+          p.write_text(p.read_text().replace(old, 'BETTERWRIGHT_CHROMIUM_VERSION = "153.0.8010.36"'))
+          PY
+      - name: Enable the Chromium sandbox and recording
+        shell: bash
+        run: |
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Run the native V8 inspector suite
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/native/v8"
+          python3 tools/run-tests.py --outdir="$RUNNER_TEMP/native/inspector-out" --progress=verbose --time -j 2 inspector
+      - name: Run the native font-service tests
+        run: '"$RUNNER_TEMP/native/font-out/font_data_service_unittests" --test-launcher-jobs=2'
+      - name: Run every browser integration test against the candidate
+        run: bun test --timeout 120000 --parallel=1 tests/node/browser.test.ts
+        env:
+          BETTERWRIGHT_REQUIRE_BROWSER: "1"
+          BETTERWRIGHT_REQUIRE_RECORDING: "1"
