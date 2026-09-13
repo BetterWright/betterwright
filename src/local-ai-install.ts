@@ -2,11 +2,13 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import { GIB, type LocalPlan, localInstallArtifacts, localRoot, readLocalPlan, runLocalProbe } from "./local-ai.js";
 import type { LocalArtifact } from "./local-ai-catalog.js";
+import { LOCAL_GCC_ARTIFACTS } from "./local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
 import { isNumber, untrustedField } from "./untrusted-value.js";
 
@@ -27,10 +29,10 @@ export const LOCAL_RUNTIMES = {
 const UV_ARCHIVE: LocalArtifact = { name: "uv-x86_64-unknown-linux-gnu.tar.gz", bytes: 19391575,
   sha256: "745765a3b6e360ad76743599ae5c42e9278c7edf8bbff9fc76d05bf2623a04dd",
   url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz` };
-export const ZIG_VERSION = "0.16.0";
-const ZIG_ARCHIVE: LocalArtifact = { name: "zig-x86_64-linux-0.16.0.tar.xz", bytes: 55478392,
-  sha256: "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
-  url: "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz" };
+export const GCC_VERSION = "14.3.0";
+const MICROMAMBA_ARCHIVE: LocalArtifact = { name: "micromamba-2.9.0-0.tar.bz2", bytes: 6988090,
+  sha256: "8761c382127e6363bd9e0a2451aa3ef90d071a79133f736e2f759a3bf13040dd",
+  url: "https://conda.anaconda.org/conda-forge/linux-64/micromamba-2.9.0-0.tar.bz2" };
 export type LocalLog = (message: string) => void;
 
 /** Publish a complete owner record atomically; stale tombstones prevent late
@@ -211,13 +213,14 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
 }
 export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
   if (plan.runtime !== "vllm") return { ...process.env };
-  const compiler = path.join(localRoot(home), "runtimes", `zig-${ZIG_VERSION}`, `zig-x86_64-linux-${ZIG_VERSION}`);
+  const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
+  const compilerBin = path.join(compiler, "bin");
   const bin = path.join(runtimeDirectory(plan, home), "venv", "bin");
   const cuda = path.join(runtimeDirectory(plan, home), "venv", "lib", "python3.12", "site-packages", "nvidia", "cu13");
-  return { ...process.env, PATH: [bin, compiler, path.join(cuda, "bin"), process.env.PATH].filter(Boolean).join(path.delimiter),
-    CUDA_HOME: cuda, CUDA_PATH: cuda, NVCC_CCBIN: path.join(compiler, "bw-cxx"),
-    CC: path.join(compiler, "bw-cc"), CXX: path.join(compiler, "bw-cxx"),
-    ZIG_GLOBAL_CACHE_DIR: path.join(localRoot(home), "compiler-cache") };
+  return { ...process.env, PATH: [bin, compilerBin, path.join(cuda, "bin"), process.env.PATH].filter(Boolean).join(path.delimiter),
+    CUDA_HOME: cuda, CUDA_PATH: cuda, NVCC_CCBIN: path.join(compilerBin, "x86_64-conda-linux-gnu-g++"),
+    CC: path.join(compilerBin, "x86_64-conda-linux-gnu-gcc"), CXX: path.join(compilerBin, "x86_64-conda-linux-gnu-g++"),
+    LD_LIBRARY_PATH: [path.join(compiler, "lib"), path.join(cuda, "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
 }
 async function extractRuntime(archive: string, directory: string) {
   const listing = await runLocalProbe("tar", ["-tf", archive]);
@@ -289,47 +292,27 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   }
   const directory = runtimeDirectory(plan, home);
   const ready = path.join(directory, ".ready");
-  // Triton builds a small CUDA launcher even when all Python packages are
-  // wheels. Ship a private C/C++ compiler, without sudo or system packages.
-  const compilerDirectory = path.join(localRoot(home), "runtimes", `zig-${ZIG_VERSION}`);
-  const compilerBin = path.join(compilerDirectory, `zig-x86_64-linux-${ZIG_VERSION}`);
-  if (!await localRuntimeReady(compilerDirectory, `${ZIG_VERSION}-cuda4`, path.join(compilerBin, "zig"), ["version"]) ||
-    !fs.existsSync(path.join(compilerBin, "bw-cc")) || !fs.existsSync(path.join(compilerBin, "bw-cxx"))) {
-    const archive = await downloadLocalArtifact(ZIG_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
-    await stageLocalRuntime(compilerDirectory, async staging => {
+  // CUDA JIT requires libstdc++ on x86; install a complete private GNU toolchain.
+  const compilerDirectory = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
+  const gcc = path.join(compilerDirectory, "bin", "x86_64-conda-linux-gnu-gcc");
+  const gxx = path.join(compilerDirectory, "bin", "x86_64-conda-linux-gnu-g++");
+  if (!await localRuntimeReady(compilerDirectory, GCC_VERSION, gcc) || !await localRuntimeReady(compilerDirectory, GCC_VERSION, gxx)) {
+    const managerDirectory = path.join(localRoot(home), "runtimes", "micromamba-2.9.0");
+    const archive = await downloadLocalArtifact(MICROMAMBA_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
+    await stageLocalRuntime(managerDirectory, async staging => {
       await extractRuntime(archive, staging);
-      const zig = findExecutable(staging, "zig");
-      if (!zig) throw new Error("The pinned compiler archive contains no zig executable.");
-      await runLocalProbe(zig, ["version"]);
-      // Zig's GNU -l:filename handling does not consistently search -L
-      // paths. Resolve those exact filenames before invoking its linker.
-      writePrivate(path.join(path.dirname(zig), "bw-compiler.py"), `import os,sys
-from pathlib import Path
-args=sys.argv[2:]
-directories=[]
-for i,arg in enumerate(args):
-    if arg == "-L" and i+1 < len(args): directories.append(args[i+1])
-    elif arg.startswith("-L"): directories.append(arg[2:])
-directories += os.environ.get("LD_LIBRARY_PATH", "").split(":")
-directories += ["/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu", "/usr/local/nvidia/lib64", "/usr/lib/wsl/lib", "/usr/lib64", "/usr/lib"]
-for i,arg in enumerate(args):
-    library=arg[3:] if arg.startswith("-l:") else {"-lcuda":"libcuda.so.1", "-lcudart":"libcudart.so.13"}.get(arg)
-    if library:
-        for directory in directories:
-            candidate=Path(directory)/library
-            if directory and candidate.is_file():
-                args[i]=str(candidate.resolve())
-                break
-zig=str(Path(__file__).resolve().parent/"zig")
-mode=sys.argv[1]
-if any("c++" in arg or "__CUDACC__" in arg or arg.endswith((".cpp", ".cc", ".cu")) for arg in args): mode="c++"
-os.execv(zig, [zig, mode, *args])
-`);
-      for (const [name, command] of [["bw-cc", "cc"], ["bw-cxx", "c++"]]) {
-        fs.writeFileSync(path.join(path.dirname(zig), name), `#!/bin/sh\nexec python3 "$(dirname "$0")/bw-compiler.py" ${command} "$@"\n`, { mode: 0o700 });
-      }
-      fs.writeFileSync(path.join(staging, ".ready"), `${ZIG_VERSION}-cuda4`, { mode: 0o600 });
+      await runLocalProbe(path.join(staging, "bin", "micromamba"), ["--version"]);
     });
+    const files: string[] = [];
+    for (const artifact of LOCAL_GCC_ARTIFACTS) files.push(await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads", "gcc"), { log }));
+    const manifest = path.join(localRoot(home), "runtimes", "gcc-explicit.txt");
+    writePrivate(manifest, `@EXPLICIT\n${files.map(file => pathToFileURL(file).href).join("\n")}\n`);
+    // Conda embeds the installation prefix; build at its final private path.
+    fs.rmSync(compilerDirectory, { recursive: true, force: true });
+    await runInstall(path.join(managerDirectory, "bin", "micromamba"), ["create", "--no-rc", "--offline", "--yes", "--prefix", compilerDirectory, "--file", manifest],
+      { ...process.env, MAMBA_ROOT_PREFIX: path.join(localRoot(home), "compiler-cache") });
+    await runLocalProbe(gcc, ["--version"]); await runLocalProbe(gxx, ["--version"]);
+    fs.writeFileSync(path.join(compilerDirectory, ".ready"), GCC_VERSION, { mode: 0o600 });
   }
   const cuda = path.join(directory, "venv", "lib", "python3.12", "site-packages", "nvidia", "cu13");
   const nvcc = path.join(cuda, "bin", "nvcc"), env = localRuntimeEnvironment(plan, home);
@@ -357,8 +340,15 @@ os.execv(zig, [zig, mode, *args])
   }
   // NVIDIA wheels use lib/ while nvcc and FlashInfer expect lib64/.
   if (!fs.existsSync(path.join(cuda, "lib64"))) fs.symlinkSync("lib", path.join(cuda, "lib64"));
+  const cudartLink = path.join(cuda, "lib", "libcudart.so");
+  if (!fs.existsSync(cudartLink)) fs.symlinkSync("libcudart.so.13", cudartLink);
   fs.rmSync(ready, { force: true });
   await runLocalProbe(nvcc, ["--version"], env);
+  const driverLink = path.join(cuda, "lib", "libcuda.so");
+  if (!fs.existsSync(driverLink)) {
+    const driver = await runLocalProbe(path.join(directory, "venv", "bin", "python"), ["-c", "from pathlib import Path; from triton.backends.nvidia.driver import libcuda_dirs; print(next(str((Path(d)/'libcuda.so.1').resolve()) for d in libcuda_dirs() if (Path(d)/'libcuda.so.1').is_file()))"], env);
+    fs.symlinkSync(driver.trim(), driverLink);
+  }
   const check = fs.mkdtempSync(path.join(directory, "cuda-check-"));
   try {
     const source = path.join(check, "probe.cu");

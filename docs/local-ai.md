@@ -148,8 +148,9 @@ The catalog pins repository revisions, byte sizes, and SHA-256 hashes. Downloads
 stream to resumable partial files, are verified, then atomically installed.
 Runtime archives are also versioned and checksummed. The vLLM environment pins
 Python 3.12.13 and all 196 Python package versions, installing wheels only.
-A checksummed private Zig 0.16.0 C/C++ toolchain supports Triton's runtime
-compilation without sudo or a system compiler. No model repository code
+A private GCC 14.3.0 C/C++ toolchain supports Triton and CUDA runtime
+compilation without sudo or a system compiler. All 19 conda-forge toolchain
+archives are pinned by SHA-256 and installed offline using pinned micromamba. No model repository code
 is executed with `trust_remote_code`.
 
 - [Nex-N2.5-mini](https://huggingface.co/nex-agi/Nex-N2.5-mini), using
