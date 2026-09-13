@@ -5,7 +5,7 @@ import { defaultHome } from "./home.js";
 import { detectLocalHardware, GIB, type LocalSetupOptions, localInstallArtifacts, localModel, localPlanId, localRoot, parseLlamaDevices, readLocalPlan, recommendLocalModel,
   runLocalProbe, writeLocalJson } from "./local-ai.js";
 import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, localRuntimeEnvironment, withLocalLock } from "./local-ai-install.js";
-import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServerArguments, localServiceStatus, stopLocalService } from "./local-ai-service.js";
+import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServerArguments, localServiceStatus, stopLocalService, stopLocalServiceIfOwned } from "./local-ai-service.js";
 import { isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 // A synthetic red image, no browser/profile input. The model must see the
@@ -46,14 +46,14 @@ export interface LocalSetupDependencies {
   connect?: typeof ensureLocalService;
   verify?: typeof verifyLocalModel;
   status?: typeof localServiceStatus;
-  stop?: typeof stopLocalService;
+  stop?: typeof stopLocalServiceIfOwned;
   disk?: typeof checkLocalDisk;
 }
 export async function setupLocalAI(options: LocalSetupOptions, home = defaultHome(), log: LocalLog = console.log, dependencies: LocalSetupDependencies = {}) {
   const detect = dependencies.detect || detectLocalHardware, probe = dependencies.probe || runLocalProbe;
   const installLlama = dependencies.installLlama || installLlamaRuntime, installRuntime = dependencies.installRuntime || installLocalRuntime;
   const connect = dependencies.connect || ensureLocalService, verify = dependencies.verify || verifyLocalModel;
-  const status = dependencies.status || localServiceStatus, stop = dependencies.stop || stopLocalService;
+  const status = dependencies.status || localServiceStatus, stop = dependencies.stop || stopLocalServiceIfOwned;
   return withLocalLock(home, "setup", async () => {
     let hardware = await detect();
     if (hardware.memory <= 8 * GIB || !((hardware.platform === "darwin" && hardware.arch === "arm64") || (["linux", "win32"].includes(hardware.platform) && hardware.arch === "x64"))) {
@@ -102,12 +102,13 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     }
     for (const { artifact, directory } of localInstallArtifacts(plan, home)) await (dependencies.download || downloadLocalArtifact)(artifact, directory, { log });
     log("Loading the model and checking image input plus tool calls…");
+    let connection: LocalConnection | null = null;
     try {
-      const connection = await connect(plan, home);
+      connection = await connect(plan, home);
       await verify(connection);
       writeLocalJson(path.join(localRoot(home), "selection.json"), plan);
     } catch (error) {
-      if (!running.running) await stop(home).catch(() => {});
+      if (!running.running && connection) await stop(home, connection.apiKey).catch(() => {});
       throw error;
     }
     log("Local AI is ready and selected for the BetterWright harness.");

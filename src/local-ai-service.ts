@@ -78,6 +78,28 @@ export async function localServiceStatus(home = defaultHome()) {
 export async function stopLocalService(home = defaultHome()): Promise<boolean> {
   return withLocalLock(home, "lifecycle", () => stopLocalServiceUnlocked(home), 10 * 60_000 + 10_000);
 }
+/** Setup may only clean up the exact service whose probe it started. */
+export async function stopLocalServiceIfOwned(home: string, token: string): Promise<boolean> {
+  return withLocalLock(home, "lifecycle", async () => {
+    if (readService(home)?.token !== token) return false;
+    return stopLocalServiceUnlocked(home);
+  }, 10 * 60_000 + 10_000);
+}
+function startupFailure(home: string, offset: number): Error {
+  const logfile = path.join(localRoot(home), "runtime.log");
+  let detail = "";
+  try {
+    const fd = fs.openSync(logfile, "r");
+    try {
+      const bytes = Buffer.alloc(Math.min(128 * 1024, Math.max(0, fs.fstatSync(fd).size - offset)));
+      fs.readSync(fd, bytes, 0, bytes.length, offset);
+      // Report startup exception summaries, never full requests or configs.
+      detail = bytes.toString("utf8").split(/\r?\n/).filter(line => /(?:ImportError|ModuleNotFoundError|RuntimeError|ValueError|AssertionError|FileNotFoundError|OSError|error):/.test(line))
+        .slice(0, 12).join("\n").replace(/[a-f0-9]{64}/gi, "<redacted>").slice(0, 2400);
+    } finally { fs.closeSync(fd); }
+  } catch { /* The logfile path is still actionable if it cannot be read. */ }
+  return new Error(`The local runtime could not start. Check ${logfile}; no cloud fallback was used.${detail ? `\n${detail}` : ""}`);
+}
 async function stopLocalServiceUnlocked(home: string): Promise<boolean> {
   const service = readService(home);
   if (!service) {
@@ -138,9 +160,11 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
     writeLocalJson(path.join(localRoot(home), "plans", `${planId}.json`), plan);
     const current = await localServiceStatus(home);
     let daemon: ChildProcess | null = null;
+    let logOffset = 0;
     if (!current.running) {
       const logfile = path.join(localRoot(home), "runtime.log");
       const log = fs.openSync(logfile, "a", 0o600);
+      logOffset = fs.fstatSync(log).size;
       try {
         daemon = spawn(process.execPath, [fileURLToPath(new URL("../bin/betterwright.js", import.meta.url)), "__local-ai", planId], {
           env: { ...process.env, BETTERWRIGHT_HOME: home }, detached: true, windowsHide: true, stdio: ["ignore", log, log],
@@ -151,7 +175,7 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
     }
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      if (daemon && (daemon.exitCode !== null || daemon.signalCode !== null)) throw new Error(`The local runtime could not start. Check ${path.join(localRoot(home), "runtime.log")}; no cloud fallback was used.`);
+      if (daemon && (daemon.exitCode !== null || daemon.signalCode !== null)) throw startupFailure(home, logOffset);
       const service = readService(home);
       if (service?.planId === planId) {
         const status = await control(service, "status").catch(() => null);
