@@ -6,8 +6,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { preferredModelId } from "../../dist/src/doctor.js";
-import { decodeLocalPlan, detectLocalHardware, GIB, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
-import { LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
+import { decodeLocalPlan, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
+import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
 import { downloadLocalArtifact, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService } from "../../dist/src/local-ai-service.js";
@@ -52,6 +52,29 @@ test("preferences and reviewed overrides preserve the quant floor", () => {
   }
   assert.throws(() => recommendLocalModel(hardware(32, 12, "amd"), { model: "nex-mini" }), /fits/);
 });
+test("acceleration matches published draft heads and reserves separate drafter memory", () => {
+  const large = recommendLocalModel(hardware(128, 96, "nvidia", "linux", 12));
+  const small = recommendLocalModel(hardware(64, 32, "nvidia", "linux", 12));
+  assert.equal(large.plan.acceleration, "dflash2"); assert.equal(small.plan.acceleration, "mtp");
+  const drafts = LOCAL_DFLASH2.files.reduce((n, f) => n + f.bytes, 0);
+  assert.equal(large.downloadBytes - small.downloadBytes, drafts);
+  assert.equal(large.reserveBytes, small.reserveBytes + 2 * GIB);
+  assert.equal(recommendLocalModel(hardware()).plan.acceleration, "none");
+  assert.equal(recommendLocalModel(hardware(), { model: "ornith-9b" }).plan.acceleration, "mtp");
+  assert.equal(recommendLocalModel(hardware(), { model: "ornith-35b" }).plan.acceleration, "mtp");
+  assert.throws(() => recommendLocalModel(hardware(), { acceleration: "mtp" }), /does not publish MTP/);
+  assert.throws(() => recommendLocalModel(hardware(), { model: "ornith-9b", acceleration: "dflash2" }), /DFlash2 needs/);
+  assert.throws(() => recommendLocalModel(hardware(), { acceleration: "unreviewed" }), /--acceleration/);
+  const none = recommendLocalModel(hardware(128, 96, "nvidia", "linux", 12), { acceleration: "none" });
+  assert.equal(none.plan.acceleration, "none"); assert.notEqual(localPlanId(none.plan), localPlanId(large.plan));
+  assert.equal(modelDirectory(none.plan), modelDirectory(large.plan)); // Reuse target weights.
+  const files = localInstallArtifacts(large.plan, "/tmp/test-local");
+  assert.equal(files.filter(f => f.directory === draftDirectory("/tmp/test-local")).length, 2);
+  assert.equal(localInstallArtifacts(none.plan).length, none.model.files.length);
+  const { acceleration: _acceleration, ...legacy } = none.plan;
+  assert.equal(decodeLocalPlan(legacy).acceleration, "none");
+  assert.throws(() => decodeLocalPlan({ ...large.plan, modelId: "nex-mini", quant: "Q4_K_M", runtime: "llama.cpp" }), /Invalid/);
+});
 test("small devices, CPU-only hosts and combined small GPUs are refused", () => {
   for (const host of [hardware(8), hardware(64, 8, "nvidia"), { ...hardware(), gpus: [] }, { ...hardware(), platform: "freebsd" }]) {
     assert.throws(() => recommendLocalModel(host));
@@ -80,6 +103,10 @@ test("all catalog downloads are immutable, checksummed and from reviewed publish
   for (const key of Object.keys(LOCAL_RUNTIMES)) for (const file of LOCAL_RUNTIMES[key]) {
     assert.match(file.url, /^https:\/\/github.com\/ggml-org\/llama.cpp\/releases\/download\/b\d+\//);
     assert.match(file.sha256, /^[a-f0-9]{64}$/);
+  }
+  for (const file of LOCAL_DFLASH2.files) {
+    assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);
+    assert.equal(file.url, `https://huggingface.co/${LOCAL_DFLASH2.repository}/resolve/${LOCAL_DFLASH2.revision}/${file.name}`);
   }
 });
 test("saved plans round-trip privately and free VRAM does not create a different installation", () => {
@@ -167,6 +194,13 @@ test("runtime arguments keep vision, context and all layers on the selected acce
   assert.equal(args[args.indexOf("--gpu-layers") + 1], "999");
   const cuda = localServerArguments(recommendLocalModel(hardware(64, 32, "nvidia", "linux", 12)).plan, 1234);
   assert.equal(cuda[cuda.indexOf("--tool-call-parser") + 1], "qwen3_coder");
+  assert.ok(cuda.includes("--enforce-eager"));
+  assert.equal(JSON.parse(cuda[cuda.indexOf("--speculative-config") + 1]).method, "mtp");
+  const dflash = localServerArguments(recommendLocalModel(hardware(128, 96, "nvidia", "linux", 12)).plan, 1234, "/tmp/local");
+  assert.deepEqual(JSON.parse(dflash[dflash.indexOf("--speculative-config") + 1]), { method: "dflash", model: draftDirectory("/tmp/local"), num_speculative_tokens: 7 });
+  const mtp = localServerArguments(recommendLocalModel(hardware(), { model: "ornith-9b" }).plan, 1234);
+  assert.equal(mtp[mtp.indexOf("--spec-type") + 1], "draft-mtp");
+  assert.equal(mtp[mtp.indexOf("--spec-draft-device") + 1], "MTL0");
 });
 test("supervisor authenticates control, hides the key and owns child shutdown", async () => {
   const home = makeTempDir("bw-local-service-");

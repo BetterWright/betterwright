@@ -2,9 +2,9 @@ import path from "node:path";
 
 import { flagValue, positionalArgs } from "./cli-flags.js";
 import { defaultHome } from "./home.js";
-import { detectLocalHardware, GIB, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, readLocalPlan, recommendLocalModel,
+import { detectLocalHardware, GIB, type LocalSetupOptions, localInstallArtifacts, localModel, localPlanId, localRoot, parseLlamaDevices, readLocalPlan, recommendLocalModel,
   runLocalProbe, writeLocalJson } from "./local-ai.js";
-import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, withLocalLock } from "./local-ai-install.js";
+import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, localRuntimeEnvironment, withLocalLock } from "./local-ai-install.js";
 import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServerArguments, localServiceStatus, stopLocalService } from "./local-ai-service.js";
 import { isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
@@ -49,7 +49,7 @@ export interface LocalSetupDependencies {
   stop?: typeof stopLocalService;
   disk?: typeof checkLocalDisk;
 }
-export async function setupLocalAI(options: { preference?: string; model?: string; quant?: string }, home = defaultHome(), log: LocalLog = console.log, dependencies: LocalSetupDependencies = {}) {
+export async function setupLocalAI(options: LocalSetupOptions, home = defaultHome(), log: LocalLog = console.log, dependencies: LocalSetupDependencies = {}) {
   const detect = dependencies.detect || detectLocalHardware, probe = dependencies.probe || runLocalProbe;
   const installLlama = dependencies.installLlama || installLlamaRuntime, installRuntime = dependencies.installRuntime || installLocalRuntime;
   const connect = dependencies.connect || ensureLocalService, verify = dependencies.verify || verifyLocalModel;
@@ -85,6 +85,7 @@ export async function setupLocalAI(options: { preference?: string; model?: strin
     const { plan, model } = recommendation;
     log(`Hardware: ${plan.gpu.name} (${(plan.gpu.memory / GIB).toFixed(1)} GiB accelerator memory)`);
     log(`Model: ${model.name} · ${model.quant} · ${plan.runtime} · ${plan.context.toLocaleString()} token context`);
+    log(`Acceleration: ${plan.acceleration}`);
     log(`Source: ${model.repository}@${model.revision.slice(0, 12)}`);
     log(`Model download: ${(recommendation.downloadBytes / GIB).toFixed(2)} GiB including vision support`);
     log(recommendation.reason);
@@ -97,9 +98,9 @@ export async function setupLocalAI(options: { preference?: string; model?: strin
       // Validate both CUDA and the pinned runtime's real argument parser
       // before spending bandwidth on weights. Request logging defaults off.
       const preflight = "import json,sys,torch; from vllm.entrypoints.launchers.cli_args import make_arg_parser,validate_parsed_serve_args; from vllm.utils.argparse_utils import FlexibleArgumentParser; args=make_arg_parser(FlexibleArgumentParser()).parse_args(json.loads(sys.argv[1])); validate_parsed_serve_args(args); assert not args.enable_log_requests, 'Request logging must be disabled'; assert torch.cuda.is_available(), 'CUDA driver/runtime is unavailable'; print(torch.cuda.get_device_name(0))";
-      await probe(path.join(path.dirname(executable), "python"), ["-c", preflight, JSON.stringify(localServerArguments(plan, 8000, home).slice(1))], { ...process.env, CUDA_VISIBLE_DEVICES: plan.gpu.uuid });
+      await probe(path.join(path.dirname(executable), "python"), ["-c", preflight, JSON.stringify(localServerArguments(plan, 8000, home).slice(1))], { ...localRuntimeEnvironment(plan, home), CUDA_VISIBLE_DEVICES: plan.gpu.uuid });
     }
-    for (const file of model.files) await (dependencies.download || downloadLocalArtifact)(file, modelDirectory(plan, home), { log });
+    for (const { artifact, directory } of localInstallArtifacts(plan, home)) await (dependencies.download || downloadLocalArtifact)(artifact, directory, { log });
     log("Loading the model and checking image input plus tool calls…");
     try {
       const connection = await connect(plan, home);
@@ -118,13 +119,13 @@ export async function setupLocalAI(options: { preference?: string; model?: strin
 
 export async function runLocalCommand(args: string[], { home = defaultHome(), log = console.log }: { home?: string; log?: LocalLog } = {}): Promise<number> {
   const positional = positionalArgs(args), command = positional[0] || "setup";
-  const allowed = new Set(["--preference", "--model", "--quant", "--json"]);
+  const allowed = new Set(["--preference", "--model", "--quant", "--acceleration", "--json"]);
   for (const arg of args.filter(a => a.startsWith("--"))) if (!allowed.has(arg.split("=")[0])) { log(`Unknown local AI option: ${arg}`); return 1; }
   if (positional.length > 1 || !["setup", "plan", "status", "start", "stop"].includes(command)) { log("Use betterwright local setup|plan|status|start|stop."); return 1; }
   const json = args.includes("--json");
   if (json && !["plan", "status"].includes(command)) { log("--json is supported by local plan and local status."); return 1; }
-  const options = { preference: flagValue(args, "--preference"), model: flagValue(args, "--model"), quant: flagValue(args, "--quant") };
-  for (const flag of ["--preference", "--model", "--quant"]) {
+  const options = { preference: flagValue(args, "--preference"), model: flagValue(args, "--model"), quant: flagValue(args, "--quant"), acceleration: flagValue(args, "--acceleration") };
+  for (const flag of ["--preference", "--model", "--quant", "--acceleration"]) {
     const value = flagValue(args, flag);
     if (args.some(a => a === flag || a.startsWith(`${flag}=`)) && (!value || value.startsWith("--"))) { log(`${flag} requires a value.`); return 1; }
   }
@@ -140,7 +141,7 @@ export async function runLocalCommand(args: string[], { home = defaultHome(), lo
     if (command === "start") { await configuredLocalConnection(home); log("Local AI is ready."); return 0; }
     const plan = readLocalPlan(home), status = await localServiceStatus(home);
     if (status.error && !json) { log(`Local AI: ${status.error}`); return 1; }
-    const report = { configured: Boolean(plan), model: plan ? localModel(plan).name : null, quant: plan?.quant || null, runtime: plan?.runtime || null, ...status };
+    const report = { configured: Boolean(plan), model: plan ? localModel(plan).name : null, quant: plan?.quant || null, runtime: plan?.runtime || null, acceleration: plan?.acceleration || null, ...status };
     log(json ? JSON.stringify(report, null, 2) : plan ? `${report.model} · ${report.quant} · ${report.runtime}: ${status.ready ? "ready" : status.running ? "starting" : "stopped (starts when the harness needs it)"}` : "No local model configured. Run betterwright --local.");
     return status.error ? 1 : 0;
   } catch (error) {

@@ -8,11 +8,13 @@ import path from "node:path";
 
 import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
-import { LOCAL_MODELS, type LocalModel } from "./local-ai-catalog.js";
+import { LOCAL_DFLASH2, LOCAL_MODELS, type LocalModel } from "./local-ai-catalog.js";
 import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 export const GIB = 1024 ** 3;
 export type LocalPreference = "balanced" | "speed" | "quality";
+export type LocalAcceleration = "none" | "mtp" | "dflash2";
+export interface LocalSetupOptions { preference?: string; model?: string; quant?: string; acceleration?: string; }
 export type LocalBackend = "metal" | "vulkan" | "cuda";
 export interface LocalGpu {
   id: string;
@@ -40,6 +42,7 @@ export interface LocalPlan {
   gpu: LocalGpu;
   context: number;
   preference: LocalPreference;
+  acceleration: LocalAcceleration;
 }
 export interface LocalRecommendation {
   plan: LocalPlan;
@@ -58,12 +61,20 @@ export function localModel(plan: LocalPlan): LocalModel {
 }
 export function localPlanId(plan: LocalPlan) {
   // Free VRAM changes while a model is running; it is not a new installation.
-  return createHash("sha256").update(JSON.stringify([plan.modelId, plan.quant, localModel(plan).revision,
-    plan.runtime, plan.platform, plan.arch, plan.gpu.id, plan.gpu.uuid, plan.context])).digest("hex").slice(0, 24);
+  const identity = [plan.modelId, plan.quant, localModel(plan).revision,
+    plan.runtime, plan.platform, plan.arch, plan.gpu.id, plan.gpu.uuid, plan.context];
+  if (plan.acceleration !== "none") identity.push(plan.acceleration, plan.acceleration === "dflash2" ? LOCAL_DFLASH2.revision : "native");
+  return createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 24);
 }
 export function modelDirectory(plan: LocalPlan, home = defaultHome()) {
   const model = localModel(plan);
   return path.join(localRoot(home), "models", model.id, model.revision, model.quant);
+}
+export function draftDirectory(home = defaultHome()) { return path.join(localRoot(home), "drafts", "qwen-27b-dflash2", LOCAL_DFLASH2.revision); }
+export function localInstallArtifacts(plan: LocalPlan, home = defaultHome()) {
+  const files = localModel(plan).files.map(artifact => ({ artifact, directory: modelDirectory(plan, home) }));
+  if (plan.acceleration === "dflash2") files.push(...LOCAL_DFLASH2.files.map(artifact => ({ artifact, directory: draftDirectory(home) })));
+  return files;
 }
 export function writeLocalJson(file: string, value: UntrustedValue) {
   mkdirPrivate(path.dirname(file));
@@ -118,9 +129,10 @@ export async function detectLocalHardware({ probe = runLocalProbe, platform = pr
   return { platform, arch, memory, gpus: parseNvidiaGpus(nvidia) };
 }
 
-export function recommendLocalModel(hardware: LocalHardware, options: { preference?: string; model?: string; quant?: string } = {}): LocalRecommendation {
+export function recommendLocalModel(hardware: LocalHardware, options: LocalSetupOptions = {}): LocalRecommendation {
   const preference = options.preference || "balanced";
   if (!["balanced", "speed", "quality"].includes(preference)) throw new Error("--preference must be balanced, speed, or quality.");
+  if (options.acceleration && !["auto", "none", "mtp", "dflash2"].includes(options.acceleration)) throw new Error("--acceleration must be auto, none, mtp, or dflash2.");
   if (hardware.memory <= 8 * GIB) throw new Error("Local AI needs more than 8 GB of system memory. No model is recommended for this hardware.");
   if (!((hardware.platform === "darwin" && hardware.arch === "arm64") || (["linux", "win32"].includes(hardware.platform) && hardware.arch === "x64"))) {
     throw new Error("Automatic local AI setup supports Apple Silicon and Linux/Windows x64 with an accelerated GPU runtime.");
@@ -153,11 +165,21 @@ export function recommendLocalModel(hardware: LocalHardware, options: { preferen
   const model = candidates.filter(m => m.files.reduce((n, f) => n + f.bytes, 0) <= budget)
     .sort((a, b) => b.bits - a.bits)[0];
   if (!model) throw new Error("No reviewed quant of that model fits with browser and context-cache headroom. Choose ornith-9b, close GPU-heavy applications, or use hardware with more memory.");
+  const modelBytes = model.files.reduce((n, f) => n + f.bytes, 0);
+  const draftBytes = LOCAL_DFLASH2.files.reduce((n, f) => n + f.bytes, 0);
+  const dflashFits = model.id === "qwen-27b" && model.runtime === "vllm" && modelBytes + draftBytes + 2 * GIB <= budget;
+  let acceleration: LocalAcceleration = model.mtp ? "mtp" : "none";
+  if (dflashFits && capacity >= 44 * GIB) acceleration = "dflash2";
+  if (options.acceleration && options.acceleration !== "auto") {
+    if (options.acceleration === "mtp" && !model.mtp) throw new Error("This checkpoint does not publish MTP weights. Choose auto or none; a config field alone is not an MTP head.");
+    if (options.acceleration === "dflash2" && !dflashFits) throw new Error("DFlash2 needs the reviewed Qwen 27B vLLM target and enough memory for its BF16 drafter plus extra workspace.");
+    acceleration = options.acceleration === "dflash2" ? "dflash2" : options.acceleration === "mtp" ? "mtp" : "none";
+  }
   const context = capacity >= 48 * GIB ? 65536 : 32768;
   const plan: LocalPlan = { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform: hardware.platform,
-    arch: hardware.arch, gpu, context, preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced" };
-  return { plan, model, downloadBytes: model.files.reduce((n, f) => n + f.bytes, 0), reserveBytes: reserve,
-    reason: `${gpu.name}: ${model.quant} preserves quality while reserving ${(reserve / GIB).toFixed(1)} GiB for context, runtime${apple ? ", browser and macOS" : " workspace"}. ${model.id === "nex-mini" || model.id === "ornith-35b" ? "Sparse MoE for responsive local agent turns." : ""}`.trim() };
+    arch: hardware.arch, gpu, context, acceleration, preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced" };
+  return { plan, model, downloadBytes: modelBytes + (acceleration === "dflash2" ? draftBytes : 0), reserveBytes: reserve + (acceleration === "dflash2" ? 2 * GIB : 0),
+    reason: `${gpu.name}: ${model.quant} preserves quality while reserving ${(reserve / GIB).toFixed(1)} GiB for context, runtime${apple ? ", browser and macOS" : " workspace"}. ${acceleration === "dflash2" ? "DFlash2 with a pinned BF16 drafter and 2 GiB extra workspace." : acceleration === "mtp" ? "Native MTP heads enabled; no separate draft download." : "This checkpoint has no reviewed compatible draft head."}`.trim() };
 }
 
 export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
@@ -166,15 +188,18 @@ export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
   const field = (key: string) => untrustedField(gpu, key);
   const model = LOCAL_MODELS.find(m => m.id === get("modelId") && m.quant === get("quant") && m.runtime === get("runtime"));
   const platform = get("platform"), arch = get("arch"), context = get("context"), preference = get("preference");
+  const acceleration = get("acceleration") ?? "none";
   const id = field("id"), name = field("name"), memory = field("memory"), freeMemory = field("freeMemory"), backend = field("backend"), gpuVendor = field("vendor"), compute = field("compute"), uuid = field("uuid");
   if (get("version") !== 1 || !model || !isString(platform) || !isString(arch) || !["linux", "win32", "darwin"].includes(platform) || !["arm64", "x64"].includes(arch) ||
     !isNumber(context) || ![32768, 65536].includes(context) || !["balanced", "speed", "quality"].includes(String(preference)) ||
+    !["none", "mtp", "dflash2"].includes(String(acceleration)) || acceleration === "mtp" && !model.mtp || acceleration === "dflash2" && (model.id !== "qwen-27b" || model.runtime !== "vllm") ||
     !isString(id) || !/^(MTL|Metal|Vulkan|CUDA)\d+$/.test(id) || !isString(name) || name.length > 200 ||
     !isNumber(memory) || !Number.isFinite(memory) || memory <= 8 * GIB || !isNumber(freeMemory) || !Number.isFinite(freeMemory) || freeMemory < 0 ||
     !["metal", "vulkan", "cuda"].includes(String(backend)) || !isNumber(compute) || !Number.isFinite(compute) || !isString(uuid) || (uuid !== "" && !/^GPU-[\da-f-]+$/i.test(uuid))) {
     throw new Error("Invalid saved local AI configuration. Run betterwright --local to repair it.");
   }
   return { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform, arch, context,
+    acceleration: acceleration === "dflash2" ? "dflash2" : acceleration === "mtp" ? "mtp" : "none",
     preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced",
     gpu: { id, name, memory, freeMemory, backend: backend === "metal" ? "metal" : backend === "cuda" ? "cuda" : "vulkan",
       vendor: gpuVendor === "apple" ? "apple" : gpuVendor === "nvidia" ? "nvidia" : gpuVendor === "amd" ? "amd" : gpuVendor === "intel" ? "intel" : "other", compute, uuid } };

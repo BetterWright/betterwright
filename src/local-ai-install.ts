@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
-import { GIB, type LocalPlan, localModel, localRoot, modelDirectory, runLocalProbe } from "./local-ai.js";
+import { GIB, type LocalPlan, localInstallArtifacts, localRoot, runLocalProbe } from "./local-ai.js";
 import type { LocalArtifact } from "./local-ai-catalog.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
 import { isNumber, untrustedField } from "./untrusted-value.js";
@@ -27,6 +27,10 @@ export const LOCAL_RUNTIMES = {
 const UV_ARCHIVE: LocalArtifact = { name: "uv-x86_64-unknown-linux-gnu.tar.gz", bytes: 19391575,
   sha256: "745765a3b6e360ad76743599ae5c42e9278c7edf8bbff9fc76d05bf2623a04dd",
   url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz` };
+export const ZIG_VERSION = "0.16.0";
+const ZIG_ARCHIVE: LocalArtifact = { name: "zig-x86_64-linux-0.16.0.tar.xz", bytes: 55478392,
+  sha256: "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
+  url: "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz" };
 export type LocalLog = (message: string) => void;
 
 /** Publish a complete owner record atomically; stale tombstones prevent late
@@ -190,6 +194,14 @@ export function localRuntimeExecutable(plan: LocalPlan, home = defaultHome()) {
   if (!executable || !fs.existsSync(executable)) throw new Error("The managed local runtime is missing. Run betterwright --local to repair it.");
   return executable;
 }
+export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
+  if (plan.runtime !== "vllm") return { ...process.env };
+  const compiler = path.join(localRoot(home), "runtimes", `zig-${ZIG_VERSION}`, `zig-x86_64-linux-${ZIG_VERSION}`);
+  const bin = path.join(runtimeDirectory(plan, home), "venv", "bin");
+  return { ...process.env, PATH: [bin, compiler, process.env.PATH].filter(Boolean).join(path.delimiter),
+    CC: path.join(compiler, "bw-cc"), CXX: path.join(compiler, "bw-cxx"),
+    ZIG_GLOBAL_CACHE_DIR: path.join(localRoot(home), "compiler-cache") };
+}
 async function extractRuntime(archive: string, directory: string) {
   const listing = await runLocalProbe("tar", ["-tf", archive]);
   if (listing.trim().split(/\r?\n/).some(name => name.startsWith("/") || name.includes("\\") || /^[a-z]:/i.test(name) || name.split("/").includes(".."))) {
@@ -251,6 +263,22 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   }
   const directory = runtimeDirectory(plan, home);
   const ready = path.join(directory, ".ready");
+  // Triton builds a small CUDA launcher even when all Python packages are
+  // wheels. Ship a private C/C++ compiler, without sudo or system packages.
+  const compilerDirectory = path.join(localRoot(home), "runtimes", `zig-${ZIG_VERSION}`);
+  if (!fs.existsSync(path.join(compilerDirectory, ".ready"))) {
+    const archive = await downloadLocalArtifact(ZIG_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
+    await stageLocalRuntime(compilerDirectory, async staging => {
+      await extractRuntime(archive, staging);
+      const zig = findExecutable(staging, "zig");
+      if (!zig) throw new Error("The pinned compiler archive contains no zig executable.");
+      await runLocalProbe(zig, ["version"]);
+      for (const [name, command] of [["bw-cc", "cc"], ["bw-cxx", "c++"]]) {
+        fs.writeFileSync(path.join(path.dirname(zig), name), `#!/bin/sh\nexec "$(dirname "$0")/zig" ${command} "$@"\n`, { mode: 0o700 });
+      }
+      fs.writeFileSync(path.join(staging, ".ready"), ZIG_VERSION, { mode: 0o600 });
+    });
+  }
   if (!fs.existsSync(ready)) {
     const uvDirectory = path.join(localRoot(home), "runtimes", `uv-${UV_VERSION}`);
     const archive = await downloadLocalArtifact(UV_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
@@ -278,9 +306,8 @@ export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {
   while (!fs.existsSync(existing) && path.dirname(existing) !== existing) existing = path.dirname(existing);
   const stats = fs.statfsSync(existing);
   const available = Number(stats.bavail) * Number(stats.bsize);
-  const directory = modelDirectory(plan, home);
   let pending = 0;
-  for (const file of localModel(plan).files) {
+  for (const { artifact: file, directory } of localInstallArtifacts(plan, home)) {
     const complete = path.join(directory, file.name);
     if (await verifyLocalArtifact(complete, file)) continue;
     const partial = `${complete}.part`;

@@ -64,6 +64,7 @@ export const VALUE_FLAGS = new Set([
   "--max-duration",
   "--quality",
   "--preference",
+  "--acceleration",
   "--quant",
   "--locale",
   "--model",

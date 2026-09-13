@@ -67,6 +67,7 @@ Does not configure external agents, skills, MCP hosts, or their models.
 
 Options:
   --preference <mode>  balanced (default) | speed | quality
+  --acceleration <mode>  auto (default) | dflash2 | mtp | none
   --model <id>         nex-mini | ornith-35b | ornith-9b | qwen-27b
   --quant <quant>      override within the reviewed, memory-safe catalog
 

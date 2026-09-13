@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 
 import { mkdirPrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
-import { decodeLocalPlan, type LocalPlan, localModel, localPlanId, localRoot, modelDirectory, readLocalPlan, writeLocalJson } from "./local-ai.js";
-import { localRuntimeExecutable, verifyLocalArtifact, withLocalLock } from "./local-ai-install.js";
+import { decodeLocalPlan, draftDirectory, GIB, type LocalPlan, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, readLocalPlan, writeLocalJson } from "./local-ai.js";
+import { localRuntimeEnvironment, localRuntimeExecutable, verifyLocalArtifact, withLocalLock } from "./local-ai-install.js";
 import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 export const LOCAL_MODEL_ALIAS = "betterwright-local";
@@ -95,10 +95,14 @@ async function stopLocalServiceUnlocked(home: string): Promise<boolean> {
 export function localServerArguments(plan: LocalPlan, port: number, home = defaultHome()): string[] {
   const directory = modelDirectory(plan, home), model = localModel(plan);
   if (plan.runtime === "vllm") {
+    const speculative = plan.acceleration === "dflash2" ? { method: "dflash", model: draftDirectory(home), num_speculative_tokens: 7 } :
+      plan.acceleration === "mtp" ? { method: "mtp", num_speculative_tokens: 3 } : null;
     return ["serve", directory, "--host", "127.0.0.1", "--port", String(port), "--served-model-name", LOCAL_MODEL_ALIAS,
       "--max-model-len", String(plan.context), "--max-num-seqs", "1", "--gpu-memory-utilization", "0.85",
       "--kv-cache-dtype", "fp8_e4m3", "--reasoning-parser", "qwen3", "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder",
-      "--enable-chunked-prefill", "--max-num-batched-tokens", "2048", "--disable-log-stats"];
+      "--enable-chunked-prefill", "--max-num-batched-tokens", "2048", "--disable-uvicorn-access-log",
+      ...(plan.gpu.memory < 40 * GIB ? ["--enforce-eager"] : []),
+      ...(speculative ? ["--speculative-config", JSON.stringify(speculative)] : [])];
   }
   const weights = model.files.find(f => !f.name.startsWith("mmproj-"));
   const vision = model.files.find(f => f.name.startsWith("mmproj-"));
@@ -108,6 +112,7 @@ export function localServerArguments(plan: LocalPlan, port: number, home = defau
     "--parallel", "1", "--device", plan.gpu.id, "--split-mode", "none", "--gpu-layers", "999", "--flash-attn", "on",
     "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--batch-size", "512", "--ubatch-size", "128",
     "--image-max-tokens", "4096", "--jinja", "--reasoning-format", "deepseek", "--no-webui",
+    ...(plan.acceleration === "mtp" ? ["--spec-type", "draft-mtp", "--spec-draft-n-max", "3", "--spec-draft-device", plan.gpu.id, "--spec-draft-ngl", "999"] : []),
     "--chat-template-kwargs", JSON.stringify(plan.modelId === "nex-mini" ? { reasoning_effort: "medium" } : { enable_thinking: false })];
 }
 export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), timeoutMs = 10 * 60_000, verify: typeof verifyLocalArtifact = verifyLocalArtifact): Promise<LocalConnection> {
@@ -126,8 +131,8 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
       if (status && untrustedField(status, "ready") === true) return { baseURL: `http://127.0.0.1:${existing.port}/v1`, apiKey: existing.token, model: LOCAL_MODEL_ALIAS };
     }
     localRuntimeExecutable(plan, home);
-    for (const file of localModel(plan).files) {
-      const target = path.join(modelDirectory(plan, home), file.name);
+    for (const { artifact: file, directory } of localInstallArtifacts(plan, home)) {
+      const target = path.join(directory, file.name);
       if (!await verify(target, file)) throw new Error("Local model files are missing, incomplete, or failed their checksum. Run betterwright --local to resume setup.");
     }
     writeLocalJson(path.join(localRoot(home), "plans", `${planId}.json`), plan);
@@ -196,7 +201,7 @@ export async function serveLocalAI(planId: string, home = defaultHome(), launch:
   if (!address || isString(address)) throw new Error("Could not allocate the local supervisor port.");
   state = { controlPort: address.port, port, token, planId, supervisorPid: process.pid, childPid: 0 };
   mkdirPrivate(localRoot(home));
-  const env: NodeJS.ProcessEnv = { ...process.env, LLAMA_API_KEY: token, VLLM_API_KEY: token, HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" };
+  const env: NodeJS.ProcessEnv = { ...localRuntimeEnvironment(plan, home), LLAMA_API_KEY: token, VLLM_API_KEY: token, HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" };
   if (plan.runtime === "vllm" && plan.gpu.uuid) env.CUDA_VISIBLE_DEVICES = plan.gpu.uuid;
   // API keys stay out of argv/logged launch commands and all status output.
   child = launch(localRuntimeExecutable(plan, home), localServerArguments(plan, port, home), { env, detached: process.platform !== "win32", stdio: ["ignore", "inherit", "inherit"], windowsHide: true });

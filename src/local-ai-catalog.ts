@@ -15,10 +15,12 @@ export interface LocalModel {
   repository: string;
   revision: string;
   files: LocalArtifact[];
+  mtp: boolean;
 }
 export const LOCAL_MODELS: LocalModel[] = [
   {
     "id": "nex-mini",
+    "mtp": false,
     "name": "Nex-N2.5-mini",
     "quant": "Q4_K_M",
     "bits": 4,
@@ -42,6 +44,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "nex-mini",
+    "mtp": false,
     "name": "Nex-N2.5-mini",
     "quant": "Q5_K_M",
     "bits": 5,
@@ -65,6 +68,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "nex-mini",
+    "mtp": false,
     "name": "Nex-N2.5-mini",
     "quant": "Q6_K",
     "bits": 6,
@@ -88,6 +92,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "nex-mini",
+    "mtp": false,
     "name": "Nex-N2.5-mini",
     "quant": "Q8_0",
     "bits": 8,
@@ -111,6 +116,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "ornith-35b",
+    "mtp": true,
     "name": "Ornith-1.5-35B-A3B",
     "quant": "Q4_K_M",
     "bits": 4,
@@ -134,6 +140,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "ornith-35b",
+    "mtp": true,
     "name": "Ornith-1.5-35B-A3B",
     "quant": "Q5_K_M",
     "bits": 5,
@@ -157,6 +164,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "ornith-35b",
+    "mtp": true,
     "name": "Ornith-1.5-35B-A3B",
     "quant": "Q6_K",
     "bits": 6,
@@ -180,6 +188,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "ornith-35b",
+    "mtp": true,
     "name": "Ornith-1.5-35B-A3B",
     "quant": "Q8_0",
     "bits": 8,
@@ -203,6 +212,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "ornith-9b",
+    "mtp": true,
     "name": "Ornith-1.5-9B",
     "quant": "Q4_K_M",
     "bits": 4,
@@ -226,6 +236,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "ornith-9b",
+    "mtp": true,
     "name": "Ornith-1.5-9B",
     "quant": "Q5_K_M",
     "bits": 5,
@@ -249,6 +260,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "ornith-9b",
+    "mtp": true,
     "name": "Ornith-1.5-9B",
     "quant": "Q6_K",
     "bits": 6,
@@ -272,6 +284,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "ornith-9b",
+    "mtp": true,
     "name": "Ornith-1.5-9B",
     "quant": "Q8_0",
     "bits": 8,
@@ -295,6 +308,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "qwen-27b",
+    "mtp": true,
     "name": "Qwen3.8-27B",
     "quant": "NVFP4",
     "bits": 4,
@@ -372,6 +386,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
   {
     "id": "qwen-27b",
+    "mtp": true,
     "name": "Qwen3.8-27B",
     "quant": "FP8",
     "bits": 8,
@@ -844,3 +859,15 @@ export const LOCAL_MODELS: LocalModel[] = [
     ]
   }
 ];
+
+/** Original BF16 drafter published by the DFlash2 authors; no remote code. */
+export const LOCAL_DFLASH2 = {
+  repository: "incoai/Qwen3.8-27B-DFlash2",
+  revision: "dedf8df68adfb1afeaf7b7480c0a0243108177b4",
+  files: [
+    { name: "config.json", bytes: 1239, sha256: "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980",
+      url: "https://huggingface.co/incoai/Qwen3.8-27B-DFlash2/resolve/dedf8df68adfb1afeaf7b7480c0a0243108177b4/config.json" },
+    { name: "model.safetensors", bytes: 3848817896, sha256: "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c",
+      url: "https://huggingface.co/incoai/Qwen3.8-27B-DFlash2/resolve/dedf8df68adfb1afeaf7b7480c0a0243108177b4/model.safetensors" },
+  ],
+};
