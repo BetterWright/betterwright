@@ -13,6 +13,7 @@ import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
 import { fromPath } from "rookie-cookies";
 import { AD_BLOCK_CACHE_FILE } from "../../dist/src/ad-blocker.js";
+import { chromiumNeedsSoftwareGpu } from "../../dist/src/browser-runtime.js";
 import { normalizeCookieSnapshot, normalizeCookieSyncOptions } from "../../dist/src/cookie-sync.js";
 import { doctorReport } from "../../dist/src/doctor.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
@@ -397,6 +398,12 @@ test("the selected managed browser keeps WebGL rendering available with a cohere
       assert.doesNotMatch(result.result.webgl2.renderer, /SwiftShader|llvmpipe|softpipe/i, result.result.webgl2.renderer);
       assert.match(result.result.webgl.renderer, /ANGLE/, result.result.webgl.renderer);
       assert.match(result.result.webgl2.renderer, /ANGLE/, result.result.webgl2.renderer);
+      assert.equal(result.result.webgl.vendor, result.result.webgl2.vendor);
+      assert.equal(result.result.webgl.renderer, result.result.webgl2.renderer);
+      if (chromiumNeedsSoftwareGpu()) {
+        assert.equal(result.result.webgl.vendor, "Google Inc. (Intel)");
+        assert.match(result.result.webgl.renderer, /Mesa Intel\(R\) UHD Graphics 620/);
+      }
     } else if (/Macintosh/.test(result.result.webgl.userAgent)) {
       assert.equal(result.result.webgl.platform, "MacIntel");
     } else if (/Windows/.test(result.result.webgl.userAgent)) {
