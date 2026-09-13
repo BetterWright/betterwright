@@ -88,6 +88,10 @@ export async function doctorReport() {
   let providerError = null;
   let providerChain = null;
   let providerNotes = null;
+  // Tri-state: does any launch candidate resolve to a browser that can start?
+  // null while unsettled — the env-shorthand path falls back to the default's
+  // own check below.
+  let providerReady = null;
   const envShorthand = String(process.env.BETTERWRIGHT_CDP_URL || "").trim();
   try {
     // The same ladder a launch walks: the env shorthand (which
@@ -125,18 +129,31 @@ export async function doctorReport() {
       // since configure ran).
       const notes = [...chain.notes, ...(resolution?.notes || [])];
       if (notes.length) providerNotes = notes;
+      // Readiness follows the whole chain: a launch succeeds when ANY
+      // candidate can start, so a working remote fallback still reports
+      // ready with the managed fork missing. An empty chain is the implicit
+      // managed candidate; a resolved remote/local plan is launchable on its
+      // face (key present, binary found, endpoint parseable).
+      const effective = plans.length ? plans : [{ kind: "managed" }];
+      providerReady = effective.some((plan) =>
+        plan.kind === "managed"
+          ? browser === "chromium-fork" && !chromiumForkError
+          : true,
+      );
     } catch (error) {
       providerError =
         providerError ||
         (error instanceof Error ? error.message : String(error));
+      providerReady = false;
     }
   }
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (!provider || provider.kind === "managed"
-      ? browser === "chromium-fork" && !chromiumForkError
-      : !providerError);
+    (providerReady ??
+      (!provider || provider.kind === "managed"
+        ? browser === "chromium-fork" && !chromiumForkError
+        : !providerError));
   return {
     node: process.execPath,
     runtime: runtimeLabel(),

@@ -517,3 +517,38 @@ test("the daemon signature tracks configured fallbacks", async () => {
   assert.match(flagged, /kernel/);
   assert.doesNotMatch(flagged, /env\.example\.com/);
 });
+
+test("doctor ready follows the whole configured chain", async () => {
+  const { doctorReport } = await import("../../dist/src/doctor.js");
+  const home = makeTempDir("bw-doctor-chain-");
+  const saved = {
+    home: process.env.BETTERWRIGHT_HOME,
+    chromium: process.env.BETTERWRIGHT_CHROMIUM_PATH,
+    cdp: process.env.BETTERWRIGHT_CDP_URL,
+  };
+  // A nonexistent explicit path makes the managed fork report missing.
+  process.env.BETTERWRIGHT_HOME = home;
+  process.env.BETTERWRIGHT_CHROMIUM_PATH = "/definitely/not/installed/BetterChromium";
+  delete process.env.BETTERWRIGHT_CDP_URL;
+  try {
+    // Remote-only default: launch attaches to the endpoint, so ready stands
+    // even with the managed fork absent.
+    saveDefaultBrowser({ cdpUrl: "wss://endpoint.example.com/connect" }, home);
+    assert.equal((await doctorReport()).ready, true);
+
+    // Managed-only chain with the fork missing: not ready.
+    saveDefaultBrowser({ provider: "managed" }, home);
+    assert.equal((await doctorReport()).ready, false);
+
+    // A resolvable remote fallback rescues the same missing-fork setup.
+    saveBrowserFallbacks([{ cdpUrl: "wss://fallback.example.com/connect" }], home);
+    assert.equal((await doctorReport()).ready, true);
+  } finally {
+    if (saved.home === undefined) delete process.env.BETTERWRIGHT_HOME;
+    else process.env.BETTERWRIGHT_HOME = saved.home;
+    if (saved.chromium === undefined) delete process.env.BETTERWRIGHT_CHROMIUM_PATH;
+    else process.env.BETTERWRIGHT_CHROMIUM_PATH = saved.chromium;
+    if (saved.cdp === undefined) delete process.env.BETTERWRIGHT_CDP_URL;
+    else process.env.BETTERWRIGHT_CDP_URL = saved.cdp;
+  }
+});
