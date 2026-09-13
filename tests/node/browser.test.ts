@@ -217,7 +217,13 @@ for (const disabledIdentity of [{ geoip: false }, { launchIdentity: false }]) {
         return page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
       `);
       assert.equal(result.ok, true, result.error);
-      assert.equal(result.result, Intl.DateTimeFormat().resolvedOptions().timeZone);
+      // Bun's test runner fixes its own ICU timezone to UTC. A normal child
+      // process reads the host timezone inherited by the native browser.
+      const hostTimezone = spawnSync(process.execPath, [
+        "-e", "console.log(Intl.DateTimeFormat().resolvedOptions().timeZone)",
+      ], { encoding: "utf8" });
+      assert.equal(hostTimezone.status, 0, hostTimezone.stderr);
+      assert.equal(result.result, hostTimezone.stdout.trim());
       assert.ok(attemptedHosts.includes("127.0.0.1"), "the fixture must exercise the network policy");
       assert.deepEqual(
         attemptedHosts.filter((hostname) => hostname === "ipwho.is" || hostname === "ip-api.com"),
