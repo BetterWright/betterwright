@@ -2340,6 +2340,14 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
       if (!remoteCdp) args.push(...identityPlan.args);
     }
 
+    if (!remoteCdp && forkBinary && !identityPlan?.identity.timezone) {
+      // A missing timezone switch lets the Linux fork run its legacy native
+      // egress probe, even when geoip or launchIdentity is disabled. An explicit
+      // empty value suppresses that probe without overriding the host timezone.
+      // resolveGeoIdentity above is the only owner of opt-in geography lookups.
+      args.push("--bw-timezone=");
+    }
+
     // Caller-supplied switches go last, after every argument BetterWright
     // derives, so a host can tune things the managed list has no opinion on.
     // Switches that collide with a managed one are dropped rather than

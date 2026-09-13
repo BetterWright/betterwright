@@ -190,14 +190,57 @@ test("navigate and read the title", opts, async () => {
   }
 });
 
-test("the managed browser preserves an explicit locale in pages, workers and requests", opts, async () => {
+for (const disabledIdentity of [{ geoip: false }, { launchIdentity: false }]) {
+  test(`disabled identity ${JSON.stringify(disabledIdentity)} preserves the host timezone without geo lookups`, opts, async () => {
+    const attemptedHosts: string[] = [];
+    const site = await listen((_request, response) => {
+      response.end("<!doctype html><title>Identity opt-out fixture</title>");
+    });
+    const home = tempHome();
+    const bw = new BetterWright({
+      home,
+      headless: true,
+      adBlock: false,
+      ...disabledIdentity,
+      policy: new NetworkPolicy({
+        allowLoopback: true,
+        custom: (url) => {
+          const hostname = new URL(url).hostname;
+          attemptedHosts.push(hostname);
+          return { allowed: hostname === "127.0.0.1", reason: "Identity opt-out fixture only" };
+        },
+      }),
+    });
+    try {
+      const result = await bw.run(`
+        await page.goto(${JSON.stringify(site.origin)});
+        return page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+      `);
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result, Intl.DateTimeFormat().resolvedOptions().timeZone);
+      assert.ok(attemptedHosts.includes("127.0.0.1"), "the fixture must exercise the network policy");
+      assert.deepEqual(
+        attemptedHosts.filter((hostname) => hostname === "ipwho.is" || hostname === "ip-api.com"),
+        [],
+        "disabled identity must not attempt a geo lookup",
+      );
+    } finally {
+      await bw.close();
+      await site.close();
+      removeBrowserHome(home);
+    }
+  });
+}
+
+test("the managed browser preserves an explicit locale and timezone in pages, workers and requests", opts, async () => {
   const site = await listen((request, response) => {
     if (request.url === "/worker.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(`postMessage({
         language: navigator.language,
         languages: navigator.languages,
-        locale: Intl.DateTimeFormat().resolvedOptions().locale
+        locale: Intl.DateTimeFormat().resolvedOptions().locale,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
       });`);
       return;
     }
@@ -215,6 +258,7 @@ test("the managed browser preserves an explicit locale in pages, workers and req
     headless: true,
     geoip: false,
     locale: "fr-FR",
+    timezone: "Europe/Paris",
   });
   try {
     const result = await bw.run(`
@@ -229,7 +273,8 @@ test("the managed browser preserves an explicit locale in pages, workers and req
           page: {
             language: navigator.language,
             languages: navigator.languages,
-            locale: Intl.DateTimeFormat().resolvedOptions().locale
+            locale: Intl.DateTimeFormat().resolvedOptions().locale,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
           },
           worker,
           headers: await fetch('/headers').then(response => response.json())
@@ -237,7 +282,7 @@ test("the managed browser preserves an explicit locale in pages, workers and req
       });
     `);
     assert.equal(result.ok, true, result.error);
-    const expected = { language: "fr-FR", languages: ["fr-FR", "fr"], locale: "fr-FR" };
+    const expected = { language: "fr-FR", languages: ["fr-FR", "fr"], locale: "fr-FR", timezone: "Europe/Paris" };
     assert.deepEqual(result.result.page, expected);
     assert.deepEqual(result.result.worker, expected);
     assert.equal(result.result.headers.language, "fr-FR,fr;q=0.9");

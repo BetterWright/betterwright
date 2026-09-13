@@ -144,12 +144,11 @@ prototype overrides:
   (`#007aff` light, `#0a84ff` dark) on every Linux identity, not only the
   macOS mask. Stock Linux surfaces the color provider's active-link red
   (`rgb(255,0,0)`), which is CreepJS's `hasKnownBgColor` tell.
-- `chrome_content_renderer_client.cc` enables Blink Web Share on Linux
-  unconditionally (no longer gated behind `--fingerprint-platform=macos`).
-  There is still no Linux share-sheet backend, so `navigator.share()` rejects
-  at call time — the API surface is present, the platform operation is not,
-  matching desktop Chrome's contract. Absence of `share`/`canShare` is
-  CreepJS's `noWebShare` tell.
+- `chrome_content_renderer_client.cc` enables Blink Web Share on Linux only
+  with an explicit `--fingerprint-platform=macos` identity. The default Linux
+  identity leaves `navigator.share` and `navigator.canShare` unavailable,
+  preserving the behavior shipped in 2.7.1. There is no Linux share-sheet
+  backend; enabling the API surface does not provide the platform operation.
 - `runtime_enabled_features.json5` marks `ContentIndex`, `ContactsManager`,
   and `NetInfoDownlinkMax` stable on Linux so `window.ContentIndex`,
   `window.ContactsManager`, and `NetworkInformation.prototype.downlinkMax`

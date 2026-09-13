@@ -33,6 +33,10 @@ Releases before 1.1.3 predate this file; their notes live on the
   assembly manifest, including the Linux launcher and sandbox helper.
 - Use Direct3D 11 for Windows rendering, fixing blank accelerated 2D canvas
   readback and unavailable WebGPU when desktop OpenGL is forced.
+- Honor disabled GeoIP and launch identity settings by suppressing the Linux
+  browser's implicit timezone lookup. Explicit timezones remain supported.
+- Correct the Linux Web Share documentation to describe the existing
+  platform-dependent API availability.
 - Correct the Electron host-owned tab integration documentation (#187).
 
 ## [2.7.1] - 2026-09-11
