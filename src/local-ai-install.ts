@@ -72,11 +72,14 @@ async function fetchArtifact(url: string, headers: Record<string, string>, fetch
 }
 /** Stream/resume verified bytes. Never buffer a model in JS memory. */
 export async function downloadLocalArtifact(artifact: LocalArtifact, directory: string, { fetchImpl = fetch, log = console.log }: { fetchImpl?: typeof fetch; log?: LocalLog } = {}): Promise<string> {
-  if (!/^[a-zA-Z0-9_.-]+$/.test(artifact.name) || !/^[a-f0-9]{64}$/.test(artifact.sha256) || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) throw new Error("Invalid local AI artifact manifest.");
+  if (!/^[a-zA-Z0-9_.-]+$/.test(artifact.name) || [".", ".."].includes(artifact.name) || !/^[a-f0-9]{64}$/.test(artifact.sha256) || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) throw new Error("Invalid local AI artifact manifest.");
   mkdirPrivate(directory);
   const file = path.join(directory, artifact.name);
   if (await verifyLocalArtifact(file, artifact)) { log(`Already downloaded: ${artifact.name}`); return file; }
   const partial = `${file}.part`;
+  // A process can exit after the last byte but before the final rename.
+  // Reuse that verified file instead of downloading many GiB again.
+  if (await verifyLocalArtifact(partial, artifact)) { fs.renameSync(partial, file); return file; }
   let offset = 0;
   if (fs.existsSync(partial)) {
     const stat = fs.lstatSync(partial);
@@ -203,6 +206,7 @@ export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {
     const complete = path.join(directory, file.name);
     if (await verifyLocalArtifact(complete, file)) continue;
     const partial = `${complete}.part`;
+    if (await verifyLocalArtifact(partial, file)) continue;
     const stat = fs.existsSync(partial) ? fs.lstatSync(partial) : null;
     const downloaded = stat?.isFile() && stat.size < file.bytes ? stat.size : 0;
     pending += file.bytes - downloaded;

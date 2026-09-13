@@ -215,3 +215,11 @@ test("Windows retries Vulkan if a CUDA binary starts but cannot enumerate its GP
   });
   assert.deepEqual(backends, ["cuda", "vulkan"]); assert.equal(r.plan.gpu.backend, "vulkan");
 });
+
+test("a complete verified partial is installed without another download after a crash", async () => {
+  const dir = makeTempDir("bw-local-complete-partial-");
+  fs.writeFileSync(path.join(dir, "model.gguf.part"), bytes);
+  const file = await downloadLocalArtifact(artifact, dir, { fetchImpl: async () => { throw new Error("must stay offline"); }, log: quiet });
+  assert.deepEqual(fs.readFileSync(file), bytes); assert.ok(!fs.existsSync(`${file}.part`));
+  await assert.rejects(downloadLocalArtifact({ ...artifact, name: ".." }, dir), /manifest/);
+});
