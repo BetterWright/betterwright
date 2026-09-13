@@ -1,0 +1,62 @@
+name: Validate native Chromium 153 Windows candidate
+
+on:
+  push:
+    branches: [codex/validate-native-153-windows]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run build:harness
+      - name: Verify user encryption and the native candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Add-Type -AssemblyName System.Security
+          $plain=[Text.Encoding]::UTF8.GetBytes('betterwright-fixture-only')
+          $encrypted=[Security.Cryptography.ProtectedData]::Protect($plain,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+          $decrypted=[Security.Cryptography.ProtectedData]::Unprotect($encrypted,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+          if ([Text.Encoding]::UTF8.GetString($decrypted) -ne 'betterwright-fixture-only') { throw 'DPAPI round trip failed' }
+          $native=Join-Path $env:RUNNER_TEMP 'native'
+          New-Item -ItemType Directory -Force $native | Out-Null
+          gh release download betterchromium-153.0.8010.36-r2 --repo BetterWright/betterwright --pattern betterchromium-win-x64.zip --dir $native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archive=Join-Path $native 'betterchromium-win-x64.zip'
+          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne '589246796678e331773ce2a26d572384759f1aa57415418d5ee5685c017c2753') { throw 'Runtime checksum mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $native
+          $binary=Join-Path $native 'win-x64\betterchromium.exe'
+          if ((Get-Item $binary).VersionInfo.ProductVersion -notmatch '^153\.0\.8010\.36(?:\s|$)') { throw 'Wrong native version' }
+          "BETTERWRIGHT_CHROMIUM_PATH=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Match generated validation metadata to the explicit candidate
+        # Candidate-only metadata. This branch never runs the managed installer
+        # until all production source pins are committed and verified.
+        run: |
+          $file='dist/src/chromium-fork.js'
+          $source=[IO.File]::ReadAllText($file)
+          $old='BETTERWRIGHT_CHROMIUM_VERSION = "151.0.7922.108"'
+          if (-not $source.Contains($old)) { throw 'Unexpected source version' }
+          [IO.File]::WriteAllText($file,$source.Replace($old,'BETTERWRIGHT_CHROMIUM_VERSION = "153.0.8010.36"'))
+      - name: Install the recording encoder
+        run: |
+          $archive=Join-Path $env:RUNNER_TEMP 'ffmpeg.7z'
+          Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.1-essentials_build.7z' -OutFile $archive
+          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne '49a73bdf0850092a252ac4641d922f3048d63ed113e196cc65ce1e4f7fb33e85') { throw 'Encoder checksum mismatch' }
+          $encoder=Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          7z x -y $archive "-o$encoder"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $encoder 'ffmpeg-9.0.1-essentials_build\bin') | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Run every browser integration test against the candidate
+        run: bun test --timeout 120000 --parallel=1 tests/node/browser.test.ts
+        env:
+          BETTERWRIGHT_REQUIRE_BROWSER: "1"
+          BETTERWRIGHT_REQUIRE_RECORDING: "1"
