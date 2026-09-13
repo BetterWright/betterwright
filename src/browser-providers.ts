@@ -131,10 +131,10 @@ function isFetchJsonHook(value: UntrustedValue): value is FetchJsonHook {
 export const PROVIDER_HTTP_TIMEOUT_MS = 30_000;
 
 /** The one-line reason a provider API call never produced a response. */
-function describeFetchFailure(method, url, error) {
+function describeFetchFailure(method, url, error, timeoutMs = PROVIDER_HTTP_TIMEOUT_MS) {
   const name = untrustedField(error, "name");
   if (name === "TimeoutError" || name === "AbortError") {
-    return `Cloud browser API ${method} ${url} timed out after ${PROVIDER_HTTP_TIMEOUT_MS / 1000}s.`;
+    return `Cloud browser API ${method} ${url} timed out after ${timeoutMs / 1000}s.`;
   }
   // undici reports network failures as a bare "fetch failed" TypeError and
   // keeps the useful part (ENOTFOUND, ECONNREFUSED, a TLS error) in `cause`.
@@ -147,7 +147,7 @@ function describeFetchFailure(method, url, error) {
   return `Cloud browser API ${method} ${url} failed: ${detail || String(error)}`;
 }
 
-async function httpJson(fetchJson, method, url, { headers, body }) {
+async function httpJson(fetchJson, method, url, { headers, body, timeoutMs = PROVIDER_HTTP_TIMEOUT_MS }) {
   if (isFetchJsonHook(fetchJson)) {
     const request: ProviderHttpRequest = { method, headers };
     if (body !== undefined) request.body = body;
@@ -159,7 +159,7 @@ async function httpJson(fetchJson, method, url, { headers, body }) {
   const init: RequestInit = {
     method,
     headers: requestHeaders,
-    signal: AbortSignal.timeout(PROVIDER_HTTP_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   };
   if (body !== undefined) init.body = JSON.stringify(body);
   let response: Response;
@@ -168,7 +168,7 @@ async function httpJson(fetchJson, method, url, { headers, body }) {
     response = await fetch(url, init);
     text = await response.text();
   } catch (error) {
-    throw new Error(describeFetchFailure(method, url, error));
+    throw new Error(describeFetchFailure(method, url, error, timeoutMs));
   }
   let data = null;
   try {
@@ -598,12 +598,13 @@ export function providerPlanLabel(plan) {
  * performs the whole launch for one candidate (session mint included) and
  * returns whatever the caller needs from the winner.
  *
- * Any failure advances to the next candidate — provider errors are not a
+ * Ordinary launch failures advance to the next candidate — provider errors are not a
  * typed taxonomy (REST statuses, WebSocket closes, create-session rejections
  * all surface as plain errors), so classifying "quota" vs "down" would miss
  * the cases a chain exists for. With one candidate the original error is
  * rethrown untouched so single-provider messages keep their shape; with a
- * real chain the error names every candidate tried.
+ * real chain the error names every candidate tried. An unconfirmed session
+ * release stops the chain so another billed session cannot hide the first.
  */
 export async function runProviderChain(candidates, attempt) {
   const failures = [];
@@ -612,6 +613,7 @@ export async function runProviderChain(candidates, attempt) {
       const result = await attempt(candidate);
       return { result, failures };
     } catch (error) {
+      if (error instanceof ProviderCleanupError) throw error;
       failures.push({ label: providerPlanLabel(candidate), error });
     }
   }
@@ -629,6 +631,39 @@ export async function runProviderChain(candidates, attempt) {
 
 function firstLine(value) {
   return String(value || "unknown error").split("\n", 1)[0].trim() || "unknown error";
+}
+
+// Bound cleanup separately from session creation/connection: each stop
+// request (including its response body) gets two seconds and one retry.
+const PROVIDER_CLEANUP_TIMEOUT_MS = 2_000;
+const PROVIDER_CLEANUP_ATTEMPTS = 2;
+
+export class ProviderCleanupError extends Error {
+  readonly code = "BW_PROVIDER_CLEANUP_FAILED";
+
+  constructor(readonly provider: string, readonly sessionId: string) {
+    super(
+      `Could not confirm release of ${provider} session ${JSON.stringify(sessionId)} ` +
+        `after ${PROVIDER_CLEANUP_ATTEMPTS} attempts; it may still be running and billing. ` +
+        "Fallback stopped. End the session in the provider console before retrying.",
+    );
+    this.name = "ProviderCleanupError";
+  }
+}
+
+/** Release a failed candidate, or stop the chain with an actionable error. */
+export async function releaseFailedProviderSession(plan) {
+  if (!plan?.end) return;
+  for (let attempt = 0; attempt < PROVIDER_CLEANUP_ATTEMPTS; attempt++) {
+    try {
+      await plan.end({ timeoutMs: PROVIDER_CLEANUP_TIMEOUT_MS });
+      return;
+    } catch {
+      // Never copy a provider's raw error response into diagnostics: it can
+      // echo credentials. The final error names the session to stop manually.
+    }
+  }
+  throw new ProviderCleanupError(plan.provider, plan.sessionId);
 }
 
 /**
@@ -858,11 +893,12 @@ async function sessionPlanFromPayload(
   // the session keeps running).
   const end =
     descriptor.end && box.id
-      ? async () => {
+      ? async ({ timeoutMs = PROVIDER_HTTP_TIMEOUT_MS } = {}) => {
           const stop = descriptor.end(box.id);
           await httpJson(fetchJson, stop.method, stop.url, {
             headers,
             body: stop.body,
+            timeoutMs,
           });
         }
       : null;
@@ -873,7 +909,9 @@ async function sessionPlanFromPayload(
       `the ${name} CDP URL`,
     );
   } catch (error) {
-    if (releaseOnError && end) await end().catch(() => {});
+    if (releaseOnError) {
+      await releaseFailedProviderSession({ provider: name, sessionId: box.id, end });
+    }
     throw error;
   }
   return {

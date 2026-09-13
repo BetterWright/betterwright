@@ -184,7 +184,9 @@ export interface BetterWrightOptions {
    * quota or down does not fail the session. An entry that cannot resolve —
    * an unknown name, an unset key, a binary that is not installed — is
    * skipped with a launch warning rather than vetoing the chain; the chain
-   * fails only when no entry survives.
+   * cannot resolve when no entry survives. If a failed candidate's session
+   * cannot be released, launch stops and identifies the potentially billed
+   * session instead of advancing to another browser.
    *
    * When the option is absent, the default saved by `betterwright configure`
    * (in `<home>/config.json`) applies, extended by its configured fallbacks;

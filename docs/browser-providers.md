@@ -104,7 +104,7 @@ new BetterWright({
 
 An array entry that cannot resolve — an unknown name, an unset key, a binary
 that is not installed — is skipped with a launch warning instead of vetoing
-the array; the remaining candidates keep their order. An array fails only
+the array; the remaining candidates keep their order. Array resolution fails only
 when no entry survives: one bad entry rethrows its own error, several get a
 single error naming each entry's reason.
 
@@ -132,9 +132,16 @@ Every skipped or failed candidate appears as a warning on the launch's
 result envelope, and `betterwright doctor` lists the resolved chain under
 **Browser → Fallbacks**.
 
-A remote candidate that mints a session but fails to connect releases it
-before the next candidate is tried — a fallback attempt never leaves a billed
-browser running. Cookie Sync consent for a chained launch names every remote
+A remote candidate that mints a session but fails to connect or initialize
+releases it before the next candidate is tried. Cleanup gets two attempts,
+each with a two-second timeout. If release cannot be confirmed, the launch
+stops with `BW_PROVIDER_CLEANUP_FAILED` rather than starting another browser.
+The error names the provider and session that may still be billing; end it
+in the provider's console before retrying. This also applies when a create
+response contains a session ID but an invalid endpoint.
+
+Skipped-candidate warnings are preserved when every remaining candidate fails.
+Cookie Sync consent for a chained launch names every remote
 candidate, joined with `+` (for example `provider:browserbase+provider:kernel`).
 
 ### Custom named providers

@@ -20,8 +20,10 @@ import type { RecordingStatus } from "../types/recording.js";
 import { compactAutomaticUI, hasReturnedUIDirectory } from "./automatic-ui.js";
 import {
   cookieSyncConsentTarget,
+  ProviderCleanupError,
   providerResolutionPlans,
   redactProviderSecrets,
+  releaseFailedProviderSession,
   resolveBrowserProvider,
   runProviderChain,
 } from "./browser-providers.js";
@@ -2163,7 +2165,18 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
   // BetterChromium is the only bundled browser; everything else is an
   // explicit provider (a caller-supplied local Chromium binary, or a remote
   // CDP endpoint minted by a cloud-browser service).
-  const providerResolution = resolveBrowserProvider(config.provider);
+  const chainNotes = Array.isArray(config.providerChainNotes)
+    ? config.providerChainNotes.filter((note) => isString(note) && note.trim())
+    : [];
+  let providerResolution;
+  try {
+    providerResolution = resolveBrowserProvider(config.provider);
+  } catch (error) {
+    // Expansion may already have skipped candidates before the worker finds
+    // that none of the survivors validate. Keep both stages' diagnostics.
+    providerWarnings = chainNotes;
+    throw error;
+  }
   const publicSearchPolicy = String(config.publicSearchPolicy || "block")
     .trim()
     .toLowerCase();
@@ -2193,6 +2206,14 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
   }
   launchConfig = { ...config };
   launchPromise = (async () => {
+    // Record skips before launch so exhaustion and fatal cleanup errors also
+    // retain them. Reusing an already-open context keeps its launch warnings.
+    providerWarnings = [
+      ...chainNotes,
+      ...(Array.isArray(providerResolution?.notes)
+        ? providerResolution.notes.filter((note) => isString(note) && note.trim())
+        : []),
+    ];
     mkdirPrivate(launchConfig.artifactsDir);
 
     // An explicit or configured provider may resolve to an ordered chain
@@ -2502,7 +2523,7 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
         // the successful candidate below gets to release it on close.
         if (attemptContext) await attemptContext.close().catch(() => {});
         if (browser) await browser.close().catch(() => {});
-        if (end) await end().catch(() => {});
+        if (end) await releaseFailedProviderSession({ ...providerPlan, end });
         throw error;
       }
     };
@@ -2517,15 +2538,7 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
     // The winner's provider warnings plus one line per skipped or failed
     // candidate, so a degraded launch is never silent.
     providerWarnings = [
-      ...(Array.isArray(launchConfig.providerChainNotes)
-        ? launchConfig.providerChainNotes.filter((note) => isString(note) && note.trim())
-        : []),
-      // Candidates the resolver dropped before launch (a gone binary, a bad
-      // scheme): skipped without vetoing the chain, reported like the config
-      // notes above.
-      ...(Array.isArray(providerResolution?.notes)
-        ? providerResolution.notes.filter((note) => isString(note) && note.trim())
-        : []),
+      ...providerWarnings,
       ...launched.failures.map(
         (failure) =>
           `Browser provider ${failure.label} failed to launch: ` +
@@ -8113,6 +8126,9 @@ async function execute(message) {
       error: redactText(failure?.message || String(failure)),
       restartWorker,
     };
+    if (failure instanceof ProviderCleanupError) {
+      Object.assign(failureFields, { errorCode: failure.code });
+    }
     const page = session.pages.get(session.currentId);
     if (!restartWorker && !challenges.length && page && !page.isClosed()) {
       const evidence = await Promise.race([

@@ -737,7 +737,11 @@ export function configuredProviderChain({
   const notes: string[] = [];
   const chain: UntrustedValue[] = [];
   if (config.default) {
-    chain.push(expandProviderChoice(config.default, { home, env, config }));
+    const expanded = expandProviderChoice(config.default, { home, env, config });
+    // Defaults stay strict even when fallbacks turn the selection into an
+    // array. Validation is side-effect free; session creation stays deferred.
+    resolveBrowserProvider(expanded, { env });
+    chain.push(expanded);
   }
   for (const ref of config.fallbacks || []) {
     try {

@@ -9,6 +9,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
 import { fromPath } from "rookie-cookies";
@@ -5206,5 +5207,84 @@ test("provider chain: failed guard setup disconnects the candidate and tries the
     for (const socket of sockets) socket.terminate();
     await new Promise<void>((resolve) => proxy.close(() => resolve()));
     await cdp.close();
+  }
+});
+
+test("provider chain: exhaustion retains expansion and resolution skip diagnostics", opts, async () => {
+  const home = tempHome();
+  const missing = path.join(home, "missing-chromium");
+  for (const provider of [
+    [{ provider: "missing-review-provider" }, { executablePath: missing }, { cdpUrl: "ws://127.0.0.1:1/dead" }],
+    [{ provider: "missing-review-provider" }, { executablePath: missing }],
+  ]) {
+    const bw = new BetterWright({ home, headless: true, provider });
+    try {
+      const result = await bw.run("return 1");
+      assert.equal(result.ok, false);
+      const diagnostics = [result.error, ...result.warnings].join("\n");
+      assert.ok(diagnostics.includes("missing-review-provider"));
+      assert.ok(diagnostics.includes(missing));
+      if (provider.length === 3) assert.ok(diagnostics.includes("127.0.0.1:1"));
+    } finally {
+      await bw.close();
+    }
+  }
+  saveDefaultBrowser({ cdpUrl: "ws://127.0.0.1:1/default" }, home);
+  saveBrowserFallbacks([{ executablePath: missing }], home);
+  const configured = new BetterWright({ home, headless: true });
+  try {
+    const result = await configured.run("return 1");
+    assert.equal(result.ok, false);
+    assert.match(result.error, /127\.0\.0\.1:1/);
+    assert.ok(result.warnings.some((warning) => warning.includes(missing)));
+  } finally {
+    await configured.close();
+    removeBrowserHome(home);
+  }
+});
+
+test("provider chain: a failed release reports the session instead of starting another browser", opts, () => {
+  const home = tempHome();
+  const preload = path.join(home, "provider-fixture.mjs");
+  const probe = path.join(home, "release-probe.mjs");
+  const calls = path.join(home, "calls.jsonl");
+  const clientUrl = new URL("../../dist/src/client.js", import.meta.url).href;
+  // A trusted preload replaces only the worker's provider REST transport.
+  // Every request is answered locally; there are no cloud sessions or keys.
+  fs.writeFileSync(preload, `
+    import fs from "node:fs";
+    globalThis.fetch = async (url, init) => {
+      if (!String(url).startsWith("https://api.onkernel.com/browsers")) throw new Error("Unexpected fixture request");
+      fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({method:init.method}) + "\\n");
+      if (init.method === "POST") return Response.json({session_id:"fixture-session", cdp_ws_url:process.env.BW_TEST_CDP_URL});
+      return Response.json({message:"Stop failed; SYNTHETIC_API_KEY"}, {status:503});
+    };
+  `);
+  fs.writeFileSync(probe, `
+    import { BetterWright } from ${JSON.stringify(clientUrl)};
+    const bw = new BetterWright({home:${JSON.stringify(home)}, headless:true, adBlock:false,
+      provider:[{provider:"kernel",apiKey:"SYNTHETIC_API_KEY"},{provider:"managed"}]});
+    try { console.log(JSON.stringify(await bw.run("return 42"))); }
+    finally { await bw.close(); }
+  `);
+  try {
+    for (const endpoint of ["ws://127.0.0.1:1/dead", "not-a-url"]) {
+      fs.writeFileSync(calls, "");
+      const child = spawnSync(process.execPath, [probe], {
+        env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, BW_TEST_CDP_URL: endpoint },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+      assert.equal(child.status, 0, child.stderr);
+      const result = JSON.parse(child.stdout.trim());
+      assert.equal(result.ok, false, "an unconfirmed release must not fall through to managed");
+      assert.equal(result.errorCode, "BW_PROVIDER_CLEANUP_FAILED");
+      assert.match(result.error, /kernel session "fixture-session"/);
+      assert.match(result.error, /billing/);
+      assert.ok(!JSON.stringify(result).includes("SYNTHETIC_API_KEY"));
+      assert.deepEqual(fs.readFileSync(calls, "utf8").trim().split("\n").map((line) => JSON.parse(line).method), ["POST", "DELETE", "DELETE"]);
+    }
+  } finally {
+    removeBrowserHome(home);
   }
 });

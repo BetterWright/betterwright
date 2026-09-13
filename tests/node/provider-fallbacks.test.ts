@@ -15,13 +15,15 @@ import {
 } from "../../dist/src/browser-config.js";
 import {
   cookieSyncConsentTarget,
+  ProviderCleanupError,
   providerPlanLabel,
   providerResolutionPlans,
+  releaseFailedProviderSession,
   resolveBrowserProvider,
   runProviderChain,
 } from "../../dist/src/browser-providers.js";
 import { daemonConfigSignature, normalizeDaemonConfig } from "../../dist/src/daemon.js";
-import { isCallable } from "../../dist/src/untrusted-value.js";
+import { isCallable, untrustedField } from "../../dist/src/untrusted-value.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
 function writeConfig(home, config) {
@@ -240,6 +242,68 @@ test("a malformed mint response releases the billed session before failing", asy
     "POST https://api.onkernel.com/browsers",
     "DELETE https://api.onkernel.com/browsers/sess-1",
   ]);
+});
+
+test("failed-session cleanup retries a transient release before allowing fallback", async () => {
+  const calls = [];
+  const plan = { provider: "kernel", sessionId: "retry-session", end: async (options) => {
+    calls.push(options.timeoutMs);
+    if (calls.length === 1) throw new Error("transient failure");
+  } };
+  const launched = await runProviderChain([plan, { provider: "managed" }], async (candidate) => {
+    if (candidate === plan) {
+      await releaseFailedProviderSession(plan);
+      throw new Error("connect failed, session released");
+    }
+    return "fallback";
+  });
+  assert.equal(launched.result, "fallback");
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((timeout) => timeout > 0 && timeout <= 2_000));
+});
+
+test("unconfirmed release stops the chain and identifies the potentially billed session", async () => {
+  let releases = 0;
+  let attempts = 0;
+  const plan = { provider: "kernel", sessionId: "unreleased-session", end: async () => {
+    releases++;
+    throw new Error("provider echoed SYNTHETIC_SECRET");
+  } };
+  await assert.rejects(
+    runProviderChain([plan, { provider: "managed" }], async () => {
+      attempts++;
+      await releaseFailedProviderSession(plan);
+    }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.ok(error instanceof ProviderCleanupError);
+      assert.equal(untrustedField(error, "code"), "BW_PROVIDER_CLEANUP_FAILED");
+      assert.match(error.message, /kernel session "unreleased-session"/);
+      assert.match(error.message, /billing/);
+      assert.doesNotMatch(error.message, /SYNTHETIC_SECRET/);
+      return true;
+    },
+  );
+  assert.equal(releases, 2);
+  assert.equal(attempts, 1, "cleanup failure must not launch a later candidate");
+});
+
+test("a malformed minted endpoint cannot hide an unsuccessful release", async () => {
+  let releases = 0;
+  const { plan } = resolveBrowserProvider({ provider: "kernel", apiKey: "synthetic" }, { env: {} });
+  await assert.rejects(
+    plan.create({ fetchJson: async (_url, request) => {
+      if (request.method === "POST") return { session_id: "malformed-session", cdp_ws_url: "" };
+      releases++;
+      throw new Error("stop API unavailable");
+    } }),
+    (error) => {
+      assert.ok(error instanceof ProviderCleanupError);
+      assert.equal(untrustedField(error, "sessionId"), "malformed-session");
+      return true;
+    },
+  );
+  assert.equal(releases, 2);
 });
 
 test("cookieSyncConsentTarget names every remote candidate in a chain", () => {
@@ -469,6 +533,23 @@ test("a broken configured default still throws, not degrades to a fallback", () 
     () => configuredProviderChain({ home, env: {} }),
     /Unknown browser provider/,
   );
+});
+
+test("configured defaults are strictly validated even with usable fallbacks", () => {
+  const home = makeTempDir("bw-strict-default-");
+  for (const [ref, expected] of [
+    [{ executablePath: "/definitely/missing/bw-default-browser" }, /does not exist/],
+    [{ cdpUrl: "https://browser.example.com" }, /ws:\/\/ or wss:\/\//],
+    [{ provider: "kernel" }, /needs an API key/],
+  ] as const) {
+    saveDefaultBrowser(ref, home);
+    saveBrowserFallbacks([{ provider: "managed" }], home);
+    assert.throws(() => configuredProviderChain({ home, env: {} }), expected);
+  }
+  saveDefaultBrowser({ provider: "kernel", apiKey: "synthetic" }, home);
+  const chain = configuredProviderChain({ home, env: {} });
+  const plans = providerResolutionPlans(resolveBrowserProvider(chain.provider, { env: {} }));
+  assert.ok(isCallable(plans[0].create), "validation must keep session creation deferred");
 });
 
 test("the daemon signature covers every chain candidate", () => {
