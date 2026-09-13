@@ -241,7 +241,7 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
 }
 export function llamaRuntimeEnvironment(platform: string, home = defaultHome()): NodeJS.ProcessEnv {
   if (platform !== "linux") return { ...process.env };
-  return { ...process.env, LD_LIBRARY_PATH: [path.join(localRoot(home), "runtimes", "linux-libraries-1", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "targets", "x86_64-linux", "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
+  return { ...process.env, LD_LIBRARY_PATH: [path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-linuxCuda`, "app"), path.join(localRoot(home), "runtimes", "linux-libraries-1", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "targets", "x86_64-linux", "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
 }
 export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
   if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home);
@@ -341,7 +341,8 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
       const executable = findExecutable(staging, platform === "win32" ? "llama-server.exe" : "llama-server");
       if (!executable) throw new Error("The inference runtime archive contains no llama-server.");
       if (platform !== "win32") fs.chmodSync(executable, 0o755);
-      await runLocalProbe(executable, ["--version"], env);
+      const probeEnv = platform === "linux" ? { ...env, LD_LIBRARY_PATH: [path.dirname(executable), env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) } : env;
+      await runLocalProbe(executable, ["--version"], probeEnv);
       fs.writeFileSync(path.join(staging, ".ready"), LLAMA_VERSION, { mode: 0o600 });
     });
   }
