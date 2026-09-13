@@ -45,6 +45,7 @@ export const VALUE_FLAGS = new Set([
   // `run --browser steel script.js` must read script.js as the file, not
   // steel: the browser choice and its key are values, never positionals.
   "--browser",
+  "--browser-fallback",
   "--browser-key",
   "--connect",
   "--disconnect",

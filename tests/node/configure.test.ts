@@ -7,6 +7,8 @@
 // socket or writes outside the temp directory.
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import { loadBrowserConfig } from "../../dist/src/browser-config.js";
@@ -26,6 +28,25 @@ function recorder() {
     stderr: () => err.join("\n"),
   };
 }
+
+test("configure reports sanitized malformed refs in show and test output", async () => {
+  const home = makeTempDir("bw-configure-invalid-");
+  const secret = "SYNTHETIC_CONFIG_SECRET";
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ browser: {
+    default: { provider: "kernel", cdpUrl: `wss://host?token=${secret}` },
+    fallbacks: [{ provider: "managed", executablePath: secret }],
+  } }));
+  for (const argv of [["--show"], ["--show", "--json"], ["--test"]]) {
+    const io = recorder();
+    const code = await runConfigure(argv, { home, env: {}, ...io });
+    assert.equal(code, argv.includes("--test") ? 1 : 0);
+    const output = `${io.stdout()}\n${io.stderr()}`;
+    assert.match(output, /browser\.default/);
+    assert.match(output, /browser\.fallbacks\[0\]/);
+    assert.ok(!output.includes(secret));
+    assert.doesNotMatch(output, /No default is configured/);
+  }
+});
 
 // Answers the menu in order; `confirm` is derived from `ask` by runConfigure,
 // so a script is just the strings a person would type.

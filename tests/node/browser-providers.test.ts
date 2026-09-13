@@ -98,6 +98,18 @@ test("cdpUrl must be a ws(s) endpoint; diagnostics mask credentials", () => {
   );
 });
 
+test("malformed CDP diagnostics never echo credentials", () => {
+  const secret = "synthetic-provider-secret";
+  for (const endpoint of [
+    `wss://bad host/connect?apiKey=${secret}`,
+    `wss://user:${secret}@host:invalid/connect`,
+    `not-a-url?token=${encodeURIComponent(secret)}`,
+  ]) {
+    assert.doesNotMatch(describeCdpUrl(endpoint), /synthetic-provider-secret/);
+    assert.match(describeCdpUrl(endpoint), /invalid/i);
+  }
+});
+
 test("plaintext ws:// is loopback-only; a remote endpoint must use wss://", () => {
   for (const host of ["ws://127.0.0.1:9222/devtools/x", "ws://localhost:9222", "ws://[::1]:9222"]) {
     assert.equal(resolveBrowserProvider({ cdpUrl: host }).plan.kind, "remote");

@@ -574,3 +574,71 @@ test("a daemon on an over-long home actually accepts connections", { skip: proce
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("the spawned daemon's argv carries no credential material", async () => {
+  // A provider key in the daemon's --config argv is readable by any same-user
+  // process (procfs cmdline / ps). The config must ride stdin instead.
+  if (process.platform === "win32") return;
+  const { spawnSync } = await import("node:child_process");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { daemonInfoPath } = await import("../../dist/src/daemon.js");
+  const root = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../..",
+  );
+  const home = makeTempDir("bw-daemon-argv-");
+  const marker = `sk-argv-${Date.now()}`;
+  const outcome = await connectSessionDaemon({
+    home,
+    cliPath: path.join(root, "dist/bin/betterwright.js"),
+    config: { browser: { provider: { provider: "steel", apiKey: marker } } },
+  });
+  assert.equal(outcome.ok, true, `daemon did not start: ${outcome.reason}`);
+  try {
+    const info = JSON.parse(fs.readFileSync(daemonInfoPath(home, null), "utf8"));
+    let argvText = "";
+    if (fs.existsSync(`/proc/${info.pid}/cmdline`)) {
+      argvText = fs
+        .readFileSync(`/proc/${info.pid}/cmdline`, "utf8")
+        .replace(/\0/g, " ");
+    } else {
+      argvText = spawnSync("ps", ["-o", "args=", "-p", String(info.pid)], {
+        encoding: "utf8",
+      }).stdout;
+    }
+    assert.ok(!argvText.includes(marker), `daemon argv leaked the key: ${argvText}`);
+    assert.ok(
+      !argvText.includes(Buffer.from(marker).toString("base64url")),
+      "daemon argv leaked the base64 config payload",
+    );
+    assert.ok(!argvText.includes("--config"), `daemon argv still carries --config: ${argvText}`);
+    // The config still arrived: the daemon signed with the provider it was given.
+    assert.match(info.configSig, new RegExp(marker));
+  } finally {
+    await outcome.channel.request({ op: "shutdown" }).catch(() => {});
+    outcome.channel.end();
+  }
+});
+
+test("daemon stdin config survives multi-byte characters split across chunks", async () => {
+  const { Readable } = await import("node:stream");
+  const { daemonConfigFromStdin } = await import("../../dist/src/daemon.js");
+  // 'é' and '日' as raw bytes, sliced mid-sequence — per-chunk string
+  // concatenation would corrupt them; setEncoding must not.
+  const payload = Buffer.from(
+    JSON.stringify({ profile: "café-日本語", browser: { provider: null } }),
+    "utf8",
+  );
+  // Cut inside é (bytes 15-16) and inside 日 (bytes 18-20): per-chunk
+  // stringification would corrupt both into replacement characters.
+  const pieces = [payload.subarray(0, 16), payload.subarray(16, 19), payload.subarray(19)];
+  assert.equal(payload[15], 0xc3, "the cut at 16 must land inside é's sequence");
+  assert.equal(payload[18], 0xe6, "the cut at 19 must land inside 日's sequence");
+  const config = await daemonConfigFromStdin(Readable.from(pieces));
+  assert.equal(config.profile, "café-日本語");
+  // Empty stdin means defaults, not an error.
+  assert.deepEqual(await daemonConfigFromStdin(Readable.from([])), {});
+  // And malformed JSON falls back to defaults too.
+  assert.deepEqual(await daemonConfigFromStdin(Readable.from([Buffer.from("{oops")])), {});
+});

@@ -48,6 +48,10 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { adBlockFromFlags } from "../src/ad-block-config.js";
 import { formatAgentUsage } from "../src/agent-usage.js";
+import {
+  configuredProviderChain,
+  expandProviderChoice,
+} from "../src/browser-config.js";
 import { chromiumNeedsSoftwareGpu } from "../src/browser-runtime.js";
 import { configuredBrowserBackend } from "../src/chromium-fork.js";
 import {
@@ -293,19 +297,19 @@ function cliProfile(): string | null {
 // --upstream-proxy chains an egress proxy through the policy guard (the IP
 // layer); --geoip aligns locale and timezone with the egress IP unless
 // --locale/--timezone pin them explicitly.
-function browserOptionsFromFlags(flags) {
+function browserOptionsFromFlags(flags, argv = process.argv) {
   const options: any = {
     adBlock: adBlockFromFlags(flags),
     launchIdentity: !flags.has("--no-launch-identity"),
-    upstreamProxy: flagValue(process.argv, "--upstream-proxy") || undefined,
+    upstreamProxy: flagValue(argv, "--upstream-proxy") || undefined,
     geoip: flags.has("--geoip"),
-    locale: flagValue(process.argv, "--locale") || undefined,
-    timezone: flagValue(process.argv, "--timezone") || undefined,
+    locale: flagValue(argv, "--locale") || undefined,
+    timezone: flagValue(argv, "--timezone") || undefined,
     headedInvisible: flags.has("--headed-invisible"),
-    platform: flagValue(process.argv, "--platform") || undefined,
+    platform: flagValue(argv, "--platform") || undefined,
     stealthRuntimeFix: flags.has("--stealth") || undefined,
   };
-  const provider = providerFromFlags(flags);
+  const provider = providerFromFlags(flags, argv);
   if (provider) options.provider = provider;
   return options;
 }
@@ -321,16 +325,16 @@ type CliCloudProviderChoice = {
   sessionOptions?: { sessionId: string };
 };
 
-function providerFromFlags(_flags) {
-  const named = flagValue(process.argv, "--browser");
+function providerFromFlags(_flags, argv = process.argv) {
+  const named = flagValue(argv, "--browser");
   if (named !== undefined && named !== null) {
     const value = String(named).trim();
     if (!value) return undefined;
     if (/^wss?:\/\//i.test(value)) return { cdpUrl: value };
-    const key = flagValue(process.argv, "--browser-key");
+    const key = flagValue(argv, "--browser-key");
     const provider: CliCloudProviderChoice = { provider: value };
     if (key) provider.apiKey = String(key);
-    const sessionId = flagValue(process.argv, "--session-id");
+    const sessionId = flagValue(argv, "--session-id");
     if (sessionId) provider.sessionOptions = { sessionId: String(sessionId) };
     return provider;
   }
@@ -539,7 +543,34 @@ async function readSnippet(arg) {
 // in-process paths use. The daemon builds its NetworkPolicy/BetterWright from
 // this object AND derives the compatibility signature from it, so flags and
 // signature can never disagree.
-function daemonConfigFromFlags(flags) {
+export function daemonConfigFromFlags(
+  flags,
+  { argv = process.argv, home = defaultDaemonHome(), env = process.env }: any = {},
+) {
+  const browser = browserOptionsFromFlags(flags, argv);
+  if (browser.provider === undefined) {
+    // The daemon's BetterWright resolves this same ladder at construction —
+    // env shorthand, then the persisted default and its fallbacks. Baking the
+    // resolution into the config keeps the signature honest: a changed
+    // configured chain must not silently reuse a daemon built on the old one.
+    const cdpEnv = String(env.BETTERWRIGHT_CDP_URL || "").trim();
+    if (cdpEnv) {
+      browser.provider = { cdpUrl: cdpEnv };
+    } else {
+      const chain = configuredProviderChain({ home, env });
+      browser.provider = chain.provider;
+      // The daemon supplies provider as an explicit option, so its
+      // BetterWright never recomputes these notes — carry the skipped-entry
+      // lines through so daemon and in-process envelopes match.
+      if (chain.notes.length) browser.providerChainNotes = chain.notes;
+    }
+  } else {
+    // Expand the flag's provider against saved accounts so the resolved
+    // credential participates in the signature — a reconnected account must
+    // not reuse a daemon authenticated with the old key. The daemon's client
+    // expands identically at construction, so flags and signature agree.
+    browser.provider = expandProviderChoice(browser.provider, { home, env });
+  }
   return {
     headless: !flags.has("--headed"),
     // Selects which daemon to talk to (one per profile per home), not merely
@@ -548,10 +579,10 @@ function daemonConfigFromFlags(flags) {
     policy: {
       allowLoopback: !flags.has("--block-loopback"),
       allowPrivateNetwork: !flags.has("--block-private-network"),
-      allowHosts: collectValues(process.argv, "--allow-host"),
-      blockHosts: collectValues(process.argv, "--block-host"),
+      allowHosts: collectValues(argv, "--allow-host"),
+      blockHosts: collectValues(argv, "--block-host"),
     },
-    browser: browserOptionsFromFlags(flags),
+    browser,
   };
 }
 
@@ -2327,7 +2358,7 @@ export async function runCli() {
     }
     case "__daemon": {
       const { runSessionDaemon } = await import("../src/daemon.js");
-      return runSessionDaemon(process.argv);
+      return runSessionDaemon();
     }
     default:
       console.error(`Unknown command "${command}".\n\n${cliPaint({ stream: process.stderr }).help(MAIN_USAGE)}`);

@@ -56,7 +56,10 @@ export class BetterWright {
   credentialCapture: boolean;
   browserFlavor: "chromium-fork";
   /** The configured provider, or null for the managed BetterChromium fork. */
-  provider: import("./public.js").BrowserProviderOptions | null;
+  provider:
+    | import("./public.js").BrowserProviderOptions
+    | import("./public.js").BrowserProviderOptions[]
+    | null;
   /** Resolved headed/headless choice (`"auto"` has already been decided). */
   headless: boolean;
   /** Minimum gap between public-search navigations, when allowed. */

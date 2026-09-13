@@ -11,8 +11,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadCodexAuth, loadGrokAuth } from "./auth.js";
-import { configuredDefaultProvider } from "./browser-config.js";
-import { browserProviderInfo, resolveBrowserProvider } from "./browser-providers.js";
+import { configuredDefaultProvider, configuredProviderChain } from "./browser-config.js";
+import {
+  browserProviderInfo,
+  providerPlanLabel,
+  providerResolutionPlans,
+  resolveBrowserProvider,
+} from "./browser-providers.js";
 import { chromiumNeedsSoftwareGpu } from "./browser-runtime.js";
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
@@ -81,14 +86,19 @@ export async function doctorReport() {
   const browser = chromiumForkError ? "unavailable" : browserSelection.browser;
   let provider = null;
   let providerError = null;
+  let providerChain = null;
+  let providerNotes = null;
+  // Tri-state: does any launch candidate resolve to a browser that can start?
+  // null while unsettled — the env-shorthand path falls back to the default's
+  // own check below.
+  let providerReady = null;
+  const envShorthand = String(process.env.BETTERWRIGHT_CDP_URL || "").trim();
   try {
     // The same ladder a launch walks: the env shorthand (which
     // resolveBrowserProvider reads itself), then the default persisted by
     // `betterwright configure`. A configured default whose key is missing
     // throws here and is reported as the provider problem it is.
-    const configured = String(process.env.BETTERWRIGHT_CDP_URL || "").trim()
-      ? undefined
-      : configuredDefaultProvider();
+    const configured = envShorthand ? undefined : configuredDefaultProvider();
     const resolved = resolveBrowserProvider(configured ?? undefined);
     if (resolved?.plan) {
       const plan = resolved.plan;
@@ -104,10 +114,51 @@ export async function doctorReport() {
   } catch (error) {
     providerError = error instanceof Error ? error.message : String(error);
   }
+  if (!envShorthand) {
+    // The fallbacks sit beneath the default: report the whole chain so a
+    // dead link (or a skipped one) is visible before a launch finds it.
+    try {
+      const chain = configuredProviderChain();
+      const resolution = resolveBrowserProvider(chain.provider ?? undefined);
+      const plans = providerResolutionPlans(resolution);
+      if (plans.length > 1) {
+        providerChain = plans.map((entry) => providerPlanLabel(entry));
+      }
+      // Config notes cover refs skipped at expansion; resolution notes cover
+      // candidates that expanded but no longer validate (a binary removed
+      // since configure ran).
+      const notes = [...chain.notes, ...(resolution?.notes || [])];
+      if (notes.length) providerNotes = notes;
+      // Readiness follows the whole chain: a launch succeeds when ANY
+      // candidate can start, so a working remote fallback still reports
+      // ready with the managed fork missing. An empty chain is the implicit
+      // managed candidate; a resolved remote/local plan is launchable on its
+      // face (key present, binary found, endpoint parseable).
+      const effective = plans.length ? plans : [{ kind: "managed" }];
+      providerReady = effective.some((plan) =>
+        plan.kind === "managed"
+          ? browser === "chromium-fork" && !chromiumForkError
+          : true,
+      );
+    } catch (error) {
+      providerError =
+        providerError ||
+        (error instanceof Error ? error.message : String(error));
+      providerReady = false;
+    }
+  }
+  // Resolved once so the report can expose it: "some launch candidate can
+  // start" — the piece of `ready` that is about the provider chain rather
+  // than the runtime (worker, pinned playwright).
+  const providerUsable =
+    providerReady ??
+    (!provider || provider.kind === "managed"
+      ? browser === "chromium-fork" && !chromiumForkError
+      : !providerError);
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (provider ? !providerError : browser === "chromium-fork" && !chromiumForkError);
+    providerUsable;
   return {
     node: process.execPath,
     runtime: runtimeLabel(),
@@ -124,6 +175,9 @@ export async function doctorReport() {
     browser_selection_reason: browserSelection.selectionReason,
     provider,
     provider_error: providerError,
+    provider_chain: providerChain,
+    provider_notes: providerNotes,
+    provider_ready: providerUsable,
     stealth_driver: stealth,
     stealth_available: Boolean(stealth),
     browser,
@@ -301,7 +355,9 @@ export function doctorChecks(
       provider.kind === "remote" ? "warn" : "ok",
       provider.kind === "remote"
         ? `${provider.name || provider.provider} (remote CDP${provider.endpoint ? ` — ${provider.endpoint}` : ""}) — outside the guard proxy`
-        : `custom local Chromium — ${provider.executablePath}`,
+        : provider.kind === "managed"
+          ? "the managed BetterChromium fork"
+          : `custom local Chromium — ${provider.executablePath}`,
       provider.kind === "remote"
         ? "Remote page traffic cannot be network-policy enforced; see docs/browser-providers.md."
         : null,
@@ -309,7 +365,24 @@ export function doctorChecks(
   } else if (report.provider_error) {
     add("Browser", "Provider", "fail", report.provider_error);
   }
+  // The chain also exists without a configured default (implicit managed
+  // first), so report it independently of the Provider row.
+  if (report.provider_chain?.length > 1) {
+    add(
+      "Browser",
+      "Fallbacks",
+      "ok",
+      report.provider_chain.slice(1).join(" → "),
+      null,
+    );
+  }
+  for (const note of report.provider_notes || []) {
+    add("Browser", "Fallbacks", "warn", note, null);
+  }
 
+  // When a non-managed candidate can still launch, a missing fork is a
+  // warning, not a failure: doctor's exit code must agree with `ready`.
+  const forkOptional = report.provider_ready === true;
   if (report.chromium_fork) {
     add(
       "Browser",
@@ -327,25 +400,31 @@ export function doctorChecks(
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       report.chromium_fork_error,
-      "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
     );
   } else if (report.browser_selection_reason === "unsupported-platform") {
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       "no artifact is published for this platform",
-      "Use the provider option to bring your own or a cloud browser — docs/browser-providers.md.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Use the provider option to bring your own or a cloud browser — docs/browser-providers.md.",
     );
   } else if (!report.provider) {
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       "not installed",
-      "Run `betterwright setup`.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Run `betterwright setup`.",
     );
   }
   add("Browser", "In use", report.ready ? "ok" : "fail",

@@ -70,7 +70,10 @@ export function describeCdpUrl(value) {
     }
     return url.href;
   } catch {
-    return String(value || "");
+    // A malformed endpoint can still contain a credential. In particular,
+    // skipped fallbacks never reach the worker's secret registrar, so there
+    // is no later redaction pass that can safely recover the original URL.
+    return "[invalid CDP URL]";
   }
 }
 
@@ -128,10 +131,10 @@ function isFetchJsonHook(value: UntrustedValue): value is FetchJsonHook {
 export const PROVIDER_HTTP_TIMEOUT_MS = 30_000;
 
 /** The one-line reason a provider API call never produced a response. */
-function describeFetchFailure(method, url, error) {
+function describeFetchFailure(method, url, error, timeoutMs = PROVIDER_HTTP_TIMEOUT_MS) {
   const name = untrustedField(error, "name");
   if (name === "TimeoutError" || name === "AbortError") {
-    return `Cloud browser API ${method} ${url} timed out after ${PROVIDER_HTTP_TIMEOUT_MS / 1000}s.`;
+    return `Cloud browser API ${method} ${url} timed out after ${timeoutMs / 1000}s.`;
   }
   // undici reports network failures as a bare "fetch failed" TypeError and
   // keeps the useful part (ENOTFOUND, ECONNREFUSED, a TLS error) in `cause`.
@@ -144,7 +147,7 @@ function describeFetchFailure(method, url, error) {
   return `Cloud browser API ${method} ${url} failed: ${detail || String(error)}`;
 }
 
-async function httpJson(fetchJson, method, url, { headers, body }) {
+async function httpJson(fetchJson, method, url, { headers, body, timeoutMs = PROVIDER_HTTP_TIMEOUT_MS }) {
   if (isFetchJsonHook(fetchJson)) {
     const request: ProviderHttpRequest = { method, headers };
     if (body !== undefined) request.body = body;
@@ -156,7 +159,7 @@ async function httpJson(fetchJson, method, url, { headers, body }) {
   const init: RequestInit = {
     method,
     headers: requestHeaders,
-    signal: AbortSignal.timeout(PROVIDER_HTTP_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   };
   if (body !== undefined) init.body = JSON.stringify(body);
   let response: Response;
@@ -165,7 +168,7 @@ async function httpJson(fetchJson, method, url, { headers, body }) {
     response = await fetch(url, init);
     text = await response.text();
   } catch (error) {
-    throw new Error(describeFetchFailure(method, url, error));
+    throw new Error(describeFetchFailure(method, url, error, timeoutMs));
   }
   let data = null;
   try {
@@ -474,6 +477,16 @@ export function browserProviderInfo(name) {
  * A resolution is either synchronous (`plan`, already a CDP endpoint or local
  * binary) or session-minting (`create`, which makes the REST call at launch
  * time so a failed construction never leaves a billed session behind).
+ *
+ * `provider` may also be an array, which resolves to `plans`: an ordered
+ * fallback chain the worker walks at launch, so a provider that is out of
+ * quota, down, or misconfigured falls through to the next candidate instead
+ * of failing the launch. An entry that cannot resolve at all (a missing
+ * binary, a bad endpoint scheme, an unknown name) is a candidate that has
+ * already failed — it is dropped with a `notes` line the launch surfaces as
+ * a warning, and the survivors keep their order. Resolution only throws when
+ * no candidate survives: a one-element array rethrows that entry's error
+ * unchanged; a longer array names every entry's failure.
  */
 export function resolveBrowserProvider(provider, { env = process.env } = {}) {
   if (provider == null || provider === false) {
@@ -482,11 +495,55 @@ export function resolveBrowserProvider(provider, { env = process.env } = {}) {
       ? resolveBrowserProvider({ cdpUrl: shorthand }, { env })
       : null;
   }
+  if (Array.isArray(provider)) {
+    if (!provider.length) {
+      throw new TypeError(
+        "provider as an array must name at least one candidate: " +
+          "[{ provider: <name> }, { cdpUrl: <ws-url> }, { executablePath: <path> }].",
+      );
+    }
+    const plans = [];
+    const failures = [];
+    for (const [index, entry] of provider.entries()) {
+      try {
+        plans.push(resolveProviderEntry(entry, env));
+      } catch (error) {
+        failures.push({ index, error });
+      }
+    }
+    if (!plans.length) {
+      if (failures.length === 1) throw failures[0].error;
+      throw new TypeError(
+        "provider array has no usable candidates:\n" +
+          failures
+            .map(
+              ({ index, error }) =>
+                `  provider[${index}]: ${firstLine(error?.message || error)}`,
+            )
+            .join("\n"),
+      );
+    }
+    const resolution: any = plans.length === 1 ? { plan: plans[0] } : { plans };
+    if (failures.length) {
+      resolution.notes = failures.map(
+        ({ index, error }) =>
+          `provider[${index}] skipped: ${firstLine(error?.message || error)}`,
+      );
+    }
+    return resolution;
+  }
+  return { plan: resolveProviderEntry(provider, env) };
+}
+
+// One candidate in a provider selection: a name, an endpoint, or a binary.
+// Unlike resolveBrowserProvider this never consults BETTERWRIGHT_CDP_URL —
+// the shorthand only applies to a whole absent choice.
+function resolveProviderEntry(provider, env) {
   if (isString(provider)) provider = { provider };
   if (!isRecord(provider)) {
     throw new TypeError(
-      "provider must be an object: { executablePath }, { cdpUrl }, or " +
-        "{ provider: <name>, apiKey? }.",
+      "provider must be an object or an ordered array of objects: " +
+        "{ executablePath }, { cdpUrl }, or { provider: <name>, apiKey? }.",
     );
   }
   const executablePath = String(untrustedField(provider, "executablePath") || "").trim();
@@ -499,34 +556,141 @@ export function resolveBrowserProvider(provider, { env = process.env } = {}) {
         "cdpUrl (a CDP WebSocket endpoint), or provider (a cloud browser service).",
     );
   }
-  if (executablePath) return { plan: resolveLocalProvider(executablePath) };
-  if (cdpUrl) return { plan: resolveExplicitCdpProvider(cdpUrl, provider) };
+  if (executablePath) return resolveLocalProvider(executablePath);
+  if (cdpUrl) return resolveExplicitCdpProvider(cdpUrl, provider);
+  if (name === "managed") return { kind: "managed", provider: "managed", warnings: [] };
   const descriptor = PROVIDERS[name];
   if (!descriptor) {
     throw new TypeError(
       `Unknown browser provider ${JSON.stringify(name)}. Supported: ` +
-        `${BROWSER_PROVIDER_NAMES.join(", ")} — or pass { cdpUrl } for any ` +
+        `${BROWSER_PROVIDER_NAMES.join(", ")}, managed — or pass { cdpUrl } for any ` +
         "CDP endpoint (docs: docs/browser-providers.md).",
     );
   }
-  return { plan: resolveNamedProvider(descriptor, name, provider, env) };
+  return resolveNamedProvider(descriptor, name, provider, env);
+}
+
+/**
+ * The ordered candidate list a provider resolution describes: one plan, or a
+ * fallback chain. A null resolution (the implicit managed fork) lists nothing.
+ */
+export function providerResolutionPlans(resolution) {
+  if (!resolution) return [];
+  if (Array.isArray(resolution.plans)) return resolution.plans;
+  return resolution.plan ? [resolution.plan] : [];
+}
+
+/**
+ * Short name for a candidate in error and warning lines: the provider key for
+ * named services, the masked endpoint for raw CDP, a marker for local and
+ * managed browsers. Deliberately not the full connect URL — that can carry a
+ * credential.
+ */
+export function providerPlanLabel(plan) {
+  if (!plan || plan.kind === "managed") return "managed BetterChromium fork";
+  if (plan.kind === "local") return `local Chromium at ${plan.executablePath}`;
+  if (plan.provider === "cdp") return plan.endpointLabel || "CDP endpoint";
+  return plan.provider || "browser provider";
+}
+
+/**
+ * Walk an ordered provider chain until one candidate launches. `attempt`
+ * performs the whole launch for one candidate (session mint included) and
+ * returns whatever the caller needs from the winner.
+ *
+ * Ordinary launch failures advance to the next candidate — provider errors are not a
+ * typed taxonomy (REST statuses, WebSocket closes, create-session rejections
+ * all surface as plain errors), so classifying "quota" vs "down" would miss
+ * the cases a chain exists for. With one candidate the original error is
+ * rethrown untouched so single-provider messages keep their shape; with a
+ * real chain the error names every candidate tried. An unconfirmed session
+ * release stops the chain so another billed session cannot hide the first.
+ */
+export async function runProviderChain(candidates, attempt) {
+  const failures = [];
+  for (const candidate of candidates) {
+    try {
+      const result = await attempt(candidate);
+      return { result, failures };
+    } catch (error) {
+      if (error instanceof ProviderCleanupError) throw error;
+      failures.push({ label: providerPlanLabel(candidate), error });
+    }
+  }
+  if (failures.length === 1) throw failures[0].error;
+  const detail = failures
+    .map(
+      (failure) =>
+        `  ${failure.label}: ${firstLine(failure.error?.message || failure.error)}`,
+    )
+    .join("\n");
+  throw new Error(
+    `Every browser provider in the chain failed:\n${detail}`,
+  );
+}
+
+function firstLine(value) {
+  return String(value || "unknown error").split("\n", 1)[0].trim() || "unknown error";
+}
+
+// Bound cleanup separately from session creation/connection: each stop
+// request (including its response body) gets two seconds and one retry.
+const PROVIDER_CLEANUP_TIMEOUT_MS = 2_000;
+const PROVIDER_CLEANUP_ATTEMPTS = 2;
+
+export class ProviderCleanupError extends Error {
+  readonly code = "BW_PROVIDER_CLEANUP_FAILED";
+
+  constructor(readonly provider: string, readonly sessionId: string) {
+    super(
+      `Could not confirm release of ${provider} session ${JSON.stringify(sessionId)} ` +
+        `after ${PROVIDER_CLEANUP_ATTEMPTS} attempts; it may still be running and billing. ` +
+        "Fallback stopped. End the session in the provider console before retrying.",
+    );
+    this.name = "ProviderCleanupError";
+  }
+}
+
+/** Release a failed candidate, or stop the chain with an actionable error. */
+export async function releaseFailedProviderSession(plan) {
+  if (!plan?.end) return;
+  for (let attempt = 0; attempt < PROVIDER_CLEANUP_ATTEMPTS; attempt++) {
+    try {
+      await plan.end({ timeoutMs: PROVIDER_CLEANUP_TIMEOUT_MS });
+      return;
+    } catch {
+      // Never copy a provider's raw error response into diagnostics: it can
+      // echo credentials. The final error names the session to stop manually.
+    }
+  }
+  throw new ProviderCleanupError(plan.provider, plan.sessionId);
 }
 
 /**
  * Stable identity a Cookie Sync consent must name. Resolving is deliberately
  * side-effect free here: deferred providers are not created until the worker
  * launches, after both the client and worker have checked this value.
+ *
+ * A fallback chain can land on any of its remote candidates, so consent
+ * covers every remote target in the chain, joined with "+"; a chain that is
+ * all-local needs none.
  */
 export function cookieSyncConsentTarget(provider, { env = process.env } = {}) {
   const resolution = resolveBrowserProvider(provider, { env });
-  const plan = resolution?.plan;
-  if (plan?.kind !== "remote") return null;
-  if (plan.provider !== "cdp") return `provider:${plan.provider}`;
-  try {
-    return `cdp:${new URL(plan.cdpUrl).host.toLowerCase()}`;
-  } catch {
-    throw new TypeError("Cookie Sync could not identify the CDP endpoint.");
+  const targets = [];
+  for (const plan of providerResolutionPlans(resolution)) {
+    if (plan?.kind !== "remote") continue;
+    if (plan.provider !== "cdp") {
+      targets.push(`provider:${plan.provider}`);
+      continue;
+    }
+    try {
+      targets.push(`cdp:${new URL(plan.cdpUrl).host.toLowerCase()}`);
+    } catch {
+      throw new TypeError("Cookie Sync could not identify the CDP endpoint.");
+    }
   }
+  return targets.length ? [...new Set(targets)].join("+") : null;
 }
 
 function resolveLocalProvider(executablePath) {
@@ -682,7 +846,9 @@ async function createNamedSession(descriptor, name, apiKey, sessionOptions, fetc
     headers,
     body,
   });
-  return sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson);
+  return sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson, {
+    releaseOnError: true,
+  });
 }
 
 async function attachNamedSession(descriptor, name, apiKey, sessionId, fetchJson) {
@@ -711,23 +877,43 @@ async function fetchProviderRecord(descriptor, apiKey, sessionId, fetchJson) {
   });
 }
 
-async function sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson) {
+async function sessionPlanFromPayload(
+  descriptor,
+  name,
+  apiKey,
+  data,
+  fetchJson,
+  { releaseOnError = false } = {},
+) {
   const box = providerBoxFromPayload(descriptor, name, apiKey, data);
-  const endpoint = wssUrl(
-    requireStringField(box.cdpUrl, "a CDP WebSocket URL", descriptor.displayName),
-    `the ${name} CDP URL`,
-  );
   const headers = descriptor.headers ? descriptor.headers(apiKey) : {};
+  // Arm release as soon as the minted session id is known — a payload whose
+  // endpoint fails validation below must still stop the billed box before
+  // the error propagates (a provider chain would otherwise advance while
+  // the session keeps running).
   const end =
     descriptor.end && box.id
-      ? async () => {
+      ? async ({ timeoutMs = PROVIDER_HTTP_TIMEOUT_MS } = {}) => {
           const stop = descriptor.end(box.id);
           await httpJson(fetchJson, stop.method, stop.url, {
             headers,
             body: stop.body,
+            timeoutMs,
           });
         }
       : null;
+  let endpoint;
+  try {
+    endpoint = wssUrl(
+      requireStringField(box.cdpUrl, "a CDP WebSocket URL", descriptor.displayName),
+      `the ${name} CDP URL`,
+    );
+  } catch (error) {
+    if (releaseOnError) {
+      await releaseFailedProviderSession({ provider: name, sessionId: box.id, end });
+    }
+    throw error;
+  }
   return {
     kind: "remote",
     provider: name,

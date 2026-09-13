@@ -20,8 +20,12 @@ import type { RecordingStatus } from "../types/recording.js";
 import { compactAutomaticUI, hasReturnedUIDirectory } from "./automatic-ui.js";
 import {
   cookieSyncConsentTarget,
+  ProviderCleanupError,
+  providerResolutionPlans,
   redactProviderSecrets,
+  releaseFailedProviderSession,
   resolveBrowserProvider,
+  runProviderChain,
 } from "./browser-providers.js";
 import {
   assertProfileNotNewer,
@@ -2161,7 +2165,18 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
   // BetterChromium is the only bundled browser; everything else is an
   // explicit provider (a caller-supplied local Chromium binary, or a remote
   // CDP endpoint minted by a cloud-browser service).
-  const providerResolution = resolveBrowserProvider(config.provider);
+  const chainNotes = Array.isArray(config.providerChainNotes)
+    ? config.providerChainNotes.filter((note) => isString(note) && note.trim())
+    : [];
+  let providerResolution;
+  try {
+    providerResolution = resolveBrowserProvider(config.provider);
+  } catch (error) {
+    // Expansion may already have skipped candidates before the worker finds
+    // that none of the survivors validate. Keep both stages' diagnostics.
+    providerWarnings = chainNotes;
+    throw error;
+  }
   const publicSearchPolicy = String(config.publicSearchPolicy || "block")
     .trim()
     .toLowerCase();
@@ -2191,48 +2206,23 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
   }
   launchConfig = { ...config };
   launchPromise = (async () => {
+    // Record skips before launch so exhaustion and fatal cleanup errors also
+    // retain them. Reusing an already-open context keeps its launch warnings.
+    providerWarnings = [
+      ...chainNotes,
+      ...(Array.isArray(providerResolution?.notes)
+        ? providerResolution.notes.filter((note) => isString(note) && note.trim())
+        : []),
+    ];
     mkdirPrivate(launchConfig.artifactsDir);
 
-    // Session-minting providers make their REST call here, at launch, so a
-    // client that is constructed but never starts never bills a session.
-    let providerPlan = providerResolution?.plan || null;
-    const remoteCdp = providerPlan?.kind === "remote";
-    let forkBinary = null;
-    let launchExecutable = null;
-    // GPU-less Linux: the fork must be launched with an explicit SwiftShader
-    // path because a runner with no render device does not always auto-init
-    // the GPU process for WebGL. Detected here so the launch args can bind the
-    // software rasterizer instead of leaving the context null.
-    let softwareGpu = false;
-    if (remoteCdp) {
-      backendSelectionNote = providerPlan.warnings[0];
-    } else if (providerPlan?.kind === "local") {
-      launchExecutable = providerPlan.executablePath;
-      backendSelectionNote = providerPlan.warnings[0];
-    } else {
-      forkBinary = resolveChromiumForkBinary();
-      softwareGpu = chromiumNeedsSoftwareGpu();
-      const browserSelection = selectManagedBrowserBackend({
-        chromiumFork: forkBinary,
-        softwareGpu,
-      });
-      backendSelectionNote = browserSelectionWarning(browserSelection, {
-        softwareGpu,
-      });
-      if (browserSelection.browser !== "chromium-fork") {
-        const reason = browserSelection.selectionReason;
-        throw new Error(
-          (reason === "unsupported-platform"
-            ? "No BetterChromium artifact is published for this host. "
-            : "BetterChromium is required but not installed. Run `betterwright setup`. ") +
-            "To use another browser instead, pass the provider option — " +
-            "{ executablePath } for a local Chromium binary, { cdpUrl } for a " +
-            "CDP endpoint, or { provider: \"browserbase\" | \"browser-use\" | " +
-            "\"kernel\" | … } for a cloud browser (docs/browser-providers.md).",
-        );
-      }
-      launchExecutable = forkBinary;
-    }
+    // An explicit or configured provider may resolve to an ordered chain
+    // (`plans`) instead of a single `plan`: candidates are tried in order and
+    // a launch failure — quota, outage, a dead endpoint — falls through to
+    // the next one. A null resolution is the implicit managed fork, the
+    // single default candidate.
+    const candidates = providerResolutionPlans(providerResolution);
+    if (!candidates.length) candidates.push(null);
 
     mkdirPrivate(launchConfig.runtimeDir);
     profileLock = acquireProfileLock(
@@ -2248,43 +2238,8 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
     mkdirPrivate(browserProfileDir);
     loadCookieRedactionRegistry(browserProfileDir);
     profileWarning = profileLock.warning || "";
-    if (providerPlan?.create) {
-      providerPlan = await providerPlan.create();
-    }
-    redactProviderSecrets(trackSecret, providerPlan);
-    providerWarnings = providerPlan?.warnings || [];
-    if (remoteCdp) endRemoteSession = providerPlan?.end || null;
-    // The guard proxy only bounds locally launched browsers. A remote CDP
-    // browser runs on the provider's side of the WebSocket; its traffic never
-    // touches this listener, so it is not even started (see the warnings).
-    if (!remoteCdp || launchConfig.hostOwnedTarget) {
-      transportProxyPort = await guardProxy.ensure();
-    }
-    if (launchConfig.hostOwnedTarget) {
-      const connection = await rpc("host_connect", { proxyUrl: `socks5://127.0.0.1:${transportProxyPort}` }, null);
-      if (!connection?.cdpUrl) throw new Error("Host target connection failed.");
-      providerPlan = { ...providerPlan, cdpUrl: connection.cdpUrl, headers: connection.headers || {}, warnings: [] };
-      providerWarnings = [];
-      backendSelectionNote = "Host-owned tab: network traffic uses the policy guard; tab lifetime belongs to the host.";
-      redactProviderSecrets(trackSecret, providerPlan);
-    }
 
     const headless = launchConfig.headless !== false;
-    // Upstream egress proxy (the IP layer). Every connection still passes
-    // policy + DNS-rebinding validation here; the upstream only changes which
-    // IP the target observes. Only meaningful for a local launch — a remote
-    // browser's egress belongs to the provider, so chaining one would mislead.
-    let upstream = null;
-    if (launchConfig.upstreamProxy && !remoteCdp) {
-      upstream = parseUpstreamProxy(launchConfig.upstreamProxy);
-      if (!upstream) {
-        throw new Error(
-          "upstreamProxy must be an http:// or socks5:// URL (optional user:pass@).",
-        );
-      }
-    }
-    guardProxy.setUpstream(upstream);
-
     // The fingerprint seed belongs to the managed fork; a caller-supplied
     // binary does not carry the fork's --fingerprint patches, and a remote
     // browser never receives launch args at all. When fingerprintNoise is off
@@ -2294,143 +2249,304 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
     // that is what clears the "masking detected" verdict on consistency
     // checkers that compare rendering against stock hardware.
     const fingerprintNoise = launchConfig.fingerprintNoise !== false;
-    // Page-published WebMCP tools are a browser feature, not a fork feature.
-    // Enable the domain for every local Chromium launch; an attached browser
-    // keeps its own launch flags and gets an actionable error from the helper
-    // when the domain is unavailable.
-    const args = remoteCdp ? [] : [WEBMCP_FEATURE_SWITCH];
-    if (!remoteCdp && forkBinary) {
-      args.push(
-        ...managedForkArgs(
-          fingerprintNoise ? fingerprintSeedForProfile(browserProfileDir) : null,
-          {
-            softwareGpu,
-          },
-        ),
-      );
-    }
 
-    // Coherent launch identity: one story across the Chromium and network
-    // layers. geoip resolves the locale/timezone to match the egress
-    // geography so the JS layer and the network layer agree. The identity is
-    // the host's real platform — no OS is masked as another.
+    // Parsed once for the whole chain: the upstream egress proxy (the IP
+    // layer) and the coherent launch identity depend only on launchConfig,
+    // not on which candidate wins. A remote browser's egress belongs to the
+    // provider, so an upstream only applies to local launches — the parse
+    // happens on the first local attempt.
+    let upstreamReady = false;
+    let upstream = null;
+    // The coherent launch identity is computed lazily on the first local
+    // attempt; remote candidates never read it.
     let identityPlan = null;
-    if (launchConfig.launchIdentity !== false) {
-      const identity = await resolveGeoIdentity({
-        geoip: launchConfig.geoip === true && Boolean(upstream),
-        locale: launchConfig.locale,
-        timezone: launchConfig.timezone,
-        fetchJson: upstream
-          ? async (url) => {
-              const response = await httpGetViaProxy(upstream, url);
-              try {
-                return JSON.parse(response.body);
-              } catch {
-                return null;
-              }
-            }
-          : undefined,
-      });
-      identityPlan = buildLaunchIdentityPlan({
-        locale: identity.locale || "en-US",
-        timezone: identity.timezone || undefined,
-        platform: launchConfig.platform || undefined,
-        headedInvisible: launchConfig.headedInvisible === true,
-      });
-      if (!remoteCdp) args.push(...identityPlan.args);
-    }
+    // The winning candidate's own warnings (remote-egress, billing, local
+    // binary) — captured on success so the envelope names the browser that
+    // actually launched.
+    let winnerWarnings = [];
 
-    if (!remoteCdp && forkBinary && !identityPlan?.identity.timezone) {
-      // A missing timezone switch lets the Linux fork run its legacy native
-      // egress probe, even when geoip or launchIdentity is disabled. An explicit
-      // empty value suppresses that probe without overriding the host timezone.
-      // resolveGeoIdentity above is the only owner of opt-in geography lookups.
-      args.push("--bw-timezone=");
-    }
-
-    // Caller-supplied switches go last, after every argument BetterWright
-    // derives, so a host can tune things the managed list has no opinion on.
-    // Switches that collide with a managed one are dropped rather than
-    // appended: Chromium resolves duplicates last-wins, so appending would
-    // override BetterWright's value instead of losing to it. See
-    // src/chromium-args.ts.
-    // The client already resolved the option and the environment into one
-    // list; re-validating here keeps the IPC boundary from being a way to
-    // smuggle a reserved switch past the client's checks.
-    const mergedArgs = mergeChromiumArgs(
-      args,
-      normalizeChromiumArgs(launchConfig.chromiumArgs, "chromiumArgs"),
-    );
-    // Do not pass Playwright's `proxy` option. For SOCKS it injects
-    // `--host-resolver-rules="MAP * ~NOTFOUND"`, which Chromium paints as a
-    // persistent unsupported-flag infobar. The same guard is applied as
-    // launch switches instead; the proxy still resolves hostnames and
-    // re-validates every IP.
-    const launchArgs = remoteCdp
-      ? []
-      : [
-          ...mergedArgs.args,
-          ...guardProxyLaunchArgs(transportProxyPort),
-        ];
-    chromiumArgsNote = remoteCdp
-      ? ""
-      : chromiumArgsWarning(mergedArgs.ignored);
-
-    if (remoteCdp) {
-      const { chromium } = await loadPlaywrightDriver();
-      // A session-minting provider's stop call is armed before connect so a
-      // rejection from connectOverCDP or newContext still releases the metered
-      // session. On success the context's "close" handler disarms and consumes
-      // this same reference, so the stop never runs twice.
+    const attempt = async (candidate) => {
+      let providerPlan = candidate;
+      const remoteCdp = providerPlan?.kind === "remote";
+      let attemptEnd = null;
+      // Keep both resources owned by this attempt until all required guards
+      // are ready. Even a connected browser can fail during initialization.
+      let attemptBrowser = null;
+      let attemptContext = null;
       try {
-        const browser = await chromium.connectOverCDP(
-          providerPlan.cdpUrl,
-          { headers: providerPlan.headers || {}, noDefaults: launchConfig.hostOwnedTarget === true },
-        );
-        const existing = browser.contexts()[0];
-        if (launchConfig.hostOwnedTarget && (!existing || browser.contexts().length !== 1 || existing.pages().length !== 1)) {
-          await browser.close();
-          throw new Error("Host target must expose exactly one context and one page.");
+        let forkBinary = null;
+        let launchExecutable = null;
+        // GPU-less Linux: the fork must be launched with an explicit
+        // SwiftShader path because a runner with no render device does not
+        // always auto-init the GPU process for WebGL. Detected here so the
+        // launch args can bind the software rasterizer instead of leaving the
+        // context null.
+        let softwareGpu = false;
+        if (remoteCdp) {
+          backendSelectionNote = providerPlan.warnings[0];
+        } else if (providerPlan?.kind === "local") {
+          launchExecutable = providerPlan.executablePath;
+          backendSelectionNote = providerPlan.warnings[0];
+        } else {
+          forkBinary = resolveChromiumForkBinary();
+          softwareGpu = chromiumNeedsSoftwareGpu();
+          const browserSelection = selectManagedBrowserBackend({
+            chromiumFork: forkBinary,
+            softwareGpu,
+          });
+          backendSelectionNote = browserSelectionWarning(browserSelection, {
+            softwareGpu,
+          });
+          if (browserSelection.browser !== "chromium-fork") {
+            const reason = browserSelection.selectionReason;
+            throw new Error(
+              (reason === "unsupported-platform"
+                ? "No BetterChromium artifact is published for this host. "
+                : "BetterChromium is required but not installed. Run `betterwright setup`. ") +
+                "To use another browser instead, pass the provider option — " +
+                "{ executablePath } for a local Chromium binary, { cdpUrl } for a " +
+                "CDP endpoint, or { provider: \"browserbase\" | \"browser-use\" | " +
+                "\"kernel\" | … } for a cloud browser (docs/browser-providers.md).",
+            );
+          }
+          launchExecutable = forkBinary;
         }
-        browserContext =
-          existing ||
-          (await browser.newContext({
-            acceptDownloads: true,
-            serviceWorkers: launchConfig.adBlock === true ? "block" : "allow",
-          }));
+
+        // Session-minting providers make their REST call here, inside the
+        // attempt, so a candidate that fails leaves no billed session behind
+        // — and a session minted by a failed connect is released before the
+        // next candidate is tried. The key is registered with the redaction
+        // net before the REST call so a provider error body that echoes it
+        // still cannot reach model-visible output; the minted endpoint's
+        // secrets are registered again right after.
+        redactProviderSecrets(trackSecret, providerPlan);
+        if (providerPlan?.create) {
+          providerPlan = await providerPlan.create();
+          redactProviderSecrets(trackSecret, providerPlan);
+        }
+        if (remoteCdp) attemptEnd = providerPlan?.end || null;
+
+        // The guard proxy only bounds locally launched browsers. A remote CDP
+        // browser runs on the provider's side of the WebSocket; its traffic
+        // never touches this listener, so it is not even started (see the
+        // warnings).
+        if (!remoteCdp || launchConfig.hostOwnedTarget) {
+          transportProxyPort = await guardProxy.ensure();
+        }
+        if (launchConfig.hostOwnedTarget) {
+          const connection = await rpc("host_connect", { proxyUrl: `socks5://127.0.0.1:${transportProxyPort}` }, null);
+          if (!connection?.cdpUrl) throw new Error("Host target connection failed.");
+          providerPlan = { ...providerPlan, cdpUrl: connection.cdpUrl, headers: connection.headers || {}, warnings: [] };
+          providerWarnings = [];
+          backendSelectionNote = "Host-owned tab: network traffic uses the policy guard; tab lifetime belongs to the host.";
+          redactProviderSecrets(trackSecret, providerPlan);
+        }
+
+        if (!remoteCdp && !upstreamReady) {
+          // Upstream egress proxy (the IP layer). Every connection still
+          // passes policy + DNS-rebinding validation here; the upstream only
+          // changes which IP the target observes. Only meaningful for a local
+          // launch — a remote browser's egress belongs to the provider, so
+          // chaining one would mislead.
+          if (launchConfig.upstreamProxy) {
+            upstream = parseUpstreamProxy(launchConfig.upstreamProxy);
+            if (!upstream) {
+              throw new Error(
+                "upstreamProxy must be an http:// or socks5:// URL (optional user:pass@).",
+              );
+            }
+          }
+          guardProxy.setUpstream(upstream);
+          upstreamReady = true;
+        }
+
+        // Page-published WebMCP tools are a browser feature, not a fork
+        // feature. Enable the domain for every local Chromium launch; an
+        // attached browser keeps its own launch flags and gets an actionable
+        // error from the helper when the domain is unavailable.
+        const args = remoteCdp ? [] : [WEBMCP_FEATURE_SWITCH];
+        if (!remoteCdp && forkBinary) {
+          args.push(
+            ...managedForkArgs(
+              fingerprintNoise ? fingerprintSeedForProfile(browserProfileDir) : null,
+              {
+                softwareGpu,
+              },
+            ),
+          );
+        }
+
+        // Coherent launch identity: one story across the Chromium and network
+        // layers. geoip resolves the locale/timezone to match the egress
+        // geography so the JS layer and the network layer agree. The identity
+        // is the host's real platform — no OS is masked as another.
+        if (!remoteCdp && launchConfig.launchIdentity !== false) {
+          if (identityPlan === null) {
+            const identity = await resolveGeoIdentity({
+              geoip: launchConfig.geoip === true && Boolean(upstream),
+              locale: launchConfig.locale,
+              timezone: launchConfig.timezone,
+              fetchJson: upstream
+                ? async (url) => {
+                    const response = await httpGetViaProxy(upstream, url);
+                    try {
+                      return JSON.parse(response.body);
+                    } catch {
+                      return null;
+                    }
+                  }
+                : undefined,
+            });
+            identityPlan = buildLaunchIdentityPlan({
+              locale: identity.locale || "en-US",
+              timezone: identity.timezone || undefined,
+              platform: launchConfig.platform || undefined,
+              headedInvisible: launchConfig.headedInvisible === true,
+            });
+          }
+          args.push(...identityPlan.args);
+        }
+
+        if (!remoteCdp && forkBinary && !identityPlan?.identity.timezone) {
+          // A missing timezone switch lets the Linux fork run its legacy
+          // native egress probe, even when geoip or launchIdentity is
+          // disabled. An explicit empty value suppresses that probe without
+          // overriding the host timezone. resolveGeoIdentity above is the
+          // only owner of opt-in geography lookups.
+          args.push("--bw-timezone=");
+        }
+
+        // Caller-supplied switches go last, after every argument BetterWright
+        // derives, so a host can tune things the managed list has no opinion
+        // on. Switches that collide with a managed one are dropped rather
+        // than appended: Chromium resolves duplicates last-wins, so appending
+        // would override BetterWright's value instead of losing to it. See
+        // src/chromium-args.ts.
+        // The client already resolved the option and the environment into one
+        // list; re-validating here keeps the IPC boundary from being a way to
+        // smuggle a reserved switch past the client's checks.
+        const mergedArgs = mergeChromiumArgs(
+          args,
+          normalizeChromiumArgs(launchConfig.chromiumArgs, "chromiumArgs"),
+        );
+        // Do not pass Playwright's `proxy` option. For SOCKS it injects
+        // `--host-resolver-rules="MAP * ~NOTFOUND"`, which Chromium paints as
+        // a persistent unsupported-flag infobar. The same guard is applied as
+        // launch switches instead; the proxy still resolves hostnames and
+        // re-validates every IP.
+        const launchArgs = remoteCdp
+          ? []
+          : [
+              ...mergedArgs.args,
+              ...guardProxyLaunchArgs(transportProxyPort),
+            ];
+        chromiumArgsNote = remoteCdp
+          ? ""
+          : chromiumArgsWarning(mergedArgs.ignored);
+
+        if (remoteCdp) {
+          const { chromium } = await loadPlaywrightDriver();
+          // A session-minting provider's stop call is armed before connect so
+          // a rejection from connectOverCDP or newContext still releases the
+          // metered session. On success the armed call becomes the context's
+          // endRemoteSession, consumed by the context's own "close" handler.
+          const browser = await chromium.connectOverCDP(
+            providerPlan.cdpUrl,
+            { headers: providerPlan.headers || {}, noDefaults: launchConfig.hostOwnedTarget === true },
+          );
+          attemptBrowser = browser;
+          const existing = browser.contexts()[0];
+          if (launchConfig.hostOwnedTarget && (!existing || browser.contexts().length !== 1 || existing.pages().length !== 1)) {
+            await browser.close();
+            attemptBrowser = null;
+            throw new Error("Host target must expose exactly one context and one page.");
+          }
+          attemptContext =
+            existing ||
+            (await browser.newContext({
+              acceptDownloads: true,
+              serviceWorkers: launchConfig.adBlock === true ? "block" : "allow",
+            }));
+          useSetContentCompatibility = true;
+        } else {
+          // The managed fork (or an explicit provider binary) launches under
+          // BetterWright's own flags: WebRTC pinned to the proxy path, the
+          // profile-pinned fingerprint seed, and the coherent launch identity.
+          if (!profileLock.ephemeral) {
+            assertProfileNotNewer(
+              browserProfileDir,
+              forkBinary ? BETTERWRIGHT_CHROMIUM_VERSION : undefined,
+            );
+          }
+          useSetContentCompatibility = true;
+          const { chromium } = await loadPlaywrightDriver();
+          attemptContext = await chromium.launchPersistentContext(
+            browserProfileDir,
+            {
+              executablePath: launchExecutable,
+              headless,
+              ...chromiumForkContextOptions(),
+              args: launchArgs,
+              acceptDownloads: true,
+              serviceWorkers: launchConfig.adBlock === true ? "block" : "allow",
+              downloadsPath: launchConfig.downloadsDir,
+            },
+          );
+        }
+        // Connecting is only part of launch. A candidate that cannot enforce
+        // policy, bound downloads, or register cookie secrets must be torn
+        // down before the next candidate gets the same profile lock.
+        // Publish the context for shutdown while setup is pending; other
+        // launches still wait on launchPromise before using it.
+        browserContext = attemptContext;
+        await installContextGuard(attemptContext);
+        await installDownloadGuard(attemptContext);
+        await refreshCookieSecrets(attemptContext);
+        winnerWarnings = launchConfig.hostOwnedTarget
+          ? []
+          : providerPlan?.warnings || [];
+        endRemoteSession = attemptEnd;
+        attemptEnd = null;
+        attemptBrowser = null;
+        return attemptContext;
       } catch (error) {
-        const end = endRemoteSession;
-        endRemoteSession = null;
-        if (end) await end().catch(() => {});
+        // Release whatever this candidate minted before the chain moves on —
+        // a metered remote session that never connected is still billable —
+        // and drop a half-established CDP connection with it.
+        const end = attemptEnd;
+        attemptEnd = null;
+        const browser = attemptBrowser;
+        attemptBrowser = null;
+        if (browserContext === attemptContext) browserContext = null;
+        await closeDownloadGuard();
+        // No context close listener owns the shared profile lock yet; only
+        // the successful candidate below gets to release it on close.
+        if (attemptContext) await attemptContext.close().catch(() => {});
+        if (browser) await browser.close().catch(() => {});
+        if (end) await releaseFailedProviderSession({ ...providerPlan, end });
         throw error;
       }
-      useSetContentCompatibility = true;
-    } else {
-      // The managed fork (or an explicit provider binary) launches under
-      // BetterWright's own flags: WebRTC pinned to the proxy path, the
-      // profile-pinned fingerprint seed, and the coherent launch identity.
-      if (!profileLock.ephemeral) {
-        assertProfileNotNewer(
-          browserProfileDir,
-          forkBinary ? BETTERWRIGHT_CHROMIUM_VERSION : undefined,
-        );
-      }
-      useSetContentCompatibility = true;
-      const { chromium } = await loadPlaywrightDriver();
-      browserContext = await chromium.launchPersistentContext(
-        browserProfileDir,
-        {
-          executablePath: launchExecutable,
-          headless,
-          ...chromiumForkContextOptions(),
-          args: launchArgs,
-          acceptDownloads: true,
-          serviceWorkers: launchConfig.adBlock === true ? "block" : "allow",
-          downloadsPath: launchConfig.downloadsDir,
-        },
-      );
-    }
-    const launchedContext = browserContext;
+    };
+
+    // A host-owned attach is not a real chain: the placeholder endpoint is
+    // replaced by the host's connection, so only its single candidate exists.
+    const attemptCandidates = launchConfig.hostOwnedTarget
+      ? candidates.slice(0, 1)
+      : candidates;
+    const launched = await runProviderChain(attemptCandidates, attempt);
+    const launchedContext = launched.result;
+    // The winner's provider warnings plus one line per skipped or failed
+    // candidate, so a degraded launch is never silent.
+    providerWarnings = [
+      ...providerWarnings,
+      ...launched.failures.map(
+        (failure) =>
+          `Browser provider ${failure.label} failed to launch: ` +
+          String(failure.error?.message || failure.error).split("\n")[0],
+      ),
+      ...winnerWarnings,
+    ];
+    browserContext = launchedContext;
     launchedContext.on("close", () => {
       if (browserContext === launchedContext) browserContext = null;
       downloadGuardReady = false;
@@ -2449,9 +2565,6 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
       liveView = null;
       if (closingLiveView) void closingLiveView.stop().catch(() => {});
     });
-    await installContextGuard(launchedContext);
-    await installDownloadGuard(launchedContext);
-    await refreshCookieSecrets(launchedContext);
     if (launchConfig.credentialCapture !== false) {
       // CDP-level capture: the sensor runs in dedicated isolated worlds and
       // reports logins in-process; model-typed logins save silently, manual
@@ -8013,6 +8126,9 @@ async function execute(message) {
       error: redactText(failure?.message || String(failure)),
       restartWorker,
     };
+    if (failure instanceof ProviderCleanupError) {
+      Object.assign(failureFields, { errorCode: failure.code });
+    }
     const page = session.pages.get(session.currentId);
     if (!restartWorker && !challenges.length && page && !page.isClosed()) {
       const evidence = await Promise.race([

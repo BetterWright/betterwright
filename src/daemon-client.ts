@@ -168,7 +168,6 @@ function rotateDaemonLog(file) {
 }
 
 function spawnDaemon({ home, cliPath, config, profile }) {
-  const payload = Buffer.from(JSON.stringify(config), "utf8").toString("base64url");
   let logFd: number | "ignore";
   try {
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -181,10 +180,10 @@ function spawnDaemon({ home, cliPath, config, profile }) {
   }
   const child = spawn(
     process.execPath,
-    [...bunInheritedExecArgv(), cliPath, "__daemon", "--config", payload],
+    [...bunInheritedExecArgv(), cliPath, "__daemon"],
     {
       detached: true,
-      stdio: ["ignore", "ignore", logFd],
+      stdio: ["pipe", "ignore", logFd],
       // Pin the daemon's home to the one the client resolved. The daemon
       // otherwise reads BETTERWRIGHT_HOME itself, so a programmatic
       // `connectSessionDaemon({home})` that did not also set the env var would
@@ -193,6 +192,11 @@ function spawnDaemon({ home, cliPath, config, profile }) {
       env: { ...process.env, BETTERWRIGHT_HOME: home, NODE_NO_WARNINGS: "1" },
     },
   );
+  // The config rides stdin, never argv: provider refs can carry credentials
+  // (a saved account key, a credentialed CDP endpoint), and a process's
+  // command line is readable by any same-user process.
+  child.stdin.on("error", () => {});
+  child.stdin.end(JSON.stringify(config));
   child.unref();
   if (logFd !== "ignore") {
     try {
