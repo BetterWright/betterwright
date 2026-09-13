@@ -182,6 +182,63 @@ test("navigate and read the title", opts, async () => {
   }
 });
 
+test("the managed browser preserves an explicit locale in pages, workers and requests", opts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url === "/worker.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(`postMessage({
+        language: navigator.language,
+        languages: navigator.languages,
+        locale: Intl.DateTimeFormat().resolvedOptions().locale
+      });`);
+      return;
+    }
+    if (request.url === "/headers") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ language: request.headers["accept-language"] }));
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end("<!doctype html><title>Locale fixture</title>");
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    policy: new NetworkPolicy(),
+    headless: true,
+    geoip: false,
+    locale: "fr-FR",
+  });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      return page.evaluate(async () => {
+        const worker = await new Promise((resolve, reject) => {
+          const child = new Worker('/worker.js');
+          child.onmessage = ({ data }) => { child.terminate(); resolve(data); };
+          child.onerror = () => { child.terminate(); reject(new Error('Locale worker failed')); };
+        });
+        return {
+          page: {
+            language: navigator.language,
+            languages: navigator.languages,
+            locale: Intl.DateTimeFormat().resolvedOptions().locale
+          },
+          worker,
+          headers: await fetch('/headers').then(response => response.json())
+        };
+      });
+    `);
+    assert.equal(result.ok, true, result.error);
+    const expected = { language: "fr-FR", languages: ["fr-FR", "fr"], locale: "fr-FR" };
+    assert.deepEqual(result.result.page, expected);
+    assert.deepEqual(result.result.worker, expected);
+    assert.equal(result.result.headers.language, "fr-FR,fr;q=0.9");
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
 test("stock software-rasterizer boilerplate warns without blocking launch", opts, async () => {
   const bw = new BetterWright({
     home: tempHome(),
