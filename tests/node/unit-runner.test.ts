@@ -13,7 +13,7 @@ function runFixture(script: string, args: string[], env: NodeJS.ProcessEnv) {
     execFile(process.execPath, [script, ...args], {
       encoding: "utf8", env, timeout: 30_000, killSignal: "SIGKILL",
     }, (error, stdout, stderr) => {
-      if (error && (error.killed || typeof error.code !== "number")) {
+      if (error && (error.killed || !Number.isInteger(error.code))) {
         reject(error);
         return;
       }
