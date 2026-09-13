@@ -1,0 +1,52 @@
+name: Validate disabled geo identity on native Linux
+
+on:
+  push:
+    branches: [codex/validate-disabled-geoip]
+
+permissions:
+  contents: read
+
+jobs:
+  identity-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run build:harness
+      - run: bun dist/bin/betterwright.js setup
+      - name: Enable the Chromium sandbox
+        shell: bash
+        run: |
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Prove the original worker attempts disabled geo lookups
+        shell: bash
+        env:
+          BETTERWRIGHT_REQUIRE_BROWSER: "1"
+        run: |
+          git fetch origin 5a41875267b5dd9a1fbde4d884a33d92fd02d74a
+          git show 5a41875267b5dd9a1fbde4d884a33d92fd02d74a:src/worker.ts > src/worker.ts
+          bun run build
+          set +e
+          bun test --timeout 120000 --parallel=1 --test-name-pattern 'disabled identity' tests/node/browser.test.ts > baseline.log 2>&1
+          baseline_status=$?
+          set -e
+          cat baseline.log
+          test "$baseline_status" -ne 0
+          grep -q 'disabled identity must not attempt a geo lookup' baseline.log
+          grep -q '2 fail' baseline.log
+      - name: Verify fixed opt-outs and explicit timezone on the same native browser
+        shell: bash
+        env:
+          BETTERWRIGHT_REQUIRE_BROWSER: "1"
+        run: |
+          git restore src/worker.ts
+          bun run build
+          bun test --timeout 120000 --parallel=1 --test-name-pattern 'disabled identity|explicit locale and timezone' tests/node/browser.test.ts
+
