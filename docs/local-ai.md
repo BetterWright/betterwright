@@ -171,3 +171,11 @@ Windows, high-end NVIDIA and the larger models still need real hardware
 acceptance testing; fixture coverage does not establish their speed or universal
 compatibility. Each installation performs its own image/tool check before the
 harness default changes.
+
+Maintainers can run `bun run build:harness` followed by
+`bun research/verify-local-ai-catalog.ts` to verify every model/draft pin against
+its immutable Hugging Face revision without downloading weights. For a vLLM
+refresh, resolve the exact top-level version using pinned uv with
+`pip compile --python-version 3.12.13 --python-platform x86_64-manylinux_2_35
+--only-binary :all: --no-annotate --no-header --strip-extras`, review every changed
+pin in `src/local-ai-vllm-lock.ts`, and repeat fresh GPU acceptance testing.

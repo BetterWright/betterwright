@@ -216,12 +216,13 @@ export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
     !["metal", "vulkan", "cuda"].includes(String(backend)) || !isNumber(compute) || !Number.isFinite(compute) || !isString(uuid) || (uuid !== "" && !/^GPU-[\da-f-]+$/i.test(uuid))) {
     throw new Error("Invalid saved local AI configuration. Run betterwright --local to repair it.");
   }
-  return { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform, arch, context,
+  const plan: LocalPlan = { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform, arch, context,
     acceleration: acceleration === "dflash2" ? "dflash2" : acceleration === "mtp" ? "mtp" : "none",
-    ...(get("accelerationTuned") === true ? { accelerationTuned: true } : {}),
     preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced",
     gpu: { id, name, memory, freeMemory, backend: backend === "metal" ? "metal" : backend === "cuda" ? "cuda" : "vulkan",
       vendor: gpuVendor === "apple" ? "apple" : gpuVendor === "nvidia" ? "nvidia" : gpuVendor === "amd" ? "amd" : gpuVendor === "intel" ? "intel" : "other", compute, uuid } };
+  if (get("accelerationTuned") === true) plan.accelerationTuned = true;
+  return plan;
 }
 export function readLocalPlan(home = defaultHome()): LocalPlan | null {
   const file = path.join(localRoot(home), "selection.json");
