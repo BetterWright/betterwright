@@ -9,7 +9,7 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
-## [2.7.2] - 2026-09-12
+## [2.7.2] - 2026-09-13
 
 ### Security
 
@@ -31,6 +31,8 @@ Releases before 1.1.3 predate this file; their notes live on the
   directory swap before requiring network access.
 - Package the native browser's runtime dependencies and matching Windows
   assembly manifest, including the Linux launcher and sandbox helper.
+- Use Direct3D 11 for Windows rendering, fixing blank accelerated 2D canvas
+  readback and unavailable WebGPU when desktop OpenGL is forced.
 - Correct the Electron host-owned tab integration documentation (#187).
 
 ## [2.7.1] - 2026-09-11

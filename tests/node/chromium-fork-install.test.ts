@@ -25,10 +25,10 @@ const ROOT = path.dirname(
   path.dirname(path.dirname(fileURLToPath(import.meta.url))),
 );
 
-test("Chromium 151 release is pinned to verified public assets", () => {
+test("Chromium 153 release is pinned to verified public assets", () => {
   assert.equal(
     CHROMIUM_FORK_RELEASE_TAG,
-    `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r3`,
+    `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`,
   );
   assert.deepEqual(
     chromiumForkAssetForHost({ platform: "darwin", arch: "arm64" }),
@@ -46,17 +46,17 @@ test("Chromium 151 release is pinned to verified public assets", () => {
     "darwin-arm64": {
       name: "betterchromium-mac-arm64.zip",
       sha256:
-        "22484b810c601697afd7d0a82f39ced7f24ac7d8a2b01e52c5a61e9a6096ec67",
+        "e59b872601542e29c85a22ed8b83a36c9f6fd4ec0523c11253eaff74b279806c",
     },
     "linux-x64": {
       name: "betterchromium-linux-x64.zip",
       sha256:
-        "3eabe54aae9d8bde34170a6930df21932325be4570baf9d45431baad6cd03d98",
+        "fe7ec75a7bffe7c39de02073bf9592ac490f985b8457d16def2b372305830446",
     },
     "win32-x64": {
       name: "betterchromium-win-x64.zip",
       sha256:
-        "03d8abb5d6064bbd808cf52c2a327692502c4ca6c565b2e1cdb639200c52dccb",
+        "589246796678e331773ce2a26d572384759f1aa57415418d5ee5685c017c2753",
     },
   });
 });
