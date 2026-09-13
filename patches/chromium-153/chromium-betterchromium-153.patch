@@ -891,7 +891,7 @@ index 4604be68adba418ceb342f50465dcb52996499d7..2273903044cca373e1a07635fa0ae1cd
      // promise too.
      DispatchEvent(*OfflineAudioCompletionEvent::Create(rendered_buffer));
 diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
-index 403e1b307fa35d1c98641c3da2a775912b18b60c..4627d1daa7e445720aeb87a98a5754ec6b238f67 100644
+index 403e1b307fa35d1c98641c3da2a775912b18b60c..a639095d97b72b64ba3e7fad00d3af16874dd975 100644
 --- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
 +++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
 @@ -34,6 +34,8 @@
@@ -903,7 +903,22 @@ index 403e1b307fa35d1c98641c3da2a775912b18b60c..4627d1daa7e445720aeb87a98a5754ec
  #include "base/memory/scoped_refptr.h"
  #include "base/metrics/histogram_functions.h"
  #include "base/metrics/histogram_macros.h"
-@@ -4200,6 +4202,13 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+@@ -205,6 +207,14 @@ unsigned WebGLRenderingContextBase::max_active_webgl_contexts_on_worker_ = 0;
+
+ namespace {
+
++#if BUILDFLAG(IS_LINUX)
++bool IsBetterChromiumSoftwareRenderer(const String& renderer) {
++  return renderer.FindIgnoringAsciiCase("SwiftShader") != String::npos ||
++         renderer.FindIgnoringAsciiCase("llvmpipe") != String::npos ||
++         renderer.FindIgnoringAsciiCase("softpipe") != String::npos;
++}
++#endif
++
+ enum class WebGLANGLEImplementation {
+   // These values are persisted to logs. Entries should not be renumbered and
+   // numeric values should never be reused.
+@@ -4200,6 +4210,25 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
        return ScriptValue::CreateNull(script_state->GetIsolate());
      case WebGLDebugRendererInfo::kUnmaskedRendererWebgl:
        if (ExtensionEnabled(kWebGLDebugRendererInfoName)) {
@@ -914,10 +929,22 @@ index 403e1b307fa35d1c98641c3da2a775912b18b60c..4627d1daa7e445720aeb87a98a5754ec
 +              String("ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, "
 +                     "Unspecified Version)"));
 +        }
++#if BUILDFLAG(IS_LINUX)
++        // Preserve the software-renderer identity shipped in the 151 r3 Linux
++        // archive. Only debug identity strings change; real hardware adapters,
++        // rendering, extensions and limits continue to use the native backend.
++        if (IsBetterChromiumSoftwareRenderer(
++                String(ContextGL()->GetString(GL_RENDERER)))) {
++          return WebGLAny(
++              script_state,
++              String("ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), "
++                     "OpenGL 4.6 (Core Profile) Mesa 23.2.1)"));
++        }
++#endif
          return WebGLAny(script_state,
                          String(ContextGL()->GetString(GL_RENDERER)));
        }
-@@ -4209,6 +4218,10 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
+@@ -4209,6 +4238,16 @@ ScriptValue WebGLRenderingContextBase::getParameter(ScriptState* script_state,
        return ScriptValue::CreateNull(script_state->GetIsolate());
      case WebGLDebugRendererInfo::kUnmaskedVendorWebgl:
        if (ExtensionEnabled(kWebGLDebugRendererInfoName)) {
@@ -925,10 +952,16 @@ index 403e1b307fa35d1c98641c3da2a775912b18b60c..4627d1daa7e445720aeb87a98a5754ec
 +                "fingerprint-platform") == "macos") {
 +          return WebGLAny(script_state, String("Google Inc. (Apple)"));
 +        }
++#if BUILDFLAG(IS_LINUX)
++        if (IsBetterChromiumSoftwareRenderer(
++                String(ContextGL()->GetString(GL_RENDERER)))) {
++          return WebGLAny(script_state, String("Google Inc. (Intel)"));
++        }
++#endif
          return WebGLAny(script_state,
                          String(ContextGL()->GetString(GL_VENDOR)));
        }
-@@ -5355,6 +5368,13 @@ void WebGLRenderingContextBase::ReadPixelsHelper(GLint x,
+@@ -5355,6 +5394,13 @@ void WebGLRenderingContextBase::ReadPixelsHelper(GLint x,
        return;
      }
      ContextGL()->ReadPixels(x, y, width, height, format, type, data);

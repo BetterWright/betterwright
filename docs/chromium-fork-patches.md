@@ -58,6 +58,14 @@ inherit them, which the CDP emulation layer cannot reach.
 what real Chrome returns for the non-debug parameters. The WebGL2 context
 inherits the same base implementation, so one interception covers both.
 
+The Linux build also retains the software-GPU identity from the published
+Chromium 151 r3 archive: a SwiftShader, llvmpipe, or softpipe renderer reports
+`Google Inc. (Intel)` and the Mesa Intel UHD Graphics 620 renderer string.
+Hardware renderer strings pass through unchanged. This changes the WebGL debug
+identity only; rendering, extensions, limits, and WebGPU capabilities continue
+to come from the real backend. The Chromium 153 patch now includes this behavior
+so it can be reproduced from the checked-in build definition.
+
 Chromium 151 no longer guarantees an automatic software WebGL fallback. The
 original Chromium 151 r1 Linux archive could not initialize its bundled SwANGLE renderer
 when no accessible `/dev/dri` render device was available, leaving WebGL blocked. On
