@@ -114,13 +114,14 @@ function describeAccount(name, account: ProviderAccount, env) {
 
 function summaryLines(config, env, home) {
   const lines = [`  Config file: ${browserConfigPath(home)}`];
-  lines.push(`  Default:     ${describeDefaultBrowser(config.default, { env, custom: config.custom })}`);
+  lines.push(`  Default:     ${config.defaultError || describeDefaultBrowser(config.default, { env, custom: config.custom })}`);
   if (config.fallbacks?.length) {
     lines.push("  Fallbacks:");
     for (const ref of config.fallbacks) {
       lines.push(`    · ${describeDefaultBrowser(ref, { env, custom: config.custom })}`);
     }
   }
+  for (const error of config.fallbackErrors || []) lines.push(`    · ${error}`);
   const accountNames = Object.keys(config.accounts);
   if (accountNames.length) {
     lines.push("  Connected:");
@@ -180,19 +181,16 @@ function showConfig({ home, env, log, json, paint }) {
     for (const [name, account] of Object.entries(config.accounts)) {
       accounts[name] = maskEntry({ provider: name, ...account }, env);
     }
-    log(
-      JSON.stringify(
-        {
-          file: browserConfigPath(home),
-          default: config.default ? maskEntry(config.default, env) : null,
-          fallbacks: (config.fallbacks || []).map((ref) => maskEntry(ref, env)),
-          accounts,
-          custom,
-        },
-        null,
-        2,
-      ),
-    );
+    const report = {
+      file: browserConfigPath(home),
+      default: config.default ? maskEntry(config.default, env) : null,
+      fallbacks: (config.fallbacks || []).map((ref) => maskEntry(ref, env)),
+      accounts,
+      custom,
+    };
+    if (config.defaultError) Object.assign(report, { default_error: config.defaultError });
+    if (config.fallbackErrors) Object.assign(report, { fallback_errors: config.fallbackErrors });
+    log(JSON.stringify(report, null, 2));
     return 0;
   }
   log("");
@@ -274,7 +272,8 @@ async function connectOverCdp({ cdpUrl, headers, timeout }: any) {
 async function testConnection({ home, env, log, fail, connect, fetchJson }) {
   const config = loadBrowserConfig(home);
   const reportFallbacks = () => {
-    let broken = false;
+    let broken = Boolean(config.fallbackErrors?.length);
+    for (const error of config.fallbackErrors || []) fail(`  ✗ ${error}`);
     for (const ref of config.fallbacks || []) {
       try {
         // Same two steps launch takes: expand against accounts/keyEnv/custom
@@ -292,6 +291,11 @@ async function testConnection({ home, env, log, fail, connect, fetchJson }) {
     }
     return broken ? 1 : 0;
   };
+  if (config.defaultError) {
+    fail(`  ✗ ${config.defaultError}`);
+    reportFallbacks();
+    return 1;
+  }
   if (!config.default) {
     log("  · No default is configured, so launches use the managed BetterChromium fork.");
     return reportFallbacks();

@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   browserConfigPath,
+  configuredDefaultProvider,
   configuredProviderChain,
   expandProviderChainOption,
   expandProviderChoice,
@@ -446,6 +447,45 @@ test("loadBrowserConfig sanitizes the fallbacks list", () => {
   ]);
   writeConfig(home, { browser: { fallbacks: "not-an-array" } });
   assert.equal(loadBrowserConfig(home).fallbacks, undefined);
+});
+
+test("sanitized malformed refs retain safe diagnostics and invalid defaults stay fatal", async () => {
+  const home = makeTempDir("bw-malformed-refs-");
+  const secret = "SYNTHETIC_MALFORMED_SECRET";
+  for (const invalid of [
+    {},
+    { provider: "kernel", cdpUrl: `wss://host?apiKey=${secret}` },
+    { provider: "managed", executablePath: 42 },
+    secret,
+  ]) {
+    writeConfig(home, { browser: {
+      default: invalid,
+      fallbacks: [invalid, null, { provider: "managed" }],
+    } });
+    const loaded = loadBrowserConfig(home);
+    assert.equal(loaded.default, undefined);
+    assert.match(loaded.defaultError, /browser\.default must set exactly one/);
+    assert.deepEqual(loaded.fallbacks, [{ provider: "managed" }]);
+    assert.equal(loaded.fallbackErrors.length, 2);
+    assert.ok(!JSON.stringify(loaded).includes(secret));
+    assert.throws(() => configuredDefaultProvider({ home, env: {} }), /browser\.default/);
+    assert.throws(() => configuredProviderChain({ home, env: {} }), /browser\.default/);
+  }
+  const { BetterWright } = await import("../../dist/src/client.js");
+  assert.throws(() => new BetterWright({ home }), /browser\.default/);
+  // An explicit selection still overrides the default, including a bad one.
+  const explicit = new BetterWright({ home, provider: { provider: "managed" } });
+  await explicit.close();
+  saveDefaultBrowser(null, home);
+  const chain = configuredProviderChain({ home, env: {} });
+  assert.equal(chain.notes.length, 2);
+  assert.match(chain.notes[0], /browser\.fallbacks\[0\]/);
+  assert.match(chain.notes[1], /browser\.fallbacks\[1\]/);
+  assert.ok(!JSON.stringify(chain).includes(secret));
+  writeConfig(home, { browser: { default: null, fallbacks: secret } });
+  const malformedList = configuredProviderChain({ home, env: {} });
+  assert.equal(malformedList.provider, null);
+  assert.deepEqual(malformedList.notes, ["Skipped browser.fallbacks: must be an array of provider refs."]);
 });
 
 test("saveBrowserFallbacks round-trips, validates, and clears", () => {

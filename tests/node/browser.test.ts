@@ -5125,16 +5125,22 @@ test("provider chain: an unresolvable entry is skipped with a warning, not a vet
   }
 });
 
-test("provider chain: malformed configured URLs never expose credentials in envelopes", opts, async () => {
+test("provider chain: malformed configured refs never expose credentials in envelopes", opts, async () => {
   const home = tempHome();
   const secret = "synthetic-fallback-secret";
-  saveBrowserFallbacks([{ cdpUrl: `wss://bad host/connect?apiKey=${secret}` }], home);
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ browser: { fallbacks: [
+    { cdpUrl: `wss://bad host/connect?apiKey=${secret}` },
+    { provider: "managed", cdpUrl: `wss://host?apiKey=${secret}` },
+    {},
+  ] } }));
   const bw = new BetterWright({ home, headless: true });
   try {
     const result = await bw.run("return 42");
     assert.equal(result.ok, true, result.error);
     assert.equal(result.result, 42);
     assert.ok(result.warnings.some((warning) => /Skipped a browser fallback/.test(warning)));
+    assert.ok(result.warnings.some((warning) => /browser\.fallbacks\[1\]/.test(warning)));
+    assert.ok(result.warnings.some((warning) => /browser\.fallbacks\[2\]/.test(warning)));
     assert.ok(!JSON.stringify(result).includes(secret), "a skipped fallback leaked its credential");
   } finally {
     await bw.close();

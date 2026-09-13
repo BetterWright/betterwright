@@ -95,6 +95,9 @@ export interface DefaultBrowserRef {
 /** The sanitized `browser` section of <home>/config.json. */
 export interface BrowserFileConfig {
   default?: DefaultBrowserRef;
+  /** Safe diagnostics for rejected refs; never contains the raw values. */
+  defaultError?: string;
+  fallbackErrors?: string[];
   /** Providers tried in order when the default fails to launch. */
   fallbacks?: DefaultBrowserRef[];
   custom: Record<string, CustomProviderDefinition>;
@@ -171,6 +174,10 @@ function cleanAccount(value: UntrustedValue): ProviderAccount | null {
 
 function cleanDefaultRef(value: UntrustedValue): DefaultBrowserRef | undefined {
   if (!isRecord(value)) return undefined;
+  for (const name of ["provider", "cdpUrl", "executablePath"]) {
+    const field = untrustedField(value, name);
+    if (field != null && !isString(field)) return undefined;
+  }
   const ref: DefaultBrowserRef = {};
   const provider = cleanString(untrustedField(value, "provider"));
   if (provider) ref.provider = provider.toLowerCase();
@@ -191,7 +198,7 @@ function cleanDefaultRef(value: UntrustedValue): DefaultBrowserRef | undefined {
     ref.sessionOptions = sessionOptions as Record<string, UntrustedValue>;
   }
   // Exactly one kind, same rule the provider layer enforces; a ref that sets
-  // none (or several) is a hand-edit gone wrong and reads as "no default".
+  // none (or several) is rejected; the loader retains a safe diagnostic.
   const kinds = [ref.provider, ref.cdpUrl, ref.executablePath].filter(Boolean).length;
   return kinds === 1 ? ref : undefined;
 }
@@ -199,20 +206,32 @@ function cleanDefaultRef(value: UntrustedValue): DefaultBrowserRef | undefined {
 /**
  * Read the sanitized `browser` section of <home>/config.json. Unknown keys
  * and malformed entries are dropped so a typo can't smuggle unexpected
- * options into a launch.
+ * options into a launch. Invalid provider refs retain diagnostics separately,
+ * so sanitizing never turns a broken default into an implicit managed one.
  */
 export function loadBrowserConfig(home = defaultHome()): BrowserFileConfig {
   const section = untrustedField(readConfigFile(home), "browser");
   const config: BrowserFileConfig = { custom: {}, accounts: {} };
   if (!isRecord(section)) return config;
-  const fallback = cleanDefaultRef(untrustedField(section, "default"));
+  const rawDefault = untrustedField(section, "default");
+  const fallback = cleanDefaultRef(rawDefault);
   if (fallback) config.default = fallback;
+  else if (rawDefault != null) {
+    config.defaultError = "Configured browser.default must set exactly one non-empty string provider, cdpUrl, or executablePath.";
+  }
   const fallbacks = untrustedField(section, "fallbacks");
   if (Array.isArray(fallbacks)) {
-    const cleaned = fallbacks
-      .map((entry) => cleanDefaultRef(entry))
-      .filter((entry): entry is DefaultBrowserRef => Boolean(entry));
+    const cleaned: DefaultBrowserRef[] = [];
+    const errors: string[] = [];
+    for (const [index, entry] of fallbacks.entries()) {
+      const ref = cleanDefaultRef(entry);
+      if (ref) cleaned.push(ref);
+      else errors.push(`Skipped browser.fallbacks[${index}]: must set exactly one non-empty string provider, cdpUrl, or executablePath.`);
+    }
     if (cleaned.length) config.fallbacks = cleaned;
+    if (errors.length) config.fallbackErrors = errors;
+  } else if (fallbacks != null) {
+    config.fallbackErrors = ["Skipped browser.fallbacks: must be an array of provider refs."];
   }
   const custom = untrustedField(section, "custom");
   if (isRecord(custom)) {
@@ -700,6 +719,7 @@ export function configuredDefaultProvider({
   env = process.env,
 }: any = {}) {
   const config = loadBrowserConfig(home);
+  if (config.defaultError) throw new TypeError(config.defaultError);
   if (!config.default) return null;
   return expandProviderChoice(config.default, { home, env, config });
 }
@@ -734,7 +754,8 @@ export function configuredProviderChain({
   env = process.env,
 }: any = {}) {
   const config = loadBrowserConfig(home);
-  const notes: string[] = [];
+  if (config.defaultError) throw new TypeError(config.defaultError);
+  const notes: string[] = [...(config.fallbackErrors || [])];
   const chain: UntrustedValue[] = [];
   if (config.default) {
     const expanded = expandProviderChoice(config.default, { home, env, config });
