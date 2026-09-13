@@ -101,7 +101,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
       try {
         executable = await installLlama(hardware.platform, backend, home, log);
         devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home));
-        if (backend === "cuda" && !parseLlamaDevices(devices, native).length) throw new Error("No usable CUDA device.");
+        if (backend === "cuda" && !parseLlamaDevices(devices, native).length) throw new Error(`No usable CUDA device. ${devices.trim().slice(0, 1800)}`);
       }
       catch (error) {
         if (backend !== "cuda") throw error;

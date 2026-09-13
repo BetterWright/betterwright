@@ -478,3 +478,16 @@ test("recycled PIDs release stale locks and service records without signaling th
   assert.equal(await stopLocalService(home), false);
   assert.ok(!fs.existsSync(path.join(localRoot(home), "service.json")));
 });
+
+test("a supervisor spawn error fails promptly instead of holding the startup lock", async () => {
+  const home = makeTempDir("bw-local-spawn-failure-");
+  const plan = { ...recommendLocalModel(hardware()).plan, platform: process.platform, arch: process.arch };
+  const runtime = runtimeDirectory(plan, home);
+  fs.mkdirSync(runtime, { recursive: true });
+  fs.writeFileSync(path.join(runtime, process.platform === "win32" ? "llama-server.exe" : "llama-server"), "fixture");
+  const started = Date.now();
+  await assert.rejects(ensureLocalService(plan, home, 10000, async () => true, (_command, _args, options) =>
+    spawn(process.execPath, ["--eval", ""], { ...options, cwd: path.join(home, "missing-directory") })), /Cannot start the local supervisor/);
+  assert.ok(Date.now() - started < 5000);
+  assert.ok(!fs.existsSync(path.join(localRoot(home), "lifecycle.lock")));
+});

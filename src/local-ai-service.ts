@@ -139,7 +139,7 @@ export function localServerArguments(plan: LocalPlan, port: number, home = defau
     ...(plan.acceleration === "mtp" ? ["--spec-type", "draft-mtp", "--spec-draft-n-max", "3", "--spec-draft-device", plan.gpu.id, "--spec-draft-ngl", "999"] : []),
     "--chat-template-kwargs", JSON.stringify(plan.modelId === "nex-mini" ? { reasoning_effort: "medium" } : { enable_thinking: false })];
 }
-export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), timeoutMs = 10 * 60_000, verify: typeof verifyLocalArtifact = verifyLocalArtifact): Promise<LocalConnection> {
+export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), timeoutMs = 10 * 60_000, verify: typeof verifyLocalArtifact = verifyLocalArtifact, launch: typeof spawn = spawn): Promise<LocalConnection> {
   if (plan.platform !== process.platform || plan.arch !== process.arch) throw new Error("This local AI installation belongs to different hardware. Run betterwright --local on this machine.");
   const planId = localPlanId(plan);
   return withLocalLock(home, "lifecycle", async () => {
@@ -162,21 +162,23 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
     writeLocalJson(path.join(localRoot(home), "plans", `${planId}.json`), plan);
     const current = await localServiceStatus(home);
     let daemon: ChildProcess | null = null;
+    let launchFailure = "";
     let logOffset = 0;
     if (!current.running) {
       const logfile = path.join(localRoot(home), "runtime.log");
       const log = fs.openSync(logfile, "a", 0o600);
       logOffset = fs.fstatSync(log).size;
       try {
-        daemon = spawn(process.execPath, [fileURLToPath(new URL("../bin/betterwright.js", import.meta.url)), "__local-ai", planId], {
+        daemon = launch(process.execPath, [fileURLToPath(new URL("../bin/betterwright.js", import.meta.url)), "__local-ai", planId], {
           env: { ...process.env, BETTERWRIGHT_HOME: home }, detached: true, windowsHide: true, stdio: ["ignore", log, log],
         });
-        daemon.on("error", () => {});
+        daemon.on("error", error => { launchFailure = error.message; });
         daemon.unref();
       } finally { fs.closeSync(log); }
     }
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      if (launchFailure) throw new Error(`Cannot start the local supervisor: ${launchFailure}`);
       if (daemon && (daemon.exitCode !== null || daemon.signalCode !== null)) throw startupFailure(home, logOffset);
       const service = readService(home);
       if (service?.planId === planId) {
