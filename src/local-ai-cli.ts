@@ -4,7 +4,7 @@ import { flagValue, positionalArgs } from "./cli-flags.js";
 import { defaultHome } from "./home.js";
 import { detectLocalHardware, GIB, hasLocalSelection, type LocalSetupOptions, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, readLocalPlan, recommendLocalModel,
   runLocalProbe, writeLocalJson } from "./local-ai.js";
-import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, llamaRuntimeEnvironment, localRuntimeEnvironment, withLocalLock } from "./local-ai-install.js";
+import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, LOCAL_ROCM_ARCHIVES, type LocalLog, llamaRuntimeEnvironment, localRuntimeEnvironment, withLocalLock } from "./local-ai-install.js";
 import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServerArguments, localServiceStatus, stopLocalService, stopLocalServiceIfOwned } from "./local-ai-service.js";
 import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
@@ -95,24 +95,23 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     const provisional = native.some(g => g.memory > 8 * GIB) ? recommendLocalModel(hardware, options) : null;
     if (provisional?.plan.runtime !== "vllm") {
       log("Checking the accelerated runtime before downloading model weights…");
-      let backend = hardware.platform === "darwin" ? "metal" : ["linux", "win32"].includes(hardware.platform) && native.some(g => g.vendor === "nvidia" && g.compute >= 7.5) ? "cuda" : "vulkan";
-      let executable: string;
-      let devices: string;
-      try {
-        executable = await installLlama(hardware.platform, backend, home, log);
-        devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend));
-        if (backend === "cuda" && !parseLlamaDevices(devices, native).length) throw new Error(`No usable CUDA device. ${devices.trim().slice(0, 1800)}`);
-      }
-      catch (error) {
-        if (backend !== "cuda") throw error;
-        log(`CUDA runtime check failed: ${error instanceof Error ? error.message : String(error)}`);
-        log("Checking Vulkan acceleration as a fallback.");
-        backend = "vulkan";
-        executable = await installLlama(hardware.platform, backend, home, log);
-        devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend));
+      const amd = native.find(g => g.vendor === "amd" && g.gfx && LOCAL_ROCM_ARCHIVES[g.gfx]);
+      const backends = hardware.platform === "darwin" ? ["metal"] : native.some(g => g.vendor === "nvidia" && g.compute >= 7.5) ? ["cuda", "vulkan"] : hardware.platform === "linux" && amd ? ["rocm", "vulkan"] : ["vulkan"];
+      let devices = "";
+      for (const [index, backend] of backends.entries()) {
+        try {
+          const executable = await installLlama(hardware.platform, backend, home, log, amd?.gfx);
+          devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend, amd?.gfx));
+          if (!parseLlamaDevices(devices, native).length) throw new Error(`The runtime found no accelerated GPU. Check your GPU driver; no model weights were downloaded. ${devices.trim().slice(0, 1800)}`);
+          break;
+        } catch (error) {
+          log(`${backend.toUpperCase()} runtime check failed: ${error instanceof Error ? error.message : String(error)}`);
+          if (index === backends.length - 1) throw error;
+          log(`Checking ${backends[index + 1]} acceleration as a fallback.`);
+        }
       }
       hardware = accountForManagedWeights({ ...hardware, gpus: parseLlamaDevices(devices, native) });
-      if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working Metal/Vulkan GPU driver and rerun betterwright --local; no model weights were downloaded.");
+      if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working GPU driver and rerun betterwright --local; no model weights were downloaded.");
     }
     const recommendation = recommendLocalModel(hardware, options);
     let { plan } = recommendation;

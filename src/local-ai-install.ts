@@ -40,10 +40,15 @@ export const LOCAL_RUNTIMES = {
 ],
   metal: [llamaArchive("llama-b10902-bin-macos-arm64.tar.gz", 11140021, "9d6c0ac65ca25c3d2c5173ded6424b0b73ce147090fe56e78d70ae32bbeddfbe")],
   linux: [llamaArchive("llama-b10902-bin-ubuntu-vulkan-x64.tar.gz", 30154951, "ca717eeff2f86b6580e3b5f48b455645eff0cd6d3500a3d5c1e52a32a19c639a")],
+  linuxRocm: [llamaArchive("llama-b10902-bin-ubuntu-rocm-10.0-x64.tar.gz", 218367029, "d8d80666a71e6afc14654c2986d3efdcd3983236a84475267a6066d5590c0bad")],
   windows: [llamaArchive("llama-b10902-bin-win-vulkan-x64.zip", 31666258, "a75b13adaebbac980f24c52a7485b9620e96e21591da24b5a88142749f0d67c2")],
   cuda: [llamaArchive("llama-b10902-bin-win-cuda-13.3-x64.zip", 149706753, "621a763137e45f71eb3dc546f47150c0279a42b7711c5a230fb84efdb8ac9f0f"),
     llamaArchive("cudart-llama-bin-win-cuda-13.3-x64.zip", 390970417, "1462a050eb4c684921ba51dcc4cc488a036674c3e73e9945ee705b854808d03e")],
 };
+export const LOCAL_ROCM_ARCHIVES = {
+  gfx942: { name: "therock-dist-linux-gfx94X-dcgpu-10.0.0.tar.gz", bytes: 3259456349, sha256: "a7e105c74c26ef88d12f66712a0af1a107ded0405890a8e2389254ed046e7b06",
+    url: "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx94X-dcgpu-10.0.0.tar.gz" },
+} satisfies Record<string, LocalArtifact>;
 const UV_ARCHIVE: LocalArtifact = { name: "uv-x86_64-unknown-linux-gnu.tar.gz", bytes: 19391575,
   sha256: "745765a3b6e360ad76743599ae5c42e9278c7edf8bbff9fc76d05bf2623a04dd",
   url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz` };
@@ -205,7 +210,7 @@ function findExecutable(directory: string, name: string): string | null {
 }
 export function llamaRuntimeKey(platform: string, backend: string): keyof typeof LOCAL_RUNTIMES {
   if (platform === "darwin") return "metal";
-  if (platform === "linux") return backend === "cuda" ? "linuxCuda" : "linux";
+  if (platform === "linux") return backend === "cuda" ? "linuxCuda" : backend === "rocm" ? "linuxRocm" : "linux";
   if (platform === "win32") return backend === "cuda" ? "cuda" : "windows";
   throw new Error("No managed inference runtime is published for this platform.");
 }
@@ -233,20 +238,31 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
       const env = localRuntimeEnvironment(plan, home);
       if (!env.CC || !env.CXX || !env.CUDA_HOME || ![env.CC, env.CXX, path.join(env.CUDA_HOME, "bin", "nvcc"), path.join(env.CUDA_HOME, "lib", "libcudart.so.13")].every(file => fs.existsSync(file))) return false;
     }
+    if (plan.gpu.backend === "rocm") {
+      const env = localRuntimeEnvironment(plan, home);
+      if (!env.ROCM_PATH || !["libamdhip64.so.7", "libhipblas.so.3", "librocblas.so.5"].every(file => fs.existsSync(path.join(env.ROCM_PATH || "", "lib", file)))) return false;
+    }
     return localInstallArtifacts(plan, home).every(({ artifact, directory }) => {
       const stat = fs.lstatSync(path.join(directory, artifact.name));
       return stat.isFile() && stat.size === artifact.bytes;
     });
   } catch { return false; }
 }
-export function llamaRuntimeEnvironment(platform: string, home = defaultHome(), backend = "vulkan"): NodeJS.ProcessEnv {
+export function llamaRuntimeEnvironment(platform: string, home = defaultHome(), backend = "vulkan", gfx = ""): NodeJS.ProcessEnv {
   if (platform !== "linux") return { ...process.env };
-  const env: NodeJS.ProcessEnv = { ...process.env, GGML_BACKEND_PATH: path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-linuxCuda`, "app", "libggml-cuda.so"), LD_LIBRARY_PATH: [path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-linuxCuda`, "app"), path.join(localRoot(home), "runtimes", "linux-libraries-1", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "lib"), path.join(localRoot(home), "runtimes", "cuda-libraries-12.8", "targets", "x86_64-linux", "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
-  if (backend !== "cuda") delete env.GGML_BACKEND_PATH;
+  const root = path.join(localRoot(home), "runtimes");
+  const app = path.join(root, `llama-${LLAMA_VERSION}-${llamaRuntimeKey(platform, backend)}`, backend === "cuda" ? "app" : `llama-${LLAMA_VERSION}`);
+  const rocm = LOCAL_ROCM_ARCHIVES[gfx] ? path.join(root, `rocm-10.0.0-${gfx}`) : "";
+  const env: NodeJS.ProcessEnv = { ...process.env, LD_LIBRARY_PATH: [app, path.join(root, "linux-libraries-1", "lib"),
+    ...(backend === "rocm" && rocm ? [path.join(rocm, "lib")] : []),
+    ...(backend === "cuda" ? [path.join(root, "cuda-libraries-12.8", "lib"), path.join(root, "cuda-libraries-12.8", "targets", "x86_64-linux", "lib")] : []), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
+  if (backend === "cuda" || backend === "rocm") env.GGML_BACKEND_PATH = path.join(app, backend === "cuda" ? "libggml-cuda.so" : "libggml-hip.so");
+  else delete env.GGML_BACKEND_PATH;
+  if (backend === "rocm" && rocm) { env.ROCM_PATH = rocm; env.HIP_PATH = rocm; }
   return env;
 }
 export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
-  if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home, plan.gpu.backend);
+  if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home, plan.gpu.backend, plan.gpu.gfx);
   const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
   const compilerBin = path.join(compiler, "bin");
   const bin = path.join(runtimeDirectory(plan, home), "venv", "bin");
@@ -311,8 +327,8 @@ async function publicLlamaRegistryFetch(): Promise<typeof fetch> {
     return fetch(request);
   };
 }
-export async function installLlamaRuntime(platform: string, backend: string, home = defaultHome(), log: LocalLog = console.log): Promise<string> {
-  const env = llamaRuntimeEnvironment(platform, home, backend);
+export async function installLlamaRuntime(platform: string, backend: string, home = defaultHome(), log: LocalLog = console.log, gfx = ""): Promise<string> {
+  const env = llamaRuntimeEnvironment(platform, home, backend, gfx);
   if (platform === "linux") {
     const libraries = path.join(localRoot(home), "runtimes", "linux-libraries-1");
     const ready = path.join(libraries, ".ready");
@@ -326,6 +342,22 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
     if (!fs.existsSync(path.join(libraries, ".ready")) || !["libnccl.so.2", "libcublas.so.12", "libcudart.so.12"].every(file => ["lib", "targets/x86_64-linux/lib"].some(dir => fs.existsSync(path.join(libraries, dir, file))))) {
       await installCondaArchives(libraries, LOCAL_CUDA_LIBRARIES, home, log);
       fs.writeFileSync(path.join(libraries, ".ready"), "12.8", { mode: 0o600 });
+    }
+  }
+  if (platform === "linux" && backend === "rocm") {
+    const artifact = LOCAL_ROCM_ARCHIVES[gfx];
+    if (!artifact) throw new Error("No reviewed ROCm runtime is available for this GPU architecture. Try a working Vulkan driver.");
+    const directory = path.join(localRoot(home), "runtimes", `rocm-10.0.0-${gfx}`);
+    const libraries = ["libamdhip64.so.7", "libhipblas.so.3", "librocblas.so.5"];
+    if (!fs.existsSync(path.join(directory, ".ready")) || !libraries.every(file => fs.existsSync(path.join(directory, "lib", file)))) {
+      const disk = fs.statfsSync(localRoot(home));
+      if (Number(disk.bavail) * Number(disk.bsize) < artifact.bytes * 5 + 5 * GIB) throw new Error("The private ROCm runtime needs 21 GiB of free disk space for download, extraction and safety headroom. No model weights were downloaded.");
+      const archive = await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads"), { log });
+      await stageLocalRuntime(directory, async staging => {
+        await extractRuntime(archive, staging);
+        if (!libraries.every(file => fs.existsSync(path.join(staging, "lib", file)))) throw new Error("The ROCm archive is missing its required GPU libraries.");
+        fs.writeFileSync(path.join(staging, ".ready"), "10.0.0", { mode: 0o600 });
+      });
     }
   }
   const key = llamaRuntimeKey(platform, backend);
@@ -343,7 +375,7 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
       const executable = findExecutable(staging, platform === "win32" ? "llama-server.exe" : "llama-server");
       if (!executable) throw new Error("The inference runtime archive contains no llama-server.");
       if (platform !== "win32") fs.chmodSync(executable, 0o755);
-      const probeEnv = platform === "linux" ? { ...env, GGML_BACKEND_PATH: backend === "cuda" ? path.join(path.dirname(executable), "libggml-cuda.so") : undefined, LD_LIBRARY_PATH: [path.dirname(executable), env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) } : env;
+      const probeEnv = platform === "linux" ? { ...env, GGML_BACKEND_PATH: backend === "cuda" || backend === "rocm" ? path.join(path.dirname(executable), backend === "cuda" ? "libggml-cuda.so" : "libggml-hip.so") : undefined, LD_LIBRARY_PATH: [path.dirname(executable), env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) } : env;
       await runLocalProbe(executable, ["--version"], probeEnv);
       fs.writeFileSync(path.join(staging, ".ready"), LLAMA_VERSION, { mode: 0o600 });
     });
@@ -364,7 +396,7 @@ function runInstall(command: string, args: string[], env: NodeJS.ProcessEnv): Pr
   });
 }
 export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(), log: LocalLog = console.log) {
-  if (plan.runtime !== "vllm") return installLlamaRuntime(plan.platform, plan.gpu.backend, home, log);
+  if (plan.runtime !== "vllm") return installLlamaRuntime(plan.platform, plan.gpu.backend, home, log, plan.gpu.gfx);
   if (process.platform !== "linux" || process.arch !== "x64") throw new Error("The managed vLLM runtime requires Linux x64.");
   const libc = await runLocalProbe("getconf", ["GNU_LIBC_VERSION"]).catch(() => "");
   const version = libc.match(/glibc\s+(\d+)\.(\d+)/);

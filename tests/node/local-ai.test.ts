@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { modelReadiness, preferredModelId } from "../../dist/src/doctor.js";
-import { decodeLocalPlan, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
+import { decodeLocalPlan, detectAmdGpus, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
 import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
 import { downloadLocalArtifact, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
@@ -490,4 +490,37 @@ test("a supervisor spawn error fails promptly instead of holding the startup loc
     spawn(process.execPath, ["--eval", ""], { ...options, cwd: path.join(home, "missing-directory") })), /Cannot start the local supervisor/);
   assert.ok(Date.now() - started < 5000);
   assert.ok(!fs.existsSync(path.join(localRoot(home), "lifecycle.lock")));
+});
+
+
+test("AMD kernel detection pairs accessible PCI nodes with VRAM and ROCm architecture", () => {
+  const root = makeTempDir("bw-local-amd-kernel-"), drm = path.join(root, "drm"), kfd = path.join(root, "kfd");
+  const device = path.join(drm, "renderD128", "device"), node = path.join(kfd, "2");
+  fs.mkdirSync(device, { recursive: true }); fs.mkdirSync(node, { recursive: true });
+  for (const [name, value] of Object.entries({ vendor: "0x1002", mem_info_vram_total: String(192 * GIB), mem_info_vram_used: String(2 * GIB), product_name: "AMD Instinct MI300X OAM", uevent: "PCI_SLOT_NAME=0000:05:00.0" })) fs.writeFileSync(path.join(device, name), value);
+  fs.writeFileSync(path.join(node, "properties"), "gfx_target_version 90402\nvendor_id 4098\nlocation_id 1280\ndomain 0\n");
+  const native = detectAmdGpus(drm, kfd);
+  assert.equal(native.length, 1); assert.equal(native[0].memory, 192 * GIB); assert.equal(native[0].freeMemory, 190 * GIB); assert.equal(native[0].gfx, "gfx942");
+  const runtime = parseLlamaDevices("ROCm0: AMD Instinct MI300X (196592 MiB, 196054 MiB free)", native);
+  assert.equal(runtime[0].gfx, "gfx942"); assert.equal(runtime[0].backend, "rocm");
+  const plan = recommendLocalModel({ platform: "linux", arch: "x64", memory: 256 * GIB, gpus: runtime }).plan;
+  assert.deepEqual(decodeLocalPlan(plan), plan); assert.equal(plan.modelId, "nex-mini");
+  assert.throws(() => decodeLocalPlan({ ...plan, gpu: { ...plan.gpu, gfx: "../../invalid" } }), /Invalid/);
+  fs.writeFileSync(path.join(device, "mem_info_vram_total"), "unknown");
+  assert.equal(detectAmdGpus(drm, kfd).length, 0);
+});
+
+test("MI300X setup selects private ROCm before downloading model weights", async () => {
+  const home = makeTempDir("bw-local-rocm-setup-"), calls: string[] = [];
+  const host = hardware(256, 192, "amd");
+  Object.assign(host.gpus[0], { id: "ROCm0", name: "AMD Instinct MI300X OAM", backend: "rocm", gfx: "gfx942" });
+  const result = await setupLocalAI({}, home, quiet, {
+    detect: async () => host, status: async () => ({ running: false }), disk: async () => {},
+    installLlama: async (_platform, backend, _home, _log, gfx) => { calls.push(`${backend}:${gfx}`); return "rocm"; },
+    probe: async () => "ROCm0: AMD Instinct MI300X (196592 MiB, 196054 MiB free)",
+    installRuntime: async () => "rocm", download: async () => { calls.push("weights"); return "file"; },
+    connect: async () => ({ model: "local", apiKey: "fake", baseURL: "http://127.0.0.1:1/v1" }), verify: async () => {},
+  });
+  assert.equal(calls[0], "rocm:gfx942"); assert.equal(result.plan.gpu.backend, "rocm"); assert.equal(readLocalPlan(home)?.gpu.gfx, "gfx942");
+  assert.match(runtimeDirectory(result.plan, home), /linuxRocm$/);
 });

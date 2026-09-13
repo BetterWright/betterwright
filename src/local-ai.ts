@@ -15,7 +15,7 @@ export const GIB = 1024 ** 3;
 export type LocalPreference = "balanced" | "speed" | "quality";
 export type LocalAcceleration = "none" | "mtp" | "dflash2";
 export interface LocalSetupOptions { preference?: string; model?: string; quant?: string; acceleration?: string; }
-export type LocalBackend = "metal" | "vulkan" | "cuda";
+export type LocalBackend = "metal" | "vulkan" | "cuda" | "rocm";
 export interface LocalGpu {
   id: string;
   name: string;
@@ -25,6 +25,7 @@ export interface LocalGpu {
   vendor: "apple" | "nvidia" | "amd" | "intel" | "other";
   compute: number;
   uuid: string;
+  gfx?: string;
 }
 export interface LocalHardware {
   platform: string;
@@ -64,6 +65,7 @@ export function localPlanId(plan: LocalPlan) {
   // Free VRAM changes while a model is running; it is not a new installation.
   const identity = [plan.modelId, plan.quant, localModel(plan).revision,
     plan.runtime, plan.platform, plan.arch, plan.gpu.id, plan.gpu.uuid, plan.context];
+  if (plan.gpu.backend === "rocm") identity.push("rocm", plan.gpu.gfx || "");
   if (plan.acceleration !== "none") identity.push(plan.acceleration, plan.acceleration === "dflash2" ? LOCAL_DFLASH2.revision : "native");
   return createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 24);
 }
@@ -108,14 +110,45 @@ export function parseNvidiaGpus(output: string): LocalGpu[] {
 }
 export function parseLlamaDevices(output: string, native: LocalGpu[] = []): LocalGpu[] {
   return output.split(/\r?\n/).flatMap(line => {
-    const match = line.match(/^\s*((?:MTL|Metal|Vulkan|CUDA)\d+):\s+(.+?)\s+\((\d+)\s+MiB,\s*(\d+)\s+MiB free\)/i);
+    const match = line.match(/^\s*((?:MTL|Metal|Vulkan|CUDA|ROCm|HIP)\d+):\s+(.+?)\s+\((\d+)\s+MiB,\s*(\d+)\s+MiB free\)/i);
     if (!match) return [];
     const [, id, name, total, free] = match;
-    const physical = native.find(g => g.name.toLowerCase() === name.toLowerCase());
-    const backend = /^(MTL|Metal)/i.test(id) ? "metal" : /^CUDA/i.test(id) ? "cuda" : "vulkan";
+    const normalize = (value: string) => value.toLowerCase().replace(/\s+oam$/, "");
+    const physical = native.find(g => normalize(g.name) === normalize(name));
+    const backend = /^(MTL|Metal)/i.test(id) ? "metal" : /^(ROCm|HIP)/i.test(id) ? "rocm" : /^CUDA/i.test(id) ? "cuda" : "vulkan";
     return [{ id, name, memory: Number(total) * 1024 ** 2, freeMemory: Number(free) * 1024 ** 2,
-      backend, vendor: vendor(name), compute: physical?.compute || 0, uuid: physical?.uuid || "" } satisfies LocalGpu];
+      backend, vendor: vendor(name), compute: physical?.compute || 0, uuid: physical?.uuid || "", gfx: physical?.gfx } satisfies LocalGpu];
   });
+}
+/** Kernel-reported VRAM and PCI topology avoid the 32-bit AdapterRAM limit and
+ * work before ROCm userspace is installed. Inaccessible container nodes are ignored. */
+export function detectAmdGpus(drmRoot = "/sys/class/drm", kfdRoot = "/sys/class/kfd/kfd/topology/nodes"): LocalGpu[] {
+  const architectures = new Map<string, string>();
+  const entries = (directory: string) => { try { return fs.readdirSync(directory); } catch { return []; } };
+  for (const node of entries(kfdRoot)) {
+    try {
+      const properties = fs.readFileSync(path.join(kfdRoot, node, "properties"), "utf8");
+      const value = (key: string) => Number(properties.match(new RegExp(`^${key} (\\d+)$`, "m"))?.[1]);
+      const target = value("gfx_target_version"), location = value("location_id"), domain = value("domain");
+      if (value("vendor_id") !== 4098 || !Number.isSafeInteger(target) || target <= 0 || !Number.isSafeInteger(location) || !Number.isSafeInteger(domain)) continue;
+      const pci = `${domain.toString(16).padStart(4, "0")}:${(location >> 8).toString(16).padStart(2, "0")}:${((location >> 3) & 31).toString(16).padStart(2, "0")}.${location & 7}`;
+      architectures.set(pci, `gfx${Math.floor(target / 10000)}${(Math.floor(target / 100) % 100).toString(16)}${(target % 100).toString(16)}`);
+    } catch { /* A container may expose only one of the host's KFD nodes. */ }
+  }
+  const gpus: LocalGpu[] = [];
+  for (const name of entries(drmRoot).filter(entry => /^renderD\d+$/.test(entry)).sort()) {
+    try {
+      const directory = path.join(drmRoot, name, "device");
+      const read = (file: string) => fs.readFileSync(path.join(directory, file), "utf8").trim();
+      if (read("vendor") !== "0x1002") continue;
+      const memory = Number(read("mem_info_vram_total")), used = Number(read("mem_info_vram_used"));
+      if (!Number.isSafeInteger(memory) || memory <= 0 || !Number.isSafeInteger(used) || used < 0) continue;
+      const pci = read("uevent").match(/^PCI_SLOT_NAME=(.+)$/m)?.[1] || "";
+      let product = "AMD GPU"; try { product = read("product_name") || product; } catch { /* Product strings are optional. */ }
+      gpus.push({ id: `ROCm${gpus.length}`, name: product, memory, freeMemory: Math.max(0, memory - used), backend: "rocm", vendor: "amd", compute: 0, uuid: "", gfx: architectures.get(pci) });
+    } catch { /* Missing VRAM information must never become a guessed capacity. */ }
+  }
+  return gpus;
 }
 export async function detectLocalHardware({ probe = runLocalProbe, platform = process.platform, arch = process.arch,
   memory = os.totalmem() }: { probe?: LocalProbe; platform?: string; arch?: string; memory?: number } = {}): Promise<LocalHardware> {
@@ -127,7 +160,7 @@ export async function detectLocalHardware({ probe = runLocalProbe, platform = pr
   const nvidia = await probe("nvidia-smi", ["--query-gpu=index,name,memory.total,memory.free,compute_cap,uuid", "--format=csv,noheader,nounits"]).catch(() => "");
   // Vulkan enumeration during setup covers Radeon, Arc and other discrete
   // GPUs. WMI AdapterRAM is a 32-bit field; never use it as a VRAM limit.
-  return { platform, arch, memory, gpus: parseNvidiaGpus(nvidia) };
+  return { platform, arch, memory, gpus: [...parseNvidiaGpus(nvidia), ...(platform === "linux" ? detectAmdGpus() : [])] };
 }
 
 export function recommendLocalModel(hardware: LocalHardware, options: LocalSetupOptions = {}): LocalRecommendation {
@@ -197,7 +230,7 @@ function recommendOnGpu(hardware: LocalHardware, options: LocalSetupOptions): Lo
   const plan: LocalPlan = { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform: hardware.platform,
     arch: hardware.arch, gpu, context, acceleration, preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced" };
   return { plan, model, downloadBytes: modelBytes + (acceleration === "dflash2" ? draftBytes : 0), reserveBytes: reserve + (acceleration === "dflash2" ? 2 * GIB : 0),
-    reason: `${gpu.name}: ${model.quant} preserves quality while reserving ${(reserve / GIB).toFixed(1)} GiB for context, runtime${apple ? ", browser and macOS" : " workspace"}. ${acceleration === "dflash2" ? "DFlash2 with a pinned BF16 drafter and 2 GiB extra workspace." : acceleration === "mtp" ? "Native MTP heads enabled; no separate draft download." : "This checkpoint has no reviewed compatible draft head."}`.trim() };
+    reason: `${gpu.name}: ${model.quant} preserves quality while reserving ${(reserve / GIB).toFixed(1)} GiB for context, runtime${apple ? ", browser and macOS" : " workspace"}. ${acceleration === "dflash2" ? "DFlash2 with a pinned BF16 drafter and 2 GiB extra workspace." : acceleration === "mtp" ? "Native MTP heads enabled; no separate draft download." : "Ordinary decoding selected."}`.trim() };
 }
 
 export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
@@ -208,19 +241,23 @@ export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
   const platform = get("platform"), arch = get("arch"), context = get("context"), preference = get("preference");
   const acceleration = get("acceleration") ?? "none";
   const id = field("id"), name = field("name"), memory = field("memory"), freeMemory = field("freeMemory"), backend = field("backend"), gpuVendor = field("vendor"), compute = field("compute"), uuid = field("uuid");
+  const gfx = field("gfx");
   if (get("version") !== 1 || !model || !isString(platform) || !isString(arch) || !["linux", "win32", "darwin"].includes(platform) || !["arm64", "x64"].includes(arch) ||
     !isNumber(context) || ![32768, 65536].includes(context) || !["balanced", "speed", "quality"].includes(String(preference)) ||
     !["none", "mtp", "dflash2"].includes(String(acceleration)) || acceleration === "mtp" && !model.mtp || acceleration === "dflash2" && (model.id !== "qwen-27b" || model.runtime !== "vllm") ||
-    !isString(id) || !/^(MTL|Metal|Vulkan|CUDA)\d+$/.test(id) || !isString(name) || name.length > 200 ||
+    !isString(id) || !/^(MTL|Metal|Vulkan|CUDA|ROCm|HIP)\d+$/.test(id) || !isString(name) || name.length > 200 ||
     !isNumber(memory) || !Number.isFinite(memory) || memory <= 8 * GIB || !isNumber(freeMemory) || !Number.isFinite(freeMemory) || freeMemory < 0 ||
-    !["metal", "vulkan", "cuda"].includes(String(backend)) || !isNumber(compute) || !Number.isFinite(compute) || !isString(uuid) || (uuid !== "" && !/^GPU-[\da-f-]+$/i.test(uuid))) {
+    !["metal", "vulkan", "cuda", "rocm"].includes(String(backend)) || !isNumber(compute) || !Number.isFinite(compute) || !isString(uuid) || (uuid !== "" && !/^GPU-[\da-f-]+$/i.test(uuid)) ||
+    (gfx !== undefined && (!isString(gfx) || !/^gfx[\da-f]{3,4}$/.test(gfx))) ||
+    (backend === "rocm" && (platform !== "linux" || gpuVendor !== "amd" || !isString(gfx)))) {
     throw new Error("Invalid saved local AI configuration. Run betterwright --local to repair it.");
   }
   const plan: LocalPlan = { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform, arch, context,
     acceleration: acceleration === "dflash2" ? "dflash2" : acceleration === "mtp" ? "mtp" : "none",
     preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced",
-    gpu: { id, name, memory, freeMemory, backend: backend === "metal" ? "metal" : backend === "cuda" ? "cuda" : "vulkan",
+    gpu: { id, name, memory, freeMemory, backend: backend === "metal" ? "metal" : backend === "cuda" ? "cuda" : backend === "rocm" ? "rocm" : "vulkan",
       vendor: gpuVendor === "apple" ? "apple" : gpuVendor === "nvidia" ? "nvidia" : gpuVendor === "amd" ? "amd" : gpuVendor === "intel" ? "intel" : "other", compute, uuid } };
+  if (isString(gfx)) plan.gpu.gfx = gfx;
   if (get("accelerationTuned") === true) plan.accelerationTuned = true;
   return plan;
 }
