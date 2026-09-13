@@ -408,8 +408,10 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   }
   // NVIDIA wheels use lib/ while nvcc and FlashInfer expect lib64/.
   if (!fs.existsSync(path.join(cuda, "lib64"))) fs.symlinkSync("lib", path.join(cuda, "lib64"));
-  const cudartLink = path.join(cuda, "lib", "libcudart.so");
-  if (!fs.existsSync(cudartLink)) fs.symlinkSync("libcudart.so.13", cudartLink);
+  for (const library of ["cudart", "nvrtc"]) {
+    const link = path.join(cuda, "lib", `lib${library}.so`);
+    if (!fs.existsSync(link)) fs.symlinkSync(`lib${library}.so.13`, link);
+  }
   fs.rmSync(ready, { force: true });
   await runLocalProbe(nvcc, ["--version"], env);
   const driverLink = path.join(cuda, "lib", "libcuda.so");
@@ -422,6 +424,9 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
     const source = path.join(check, "probe.cu");
     writePrivate(source, "#include <cuda_runtime.h>\n__global__ void bw_probe(float *x) { x[0] = 1.0f; }\n");
     await runLocalProbe(nvcc, ["-c", source, `-arch=sm_${Math.round(plan.gpu.compute * 10)}`, "-o", path.join(check, "probe.o")], env, 120_000);
+    const linkSource = path.join(check, "link.cpp");
+    writePrivate(linkSource, "int main() { return 0; }\n");
+    await runLocalProbe(gxx, [linkSource, "-Wl,--no-as-needed", `-L${path.join(cuda, "lib")}`, "-lcudart", "-lnvrtc", "-lcuda", "-o", path.join(check, "link")], env);
   } catch (error) {
     fs.rmSync(path.join(compilerDirectory, ".ready"), { force: true });
     throw error;
