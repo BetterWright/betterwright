@@ -620,3 +620,25 @@ test("the spawned daemon's argv carries no credential material", async () => {
     outcome.channel.end();
   }
 });
+
+test("daemon stdin config survives multi-byte characters split across chunks", async () => {
+  const { Readable } = await import("node:stream");
+  const { daemonConfigFromStdin } = await import("../../dist/src/daemon.js");
+  // 'é' and '日' as raw bytes, sliced mid-sequence — per-chunk string
+  // concatenation would corrupt them; setEncoding must not.
+  const payload = Buffer.from(
+    JSON.stringify({ profile: "café-日本語", browser: { provider: null } }),
+    "utf8",
+  );
+  // Cut inside é (bytes 15-16) and inside 日 (bytes 18-20): per-chunk
+  // stringification would corrupt both into replacement characters.
+  const pieces = [payload.subarray(0, 16), payload.subarray(16, 19), payload.subarray(19)];
+  assert.equal(payload[15], 0xc3, "the cut at 16 must land inside é's sequence");
+  assert.equal(payload[18], 0xe6, "the cut at 19 must land inside 日's sequence");
+  const config = await daemonConfigFromStdin(Readable.from(pieces));
+  assert.equal(config.profile, "café-日本語");
+  // Empty stdin means defaults, not an error.
+  assert.deepEqual(await daemonConfigFromStdin(Readable.from([])), {});
+  // And malformed JSON falls back to defaults too.
+  assert.deepEqual(await daemonConfigFromStdin(Readable.from([Buffer.from("{oops")])), {});
+});

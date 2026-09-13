@@ -1182,6 +1182,25 @@ export async function startSessionDaemon(options: SessionDaemonOptions = {}) {
 }
 
 /**
+ * The daemon's JSON config from its stdin pipe (exported for tests).
+ * Decoding happens at the stream: a multi-byte character split across chunks
+ * would otherwise corrupt into replacement characters when each Buffer is
+ * stringified on its own. An empty payload means defaults.
+ */
+export async function daemonConfigFromStdin(stream) {
+  stream.setEncoding("utf8");
+  let payload = "";
+  for await (const chunk of stream) payload += chunk;
+  if (!payload.trim()) return {};
+  try {
+    return JSON.parse(payload);
+  } catch {
+    process.stderr.write("Invalid daemon config on stdin; starting with defaults.\n");
+    return {};
+  }
+}
+
+/**
  * Entry point for the hidden `betterwright __daemon` command: read the JSON
  * config from stdin (written by spawnDaemon — never argv, where credentials
  * in provider refs would be visible to any same-user process), start the
@@ -1189,20 +1208,11 @@ export async function startSessionDaemon(options: SessionDaemonOptions = {}) {
  */
 export async function runSessionDaemon() {
   process.title = "betterwright-daemon";
-  let config: UntrustedValue = {};
   // A TTY stdin means a manual invocation: no config is coming, so start with
   // defaults instead of waiting on input that never arrives.
-  if (!process.stdin.isTTY) {
-    let payload = "";
-    for await (const chunk of process.stdin) payload += chunk;
-    if (payload.trim()) {
-      try {
-        config = JSON.parse(payload);
-      } catch {
-        process.stderr.write("Invalid daemon config on stdin; starting with defaults.\n");
-      }
-    }
-  }
+  const config: UntrustedValue = process.stdin.isTTY
+    ? {}
+    : await daemonConfigFromStdin(process.stdin);
   let daemon;
   try {
     daemon = await startSessionDaemon({ config });
