@@ -288,6 +288,19 @@ test("doctor checks translate a raw report into fixable lines", () => {
   assert.ok(failures.every((check) => check.fix));
 });
 
+test("doctor fails an invalid local default with repair guidance even when cloud is available", () => {
+  const home = tempHome();
+  fs.mkdirSync(path.join(home, "local-ai"));
+  fs.writeFileSync(path.join(home, "local-ai", "selection.json"), "broken");
+  const env = { BETTERWRIGHT_HOME: home, OPENAI_API_KEY: "configured-cloud-key" };
+  const readiness = modelReadiness({ env, auth: {} });
+  assert.match(readiness.localError, /invalid/);
+  assert.ok(!readiness.sources.some(source => source.startsWith("local")));
+  const check = doctorChecks(READY_REPORT, { home, env }).find(row => row.label === "Model backends");
+  assert.equal(check.status, "fail"); assert.match(check.fix, /betterwright --local/);
+  assert.equal(preferredModelId({ env, auth: {} }).model, "local");
+});
+
 test("doctor surfaces the SwiftShader fallback on GPU-less Linux", () => {
   const checks = doctorChecks({
     ...READY_REPORT,

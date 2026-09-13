@@ -198,15 +198,33 @@ async function extractRuntime(archive: string, directory: string) {
   mkdirPrivate(directory);
   await runLocalProbe("tar", ["-xf", archive, "-C", directory]);
 }
+/** Only publish a complete, validated extraction. Setup holds the install lock. */
+export async function stageLocalRuntime(directory: string, populate: (staging: string) => Promise<void>) {
+  const staging = `${directory}.installing`;
+  fs.rmSync(staging, { recursive: true, force: true });
+  mkdirPrivate(staging);
+  try {
+    await populate(staging);
+    fs.rmSync(directory, { recursive: true, force: true });
+    fs.renameSync(staging, directory);
+  } finally { fs.rmSync(staging, { recursive: true, force: true }); }
+}
 export async function installLlamaRuntime(platform: string, backend: string, home = defaultHome(), log: LocalLog = console.log): Promise<string> {
   const key = llamaRuntimeKey(platform, backend);
   const directory = path.join(localRoot(home), "runtimes", `llama-${LLAMA_VERSION}-${key}`);
   const ready = path.join(directory, ".ready");
   if (!fs.existsSync(ready)) {
-    for (const artifact of LOCAL_RUNTIMES[key]) {
-      const archive = await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads"), { log });
-      await extractRuntime(archive, directory);
-    }
+    await stageLocalRuntime(directory, async staging => {
+      for (const artifact of LOCAL_RUNTIMES[key]) {
+        const archive = await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads"), { log });
+        await extractRuntime(archive, staging);
+      }
+      const executable = findExecutable(staging, platform === "win32" ? "llama-server.exe" : "llama-server");
+      if (!executable) throw new Error("The inference runtime archive contains no llama-server.");
+      if (platform !== "win32") fs.chmodSync(executable, 0o755);
+      await runLocalProbe(executable, ["--version"]);
+      fs.writeFileSync(path.join(staging, ".ready"), LLAMA_VERSION, { mode: 0o600 });
+    });
   }
   const executable = findExecutable(directory, platform === "win32" ? "llama-server.exe" : "llama-server");
   if (!executable) throw new Error("The inference runtime archive contains no llama-server.");
@@ -236,7 +254,12 @@ export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(),
   if (!fs.existsSync(ready)) {
     const uvDirectory = path.join(localRoot(home), "runtimes", `uv-${UV_VERSION}`);
     const archive = await downloadLocalArtifact(UV_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
-    await extractRuntime(archive, uvDirectory);
+    await stageLocalRuntime(uvDirectory, async staging => {
+      await extractRuntime(archive, staging);
+      const uv = findExecutable(staging, "uv");
+      if (!uv) throw new Error("The pinned uv archive contains no executable.");
+      await runLocalProbe(uv, ["--version"]);
+    });
     const uv = findExecutable(uvDirectory, "uv");
     if (!uv) throw new Error("The pinned uv archive contains no executable.");
     const env = { ...process.env, UV_PYTHON_INSTALL_DIR: path.join(localRoot(home), "python"), UV_CACHE_DIR: path.join(localRoot(home), "uv-cache") };

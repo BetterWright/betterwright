@@ -5,7 +5,7 @@ import { defaultHome } from "./home.js";
 import { detectLocalHardware, GIB, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, readLocalPlan, recommendLocalModel,
   runLocalProbe, writeLocalJson } from "./local-ai.js";
 import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, withLocalLock } from "./local-ai-install.js";
-import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServiceStatus, stopLocalService } from "./local-ai-service.js";
+import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServerArguments, localServiceStatus, stopLocalService } from "./local-ai-service.js";
 import { isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 // A synthetic red image, no browser/profile input. The model must see the
@@ -94,8 +94,10 @@ export async function setupLocalAI(options: { preference?: string; model?: strin
     await (dependencies.disk || checkLocalDisk)(plan, home);
     const executable = await installRuntime(plan, home, log);
     if (plan.runtime === "vllm") {
-      // Validate the actual CUDA/PyTorch runtime before downloading weights.
-      await probe(path.join(path.dirname(executable), "python"), ["-c", "import torch; assert torch.cuda.is_available(), 'CUDA driver/runtime is unavailable'; print(torch.cuda.get_device_name(0))"], { ...process.env, CUDA_VISIBLE_DEVICES: plan.gpu.uuid });
+      // Validate both CUDA and the pinned runtime's real argument parser
+      // before spending bandwidth on weights. Request logging defaults off.
+      const preflight = "import json,sys,torch; from vllm.entrypoints.launchers.cli_args import make_arg_parser,validate_parsed_serve_args; from vllm.utils.argparse_utils import FlexibleArgumentParser; args=make_arg_parser(FlexibleArgumentParser()).parse_args(json.loads(sys.argv[1])); validate_parsed_serve_args(args); assert not args.enable_log_requests, 'Request logging must be disabled'; assert torch.cuda.is_available(), 'CUDA driver/runtime is unavailable'; print(torch.cuda.get_device_name(0))";
+      await probe(path.join(path.dirname(executable), "python"), ["-c", preflight, JSON.stringify(localServerArguments(plan, 8000, home).slice(1))], { ...process.env, CUDA_VISIBLE_DEVICES: plan.gpu.uuid });
     }
     for (const file of model.files) await (dependencies.download || downloadLocalArtifact)(file, modelDirectory(plan, home), { log });
     log("Loading the model and checking image input plus tool calls…");
@@ -140,7 +142,7 @@ export async function runLocalCommand(args: string[], { home = defaultHome(), lo
     if (status.error && !json) { log(`Local AI: ${status.error}`); return 1; }
     const report = { configured: Boolean(plan), model: plan ? localModel(plan).name : null, quant: plan?.quant || null, runtime: plan?.runtime || null, ...status };
     log(json ? JSON.stringify(report, null, 2) : plan ? `${report.model} · ${report.quant} · ${report.runtime}: ${status.ready ? "ready" : status.running ? "starting" : "stopped (starts when the harness needs it)"}` : "No local model configured. Run betterwright --local.");
-    return 0;
+    return status.error ? 1 : 0;
   } catch (error) {
     const message = error?.message || String(error);
     log(json ? JSON.stringify({ ok: false, error: message }) : `Local AI: ${message}`);

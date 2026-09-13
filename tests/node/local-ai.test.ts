@@ -9,7 +9,7 @@ import { preferredModelId } from "../../dist/src/doctor.js";
 import { decodeLocalPlan, detectLocalHardware, GIB, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
 import { LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
-import { downloadLocalArtifact, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, runtimeDirectory, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { downloadLocalArtifact, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService } from "../../dist/src/local-ai-service.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "../../dist/src/local-ai-vllm-lock.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
@@ -212,6 +212,37 @@ test("local help and fresh status do not install or initialize integrations", ()
     else assert.match(result.stdout, /local/i);
   }
   assert.deepEqual(fs.readdirSync(home), []);
+});
+test("JSON status reports invalid ownership with a failing exit code", () => {
+  const home = makeTempDir("bw-local-status-error-");
+  writeLocalJson(path.join(localRoot(home), "service.json"), {});
+  const result = spawnSync(process.execPath, ["dist/bin/betterwright.js", "local", "status", "--json"], { encoding: "utf8", env: { ...process.env, BETTERWRIGHT_HOME: home } });
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ready, false); assert.match(report.error, /Invalid local service/);
+});
+test("local model discovery normalizes source case without starting inference", () => {
+  const home = makeTempDir("bw-local-model-list-");
+  writeLocalJson(path.join(localRoot(home), "selection.json"), recommendLocalModel(hardware()).plan);
+  const result = spawnSync(process.execPath, ["dist/bin/betterwright.js", "models", "LOCAL"], { encoding: "utf8", env: { ...process.env, BETTERWRIGHT_HOME: home } });
+  assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /local/);
+  assert.deepEqual(fs.readdirSync(localRoot(home)), ["selection.json"]);
+});
+test("runtime extraction publishes only validated trees and recovers interrupted staging", async () => {
+  const directory = path.join(makeTempDir("bw-local-extract-"), "runtime");
+  fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, "old-partial"), "old");
+  fs.mkdirSync(`${directory}.installing`); fs.writeFileSync(path.join(`${directory}.installing`, "interrupted"), "old");
+  await assert.rejects(stageLocalRuntime(directory, async staging => {
+    assert.deepEqual(fs.readdirSync(staging), []);
+    fs.writeFileSync(path.join(staging, "partial"), "failed"); throw new Error("extraction interrupted");
+  }), /interrupted/);
+  assert.deepEqual(fs.readdirSync(directory), ["old-partial"]);
+  assert.ok(!fs.existsSync(`${directory}.installing`));
+  await stageLocalRuntime(directory, async staging => {
+    assert.deepEqual(fs.readdirSync(staging), []);
+    fs.writeFileSync(path.join(staging, "complete"), "validated");
+  });
+  assert.deepEqual(fs.readdirSync(directory), ["complete"]);
 });
 
 test("Windows retries Vulkan if a CUDA binary starts but cannot enumerate its GPU", async () => {

@@ -98,7 +98,7 @@ export function localServerArguments(plan: LocalPlan, port: number, home = defau
     return ["serve", directory, "--host", "127.0.0.1", "--port", String(port), "--served-model-name", LOCAL_MODEL_ALIAS,
       "--max-model-len", String(plan.context), "--max-num-seqs", "1", "--gpu-memory-utilization", "0.85",
       "--kv-cache-dtype", "fp8_e4m3", "--reasoning-parser", "qwen3", "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder",
-      "--enable-chunked-prefill", "--max-num-batched-tokens", "2048", "--disable-log-requests", "--disable-log-stats"];
+      "--enable-chunked-prefill", "--max-num-batched-tokens", "2048", "--disable-log-stats"];
   }
   const weights = model.files.find(f => !f.name.startsWith("mmproj-"));
   const vision = model.files.find(f => f.name.startsWith("mmproj-"));
