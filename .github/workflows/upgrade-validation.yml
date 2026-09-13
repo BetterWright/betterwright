@@ -1,0 +1,59 @@
+name: Validate existing 2.7.1 profiles on Chromium 153
+
+on:
+  push:
+    branches: [codex/validate-upgrade-2.7.1]
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run build
+      - name: Prepare the isolated published 2.7.1 package
+        shell: pwsh
+        run: |
+          $compat=Join-Path $env:RUNNER_TEMP 'compat-2.7.1'
+          New-Item -ItemType Directory -Force $compat | Out-Null
+          '{"private":true,"type":"module","dependencies":{"betterwright":"2.7.1"}}' | Set-Content (Join-Path $compat 'package.json')
+          Push-Location $compat
+          bun install --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+      - name: Enable Linux browser sandbox namespaces
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Verify Windows user encryption
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Security
+          $value=[byte[]](1,2,3)
+          $encrypted=[Security.Cryptography.ProtectedData]::Protect($value,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+          $decrypted=[Security.Cryptography.ProtectedData]::Unprotect($encrypted,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+          if ($decrypted.Length -ne 3) { throw 'DPAPI unavailable' }
+      - name: Upgrade the real browser and reopen the existing profile
+        shell: pwsh
+        run: |
+          $old=Join-Path $env:RUNNER_TEMP 'compat-2.7.1/node_modules/betterwright'
+          $fixture=Join-Path $env:RUNNER_TEMP 'upgrade-fixture'
+          $result=Join-Path $env:RUNNER_TEMP 'upgrade-result.json'
+          bun scripts/verify-upgrade.mjs $old $env:GITHUB_WORKSPACE $fixture $result
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content $result
