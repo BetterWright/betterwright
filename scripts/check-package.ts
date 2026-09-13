@@ -245,7 +245,8 @@ try {
     installRoot,
     "node_modules",
     ".bin",
-    process.platform === "win32" ? "betterwright.cmd" : "betterwright",
+    // The smoke installation uses Bun, whose Windows shims are executables.
+    process.platform === "win32" ? "betterwright.exe" : "betterwright",
   );
   const versionOutput = run(bin, ["--version"], { cwd: installRoot, capture: true }).trim();
   if (versionOutput !== installed.version) {
