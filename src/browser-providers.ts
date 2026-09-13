@@ -70,7 +70,10 @@ export function describeCdpUrl(value) {
     }
     return url.href;
   } catch {
-    return String(value || "");
+    // A malformed endpoint can still contain a credential. In particular,
+    // skipped fallbacks never reach the worker's secret registrar, so there
+    // is no later redaction pass that can safely recover the original URL.
+    return "[invalid CDP URL]";
   }
 }
 

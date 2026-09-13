@@ -2248,9 +2248,10 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
       let providerPlan = candidate;
       const remoteCdp = providerPlan?.kind === "remote";
       let attemptEnd = null;
-      // A connected CDP browser whose context never materialized — closed on
-      // failure so a rejected candidate does not leak the WebSocket.
+      // Keep both resources owned by this attempt until all required guards
+      // are ready. Even a connected browser can fail during initialization.
       let attemptBrowser = null;
+      let attemptContext = null;
       try {
         let forkBinary = null;
         let launchExecutable = null;
@@ -2439,15 +2440,12 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
             attemptBrowser = null;
             throw new Error("Host target must expose exactly one context and one page.");
           }
-          browserContext =
+          attemptContext =
             existing ||
             (await browser.newContext({
               acceptDownloads: true,
               serviceWorkers: launchConfig.adBlock === true ? "block" : "allow",
             }));
-          attemptBrowser = null;
-          endRemoteSession = attemptEnd;
-          attemptEnd = null;
           useSetContentCompatibility = true;
         } else {
           // The managed fork (or an explicit provider binary) launches under
@@ -2461,7 +2459,7 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
           }
           useSetContentCompatibility = true;
           const { chromium } = await loadPlaywrightDriver();
-          browserContext = await chromium.launchPersistentContext(
+          attemptContext = await chromium.launchPersistentContext(
             browserProfileDir,
             {
               executablePath: launchExecutable,
@@ -2474,10 +2472,22 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
             },
           );
         }
+        // Connecting is only part of launch. A candidate that cannot enforce
+        // policy, bound downloads, or register cookie secrets must be torn
+        // down before the next candidate gets the same profile lock.
+        // Publish the context for shutdown while setup is pending; other
+        // launches still wait on launchPromise before using it.
+        browserContext = attemptContext;
+        await installContextGuard(attemptContext);
+        await installDownloadGuard(attemptContext);
+        await refreshCookieSecrets(attemptContext);
         winnerWarnings = launchConfig.hostOwnedTarget
           ? []
           : providerPlan?.warnings || [];
-        return browserContext;
+        endRemoteSession = attemptEnd;
+        attemptEnd = null;
+        attemptBrowser = null;
+        return attemptContext;
       } catch (error) {
         // Release whatever this candidate minted before the chain moves on —
         // a metered remote session that never connected is still billable —
@@ -2486,8 +2496,13 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
         attemptEnd = null;
         const browser = attemptBrowser;
         attemptBrowser = null;
-        if (end) await end().catch(() => {});
+        if (browserContext === attemptContext) browserContext = null;
+        await closeDownloadGuard();
+        // No context close listener owns the shared profile lock yet; only
+        // the successful candidate below gets to release it on close.
+        if (attemptContext) await attemptContext.close().catch(() => {});
         if (browser) await browser.close().catch(() => {});
+        if (end) await end().catch(() => {});
         throw error;
       }
     };
@@ -2537,9 +2552,6 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
       liveView = null;
       if (closingLiveView) void closingLiveView.stop().catch(() => {});
     });
-    await installContextGuard(launchedContext);
-    await installDownloadGuard(launchedContext);
-    await refreshCookieSecrets(launchedContext);
     if (launchConfig.credentialCapture !== false) {
       // CDP-level capture: the sensor runs in dedicated isolated worlds and
       // reports logins in-process; model-typed logins save silently, manual

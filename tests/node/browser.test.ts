@@ -12,12 +12,15 @@ import { test } from "node:test";
 import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
 import { fromPath } from "rookie-cookies";
+import { WebSocket, WebSocketServer } from "ws";
 import { AD_BLOCK_CACHE_FILE } from "../../dist/src/ad-blocker.js";
 import { saveBrowserFallbacks, saveDefaultBrowser } from "../../dist/src/browser-config.js";
-import { chromiumNeedsSoftwareGpu } from "../../dist/src/browser-runtime.js";
+import { chromiumNeedsSoftwareGpu, managedForkArgs } from "../../dist/src/browser-runtime.js";
+import { guardProxyLaunchArgs } from "../../dist/src/chromium-args.js";
 import { resolveChromiumForkBinary } from "../../dist/src/chromium-fork.js";
 import { normalizeCookieSnapshot, normalizeCookieSyncOptions } from "../../dist/src/cookie-sync.js";
 import { doctorReport } from "../../dist/src/doctor.js";
+import { createGuardProxy } from "../../dist/src/guard-proxy.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
 import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
 import { isBoolean, isCallable, isString } from "../../dist/src/untrusted-value.js";
@@ -4917,19 +4920,39 @@ test("reading an edited field does not bypass a subsequent pending submission", 
 async function spawnCdpEndpoint() {
   const binary = resolveChromiumForkBinary();
   const profile = makeTempDir("bw-cdp-profile-");
+  // Even a CDP fixture launched locally must stay on the guard proxy. These
+  // tests only use about:blank/setContent, so deny all page network traffic.
+  const guard = createGuardProxy({
+    guardUrl: async () => ({ allowed: false, reason: "CDP fixture denies network traffic" }),
+    executeId: () => "provider-chain-test",
+  });
+  const guardPort = await guard.ensure();
   const child = spawn(
     binary,
     [
       "--headless",
       "--no-first-run",
+      "--bw-timezone=",
+      ...managedForkArgs(null, { softwareGpu: chromiumNeedsSoftwareGpu() }),
+      ...guardProxyLaunchArgs(guardPort),
       "--remote-debugging-port=0",
       `--user-data-dir=${profile}`,
       "about:blank",
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
   );
+  const exited = new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+    child.once("error", () => resolve());
+  });
+  const close = async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await exited;
+    await guard.close();
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  };
   let stderr = "";
-  const cdpUrl = await new Promise((resolve, reject) => {
+  const cdpUrl = await new Promise<string>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`CDP endpoint did not start: ${stderr.slice(-400)}`)),
       20_000,
@@ -4952,17 +4975,13 @@ async function spawnCdpEndpoint() {
         new Error(`BetterChromium exited (${code}) before exposing CDP: ${stderr.slice(-400)}`),
       );
     });
+  }).catch(async (error) => {
+    await close();
+    throw error;
   });
   return {
     cdpUrl,
-    async close() {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-      await Promise.race([
-        once(child, "exit"),
-        new Promise((resolve) => setTimeout(resolve, 5_000)),
-      ]);
-      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    },
+    close,
   };
 }
 
@@ -5102,5 +5121,90 @@ test("provider chain: an unresolvable entry is skipped with a warning, not a vet
     );
   } finally {
     await bw.close();
+  }
+});
+
+test("provider chain: malformed configured URLs never expose credentials in envelopes", opts, async () => {
+  const home = tempHome();
+  const secret = "synthetic-fallback-secret";
+  saveBrowserFallbacks([{ cdpUrl: `wss://bad host/connect?apiKey=${secret}` }], home);
+  const bw = new BetterWright({ home, headless: true });
+  try {
+    const result = await bw.run("return 42");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 42);
+    assert.ok(result.warnings.some((warning) => /Skipped a browser fallback/.test(warning)));
+    assert.ok(!JSON.stringify(result).includes(secret), "a skipped fallback leaked its credential");
+  } finally {
+    await bw.close();
+    removeBrowserHome(home);
+  }
+});
+
+test("provider chain: failed guard setup disconnects the candidate and tries the next browser", opts, async () => {
+  const cdp = await spawnCdpEndpoint();
+  const sockets = new Set<WebSocket>();
+  const proxy = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  let bw: BetterWright | undefined;
+  let rejected = 0;
+  let disconnected = false;
+  try {
+    await once(proxy, "listening");
+    proxy.on("connection", (front) => {
+      const back = new WebSocket(cdp.cdpUrl);
+      for (const socket of [front, back]) {
+        sockets.add(socket);
+        socket.on("error", () => {});
+        socket.on("close", () => sockets.delete(socket));
+      }
+      const queue: string[] = [];
+      back.on("open", () => { for (const data of queue) back.send(data); });
+      front.on("message", (raw) => {
+        const data = raw.toString();
+        const message = JSON.parse(data);
+        // Playwright's initial download defaults use the root session. The
+        // worker's guard uses a separate browser CDP session, after connect.
+        if (message.method === "Browser.setDownloadBehavior" && message.sessionId) {
+          rejected++;
+          front.send(JSON.stringify({
+            id: message.id,
+            sessionId: message.sessionId,
+            error: { code: -32000, message: "Fixture download guard unavailable" },
+          }));
+          return;
+        }
+        if (back.readyState === WebSocket.OPEN) back.send(data);
+        else queue.push(data);
+      });
+      back.on("message", (raw) => {
+        if (front.readyState === WebSocket.OPEN) front.send(raw.toString());
+      });
+      front.on("close", () => { disconnected = true; back.close(); });
+      back.on("close", () => front.close());
+    });
+    // SAFETY: the listening event above completed a TCP bind, so address()
+    // is an AddressInfo rather than an unbound null or a Unix socket path.
+    const address = proxy.address() as AddressInfo;
+    bw = new BetterWright({
+      home: tempHome(),
+      headless: true,
+      provider: [{ cdpUrl: `ws://127.0.0.1:${address.port}` }, { provider: "managed" }],
+    });
+    const result = await bw.run("return 42");
+    assert.equal(rejected, 1, "the fixture must fail during guard setup, after connection");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 42);
+    assert.equal(disconnected, true, "the rejected CDP connection must be closed before fallback completes");
+    assert.equal(result.profileMode, "persistent", "candidate cleanup must retain the profile lock");
+    assert.ok(result.warnings.some((warning) => /failed to launch:.*Fixture download guard unavailable/.test(warning)));
+    assert.ok(!result.warnings.some((warning) => /a remote browser/.test(warning)), "warnings must describe the winning browser");
+    const again = await bw.run("return 43");
+    assert.equal(again.ok, true, again.error);
+    assert.equal(again.result, 43);
+  } finally {
+    await bw?.close();
+    for (const socket of sockets) socket.terminate();
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    await cdp.close();
   }
 });
