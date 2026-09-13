@@ -11,6 +11,11 @@ jobs:
   windows-native:
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      # This runner uses a virtual display adapter. Exercise its D3D renderer
+      # without Chromium's virtual-driver blocklist; all rendering assertions
+      # and the browser sandbox remain enabled.
+      BETTERWRIGHT_CHROMIUM_ARGS: "--ignore-gpu-blocklist"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -41,6 +46,13 @@ jobs:
           7z x -y $archive "-o$encoder"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           (Join-Path $encoder 'ffmpeg-9.0.1-essentials_build\bin') | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Verify rendering on the virtual Windows adapter
+        run: |
+          Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,Status | Format-Table
+          bun test --timeout 120000 --parallel=1 --test-name-pattern "selected managed browser keeps WebGL" tests/node/browser.test.ts
+        env:
+          BETTERWRIGHT_REQUIRE_BROWSER: "1"
+          BETTERWRIGHT_REQUIRE_RECORDING: "1"
       - name: Run every browser integration test against the published installation
         run: bun test --timeout 120000 --parallel=1 tests/node/browser.test.ts
         env:
