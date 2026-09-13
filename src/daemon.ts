@@ -1182,19 +1182,25 @@ export async function startSessionDaemon(options: SessionDaemonOptions = {}) {
 }
 
 /**
- * Entry point for the hidden `betterwright __daemon` command: parse the
- * base64 config from argv, start the daemon, and stay alive until the empty
- * reaper or a signal ends the process.
+ * Entry point for the hidden `betterwright __daemon` command: read the JSON
+ * config from stdin (written by spawnDaemon — never argv, where credentials
+ * in provider refs would be visible to any same-user process), start the
+ * daemon, and stay alive until the empty reaper or a signal ends it.
  */
-export async function runSessionDaemon(argv = process.argv) {
+export async function runSessionDaemon() {
   process.title = "betterwright-daemon";
-  const flagIndex = argv.indexOf("--config");
   let config: UntrustedValue = {};
-  if (flagIndex !== -1 && argv[flagIndex + 1]) {
-    try {
-      config = JSON.parse(Buffer.from(argv[flagIndex + 1], "base64url").toString("utf8"));
-    } catch {
-      process.stderr.write("Invalid --config payload; starting with defaults.\n");
+  // A TTY stdin means a manual invocation: no config is coming, so start with
+  // defaults instead of waiting on input that never arrives.
+  if (!process.stdin.isTTY) {
+    let payload = "";
+    for await (const chunk of process.stdin) payload += chunk;
+    if (payload.trim()) {
+      try {
+        config = JSON.parse(payload);
+      } catch {
+        process.stderr.write("Invalid daemon config on stdin; starting with defaults.\n");
+      }
     }
   }
   let daemon;

@@ -2358,7 +2358,7 @@ export async function runCli() {
     }
     case "__daemon": {
       const { runSessionDaemon } = await import("../src/daemon.js");
-      return runSessionDaemon(process.argv);
+      return runSessionDaemon();
     }
     default:
       console.error(`Unknown command "${command}".\n\n${cliPaint({ stream: process.stderr }).help(MAIN_USAGE)}`);
