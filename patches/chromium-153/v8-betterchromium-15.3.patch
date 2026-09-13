@@ -354,3 +354,65 @@ index 77fa823e7e86658ab60389b09d3d10bac506f33f..05f0d302b14da761713db9fd0eb3e235
    function testSetCustomObjectFormatterEnabled(next) {
      Protocol.Runtime.onConsoleAPICalled(InspectorTest.logMessage);
      Protocol.Runtime.discardConsoleEntries()
+diff --git a/src/wasm/wasm-memory-map-descriptor.cc b/src/wasm/wasm-memory-map-descriptor.cc
+index a0e956eff452f00fae6bff2e9ffe5565625f1ac4..11db1c3c570ebcc5d358513d5194137749bf6ed7 100644
+--- a/src/wasm/wasm-memory-map-descriptor.cc
++++ b/src/wasm/wasm-memory-map-descriptor.cc
+@@ -2,9 +2,10 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#include "include/v8config.h"  // For V8_TARGET_OS_LINUX.
++#include "include/v8config.h"  // For V8_OS_LINUX.
+ 
+-#if V8_TARGET_OS_LINUX
++// These APIs run on the build host in cross-compiled snapshot tools.
++#if defined(V8_OS_LINUX)
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+@@ -12,7 +13,7 @@
+ // Since we don't need `sys/mman.h`'s `MAP_TYPE`, we undefine it immediately
+ // after the `#include`.
+ #undef MAP_TYPE
+-#endif  // V8_TARGET_OS_LINUX
++#endif  // V8_OS_LINUX
+ 
+ #include "include/cppgc/allocation.h"
+ #include "include/v8-cppgc.h"
+@@ -32,7 +33,7 @@ WasmMemoryMapDescriptor::WasmMemoryMapDescriptor(PlatformFileDescriptor fd,
+ 
+ WasmMemoryMapDescriptor::~WasmMemoryMapDescriptor() {
+   mapped_memory_.Reset();
+-#if V8_TARGET_OS_LINUX
++#if defined(V8_OS_LINUX)
+   // TODO(crbug.com/339678654): Define a constant somewhere in the platform
+   // instead of hardcoding -1 here.
+   if (fd_ownership_ == FdOwnership::kAnonymousFdOwnedByV8 &&
+@@ -74,7 +75,7 @@ v8::Local<v8::Object> WasmMemoryMapDescriptor::NewFromFileDescriptor(
+ v8::MaybeLocal<v8::Object> WasmMemoryMapDescriptor::NewFromAnonymous(
+     v8::Isolate* isolate, size_t length, v8::Local<v8::Object> wrapper) {
+   CHECK(v8_flags.wasm_memory_control);
+-#if V8_TARGET_OS_LINUX
++#if defined(V8_OS_LINUX)
+   int fd = memfd_create("wasm_memory_map_descriptor", MFD_CLOEXEC);
+   if (fd == -1) return {};
+   if (ftruncate(fd, length) == -1) {
+@@ -109,7 +110,7 @@ size_t WasmMemoryMapDescriptor::Map(v8::Isolate* isolate,
+     return 0;
+   }
+ 
+-#if V8_TARGET_OS_LINUX
++#if defined(V8_OS_LINUX)
+   uint8_t* target =
+       reinterpret_cast<uint8_t*>(backing_store->buffer_start()) + offset;
+ 
+@@ -165,7 +166,7 @@ bool WasmMemoryMapDescriptor::Unmap(v8::Isolate* isolate) {
+   CHECK_GE(size_ + offset_, size_);
+   CHECK_LE(size_ + offset_, backing_store->byte_length());
+ 
+-#if V8_TARGET_OS_LINUX
++#if defined(V8_OS_LINUX)
+   uint8_t* target =
+       reinterpret_cast<uint8_t*>(backing_store->buffer_start()) + offset_;
+ 

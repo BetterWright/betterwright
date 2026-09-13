@@ -43,6 +43,10 @@ scripts/chromium/build.sh win <work>/src out/WinStatic
 The Chromium patch also carries the BetterChromium product name and macOS bundle
 identifier, so a clean build produces the bundle expected by the packager.
 
+The V8 patch guards WebAssembly memory-map system calls by the operating system
+executing the code. This lets macOS build the host snapshot tools for a Linux
+target while retaining the Linux implementation in the shipped browser.
+
 The default profile is a static release build with proprietary Chrome codecs. PGO remains disabled in the reproducible default because Chromium profile artifacts are platform/revision coupled. PGO/ThinLTO candidates must be benchmarked against this control before replacing it.
 
 ## Package
