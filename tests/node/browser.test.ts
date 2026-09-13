@@ -53,6 +53,13 @@ function tempHome() {
   return home;
 }
 
+function removeBrowserHome(home) {
+  // Windows can briefly retain closed Chromium files (including antivirus
+  // handles). Match the bounded retries used by the shared temp-dir cleanup;
+  // a persistent lock still fails instead of being silently ignored.
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
 function firstPngPixel(filePath: string) {
   const png = fs.readFileSync(filePath);
   assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
@@ -3996,7 +4003,7 @@ test("two named profiles browse concurrently, both persistent", opts, async () =
     assert.equal(fs.existsSync(path.join(home, "browser", "profile")), false);
   } finally {
     await Promise.all([social.close(), review.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4043,7 +4050,7 @@ test("cookies are per profile, and survive a restart of the same profile", opts,
   } finally {
     await Promise.all([social.close(), review.close()]);
     await server.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4184,7 +4191,7 @@ test("Cookie Sync installs an HttpOnly cookie and persists it across restart", o
   } finally {
     await browser.close();
     await server.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4257,7 +4264,7 @@ test("Cookie Sync refuses a batch that could evict target cookies", opts, async 
     assert.equal(JSON.stringify(result).includes(sentinel), false);
   } finally {
     await browser.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4296,7 +4303,7 @@ test("Cookie Sync refuses a local ephemeral target profile", opts, async () => {
     assert.equal(retried.profileMode, "persistent");
   } finally {
     await Promise.all([owner.close(), contender.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4359,7 +4366,7 @@ test("Cookie Sync cannot reuse an in-flight ephemeral browser launch", opts, asy
     assert.equal(retried.profileMode, "persistent");
   } finally {
     await Promise.all([owner.close(), contender.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4376,7 +4383,7 @@ test("a second browser on the SAME profile falls back to ephemeral", opts, async
     assert.equal(b.profileMode, "ephemeral");
   } finally {
     await Promise.all([first.close(), second.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4570,7 +4577,7 @@ test("optional ad blocker covers pages, nested frames and popups while preservin
         if (!adBlock) assert.equal(fs.existsSync(path.join(runtime, AD_BLOCK_CACHE_FILE)), false);
       } finally {
         await browser.close();
-        fs.rmSync(home, { recursive: true, force: true });
+        removeBrowserHome(home);
       }
     }
   } finally { await site.close(); }
