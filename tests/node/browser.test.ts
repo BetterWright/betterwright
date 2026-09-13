@@ -5080,3 +5080,27 @@ test("provider chain: configured fallbacks run after a failing default", opts, a
     removeBrowserHome(home);
   }
 });
+
+test("provider chain: an unresolvable entry is skipped with a warning, not a veto", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    provider: [
+      { executablePath: "/definitely/not/installed/chromium" },
+      { provider: "managed" },
+    ],
+  });
+  try {
+    const result = await bw.run("return 11");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 11);
+    assert.ok(
+      result.warnings.some(
+        (warning) => /provider\[0\] skipped/.test(warning) && /does not exist/.test(warning),
+      ),
+      `expected a skipped-candidate warning, got ${JSON.stringify(result.warnings)}`,
+    );
+  } finally {
+    await bw.close();
+  }
+});

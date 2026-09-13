@@ -528,7 +528,9 @@ function resolveKey(choiceKey, definitionKeyEnv, definitionKey, env, what) {
  * indirection against this home's config. Built-in names, explicit CDP
  * endpoints, and local binaries pass through (with keyEnv resolved to an
  * apiKey when the ref carries one, and a saved account key filled in when a
- * built-in names none). An array expands element-wise into a fallback chain.
+ * built-in names none). An explicit `provider` array — a fallback chain —
+ * expands through expandProviderChainOption instead, so one bad entry is a
+ * skipped candidate rather than a veto of the chain.
  *
  * Throws for a named provider that is neither built-in nor configured, and
  * for a custom provider whose template needs a key nobody supplied.
@@ -538,26 +540,6 @@ export function expandProviderChoice(
   { home = defaultHome(), env = process.env, config = null }: any = {},
 ) {
   if (choice == null || choice === false) return choice ?? null;
-  if (Array.isArray(choice)) {
-    if (!choice.length) {
-      throw new TypeError(
-        "provider as an array must name at least one candidate: " +
-          "[{ provider: <name> }, { cdpUrl: <ws-url> }, { executablePath: <path> }].",
-      );
-    }
-    return choice.map((entry) => {
-      // Nullish entries get the same rejection here that the worker's
-      // validator would give — an explicit chain fails at construction,
-      // never mid-launch.
-      if (entry == null || entry === false) {
-        throw new TypeError(
-          "provider chain entries must each set exactly one of " +
-            "provider, cdpUrl, or executablePath.",
-        );
-      }
-      return expandProviderChoice(entry, { home, env, config });
-    });
-  }
   if (isString(choice)) choice = { provider: choice };
   if (!isRecord(choice)) return choice; // let the provider layer report the type error
   const name = cleanString(untrustedField(choice, "provider")).toLowerCase();
@@ -618,6 +600,55 @@ export function expandProviderChoice(
     headers[header] = substituteApiKey(value, key);
   }
   return { cdpUrl, headers };
+}
+
+/**
+ * Expand an explicit `provider` array into the ordered chain a launch walks.
+ * Each entry expands on its own — one bad entry (an unknown name, a missing
+ * key, a nullish slot) is dropped with a note instead of vetoing the array,
+ * the same treatment configured fallbacks get. Entries the worker's
+ * validator would reject (a missing binary, a bad endpoint scheme) still
+ * resolve at launch and are skipped there; this layer handles the
+ * config-level failures.
+ *
+ * Returns `{ provider, notes }` in configuredProviderChain's shape: a single
+ * expanded object when one candidate survives, an array for a real chain.
+ * Throws when nothing survives — a one-element array rethrows its entry's
+ * error unchanged; a longer array names every entry's failure.
+ */
+export function expandProviderChainOption(
+  choice: UntrustedValue[],
+  { home = defaultHome(), env = process.env, config = null }: any = {},
+) {
+  const expanded: UntrustedValue[] = [];
+  const failures: { index: number; error: unknown }[] = [];
+  for (const [index, entry] of choice.entries()) {
+    try {
+      if (entry == null || entry === false) {
+        throw new TypeError(
+          "provider chain entries must each set exactly one of " +
+            "provider, cdpUrl, or executablePath.",
+        );
+      }
+      expanded.push(expandProviderChoice(entry, { home, env, config }));
+    } catch (error) {
+      failures.push({ index, error });
+    }
+  }
+  // A caught value is not guaranteed Error — take its message when it has one.
+  const line = ({ index, error }: (typeof failures)[number], label: string) =>
+    `provider[${index}]${label} ${(error instanceof Error ? error.message : String(error)).split("\n", 1)[0]}`;
+  if (!expanded.length) {
+    if (failures.length === 1) throw failures[0].error;
+    throw new TypeError(
+      "provider array has no usable candidates:\n" +
+        failures.map((f) => `  ${line(f, ":")}`).join("\n"),
+    );
+  }
+  return {
+    provider: expanded.length === 1 ? expanded[0] : expanded,
+    notes: failures.map((f) => line(f, " skipped:")),
+  };
 }
 
 // A built-in named ref may carry keyEnv (from a stored default); resolve it

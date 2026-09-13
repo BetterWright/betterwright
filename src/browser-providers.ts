@@ -478,7 +478,12 @@ export function browserProviderInfo(name) {
  * `provider` may also be an array, which resolves to `plans`: an ordered
  * fallback chain the worker walks at launch, so a provider that is out of
  * quota, down, or misconfigured falls through to the next candidate instead
- * of failing the launch.
+ * of failing the launch. An entry that cannot resolve at all (a missing
+ * binary, a bad endpoint scheme, an unknown name) is a candidate that has
+ * already failed — it is dropped with a `notes` line the launch surfaces as
+ * a warning, and the survivors keep their order. Resolution only throws when
+ * no candidate survives: a one-element array rethrows that entry's error
+ * unchanged; a longer array names every entry's failure.
  */
 export function resolveBrowserProvider(provider, { env = process.env } = {}) {
   if (provider == null || provider === false) {
@@ -494,11 +499,35 @@ export function resolveBrowserProvider(provider, { env = process.env } = {}) {
           "[{ provider: <name> }, { cdpUrl: <ws-url> }, { executablePath: <path> }].",
       );
     }
-    // Each element validates exactly as it would as a single choice — nested
-    // arrays and nullish entries are rejected by the entry type check rather
-    // than slipping into the env shorthand above.
-    const plans = provider.map((entry) => resolveProviderEntry(entry, env));
-    return plans.length === 1 ? { plan: plans[0] } : { plans };
+    const plans = [];
+    const failures = [];
+    for (const [index, entry] of provider.entries()) {
+      try {
+        plans.push(resolveProviderEntry(entry, env));
+      } catch (error) {
+        failures.push({ index, error });
+      }
+    }
+    if (!plans.length) {
+      if (failures.length === 1) throw failures[0].error;
+      throw new TypeError(
+        "provider array has no usable candidates:\n" +
+          failures
+            .map(
+              ({ index, error }) =>
+                `  provider[${index}]: ${firstLine(error?.message || error)}`,
+            )
+            .join("\n"),
+      );
+    }
+    const resolution: any = plans.length === 1 ? { plan: plans[0] } : { plans };
+    if (failures.length) {
+      resolution.notes = failures.map(
+        ({ index, error }) =>
+          `provider[${index}] skipped: ${firstLine(error?.message || error)}`,
+      );
+    }
+    return resolution;
   }
   return { plan: resolveProviderEntry(provider, env) };
 }

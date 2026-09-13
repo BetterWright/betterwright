@@ -2505,6 +2505,12 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
       ...(Array.isArray(launchConfig.providerChainNotes)
         ? launchConfig.providerChainNotes.filter((note) => isString(note) && note.trim())
         : []),
+      // Candidates the resolver dropped before launch (a gone binary, a bad
+      // scheme): skipped without vetoing the chain, reported like the config
+      // notes above.
+      ...(Array.isArray(providerResolution?.notes)
+        ? providerResolution.notes.filter((note) => isString(note) && note.trim())
+        : []),
       ...launched.failures.map(
         (failure) =>
           `Browser provider ${failure.label} failed to launch: ` +

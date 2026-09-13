@@ -21,6 +21,11 @@ Releases before 1.1.3 predate this file; their notes live on the
   configured default still tries the fork first. A candidate that mints a
   remote session but fails to connect releases it before the next candidate
   runs, and every skipped or failed candidate is listed as a launch warning.
+  A chain entry that cannot resolve at all — an unknown name, an unset key, a
+  binary that is not installed — is skipped with a warning instead of
+  vetoing the chain; the chain fails only when no entry survives. Changing
+  `browser.fallbacks` changes the session daemon's compatibility signature,
+  so a running daemon is never silently reused on a stale chain.
   `betterwright doctor` reports the resolved chain under **Browser →
   Fallbacks**. Cookie Sync consent for a chained launch names every remote
   candidate, joined with `+`.

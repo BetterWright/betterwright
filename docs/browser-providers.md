@@ -102,6 +102,12 @@ new BetterWright({
 });
 ```
 
+An array entry that cannot resolve — an unknown name, an unset key, a binary
+that is not installed — is skipped with a launch warning instead of vetoing
+the array; the remaining candidates keep their order. An array fails only
+when no entry survives: one bad entry rethrows its own error, several get a
+single error naming each entry's reason.
+
 Persisted, the chain is `browser.fallbacks` beneath `browser.default` in
 `config.json`; `betterwright configure` writes it:
 

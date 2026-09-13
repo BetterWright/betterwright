@@ -115,13 +115,16 @@ export async function doctorReport() {
     // dead link (or a skipped one) is visible before a launch finds it.
     try {
       const chain = configuredProviderChain();
-      const plans = providerResolutionPlans(
-        resolveBrowserProvider(chain.provider ?? undefined),
-      );
+      const resolution = resolveBrowserProvider(chain.provider ?? undefined);
+      const plans = providerResolutionPlans(resolution);
       if (plans.length > 1) {
         providerChain = plans.map((entry) => providerPlanLabel(entry));
       }
-      if (chain.notes.length) providerNotes = chain.notes;
+      // Config notes cover refs skipped at expansion; resolution notes cover
+      // candidates that expanded but no longer validate (a binary removed
+      // since configure ran).
+      const notes = [...chain.notes, ...(resolution?.notes || [])];
+      if (notes.length) providerNotes = notes;
     } catch (error) {
       providerError =
         providerError ||

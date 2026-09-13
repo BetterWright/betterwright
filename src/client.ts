@@ -20,6 +20,7 @@ import type { BetterWrightOptions, LiveViewOptions } from "../types/public.js";
 import { resolveAdBlock } from "./ad-block-config.js";
 import {
   configuredProviderChain,
+  expandProviderChainOption,
   expandProviderChoice,
 } from "./browser-config.js";
 import {
@@ -119,13 +120,13 @@ function resolveProviderOption(options, home) {
   // expand here, on the client side, so the worker's validator stays free of
   // filesystem access.
   if (Object.hasOwn(options, "provider")) {
-    return {
-      provider:
-        options.provider == null
-          ? null
-          : expandProviderChoice(options.provider, { home }),
-      notes: [],
-    };
+    const raw = options.provider;
+    if (raw == null) return { provider: null, notes: [] };
+    // An array is an ordered fallback chain: expand it leniently so one
+    // unresolvable entry is a skipped candidate (surfaced via notes), not a
+    // veto of the chain. A single choice stays strict.
+    if (Array.isArray(raw)) return expandProviderChainOption(raw, { home });
+    return { provider: expandProviderChoice(raw, { home }), notes: [] };
   }
   const env = String(process.env.BETTERWRIGHT_CDP_URL || "").trim();
   if (env) return { provider: { cdpUrl: env }, notes: [] };

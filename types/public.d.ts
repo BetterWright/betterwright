@@ -181,7 +181,10 @@ export interface BetterWrightOptions {
    *
    * An array is an ordered fallback chain: the launch tries each candidate in
    * turn and lands on the first that launches, so a provider that is out of
-   * quota or down does not fail the session.
+   * quota or down does not fail the session. An entry that cannot resolve —
+   * an unknown name, an unset key, a binary that is not installed — is
+   * skipped with a launch warning rather than vetoing the chain; the chain
+   * fails only when no entry survives.
    *
    * When the option is absent, the default saved by `betterwright configure`
    * (in `<home>/config.json`) applies, extended by its configured fallbacks;

@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   browserConfigPath,
   configuredProviderChain,
+  expandProviderChainOption,
   expandProviderChoice,
   loadBrowserConfig,
   saveBrowserFallbacks,
@@ -72,6 +73,42 @@ test("chain elements reject the shapes a single choice rejects", () => {
       }),
     TypeError,
   );
+});
+
+test("an unresolvable entry is skipped, not a veto of the chain", () => {
+  // A missing binary or a bad scheme mid-chain must not fail the survivors.
+  const resolution = resolveBrowserProvider(
+    [
+      { executablePath: "/definitely/not/installed/chromium" },
+      { cdpUrl: "https://not-a-websocket.example.com" },
+      "managed",
+    ],
+    { env: {} },
+  );
+  const plans = providerResolutionPlans(resolution);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].kind, "managed");
+  assert.equal(resolution.notes.length, 2);
+  assert.match(resolution.notes[0], /provider\[0\] skipped: .*does not exist/);
+  assert.match(resolution.notes[1], /provider\[1\] skipped: .*ws/);
+});
+
+test("a chain where nothing resolves names every entry's failure", () => {
+  let error;
+  try {
+    resolveBrowserProvider(
+      [
+        { executablePath: "/definitely/not/installed/chromium" },
+        { provider: "not-a-provider" },
+      ],
+      { env: {} },
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /provider\[0\]: .*does not exist/);
+  assert.match(error.message, /provider\[1\]: .*Unknown browser provider/);
 });
 
 test('"managed" names the managed fork as a provider and chain entry', () => {
@@ -206,33 +243,73 @@ test("cookieSyncConsentTarget names every remote candidate in a chain", () => {
   );
 });
 
-test("expandProviderChoice expands arrays element-wise and passes managed through", () => {
+test("expandProviderChainOption expands entries and skips the bad ones", () => {
   const home = makeTempDir("bw-chain-expand-");
   saveCustomProvider(
     "mine",
     { cdpUrl: "wss://connect.example.com?apiKey=${apiKey}", keyEnv: "MINE_KEY" },
     home,
   );
-  const expanded = expandProviderChoice(
-    [{ provider: "mine" }, "managed", { cdpUrl: "wss://direct.example.com" }],
+  const { provider, notes } = expandProviderChainOption(
+    [
+      { provider: "mine" },
+      "managed",
+      { provider: "bogus" },
+      { cdpUrl: "wss://direct.example.com" },
+      null,
+    ],
     { home, env: { MINE_KEY: "sk-1" } },
   );
-  assert.deepEqual(expanded, [
+  assert.deepEqual(provider, [
     { cdpUrl: "wss://connect.example.com?apiKey=sk-1" },
     { provider: "managed" },
     { cdpUrl: "wss://direct.example.com" },
   ]);
+  assert.equal(notes.length, 2);
+  assert.match(notes[0], /provider\[2\] skipped: .*Unknown browser provider/);
+  assert.match(notes[1], /provider\[4\] skipped: .*provider chain entries/);
+});
+
+test("expandProviderChainOption throws only when no entry survives", () => {
+  const home = makeTempDir("bw-chain-allbad-");
+  // A one-element array rethrows that entry's own error.
   assert.throws(
-    () => expandProviderChoice([], { home, env: {} }),
-    /at least one candidate/,
+    () => expandProviderChainOption([{ provider: "bogus" }], { home, env: {} }),
+    /Unknown browser provider/,
   );
-  // Nullish chain entries fail at expansion, not mid-launch in the worker.
-  for (const entry of [null, undefined, false]) {
-    assert.throws(
-      () => expandProviderChoice([entry], { home, env: {} }),
-      /provider chain entries/,
-      JSON.stringify(entry),
-    );
+  // Several bad entries collapse into one error naming each.
+  let error;
+  try {
+    expandProviderChainOption([{ provider: "bogus" }, null], { home, env: {} });
+  } catch (caught) {
+    error = caught;
+  }
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /provider\[0\]: .*Unknown browser provider/);
+  assert.match(error.message, /provider\[1\]: .*provider chain entries/);
+  // A single survivor collapses to a single provider, notes intact.
+  const { provider, notes } = expandProviderChainOption(
+    [{ provider: "bogus" }, "managed"],
+    { home, env: {} },
+  );
+  assert.deepEqual(provider, { provider: "managed" });
+  assert.equal(notes.length, 1);
+});
+
+test("an explicit provider array skips a bad entry into launch notes", async () => {
+  const { BetterWright } = await import("../../dist/src/client.js");
+  const home = makeTempDir("bw-chain-client-");
+  const bw = new BetterWright({
+    home,
+    vault: false,
+    provider: [{ provider: "bogus" }, "managed"],
+  });
+  try {
+    assert.deepEqual(bw.provider, { provider: "managed" });
+    assert.equal(bw.providerChainNotes.length, 1);
+    assert.match(bw.providerChainNotes[0], /provider\[0\] skipped.*bogus/);
+  } finally {
+    await bw.close();
   }
 });
 
@@ -393,4 +470,50 @@ test("the daemon signature covers every chain candidate", () => {
     },
   });
   assert.deepEqual(normalized.browser.provider, [{ provider: "kernel", apiKey: "k1" }]);
+});
+
+test("the daemon signature tracks configured fallbacks", async () => {
+  const { daemonConfigFromFlags } = await import("../../dist/bin/cli-main.js");
+  const home = makeTempDir("bw-daemon-chain-");
+  const argv = ["bun", "betterwright", "run", "-c", "return 1"];
+  const flags = new Set();
+  const sig = () =>
+    daemonConfigSignature(daemonConfigFromFlags(flags, { argv, home, env: {} }));
+
+  const base = sig();
+  saveBrowserFallbacks([{ provider: "managed" }], home);
+  const withManaged = sig();
+  saveBrowserFallbacks(
+    [{ provider: "managed" }, { cdpUrl: "wss://fb.example.com/connect" }],
+    home,
+  );
+  const extended = sig();
+  saveBrowserFallbacks(null, home);
+  assert.equal(sig(), base);
+
+  assert.notEqual(base, withManaged);
+  assert.notEqual(withManaged, extended);
+
+  // BETTERWRIGHT_CDP_URL wins over the configured chain.
+  const envSig = daemonConfigSignature(
+    daemonConfigFromFlags(flags, {
+      argv,
+      home,
+      env: { BETTERWRIGHT_CDP_URL: "wss://env.example.com/connect" },
+    }),
+  );
+  assert.match(envSig, /env\.example\.com/);
+  assert.notEqual(envSig, base);
+
+  // An explicit --browser flag still wins over both.
+  saveBrowserFallbacks([{ provider: "managed" }], home);
+  const flagged = daemonConfigSignature(
+    daemonConfigFromFlags(flags, {
+      argv: ["bun", "betterwright", "run", "--browser", "kernel", "-c", "x"],
+      home,
+      env: { BETTERWRIGHT_CDP_URL: "wss://env.example.com/connect" },
+    }),
+  );
+  assert.match(flagged, /kernel/);
+  assert.doesNotMatch(flagged, /env\.example\.com/);
 });
