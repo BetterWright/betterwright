@@ -8,6 +8,7 @@ import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import { GIB, type LocalPlan, localInstallArtifacts, localRoot, readLocalPlan, runLocalProbe } from "./local-ai.js";
 import type { LocalArtifact } from "./local-ai-catalog.js";
+import { localProcessInstance, localProcessIsGone } from "./local-ai-process.js";
 import { LOCAL_CUDA_LIBRARIES, LOCAL_GCC_ARTIFACTS, LOCAL_LINUX_LIBRARIES } from "./local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
 import { isNumber, isString, untrustedField } from "./untrusted-value.js";
@@ -59,7 +60,7 @@ export async function withLocalLock<T>(home: string, name: string, work: () => P
   const lock = path.join(localRoot(home), `${name}.lock`);
   const candidate = `${lock}.candidate-${process.pid}-${randomBytes(8).toString("hex")}`;
   mkdirPrivate(candidate);
-  writePrivate(path.join(candidate, "owner.json"), JSON.stringify({ pid: process.pid }));
+  writePrivate(path.join(candidate, "owner.json"), JSON.stringify({ pid: process.pid, instance: localProcessInstance(process.pid) || "" }));
   const deadline = Date.now() + waitMs;
   let acquired = false;
   try {
@@ -75,14 +76,16 @@ export async function withLocalLock<T>(home: string, name: string, work: () => P
         let stat: fs.Stats;
         try { stat = fs.lstatSync(lock); } catch (readError) { if (readError?.code === "ENOENT") continue; throw readError; }
         if (stat.isSymbolicLink()) throw new Error("The local AI lock must not be a symbolic link.");
-        let owner = 0;
+        let owner = 0, instance = "";
         try {
           const ownerFile = stat.isDirectory() ? path.join(lock, "owner.json") : lock;
-          const pid = untrustedField(JSON.parse(fs.readFileSync(ownerFile, "utf8")), "pid");
+          const record = JSON.parse(fs.readFileSync(ownerFile, "utf8"));
+          const pid = untrustedField(record, "pid"), stamp = untrustedField(record, "instance");
+          if (isString(stamp) && stamp.length <= 200) instance = stamp;
           if (isNumber(pid) && Number.isSafeInteger(pid) && pid > 0) owner = pid;
         } catch { /* Only abandoned, aged ownerless locks may be reclaimed. */ }
         let stale = !owner && Date.now() - stat.mtimeMs >= 30_000;
-        if (owner) { try { process.kill(owner, 0); } catch (probe) { stale = probe?.code === "ESRCH"; } }
+        if (owner) stale = localProcessIsGone(owner, instance);
         if (stale) {
           if (stat.isFile()) {
             // Legacy file locks predate atomic directory publication.
@@ -438,7 +441,14 @@ export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {
     const downloaded = stat?.isFile() && stat.size < file.bytes ? stat.size : 0;
     pending += file.bytes - downloaded;
   }
-  const installed = fs.existsSync(path.join(runtimeDirectory(plan, home), ".ready"));
+  let installed = false;
+  try {
+    installed = await localRuntimeReady(runtimeDirectory(plan, home), plan.runtime === "vllm" ? VLLM_INSTALL_ID : LLAMA_VERSION, localRuntimeExecutable(plan, home), ["--version"], localRuntimeEnvironment(plan, home));
+    if (installed && plan.runtime === "vllm") {
+      const env = localRuntimeEnvironment(plan, home);
+      installed = Boolean(env.CC && env.CXX && env.CUDA_HOME && [env.CC, env.CXX, path.join(env.CUDA_HOME, "bin", "nvcc"), path.join(env.CUDA_HOME, "lib64", "libcudart.so.13"), path.join(env.CUDA_HOME, "include", "cuda_runtime.h")].every(file => fs.existsSync(file)));
+    }
+  } catch { /* Damaged runtimes reserve the full repair allowance. */ }
   const required = pending + (installed ? 0 : plan.runtime === "vllm" ? 30 : 2) * GIB + 5 * GIB;
   if (available < required) throw new Error(`Local AI needs ${(required / GIB).toFixed(1)} GiB of free disk space including runtime and safety headroom; ${(available / GIB).toFixed(1)} GiB is available.`);
   return { available, required };

@@ -10,6 +10,7 @@ import { decodeLocalPlan, detectLocalHardware, draftDirectory, GIB, localInstall
 import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
 import { downloadLocalArtifact, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { localProcessInstance, localProcessIsGone } from "../../dist/src/local-ai-process.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService, stopLocalServiceIfOwned } from "../../dist/src/local-ai-service.js";
 import { LOCAL_GCC_ARTIFACTS } from "../../dist/src/local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "../../dist/src/local-ai-vllm-lock.js";
@@ -460,4 +461,20 @@ test("diagnostics reject missing and truncated installation files while preservi
     assert.ok(modelReadiness({ env, auth: {} }).localError);
     assert.equal(preferredModelId({ env, auth: {} }).model, "local");
   } finally { model.files = original; }
+});
+
+test("recycled PIDs release stale locks and service records without signaling the replacement", async () => {
+  const home = makeTempDir("bw-local-recycled-pid-");
+  const instance = localProcessInstance(process.pid);
+  assert.ok(instance); assert.ok(!localProcessIsGone(process.pid, instance));
+  assert.ok(localProcessIsGone(process.pid, "previous-process-instance"));
+  const lock = path.join(localRoot(home), "setup.lock");
+  fs.mkdirSync(lock, { recursive: true });
+  fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, instance: "previous-process-instance" }));
+  assert.equal(await withLocalLock(home, "setup", async () => "reclaimed"), "reclaimed");
+  writeLocalJson(path.join(localRoot(home), "service.json"), { controlPort: 1, port: 1, planId: "a".repeat(24), token: "b".repeat(64), supervisorPid: process.pid, childPid: process.pid,
+    supervisorInstance: "previous-process-instance", childInstance: "previous-process-instance" });
+  assert.equal((await localServiceStatus(home)).running, false);
+  assert.equal(await stopLocalService(home), false);
+  assert.ok(!fs.existsSync(path.join(localRoot(home), "service.json")));
 });

@@ -12,6 +12,7 @@ import { mkdirPrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import { decodeLocalPlan, draftDirectory, GIB, type LocalPlan, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, readLocalPlan, writeLocalJson } from "./local-ai.js";
 import { localRuntimeEnvironment, localRuntimeExecutable, verifyLocalArtifact, withLocalLock } from "./local-ai-install.js";
+import { localProcessInstance, localProcessIsGone } from "./local-ai-process.js";
 import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 export const LOCAL_MODEL_ALIAS = "betterwright-local";
@@ -22,6 +23,8 @@ interface LocalService {
   planId: string;
   supervisorPid: number;
   childPid: number;
+  supervisorInstance?: string;
+  childInstance?: string;
 }
 export interface LocalConnection { baseURL: string; apiKey: string; model: string; started?: boolean; }
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -34,7 +37,10 @@ function readService(home: string): LocalService | null {
     if (!isNumber(supervisorPid) || !Number.isSafeInteger(supervisorPid) || supervisorPid <= 0 || !isNumber(childPid) || !Number.isSafeInteger(childPid) || childPid < 0 ||
       !isNumber(port) || !Number.isInteger(port) || port < 1 || port > 65535 || !isNumber(controlPort) || !Number.isInteger(controlPort) || controlPort < 1 || controlPort > 65535 ||
       !isString(token) || !/^[a-f0-9]{64}$/.test(token) || !isString(planId) || !/^[a-f0-9]{24}$/.test(planId)) return null;
-    return { controlPort, port, token, planId, supervisorPid, childPid };
+    const supervisorInstance = untrustedField(data, "supervisorInstance"), childInstance = untrustedField(data, "childInstance");
+    return { controlPort, port, token, planId, supervisorPid, childPid,
+      supervisorInstance: isString(supervisorInstance) && supervisorInstance.length <= 200 ? supervisorInstance : "",
+      childInstance: isString(childInstance) && childInstance.length <= 200 ? childInstance : "" };
   } catch { return null; }
 }
 async function control(service: LocalService, command: "status" | "stop") {
@@ -47,16 +53,12 @@ async function control(service: LocalService, command: "status" | "stop") {
   if (untrustedField(body, "planId") !== service.planId) throw new Error("The saved local runtime identity does not match.");
   return body;
 }
-function processIsGone(pid: number): boolean {
-  if (pid <= 0) return false;
-  try { process.kill(pid, 0); return false; } catch (error) { return error?.code === "ESRCH"; }
-}
 function childGroupIsGone(service: LocalService) {
-  if (process.platform === "win32") return processIsGone(service.childPid);
+  if (process.platform === "win32" || service.childInstance && localProcessIsGone(service.childPid, service.childInstance)) return localProcessIsGone(service.childPid, service.childInstance);
   if (service.childPid <= 0) return false;
   try { process.kill(-service.childPid, 0); return false; } catch (error) { return error?.code === "ESRCH"; }
 }
-function ownersAreGone(service: LocalService) { return processIsGone(service.supervisorPid) && processIsGone(service.childPid) && childGroupIsGone(service); }
+function ownersAreGone(service: LocalService) { return localProcessIsGone(service.supervisorPid, service.supervisorInstance) && localProcessIsGone(service.childPid, service.childInstance) && childGroupIsGone(service); }
 const OWNERSHIP_ERROR = "The local supervisor is unreachable, but its processes may still be alive. Ownership was retained; no replacement was started. Resume or stop the recorded runtime processes, then retry local stop. See local-ai/runtime.log and local-ai/service.json.";
 function removeService(service: LocalService, home: string) {
   if (readService(home)?.token === service.token) fs.rmSync(serviceFile(home), { force: true });
@@ -109,7 +111,7 @@ async function stopLocalServiceUnlocked(home: string): Promise<boolean> {
   try { await control(service, "stop"); }
   catch { if (ownersAreGone(service)) { removeService(service, home); return false; } throw new Error(OWNERSHIP_ERROR); }
   for (let attempt = 0; attempt < 80; attempt++) {
-    if (processIsGone(service.childPid) && childGroupIsGone(service) && (!fs.existsSync(serviceFile(home)) || ownersAreGone(service))) { removeService(service, home); return true; }
+    if (localProcessIsGone(service.childPid, service.childInstance) && childGroupIsGone(service) && (!fs.existsSync(serviceFile(home)) || ownersAreGone(service))) { removeService(service, home); return true; }
     await pause(100);
   }
   throw new Error("The local runtime is still shutting down. Check local-ai/runtime.log and retry local stop.");
@@ -265,6 +267,8 @@ export async function serveLocalAI(planId: string, home = defaultHome(), launch:
     child = launch(localRuntimeExecutable(plan, home), localServerArguments(plan, port, home), { env, detached: process.platform !== "win32", stdio: ["ignore", "inherit", "inherit"], windowsHide: true });
     childDone = new Promise<void>(resolve => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
     state.childPid = child.pid || 0;
+    state.childInstance = localProcessInstance(state.childPid) || "";
+    state.supervisorInstance = localProcessInstance(process.pid) || "";
     writeLocalJson(serviceFile(home), state);
     let probeBusy = false;
     probe = setInterval(async () => {

@@ -105,7 +105,8 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
       }
       catch (error) {
         if (backend !== "cuda") throw error;
-        log("The CUDA build is unavailable with this driver; checking Vulkan acceleration.");
+        log(`CUDA runtime check failed: ${error instanceof Error ? error.message : String(error)}`);
+        log("Checking Vulkan acceleration as a fallback.");
         backend = "vulkan";
         executable = await installLlama(hardware.platform, backend, home, log);
         devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home));
