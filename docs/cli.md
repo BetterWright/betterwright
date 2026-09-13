@@ -293,3 +293,14 @@ the way to debug a client that shows no tools. `--ad-block`/`--no-ad-block`
 override `BETTERWRIGHT_AD_BLOCK`. Policy comes from the environment; the full
 variable list is in [environment.md](environment.md). Registration and client
 notes are in [SETUP.md](../SETUP.md#3--mcp-client).
+
+### `betterwright local [setup|plan|status|start|stop]`
+
+`betterwright --local` aliases `betterwright local setup`. Installs and verifies
+a hardware-matched model and accelerated runtime for the built-in harness.
+Options: `--preference balanced|speed|quality`, `--model
+nex-mini|ornith-35b|ornith-9b|qwen-27b`, and a compatible reviewed `--quant`.
+`local plan` and `local status` accept `--json`; plan is read-only and setup
+verifies the actual accelerator. Stop releases GPU memory; the next harness
+task starts it again. See [local AI setup](local-ai.md) for hardware support
+and download details. Skills, MCP, and browser-only commands are unaffected.

@@ -213,6 +213,7 @@ export function runAgentTask(options: RunAgentTaskOptions): Promise<AgentResult>
 export function sealTranscript(messages: AgentMessage[], reason?: string): AgentMessage[];
 
 export function resolveModel(model: string | AgentModel, modelOptions?: Record<string, UntrustedValue>): AgentModel;
+/** Resolves `local` to the managed model installed by `betterwright --local`, starting it when needed. */
 export function resolveModelSelection(
   model: string | AgentModel,
   modelOptions?: Record<string, UntrustedValue>,

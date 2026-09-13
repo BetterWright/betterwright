@@ -11,6 +11,13 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Added
 
+- `betterwright --local`: hardware-aware model and quant selection, private
+  Metal/Vulkan/CUDA inference runtimes, resumable checksum-verified downloads,
+  and image/tool-call validation before selecting the built-in harness default.
+  Includes `local plan`, `status`, `start`, and `stop`; skills and MCP hosts
+  retain their own model configuration. See `docs/local-ai.md` for supported
+  hardware and validation limits.
+
 - Ordered browser-provider fallback chains. The `provider` option accepts an
   array of candidates tried in order — a provider that is out of quota, down,
   or unreachable falls through to the next entry instead of failing the

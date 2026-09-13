@@ -1,0 +1,148 @@
+import path from "node:path";
+
+import { flagValue, positionalArgs } from "./cli-flags.js";
+import { defaultHome } from "./home.js";
+import { detectLocalHardware, GIB, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, readLocalPlan, recommendLocalModel,
+  runLocalProbe, writeLocalJson } from "./local-ai.js";
+import { checkLocalDisk, downloadLocalArtifact, installLlamaRuntime, installLocalRuntime, type LocalLog, withLocalLock } from "./local-ai-install.js";
+import { configuredLocalConnection, ensureLocalService, type LocalConnection, localServiceStatus, stopLocalService } from "./local-ai-service.js";
+import { isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
+
+// A synthetic red image, no browser/profile input. The model must see the
+// image and return a parsed tool call before setup becomes the default.
+const PROBE_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAIAAAD9b0jDAAAAJUlEQVR4nGP4z8BAdUR9E0cNHTV01NBRQ0cNHTV01NBRQweloQAOyg0e8L+IEAAAAABJRU5ErkJggg==";
+export async function verifyLocalModel(connection: LocalConnection, fetchImpl: typeof fetch = fetch) {
+  const marker = "local-setup-check";
+  const response = await fetchImpl(`${connection.baseURL}/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}` }, redirect: "error", signal: AbortSignal.timeout(180_000),
+    body: JSON.stringify({ model: connection.model, temperature: 0, max_tokens: 512, reasoning_effort: "none",
+      chat_template_kwargs: { enable_thinking: false, reasoning_effort: "none" },
+      messages: [{ role: "user", content: [{ type: "text", text: `Use the betterwright_probe tool to report the single solid color of this image. Copy marker '${marker}' into the call. Do not answer in prose.` },
+        { type: "image_url", image_url: { url: PROBE_IMAGE } }] }],
+      tools: [{ type: "function", function: { name: "betterwright_probe", description: "Report the observed image color and the supplied marker.",
+        parameters: { type: "object", properties: { color: { type: "string", enum: ["red", "green", "blue", "white", "black"] }, marker: { type: "string" } }, required: ["color", "marker"] } } }], tool_choice: "auto" }),
+  });
+  if (!response.ok) throw new Error(`The local runtime failed its vision/tool-call check (HTTP ${response.status}). No harness default was changed.`);
+  const body: UntrustedValue = await response.json();
+  const choices = untrustedField(body, "choices");
+  const message = Array.isArray(choices) ? untrustedField(choices[0], "message") : null;
+  const calls = untrustedField(message, "tool_calls");
+  const matched = Array.isArray(calls) && calls.some(call => {
+    const fn = untrustedField(call, "function");
+    if (untrustedField(fn, "name") !== "betterwright_probe") return false;
+    const args = untrustedField(fn, "arguments");
+    if (!isString(args)) return false;
+    try { const parsed: UntrustedValue = JSON.parse(args); return untrustedField(parsed, "color") === "red" && untrustedField(parsed, "marker") === marker; } catch { return false; }
+  });
+  if (!matched) throw new Error("The local model did not complete the image-and-tool-call check. No harness default was changed. See local-ai/runtime.log.");
+}
+
+export interface LocalSetupDependencies {
+  detect?: typeof detectLocalHardware;
+  installLlama?: typeof installLlamaRuntime;
+  installRuntime?: typeof installLocalRuntime;
+  download?: typeof downloadLocalArtifact;
+  probe?: typeof runLocalProbe;
+  connect?: typeof ensureLocalService;
+  verify?: typeof verifyLocalModel;
+  status?: typeof localServiceStatus;
+  stop?: typeof stopLocalService;
+  disk?: typeof checkLocalDisk;
+}
+export async function setupLocalAI(options: { preference?: string; model?: string; quant?: string }, home = defaultHome(), log: LocalLog = console.log, dependencies: LocalSetupDependencies = {}) {
+  const detect = dependencies.detect || detectLocalHardware, probe = dependencies.probe || runLocalProbe;
+  const installLlama = dependencies.installLlama || installLlamaRuntime, installRuntime = dependencies.installRuntime || installLocalRuntime;
+  const connect = dependencies.connect || ensureLocalService, verify = dependencies.verify || verifyLocalModel;
+  const status = dependencies.status || localServiceStatus, stop = dependencies.stop || stopLocalService;
+  return withLocalLock(home, "setup", async () => {
+    let hardware = await detect();
+    if (hardware.memory <= 8 * GIB || !((hardware.platform === "darwin" && hardware.arch === "arm64") || (["linux", "win32"].includes(hardware.platform) && hardware.arch === "x64"))) {
+      recommendLocalModel(hardware, options); // Fail before installing even a small runtime.
+    }
+    const native = hardware.gpus;
+    const provisional = native.some(g => g.memory > 8 * GIB) ? recommendLocalModel(hardware, options) : null;
+    if (provisional?.plan.runtime !== "vllm") {
+      log("Checking the accelerated runtime before downloading model weights…");
+      let backend = hardware.platform === "darwin" ? "metal" : hardware.platform === "win32" && native.some(g => g.vendor === "nvidia" && g.compute >= 7.5) ? "cuda" : "vulkan";
+      let executable: string;
+      let devices: string;
+      try {
+        executable = await installLlama(hardware.platform, backend, home, log);
+        devices = await probe(executable, ["--list-devices"]);
+        if (backend === "cuda" && !parseLlamaDevices(devices, native).length) throw new Error("No usable CUDA device.");
+      }
+      catch (error) {
+        if (backend !== "cuda") throw error;
+        log("The CUDA build is unavailable with this driver; checking Vulkan acceleration.");
+        backend = "vulkan";
+        executable = await installLlama(hardware.platform, backend, home, log);
+        devices = await probe(executable, ["--list-devices"]);
+      }
+      hardware = { ...hardware, gpus: parseLlamaDevices(devices, native) };
+      if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working Metal/Vulkan GPU driver and rerun betterwright --local; no model weights were downloaded.");
+    }
+    const recommendation = recommendLocalModel(hardware, options);
+    const { plan, model } = recommendation;
+    log(`Hardware: ${plan.gpu.name} (${(plan.gpu.memory / GIB).toFixed(1)} GiB accelerator memory)`);
+    log(`Model: ${model.name} · ${model.quant} · ${plan.runtime} · ${plan.context.toLocaleString()} token context`);
+    log(`Source: ${model.repository}@${model.revision.slice(0, 12)}`);
+    log(`Model download: ${(recommendation.downloadBytes / GIB).toFixed(2)} GiB including vision support`);
+    log(recommendation.reason);
+    const running = await status(home);
+    if (running.running && running.planId !== localPlanId(plan)) throw new Error("Another local model is running. Run betterwright local stop, then repeat setup to change models.");
+    if (!running.running && plan.gpu.freeMemory < recommendation.downloadBytes + 2 * GIB) throw new Error("There is not enough free accelerator memory for the selected model and context. Close GPU-heavy applications and retry; the recommendation will not silently drop to a lower-quality model.");
+    await (dependencies.disk || checkLocalDisk)(plan, home);
+    const executable = await installRuntime(plan, home, log);
+    if (plan.runtime === "vllm") {
+      // Validate the actual CUDA/PyTorch runtime before downloading weights.
+      await probe(path.join(path.dirname(executable), "python"), ["-c", "import torch; assert torch.cuda.is_available(), 'CUDA driver/runtime is unavailable'; print(torch.cuda.get_device_name(0))"], { ...process.env, CUDA_VISIBLE_DEVICES: plan.gpu.uuid });
+    }
+    for (const file of model.files) await (dependencies.download || downloadLocalArtifact)(file, modelDirectory(plan, home), { log });
+    log("Loading the model and checking image input plus tool calls…");
+    try {
+      const connection = await connect(plan, home);
+      await verify(connection);
+      writeLocalJson(path.join(localRoot(home), "selection.json"), plan);
+    } catch (error) {
+      if (!running.running) await stop(home).catch(() => {});
+      throw error;
+    }
+    log("Local AI is ready and selected for the BetterWright harness.");
+    log("Run betterwright or betterwright exec \"<task>\". Use --model local to select it explicitly.");
+    log("The runtime starts automatically when needed. betterwright local stop releases its memory.");
+    return recommendation;
+  });
+}
+
+export async function runLocalCommand(args: string[], { home = defaultHome(), log = console.log }: { home?: string; log?: LocalLog } = {}): Promise<number> {
+  const positional = positionalArgs(args), command = positional[0] || "setup";
+  const allowed = new Set(["--preference", "--model", "--quant", "--json"]);
+  for (const arg of args.filter(a => a.startsWith("--"))) if (!allowed.has(arg.split("=")[0])) { log(`Unknown local AI option: ${arg}`); return 1; }
+  if (positional.length > 1 || !["setup", "plan", "status", "start", "stop"].includes(command)) { log("Use betterwright local setup|plan|status|start|stop."); return 1; }
+  const json = args.includes("--json");
+  if (json && !["plan", "status"].includes(command)) { log("--json is supported by local plan and local status."); return 1; }
+  const options = { preference: flagValue(args, "--preference"), model: flagValue(args, "--model"), quant: flagValue(args, "--quant") };
+  for (const flag of ["--preference", "--model", "--quant"]) {
+    const value = flagValue(args, flag);
+    if (args.some(a => a === flag || a.startsWith(`${flag}=`)) && (!value || value.startsWith("--"))) { log(`${flag} requires a value.`); return 1; }
+  }
+  try {
+    if (command === "setup") { await setupLocalAI(options, home, log); return 0; }
+    if (command === "plan") {
+      const recommendation = recommendLocalModel(await detectLocalHardware(), options);
+      if (json) log(JSON.stringify(recommendation, null, 2));
+      else log(`${recommendation.model.name} · ${recommendation.model.quant} · ${recommendation.plan.runtime}\n${recommendation.reason}\n${(recommendation.downloadBytes / GIB).toFixed(2)} GiB of model files. Run betterwright --local to verify the accelerator and install.`);
+      return 0;
+    }
+    if (command === "stop") { log(await stopLocalService(home) ? "Local AI stopped; model files and harness selection are retained." : "No managed local runtime is running."); return 0; }
+    if (command === "start") { await configuredLocalConnection(home); log("Local AI is ready."); return 0; }
+    const plan = readLocalPlan(home), status = await localServiceStatus(home);
+    const report = { configured: Boolean(plan), model: plan ? localModel(plan).name : null, quant: plan?.quant || null, runtime: plan?.runtime || null, ...status };
+    log(json ? JSON.stringify(report, null, 2) : plan ? `${report.model} · ${report.quant} · ${report.runtime}: ${status.ready ? "ready" : status.running ? "starting" : "stopped (starts when the harness needs it)"}` : "No local model configured. Run betterwright --local.");
+    return 0;
+  } catch (error) {
+    const message = error?.message || String(error);
+    log(json ? JSON.stringify({ ok: false, error: message }) : `Local AI: ${message}`);
+    return 1;
+  }
+}

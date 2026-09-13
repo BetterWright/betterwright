@@ -32,6 +32,7 @@ import {
   NetworkPolicy,
 } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
+import { hasLocalSelection } from "./local-ai.js";
 import { importOptionalPeer } from "./optional-peer.js";
 import { piImageArtifacts, piImageContent } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
@@ -1788,7 +1789,7 @@ export function modelSelectionChoices(entries = []) {
 
 export function nativeModelCatalog() {
   const stored = readCodexConfig();
-  return [
+  const models = [
     {
       source: "claude",
       model:
@@ -1809,6 +1810,8 @@ export function nativeModelCatalog() {
         "grok-4.3",
     },
   ];
+  if (hasLocalSelection()) models.unshift({ source: "local", model: "local" });
+  return models;
 }
 
 async function discoverModelCandidates(model, options: any = {}) {
@@ -1842,6 +1845,13 @@ async function discoverModelCandidates(model, options: any = {}) {
 export async function resolveModelSelection(model, modelOptions: any = {}) {
   if (isAgentModel(model)) return model;
   const selector = String(model || "").trim();
+  if (["local", "local/local"].includes(selector) && !modelOptions.baseURL) {
+    const { configuredLocalConnection } = await import("./local-ai-service.js");
+    const { plan, connection } = await configuredLocalConnection();
+    return endpointModel({ ...modelOptions, ...connection, source: "custom", protocol: "chat",
+      effort: modelOptions.effort || (["nex-mini", "qwen-27b"].includes(plan.modelId) && plan.preference !== "speed" ? "medium" : "none"),
+      bodyExtra: { temperature: plan.modelId === "nex-mini" ? 0.7 : 0.6, top_p: 0.95, top_k: 40, ...modelOptions.bodyExtra } });
+  }
   const qualified = qualifiedModelSelector(selector);
   if (modelOptions.baseURL || qualified) {
     return resolveModel(selector, modelOptions);

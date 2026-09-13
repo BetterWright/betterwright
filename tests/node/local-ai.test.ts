@@ -1,0 +1,217 @@
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+
+import { preferredModelId } from "../../dist/src/doctor.js";
+import { decodeLocalPlan, detectLocalHardware, GIB, localPlanId, localRoot, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
+import { LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
+import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
+import { downloadLocalArtifact, LOCAL_RUNTIMES, runtimeDirectory, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { localServerArguments, localServiceStatus, serveLocalAI, stopLocalService } from "../../dist/src/local-ai-service.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
+
+const quiet = () => {};
+function hardware(memory = 64, vram = memory, vendor = "apple", platform = vendor === "apple" ? "darwin" : "linux", compute = 0) {
+  return { platform, arch: platform === "darwin" ? "arm64" : "x64", memory: memory * GIB,
+    gpus: [{ id: vendor === "apple" ? "MTL0" : vendor === "nvidia" ? "CUDA0" : "Vulkan0", name: `${vendor} test GPU`,
+      memory: vram * GIB, freeMemory: vram * GIB, backend: vendor === "apple" ? "metal" : vendor === "nvidia" ? "cuda" : "vulkan",
+      vendor, compute, uuid: vendor === "nvidia" ? "GPU-1234-abcd" : "" }] };
+}
+const cases: Array<[string, ReturnType<typeof hardware>, string, string, string]> = [
+  ["5090", hardware(64, 32, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
+  ["Pro 6000 Blackwell", hardware(128, 96, "nvidia", "linux", 12), "qwen-27b", "FP8", "vllm"],
+  ["RTX 6000 Ada", hardware(128, 48, "nvidia", "linux", 8.9), "qwen-27b", "FP8", "vllm"],
+  ["Windows 5090", hardware(64, 32, "nvidia", "win32", 12), "nex-mini", "Q5_K_M", "llama.cpp"],
+  ["AMD 12 GB", hardware(32, 12, "amd"), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["AMD 16 GB", hardware(32, 16, "amd"), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["AMD 32 GB", hardware(64, 32, "amd"), "nex-mini", "Q5_K_M", "llama.cpp"],
+  ["Intel Arc 16 GB", hardware(32, 16, "intel", "win32"), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["Apple 16 GB", hardware(16, 12), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["Apple 64 GB working set", hardware(64, 51.8), "nex-mini", "Q6_K", "llama.cpp"],
+  ["Apple 128 GB", hardware(128, 100), "nex-mini", "Q8_0", "llama.cpp"],
+];
+for (const [name, host, id, quant, runtime] of cases) {
+  test(`local recommendation: ${name}`, () => {
+    const r = recommendLocalModel(host);
+    assert.deepEqual([r.model.id, r.model.quant, r.plan.runtime], [id, quant, runtime]);
+    assert.ok(r.model.bits >= 3);
+    assert.ok(r.downloadBytes + r.reserveBytes <= (host.platform === "darwin" ? host.memory : host.gpus[0].memory));
+  });
+}
+test("preferences and reviewed overrides preserve the quant floor", () => {
+  assert.equal(recommendLocalModel(hardware(), { preference: "speed" }).model.quant, "Q4_K_M");
+  assert.equal(recommendLocalModel(hardware(), { preference: "quality" }).model.quant, "Q8_0");
+  assert.equal(recommendLocalModel(hardware(), { model: "ornith-35b", quant: "q5_k_m" }).model.quant, "Q5_K_M");
+  assert.equal(recommendLocalModel(hardware(64, 32, "nvidia", "linux", 12), { preference: "speed" }).model.id, "nex-mini");
+  for (const options of [{ quant: "Q2_K" }, { model: "arbitrary/repo" }, { preference: "tiny" }, { model: "qwen-27b" }]) {
+    assert.throws(() => recommendLocalModel(hardware(), options));
+  }
+  assert.throws(() => recommendLocalModel(hardware(32, 12, "amd"), { model: "nex-mini" }), /fits/);
+});
+test("small devices, CPU-only hosts and combined small GPUs are refused", () => {
+  for (const host of [hardware(8), hardware(64, 8, "nvidia"), { ...hardware(), gpus: [] }, { ...hardware(), platform: "freebsd" }]) {
+    assert.throws(() => recommendLocalModel(host));
+  }
+  const host = hardware(64, 8, "nvidia"); host.gpus.push({ ...host.gpus[0], id: "CUDA1" });
+  assert.throws(() => recommendLocalModel(host), /more than 8 GB/);
+});
+test("hardware parsers recognize real Metal, Vulkan and CUDA output without counting CPU memory", async () => {
+  const gpu = parseNvidiaGpus("0, NVIDIA GeForce RTX 5090, 32768, 30000, 12.0, GPU-1234-abcd")[0];
+  assert.equal(gpu.memory, 32 * GIB); assert.equal(gpu.compute, 12);
+  const devices = parseLlamaDevices("  MTL0: Apple M4 Max (53084 MiB, 53083 MiB free)\n BLAS: Accelerate (0 MiB, 0 MiB free)\n Vulkan0: AMD Radeon RX 9070 (16384 MiB, 15000 MiB free)");
+  assert.equal(devices.length, 2); assert.equal(devices[1].vendor, "amd"); assert.equal(devices[0].id, "MTL0");
+  const result = await detectLocalHardware({ platform: "win32", arch: "x64", memory: 64 * GIB, probe: async () => "0, NVIDIA GeForce RTX 5090, 32768, 30000, 12.0, GPU-1234-abcd" });
+  assert.equal(result.gpus[0].uuid, gpu.uuid);
+});
+test("all catalog downloads are immutable, checksummed and from reviewed publishers", () => {
+  for (const model of LOCAL_MODELS) {
+    assert.ok(model.bits >= 3); assert.match(model.revision, /^[a-f0-9]{40}$/);
+    assert.match(model.repository, /^(bartowski|ornith-ai|nvidia|Qwen)\//);
+    if (model.runtime === "llama.cpp") assert.ok(model.files.some(f => f.name.startsWith("mmproj-")));
+    for (const file of model.files) {
+      assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);
+      assert.equal(file.url, `https://huggingface.co/${model.repository}/resolve/${model.revision}/${file.name}`);
+    }
+  }
+  for (const key of Object.keys(LOCAL_RUNTIMES)) for (const file of LOCAL_RUNTIMES[key]) {
+    assert.match(file.url, /^https:\/\/github.com\/ggml-org\/llama.cpp\/releases\/download\/b\d+\//);
+    assert.match(file.sha256, /^[a-f0-9]{64}$/);
+  }
+});
+test("saved plans round-trip privately and free VRAM does not create a different installation", () => {
+  const home = makeTempDir("bw-local-plan-");
+  const plan = recommendLocalModel(hardware()).plan;
+  writeLocalJson(path.join(localRoot(home), "selection.json"), plan);
+  assert.deepEqual(readLocalPlan(home), plan);
+  assert.equal(localPlanId(plan), localPlanId({ ...plan, gpu: { ...plan.gpu, freeMemory: 0 } }));
+  assert.notEqual(localPlanId(plan), localPlanId({ ...plan, quant: "Q4_K_M" }));
+  assert.throws(() => decodeLocalPlan({ ...plan, gpu: { ...plan.gpu, id: "../../evil" } }), /Invalid/);
+  assert.equal(preferredModelId({ env: { BETTERWRIGHT_HOME: home, OPENAI_API_KEY: "fake" }, auth: {} }).model, "local");
+  if (process.platform !== "win32") assert.equal(fs.statSync(path.join(localRoot(home), "selection.json")).mode & 0o777, 0o600);
+});
+const bytes = Buffer.from("A small reproducible model artifact");
+const artifact = { name: "model.gguf", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), url: "https://models.example/model.gguf" };
+test("download verifies cache and resumes partial bytes without buffering model files", async () => {
+  const dir = makeTempDir("bw-local-download-");
+  fs.writeFileSync(path.join(dir, "model.gguf.part"), bytes.subarray(0, 7));
+  let calls = 0;
+  const fetchImpl = async (_url, init) => {
+    calls++; assert.equal(init.headers.range, "bytes=7-");
+    return new Response(bytes.subarray(7), { status: 206, headers: { "content-range": `bytes 7-${bytes.length - 1}/${bytes.length}` } });
+  };
+  const file = await downloadLocalArtifact(artifact, dir, { fetchImpl, log: quiet });
+  await downloadLocalArtifact(artifact, dir, { fetchImpl, log: quiet });
+  assert.equal(calls, 1); assert.deepEqual(fs.readFileSync(file), bytes); assert.ok(await verifyLocalArtifact(file, artifact));
+});
+test("download restarts when Range is ignored and rejects corrupt, oversized and redirected HTTP bytes", async () => {
+  const dir = makeTempDir("bw-local-download-");
+  fs.writeFileSync(path.join(dir, "model.gguf.part"), bytes.subarray(0, 5));
+  await downloadLocalArtifact(artifact, dir, { fetchImpl: async () => new Response(bytes), log: quiet });
+  fs.unlinkSync(path.join(dir, artifact.name));
+  await assert.rejects(downloadLocalArtifact(artifact, dir, { fetchImpl: async () => new Response(Buffer.alloc(bytes.length)), log: quiet }), /Checksum/);
+  assert.ok(!fs.existsSync(path.join(dir, "model.gguf.part")));
+  await assert.rejects(downloadLocalArtifact(artifact, dir, { fetchImpl: async () => new Response(Buffer.alloc(bytes.length + 1)), log: quiet }), /exceeded/);
+  await assert.rejects(downloadLocalArtifact(artifact, dir, { fetchImpl: async () => new Response(null, { status: 302, headers: { location: "http://models.example/unsafe" } }), log: quiet }), /HTTPS/);
+  await assert.rejects(downloadLocalArtifact({ ...artifact, name: "../escape" }, dir), /manifest/);
+});
+test("truncated downloads survive for retry and invalid ranges cannot append to them", async () => {
+  const dir = makeTempDir("bw-local-download-");
+  await assert.rejects(downloadLocalArtifact(artifact, dir, { fetchImpl: async () => new Response(bytes.subarray(0, 4)), log: quiet }), /interrupted/);
+  await assert.rejects(downloadLocalArtifact(artifact, dir, { fetchImpl: async () => new Response(bytes, { status: 206, headers: { "content-range": "bytes 0-3/4" } }), log: quiet }), /byte range/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "model.gguf.part")), bytes.subarray(0, 4));
+});
+test("setup serializes mutations and only selects a model after the image/tool check", async () => {
+  const home = makeTempDir("bw-local-setup-"), events: string[] = [];
+  const dependencies = {
+    detect: async () => hardware(), installLlama: async () => { events.push("runtime"); return "llama-server"; },
+    installRuntime: async () => "llama-server", probe: async () => "MTL0: Apple M4 Max (53084 MiB, 53083 MiB free)",
+    disk: async () => {}, status: async () => ({ running: false }), stop: async () => true,
+    download: async () => { events.push("download"); return "file"; }, connect: async () => ({ model: "local", apiKey: "fake", baseURL: "http://127.0.0.1:1/v1" }),
+    verify: async () => { events.push("verified"); assert.equal(readLocalPlan(home), null); },
+  };
+  await setupLocalAI({}, home, quiet, dependencies);
+  assert.equal(events[0], "runtime"); assert.equal(events.at(-1), "verified"); assert.equal(readLocalPlan(home).modelId, "nex-mini");
+  assert.deepEqual(fs.readdirSync(home), ["local-ai"]);
+  await assert.rejects(withLocalLock(home, "setup", () => withLocalLock(home, "setup", async () => {})), /already in progress/);
+  const previous = fs.readFileSync(path.join(localRoot(home), "selection.json"), "utf8");
+  await assert.rejects(setupLocalAI({ model: "ornith-9b" }, home, quiet, { ...dependencies, verify: async () => { throw new Error("invalid tool call"); } }), /invalid tool/);
+  assert.equal(fs.readFileSync(path.join(localRoot(home), "selection.json"), "utf8"), previous);
+});
+test("setup rejects drivers, small memory and changed running models before weight downloads", async () => {
+  const home = makeTempDir("bw-local-fail-"), events: string[] = [];
+  const common = { installLlama: async () => "llama-server", probe: async () => "", download: async () => { events.push("download"); }, disk: async () => {} };
+  await assert.rejects(setupLocalAI({}, home, quiet, { ...common, detect: async () => hardware(8) }), /more than 8 GB/);
+  await assert.rejects(setupLocalAI({}, home, quiet, { ...common, detect: async () => hardware() }), /no accelerated GPU/);
+  await assert.rejects(setupLocalAI({}, home, quiet, { ...common, detect: async () => hardware(), probe: async () => "MTL0: Apple M4 Max (53084 MiB, 53083 MiB free)", status: async () => ({ running: true, planId: "other" }) }), /Another local model/);
+  assert.deepEqual(events, []); assert.equal(readLocalPlan(home), null);
+});
+test("readiness requires a parsed tool call with the actual image color", async () => {
+  const connection = { model: "local", apiKey: "private-probe-key", baseURL: "http://127.0.0.1:1234/v1" };
+  await verifyLocalModel(connection, async (_url, init) => {
+    const request = JSON.parse(init.body);
+    assert.equal(init.headers.authorization, "Bearer private-probe-key");
+    assert.match(request.messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+    return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: "betterwright_probe", arguments: JSON.stringify({ color: "red", marker: "local-setup-check" }) } }] } }] });
+  });
+  await assert.rejects(verifyLocalModel(connection, async () => Response.json({ choices: [{ message: { content: "red" } }] })), /did not complete/);
+});
+test("runtime arguments keep vision, context and all layers on the selected accelerator", () => {
+  const plan = recommendLocalModel(hardware()).plan;
+  const args = localServerArguments(plan, 1234, "/tmp/local");
+  for (const flag of ["--mmproj", "--jinja", "--flash-attn", "--device"]) assert.ok(args.includes(flag));
+  assert.equal(args[args.indexOf("--host") + 1], "127.0.0.1");
+  assert.equal(args[args.indexOf("--gpu-layers") + 1], "999");
+  const cuda = localServerArguments(recommendLocalModel(hardware(64, 32, "nvidia", "linux", 12)).plan, 1234);
+  assert.equal(cuda[cuda.indexOf("--tool-call-parser") + 1], "qwen3_coder");
+});
+test("supervisor authenticates control, hides the key and owns child shutdown", async () => {
+  const home = makeTempDir("bw-local-service-");
+  const plan = { ...recommendLocalModel(hardware()).plan, platform: process.platform, arch: process.arch };
+  const id = localPlanId(plan), runtime = runtimeDirectory(plan, home);
+  fs.mkdirSync(runtime, { recursive: true });
+  fs.writeFileSync(path.join(runtime, process.platform === "win32" ? "llama-server.exe" : "llama-server"), "fixture");
+  writeLocalJson(path.join(localRoot(home), "plans", `${id}.json`), plan);
+  const fixture = path.join(home, "model-server.cjs");
+  fs.writeFileSync(fixture, `const http=require('node:http');http.createServer((q,r)=>{if(q.headers.authorization!=='Bearer '+process.env.LLAMA_API_KEY){r.writeHead(403).end();return}r.setHeader('content-type','application/json');r.end(JSON.stringify({data:[{id:'betterwright-local'}]}))}).listen(Number(process.env.FIXTURE_PORT),'127.0.0.1');`);
+  let child;
+  const done = serveLocalAI(id, home, (_command, args, options) => {
+    child = spawn(process.execPath, [fixture], { ...options, env: { ...options.env, FIXTURE_PORT: args[args.indexOf("--port") + 1] } });
+    return child;
+  });
+  try {
+    let ready = false;
+    for (let i = 0; i < 100; i++) { if ((await localServiceStatus(home)).ready) { ready = true; break; } await new Promise(r => setTimeout(r, 50)); }
+    assert.ok(ready);
+    const state = JSON.parse(fs.readFileSync(path.join(localRoot(home), "service.json"), "utf8"));
+    assert.equal((await fetch(`http://127.0.0.1:${state.controlPort}/stop`, { method: "POST" })).status, 403);
+    assert.ok(!JSON.stringify(await localServiceStatus(home)).includes(state.token));
+    assert.equal(await stopLocalService(home), true); await done;
+    assert.ok(child.exitCode !== null || child.signalCode !== null);
+    assert.equal((await localServiceStatus(home)).running, false);
+  } finally { await stopLocalService(home); child?.kill(); await done; }
+});
+test("local help and fresh status do not install or initialize integrations", () => {
+  const home = makeTempDir("bw-local-cli-");
+  for (const args of [["--local", "--help"], ["local", "--help"], ["local", "status", "--json"]]) {
+    const result = spawnSync(process.execPath, ["dist/bin/betterwright.js", ...args], { encoding: "utf8", env: { ...process.env, BETTERWRIGHT_HOME: home } });
+    assert.equal(result.status, 0, result.stderr);
+    if (args.includes("--json")) assert.equal(JSON.parse(result.stdout).configured, false);
+    else assert.match(result.stdout, /local/i);
+  }
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+test("Windows retries Vulkan if a CUDA binary starts but cannot enumerate its GPU", async () => {
+  const home = makeTempDir("bw-local-cuda-fallback-"), backends: string[] = [];
+  const r = await setupLocalAI({}, home, quiet, {
+    detect: async () => hardware(64, 16, "nvidia", "win32", 8.9),
+    installLlama: async (_platform, backend) => { backends.push(backend); return backend; },
+    probe: async executable => executable === "cuda" ? "Available devices:" : "Vulkan0: NVIDIA test GPU (16384 MiB, 15000 MiB free)",
+    status: async () => ({ running: false }), disk: async () => {}, installRuntime: async () => "vulkan",
+    download: async () => "file", connect: async () => ({ model: "local", apiKey: "fake", baseURL: "http://127.0.0.1:1/v1" }), verify: async () => {},
+  });
+  assert.deepEqual(backends, ["cuda", "vulkan"]); assert.equal(r.plan.gpu.backend, "vulkan");
+});

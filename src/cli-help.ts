@@ -26,6 +26,7 @@ export const COMMAND_SUMMARIES = [
   ["sessions", "list live browser sessions"],
   ["close", "close a session (--all stops every profile's daemon)"],
   ["models", "list models the configured backends expose"],
+  ["local", "install and manage a hardware-matched local model for the harness"],
   ["view", "open a live web view of the browser"],
   ["auth", "sign in to a model backend (codex | grok)"],
   ["skill", "print or install the agent instructions"],
@@ -39,6 +40,7 @@ Usage: betterwright <command> [options]
        betterwright                 interactive agent console (no command)
 
 New here? Run \`betterwright init\`.
+For local AI in the built-in harness: \`betterwright --local\`.
 
 Commands:
 ${COMMAND_SUMMARIES.map(([name, summary]) => `  ${name.padEnd(10)} ${summary}`).join("\n")}
@@ -51,6 +53,31 @@ Docs: https://github.com/BetterWright/betterwright#readme`;
  * MAIN_USAGE, which is still better than running the command by accident.
  */
 export const COMMAND_HELP = {
+  local: `Usage: betterwright --local [options]
+       betterwright local setup [options]
+       betterwright local plan [options] [--json]
+       betterwright local status [--json]
+       betterwright local start
+       betterwright local stop
+
+One-command local AI setup for BetterWright's own interactive/exec harness.
+Detects GPU memory, installs a managed inference runtime, downloads a reviewed
+model/quant, checks image input and tool calls, and saves the harness default.
+Does not configure external agents, skills, MCP hosts, or their models.
+
+Options:
+  --preference <mode>  balanced (default) | speed | quality
+  --model <id>         nex-mini | ornith-35b | ornith-9b | qwen-27b
+  --quant <quant>      override within the reviewed, memory-safe catalog
+
+Apple Silicon uses Metal. Compatible AMD/Intel/NVIDIA GPUs use Vulkan;
+supported NVIDIA systems can use CUDA or vLLM. No automatic recommendation
+for 8 GB or less of system/accelerator memory. Never uses a sub-3-bit quant.
+Plan is read-only; setup verifies the actual accelerator before model downloads.
+After setup, betterwright and betterwright exec use it unless a model was
+explicitly selected. --model local selects it again. Stop releases GPU memory;
+the harness starts it again when needed. The server is private to this machine.
+Details: docs/local-ai.md`,
   record: `Usage: betterwright record start [name.mp4] [options]
        betterwright record restart [name.mp4] [options]
        betterwright record stop [--session <name>]
@@ -307,7 +334,7 @@ Options:
 List the models reachable right now. With no source, probes the native backends
 plus any local Ollama or vLLM server and OpenRouter when keyed.
 
-Sources: openrouter | ollama | vllm
+Sources: openrouter | ollama | vllm | local
 
 Options:
   --base-url <url>       an OpenAI-compatible endpoint to query

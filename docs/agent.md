@@ -1,5 +1,10 @@
 # The built-in agent harness (`betterwright exec`)
 
+For automatic hardware detection, model/quant selection, and runtime installation,
+run `betterwright --local`. See [one-command local AI](local-ai.md). Once setup
+passes its image/tool-call check, the harness uses `local` by default unless you
+explicitly select another model or endpoint.
+
 This page covers the **standalone** shape: BetterWright supplies a
 browser-tuned agent loop, you plug a *model* into it, and you hand it a
 natural-language task. For how it compares to the integrated shape, see

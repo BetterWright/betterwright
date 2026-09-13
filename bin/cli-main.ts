@@ -1014,6 +1014,11 @@ async function loadModelCatalog(
   // be a name agent.ts itself recognizes, so the accepted spellings and the
   // error wording cannot drift from `--model source/id` parsing.
   const raw = String(options.source || "").trim();
+  if (raw === "local") {
+    const { hasLocalSelection } = await import("../src/local-ai.js");
+    const models = hasLocalSelection() ? ["local"] : [];
+    return { entries: models.map(model => ({ source: "local", model })), sources: [{ source: "local", models, error: undefined, baseURL: undefined }] };
+  }
   const requested = raw ? endpointSourceName(raw) : "";
   const sources = requested
     ? [requested]
@@ -2190,6 +2195,15 @@ export async function runCli() {
   const tokens = process.argv.slice(2);
   const flags = new Set(tokens.filter((token) => token.startsWith("--")));
   const first = tokens[0];
+  if (first === "__local-ai") {
+    const { serveLocalAI } = await import("../src/local-ai-service.js");
+    return serveLocalAI(tokens[1] || "");
+  }
+  if (first === "local" || first === "--local") {
+    if (wantsHelp(tokens)) { console.log(styler().help(helpFor("local"))); return 0; }
+    const { runLocalCommand } = await import("../src/local-ai-cli.js");
+    return runLocalCommand(tokens.slice(1));
+  }
   // A bad `--profile` should read as one clear line before anything launches,
   // not as a TypeError stack from inside a browser constructor. Help and
   // --version still answer, so `--help` never depends on valid flags.
