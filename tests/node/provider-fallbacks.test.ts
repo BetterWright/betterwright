@@ -218,6 +218,30 @@ test("a minted session's armed end call reaches the provider's stop API", async 
   ]);
 });
 
+test("a malformed mint response releases the billed session before failing", async () => {
+  // The provider minted a session but returned no usable CDP endpoint — the
+  // armed release must fire inside create() so a chain advance leaves nothing
+  // running.
+  const calls = [];
+  const fetchJson = async (url, request) => {
+    calls.push(`${request.method} ${url}`);
+    if (request.method === "POST" && url.endsWith("/browsers")) {
+      return { session_id: "sess-1", cdp_ws_url: "" };
+    }
+    if (request.method === "DELETE") return {};
+    throw new Error(`unexpected provider call ${request.method} ${url}`);
+  };
+  const { plan } = resolveBrowserProvider(
+    { provider: "kernel", apiKey: "k" },
+    { env: {} },
+  );
+  await assert.rejects(() => plan.create({ fetchJson }), /CDP WebSocket URL/);
+  assert.deepEqual(calls, [
+    "POST https://api.onkernel.com/browsers",
+    "DELETE https://api.onkernel.com/browsers/sess-1",
+  ]);
+});
+
 test("cookieSyncConsentTarget names every remote candidate in a chain", () => {
   const env = {};
   assert.equal(
@@ -540,9 +564,20 @@ test("doctor ready follows the whole configured chain", async () => {
     saveDefaultBrowser({ provider: "managed" }, home);
     assert.equal((await doctorReport()).ready, false);
 
-    // A resolvable remote fallback rescues the same missing-fork setup.
+    // A resolvable remote fallback rescues the same missing-fork setup — and
+    // the fork's missing binary downgrades to a warning so the check list
+    // agrees with ready (cmdDoctor exits on any fail row).
     saveBrowserFallbacks([{ cdpUrl: "wss://fallback.example.com/connect" }], home);
-    assert.equal((await doctorReport()).ready, true);
+    const report = await doctorReport();
+    assert.equal(report.ready, true);
+    const { doctorChecks } = await import("../../dist/src/doctor.js");
+    const checks = doctorChecks(report);
+    const forkRow = checks.find((check) => check.label === "BetterChromium");
+    assert.equal(forkRow.status, "warn");
+    assert.deepEqual(
+      checks.filter((check) => check.status === "fail").map((check) => check.label),
+      [],
+    );
   } finally {
     if (saved.home === undefined) delete process.env.BETTERWRIGHT_HOME;
     else process.env.BETTERWRIGHT_HOME = saved.home;
@@ -550,5 +585,71 @@ test("doctor ready follows the whole configured chain", async () => {
     else process.env.BETTERWRIGHT_CHROMIUM_PATH = saved.chromium;
     if (saved.cdp === undefined) delete process.env.BETTERWRIGHT_CDP_URL;
     else process.env.BETTERWRIGHT_CDP_URL = saved.cdp;
+  }
+});
+
+test("a managed ref carrying a conflicting endpoint fails validation", () => {
+  const home = makeTempDir("bw-managed-conflict-");
+  // Expansion passes the conflict through instead of silently reducing it to
+  // managed — the worker's exactly-one-of check then rejects it.
+  const expanded = expandProviderChoice(
+    { provider: "managed", cdpUrl: "wss://x.example.com" },
+    { home, env: {} },
+  );
+  assert.throws(
+    () => resolveBrowserProvider(expanded, { env: {} }),
+    /exactly one of/,
+  );
+  // In a chain the conflicting entry is a skipped candidate, not a veto.
+  const resolution = resolveBrowserProvider(
+    [{ provider: "managed", cdpUrl: "wss://x.example.com" }, "managed"],
+    { env: {} },
+  );
+  const plans = providerResolutionPlans(resolution);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].kind, "managed");
+  assert.match(resolution.notes[0], /provider\[0\] skipped: .*exactly one of/);
+});
+
+test("configured skip notes ride the daemon config into the browser", async () => {
+  const { daemonConfigFromFlags } = await import("../../dist/bin/cli-main.js");
+  const { createBrowserFromDaemonConfig } = await import("../../dist/src/daemon.js");
+  const home = makeTempDir("bw-daemon-notes-");
+  // A fallback whose custom provider was removed after saving is skipped with
+  // a note by configuredProviderChain.
+  saveCustomProvider(
+    "gone",
+    { cdpUrl: "wss://gone.example.com?apiKey=${apiKey}", apiKey: "k" },
+    home,
+  );
+  saveBrowserFallbacks([{ provider: "gone" }], home);
+  const configPath = browserConfigPath(home);
+  const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  delete written.browser.custom;
+  fs.writeFileSync(configPath, JSON.stringify(written));
+
+  const argv = ["bun", "betterwright", "run", "-c", "return 1"];
+  const config = daemonConfigFromFlags(new Set(), { argv, home, env: {} });
+  assert.equal(config.browser.providerChainNotes.length, 1);
+  assert.match(config.browser.providerChainNotes[0], /Skipped a browser fallback/);
+  // The notes are part of the normalized signature too.
+  const sig = daemonConfigSignature(config);
+  assert.match(sig, /Skipped a browser fallback/);
+
+  const savedHome = process.env.BETTERWRIGHT_HOME;
+  process.env.BETTERWRIGHT_HOME = home;
+  try {
+    const bw = await createBrowserFromDaemonConfig(config);
+    try {
+      assert.ok(
+        bw.providerChainNotes.some((note) => /Skipped a browser fallback/.test(note)),
+        `expected the config note on the daemon browser, got ${JSON.stringify(bw.providerChainNotes)}`,
+      );
+    } finally {
+      await bw.close();
+    }
+  } finally {
+    if (savedHome === undefined) delete process.env.BETTERWRIGHT_HOME;
+    else process.env.BETTERWRIGHT_HOME = savedHome;
   }
 });

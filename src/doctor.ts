@@ -147,13 +147,18 @@ export async function doctorReport() {
       providerReady = false;
     }
   }
+  // Resolved once so the report can expose it: "some launch candidate can
+  // start" — the piece of `ready` that is about the provider chain rather
+  // than the runtime (worker, pinned playwright).
+  const providerUsable =
+    providerReady ??
+    (!provider || provider.kind === "managed"
+      ? browser === "chromium-fork" && !chromiumForkError
+      : !providerError);
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (providerReady ??
-      (!provider || provider.kind === "managed"
-        ? browser === "chromium-fork" && !chromiumForkError
-        : !providerError));
+    providerUsable;
   return {
     node: process.execPath,
     runtime: runtimeLabel(),
@@ -172,6 +177,7 @@ export async function doctorReport() {
     provider_error: providerError,
     provider_chain: providerChain,
     provider_notes: providerNotes,
+    provider_ready: providerUsable,
     stealth_driver: stealth,
     stealth_available: Boolean(stealth),
     browser,
@@ -374,6 +380,9 @@ export function doctorChecks(
     add("Browser", "Fallbacks", "warn", note, null);
   }
 
+  // When a non-managed candidate can still launch, a missing fork is a
+  // warning, not a failure: doctor's exit code must agree with `ready`.
+  const forkOptional = report.provider_ready === true;
   if (report.chromium_fork) {
     add(
       "Browser",
@@ -391,25 +400,31 @@ export function doctorChecks(
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       report.chromium_fork_error,
-      "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
     );
   } else if (report.browser_selection_reason === "unsupported-platform") {
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       "no artifact is published for this platform",
-      "Use the provider option to bring your own or a cloud browser — docs/browser-providers.md.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Use the provider option to bring your own or a cloud browser — docs/browser-providers.md.",
     );
   } else if (!report.provider) {
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       "not installed",
-      "Run `betterwright setup`.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Run `betterwright setup`.",
     );
   }
   add("Browser", "In use", report.ready ? "ok" : "fail",

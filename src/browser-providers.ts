@@ -808,7 +808,9 @@ async function createNamedSession(descriptor, name, apiKey, sessionOptions, fetc
     headers,
     body,
   });
-  return sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson);
+  return sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson, {
+    releaseOnError: true,
+  });
 }
 
 async function attachNamedSession(descriptor, name, apiKey, sessionId, fetchJson) {
@@ -837,13 +839,20 @@ async function fetchProviderRecord(descriptor, apiKey, sessionId, fetchJson) {
   });
 }
 
-async function sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson) {
+async function sessionPlanFromPayload(
+  descriptor,
+  name,
+  apiKey,
+  data,
+  fetchJson,
+  { releaseOnError = false } = {},
+) {
   const box = providerBoxFromPayload(descriptor, name, apiKey, data);
-  const endpoint = wssUrl(
-    requireStringField(box.cdpUrl, "a CDP WebSocket URL", descriptor.displayName),
-    `the ${name} CDP URL`,
-  );
   const headers = descriptor.headers ? descriptor.headers(apiKey) : {};
+  // Arm release as soon as the minted session id is known — a payload whose
+  // endpoint fails validation below must still stop the billed box before
+  // the error propagates (a provider chain would otherwise advance while
+  // the session keeps running).
   const end =
     descriptor.end && box.id
       ? async () => {
@@ -854,6 +863,16 @@ async function sessionPlanFromPayload(descriptor, name, apiKey, data, fetchJson)
           });
         }
       : null;
+  let endpoint;
+  try {
+    endpoint = wssUrl(
+      requireStringField(box.cdpUrl, "a CDP WebSocket URL", descriptor.displayName),
+      `the ${name} CDP URL`,
+    );
+  } catch (error) {
+    if (releaseOnError && end) await end().catch(() => {});
+    throw error;
+  }
   return {
     kind: "remote",
     provider: name,

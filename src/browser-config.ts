@@ -544,7 +544,10 @@ export function expandProviderChoice(
   if (!isRecord(choice)) return choice; // let the provider layer report the type error
   const name = cleanString(untrustedField(choice, "provider")).toLowerCase();
   if (!name) return expandKeyEnv(choice, env);
-  if (name === "managed") return { provider: "managed" };
+  // Pass the choice through untouched: a ref that also sets cdpUrl or
+  // executablePath must reach the worker's exactly-one-of validation, not be
+  // silently reduced to managed.
+  if (name === "managed") return choice;
   if (BROWSER_PROVIDER_NAMES.includes(name)) {
     const expanded = expandKeyEnv(choice, env);
     if (cleanString(untrustedField(expanded, "apiKey"))) return expanded;

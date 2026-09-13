@@ -321,6 +321,7 @@ interface NormalizedDaemonBrowser {
   platform: "macos" | "windows" | "linux" | null;
   stealthRuntimeFix: boolean;
   provider: DaemonProviderConfig | DaemonProviderConfig[] | null;
+  providerChainNotes: string[];
 }
 
 // `policy` and `browser` are always present in a finished config; they are
@@ -377,6 +378,16 @@ export function normalizeDaemonConfig(config: any = {}): NormalizedDaemonConfig 
     platform: identityPlatform(untrustedField(browser, "platform")),
     stealthRuntimeFix: untrustedField(browser, "stealthRuntimeFix") === true,
     provider: normalizeDaemonProvider(untrustedField(browser, "provider")),
+    // Skipped-candidate lines the launcher already computed (the persisted
+    // chain's dead refs). Part of the signature: they reflect the effective
+    // configuration, and a daemon built on different notes is a different
+    // browser.
+    providerChainNotes: (() => {
+      const notes = untrustedField(browser, "providerChainNotes");
+      return (Array.isArray(notes) ? notes : [])
+        .map((note) => String(note))
+        .filter((note) => note.trim());
+    })(),
   };
   // Include both modes in the signature: a pre-blocker daemon must not be
   // silently reused when the default now requires blocking.
@@ -459,7 +470,18 @@ export async function createBrowserFromDaemonConfig(config) {
     // launch — nothing on this side relies on the asserted field types.
     options.provider = normalized.browser.provider as BrowserProviderOptions | BrowserProviderOptions[];
   }
-  return new BetterWright(options);
+  const browser = new BetterWright(options);
+  // Notes the CLI computed while resolving the persisted chain (dead fallback
+  // refs skipped at expansion). The explicit provider option can't reproduce
+  // them, so they ride the config and prepend whatever the daemon's own
+  // expansion derives — daemon and in-process envelopes stay identical.
+  if (normalized.browser.providerChainNotes.length) {
+    browser.providerChainNotes = [
+      ...normalized.browser.providerChainNotes,
+      ...browser.providerChainNotes,
+    ];
+  }
+  return browser;
 }
 
 // BetterWright methods a client may invoke, and where the session name pins

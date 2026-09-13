@@ -551,9 +551,16 @@ export function daemonConfigFromFlags(
     // resolution into the config keeps the signature honest: a changed
     // configured chain must not silently reuse a daemon built on the old one.
     const cdpEnv = String(env.BETTERWRIGHT_CDP_URL || "").trim();
-    browser.provider = cdpEnv
-      ? { cdpUrl: cdpEnv }
-      : configuredProviderChain({ home, env }).provider;
+    if (cdpEnv) {
+      browser.provider = { cdpUrl: cdpEnv };
+    } else {
+      const chain = configuredProviderChain({ home, env });
+      browser.provider = chain.provider;
+      // The daemon supplies provider as an explicit option, so its
+      // BetterWright never recomputes these notes — carry the skipped-entry
+      // lines through so daemon and in-process envelopes match.
+      if (chain.notes.length) browser.providerChainNotes = chain.notes;
+    }
   }
   return {
     headless: !flags.has("--headed"),
