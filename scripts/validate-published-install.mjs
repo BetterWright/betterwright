@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [repository, installationHome, resultFile] = process.argv.slice(2);
+assert.ok(repository && installationHome && resultFile, 'Pass repository, isolated installation home, and result JSON path');
+const runtime = await import(pathToFileURL(path.resolve(repository, 'dist/src/chromium-fork.js')).href);
+const { installChromiumFork } = await import(pathToFileURL(path.resolve(repository, 'dist/src/chromium-fork-install.js')).href);
+assert.equal(runtime.BETTERWRIGHT_CHROMIUM_VERSION, '153.0.8010.36');
+assert.equal(runtime.CHROMIUM_FORK_RELEASE_TAG, 'betterchromium-153.0.8010.36-r2');
+assert.ok(!process.env.BETTERWRIGHT_CHROMIUM_REPO && !process.env.BETTERWRIGHT_CHROMIUM_RELEASE_TAG, 'Use the shipped public repository and release');
+const root = runtime.defaultChromiumForkRoot({ home: installationHome });
+assert.ok(!fs.existsSync(root), 'Use a fresh isolated installation directory');
+assert.equal(runtime.resolveChromiumForkBinary({ home: installationHome, env: {} }), null);
+const installed = await installChromiumFork({ home: installationHome });
+assert.equal(installed.skipped, null);
+assert.equal(installed.alreadyInstalled, false);
+assert.equal(runtime.resolveChromiumForkBinary({ home: installationHome, env: {} }), installed.binary);
+assert.equal(runtime.chromiumForkInstallationMatches({ root }), true);
+const repeated = await installChromiumFork({ home: installationHome });
+assert.equal(repeated.alreadyInstalled, true);
+assert.equal(repeated.binary, installed.binary);
+const receipt = JSON.parse(fs.readFileSync(runtime.chromiumForkReceiptPath(root, process.platform, process.arch), 'utf8'));
+fs.writeFileSync(resultFile, JSON.stringify({ platform: process.platform, arch: process.arch, ...installed, receipt, repeatInstallSkipped: true }, null, 2) + '\n');
+console.log('Published archive installation, receipt, implicit discovery, and repeat setup verified.');
