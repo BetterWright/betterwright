@@ -1013,8 +1013,8 @@ async function loadModelCatalog(
   // Blank means "no source requested" (list everything); any other value must
   // be a name agent.ts itself recognizes, so the accepted spellings and the
   // error wording cannot drift from `--model source/id` parsing.
-  const raw = String(options.source || "").trim();
-  const requested = raw ? endpointSourceName(raw) : "";
+  const raw = String(options.source || "").trim().toLowerCase();
+  const requested = raw === "local" ? "local" : raw ? endpointSourceName(raw) : "";
   const sources = requested
     ? [requested]
     : options.modelOptions?.baseURL
@@ -1023,6 +1023,10 @@ async function loadModelCatalog(
   const settled = await Promise.all(
     sources.map(async (source) => {
       try {
+        if (source === "local") {
+          const { hasReadyLocalInstallation } = await import("../src/local-ai-install.js");
+          return { source, models: hasReadyLocalInstallation() ? ["local"] : [], baseURL: undefined };
+        }
         const query: CliModelOptions & { source: string; signal?: AbortSignal } = {
           source,
           ...(source === "custom" ? options.modelOptions : {
@@ -2190,6 +2194,15 @@ export async function runCli() {
   const tokens = process.argv.slice(2);
   const flags = new Set(tokens.filter((token) => token.startsWith("--")));
   const first = tokens[0];
+  if (first === "__local-ai") {
+    const { serveLocalAI } = await import("../src/local-ai-service.js");
+    return serveLocalAI(tokens[1] || "");
+  }
+  if (first === "local" || first === "--local") {
+    if (wantsHelp(tokens)) { console.log(styler().help(helpFor("local"))); return 0; }
+    const { runLocalCommand } = await import("../src/local-ai-cli.js");
+    return runLocalCommand(tokens.slice(1));
+  }
   // A bad `--profile` should read as one clear line before anything launches,
   // not as a TypeError stack from inside a browser constructor. Help and
   // --version still answer, so `--help` never depends on valid flags.

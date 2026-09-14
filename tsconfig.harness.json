@@ -42,6 +42,7 @@
     "research/pixelscan-probe.ts",
     "research/stealth-report.ts",
     "research/warm-profile.ts",
+    "research/verify-local-ai-catalog.ts",
     "tests/node/**/*.ts",
     "benchmarks/**/*.ts"
   ],

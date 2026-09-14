@@ -23,7 +23,7 @@ async function main() {
 
   if (!first || first.startsWith("-")) {
     if (wantsHelp(tokens)) {
-      console.log(paint.help(MAIN_USAGE));
+      console.log(paint.help(first === "--local" ? helpFor("local") : MAIN_USAGE));
       return 0;
     }
   } else {

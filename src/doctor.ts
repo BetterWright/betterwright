@@ -25,6 +25,8 @@ import {
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
 import { defaultHome } from "./home.js";
+import { hasLocalSelection } from "./local-ai.js";
+import { hasReadyLocalInstallation } from "./local-ai-install.js";
 import { installHint, optionalPeerAvailable } from "./optional-peer.js";
 import {
   runtimeFix,
@@ -214,17 +216,22 @@ export function modelReadiness({ env = process.env, auth = null }: any = {}) {
   const codex = auth ? Boolean(auth.codex) : Boolean(loadCodexAuth());
   const grok = auth ? Boolean(auth.grok) : Boolean(loadGrokAuth());
   const sources = [];
+  const home = env.BETTERWRIGHT_HOME || defaultHome();
+  const localConfigured = hasLocalSelection(home), localValid = hasReadyLocalInstallation(home);
+  const localError = localConfigured && !localValid ? "The saved local model selection is invalid or its installation is missing or damaged." : null;
+  if (localValid) sources.push("local (managed harness model)");
   if (codex) sources.push("codex (signed in)");
   if (grok) sources.push("grok (signed in)");
   if (env.ANTHROPIC_API_KEY && moduleAvailable("@anthropic-ai/sdk")) {
     sources.push("claude (ANTHROPIC_API_KEY)");
   }
   if (env.OPENROUTER_API_KEY) sources.push("openrouter (OPENROUTER_API_KEY)");
+  if (env.CEREBRAS_API_KEY) sources.push("cerebras (CEREBRAS_API_KEY)");
   if (env.XAI_API_KEY || env.GROK_API_KEY) sources.push("grok (API key)");
   if (env.OPENAI_API_KEY) sources.push("codex (OPENAI_API_KEY)");
   const anthropicKeyNoSdk =
     Boolean(env.ANTHROPIC_API_KEY) && !moduleAvailable("@anthropic-ai/sdk");
-  return { sources, anthropicKeyNoSdk };
+  return { sources, anthropicKeyNoSdk, localError };
 }
 
 /**
@@ -241,6 +248,9 @@ export function modelReadiness({ env = process.env, auth = null }: any = {}) {
  * @returns {{model: string, reason: string, configured: boolean}}
  */
 export function preferredModelId({ env = process.env, auth = null }: any = {}) {
+  if (hasLocalSelection(env.BETTERWRIGHT_HOME || defaultHome())) {
+    return { model: "local", reason: "configured with `betterwright --local`", configured: true };
+  }
   const codex = auth ? Boolean(auth.codex) : Boolean(loadCodexAuth());
   const grok = auth ? Boolean(auth.grok) : Boolean(loadGrokAuth());
   if (env.ANTHROPIC_API_KEY && moduleAvailable("@anthropic-ai/sdk")) {
@@ -277,6 +287,13 @@ export function preferredModelId({ env = process.env, auth = null }: any = {}) {
       configured: true,
     };
   }
+  if (env.CEREBRAS_API_KEY) {
+    return {
+      model: `cerebras/${String(env.BETTERWRIGHT_CEREBRAS_MODEL || "qwen-3.8-27b").replace(/^cerebras\//i, "")}`,
+      reason: "CEREBRAS_API_KEY",
+      configured: true,
+    };
+  }
   // OpenRouter, Ollama, and vLLM have no bare-id default — a model there has
   // to be named `source/id` — so they are usable but cannot supply a default.
   return { model: "claude-opus-4-8", reason: "default", configured: false };
@@ -301,6 +318,7 @@ export function modelSetupHint({ env = process.env, auth = null }: any = {}) {
     "  Sign in:  betterwright auth --login codex     (a ChatGPT/Codex subscription)\n" +
     "        or:  betterwright auth --login grok\n" +
     `        or:  export ANTHROPIC_API_KEY=… && ${installHint("@anthropic-ai/sdk")}\n` +
+    "        or:  export CEREBRAS_API_KEY=…   (Cerebras Qwen 3.8 27B)\n" +
     "  Local:    run Ollama, then --model ollama/<id>   (see `betterwright models`)"
   );
 }
@@ -489,13 +507,15 @@ export function doctorChecks(
       : installHint("@modelcontextprotocol/sdk"),
   );
 
-  const models = modelReadiness({ env });
+  const models = modelReadiness({ env: { ...env, BETTERWRIGHT_HOME: home } });
   add(
     "Built-in agent",
     "Model backends",
-    models.sources.length ? "ok" : "warn",
-    models.sources.length ? models.sources.join(", ") : "none configured",
-    models.sources.length
+    models.localError ? "fail" : models.sources.length ? "ok" : "warn",
+    models.localError || (models.sources.length ? models.sources.join(", ") : "none configured"),
+    models.localError
+      ? "Run `betterwright --local` to repair the saved local model, or select another model explicitly."
+      : models.sources.length
       ? null
       : "Only needed for `betterwright exec`. Run `betterwright auth --login codex`, or set ANTHROPIC_API_KEY.",
   );
