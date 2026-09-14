@@ -273,12 +273,14 @@ export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): 
     LD_LIBRARY_PATH: [path.join(compiler, "lib"), path.join(cuda, "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
 }
 async function extractRuntime(archive: string, directory: string) {
-  const listing = await runLocalProbe("tar", ["-tf", archive]);
+  // Portable GPU SDKs contain several GiB and many more entries than a
+  // small inference executable. Keep extraction bounded independently of probes.
+  const listing = await runLocalProbe("tar", ["-tf", archive], process.env, 10 * 60_000, 32 * 1024 * 1024);
   if (listing.trim().split(/\r?\n/).some(name => name.startsWith("/") || name.includes("\\") || /^[a-z]:/i.test(name) || name.split("/").includes(".."))) {
     throw new Error("Unsafe path in the pinned inference runtime archive.");
   }
   mkdirPrivate(directory);
-  await runLocalProbe("tar", ["-xf", archive, "-C", directory]);
+  await runLocalProbe("tar", ["-xf", archive, "-C", directory], process.env, 10 * 60_000);
 }
 /** Only publish a complete, validated extraction. Setup holds the install lock. */
 export async function stageLocalRuntime(directory: string, populate: (staging: string) => Promise<void>) {
