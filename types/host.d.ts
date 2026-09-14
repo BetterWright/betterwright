@@ -15,6 +15,9 @@ export interface HostConnection {
 export interface HostTarget {
   /** Configure the dedicated session to use this SOCKS guard before exposing the tab. */
   connect(options: { proxyUrl: string }): Promise<HostConnection>;
-  /** Optional host input/focus lease; abort its signal to hand control back to the human. */
+  /** Optional lease around run() and syncCookies(); abort its signal to hand control
+   * back to the human. In-flight worker operations drain before the promise settles.
+   * Cookie Sync successes use result to carry their CookieSyncResult inside this lease.
+   */
   run?(operation: (signal?: AbortSignal) => Promise<RunResult>): Promise<RunResult>;
 }

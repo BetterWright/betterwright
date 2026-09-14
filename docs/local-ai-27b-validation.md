@@ -67,11 +67,13 @@ dependency-index collision, and Escha's rejection of the generic `none`
 reasoning effort. Default and explicit `none` harness requests now use the
 supported API value while disabling thinking through the chat template.
 
-Repository validation: the final `bun run release:check` after the native-library
-fix passed: 1,256 tests passed, 3 optional live tests skipped, zero failures,
-plus lint, types, build, declarations, version and package checks. Two earlier
-local retries encountered unrelated subprocess timeouts; the final full run
-and the separate 75-test local-AI/profile-lock suite passed. The live catalog verifier checked all 127 distinct pinned artifacts
+Repository validation: the complete `bun run release:check` passed with
+1,281 tests passed, 3 optional live tests skipped, and zero failures, including
+the current host cookie-sync changes. Lint, types, build, declarations, version
+and package checks passed. The 75-test local-AI/Cerebras suite includes an actual
+harness tool loop for both compact Qwen models, verifying that explicit
+reasoning state is preserved across tool calls while unrelated endpoint
+message schemas remain unchanged. The live catalog verifier checked all 127 distinct pinned artifacts
 without downloading model weights. Hardware fixtures cover the new 24 GB
 defaults, 16 GB exclusions, runtime restrictions, and fallback to GSQ before
 model downloads if automatic Escha installation fails. Review regressions cover

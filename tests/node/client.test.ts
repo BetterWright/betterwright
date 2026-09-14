@@ -373,6 +373,54 @@ test("the worker rechecks Cookie Sync consent before opening a remote CDP target
   }
 });
 
+test("Cookie Sync to a host-owned target needs no cloud consent and reports the granted domains", async () => {
+  const hostTarget = {
+    connect: async () => ({ provider: { cdpUrl: "ws://127.0.0.1:9/devtools/browser/unreachable" }, close: async () => {} }),
+  };
+  const browser = new BetterWright({ hostTarget, vault: false });
+  browser._extractCookieSync = async (normalized) => ({
+    cookies: [], selected: 0, skipped: 0, warnings: [], source: { ...normalized.source },
+  });
+  try {
+    const empty = await browser.syncCookies({ source: { browser: "chrome" }, domains: ["example.test"] });
+    assert.deepEqual(empty, {
+      ok: true,
+      synced: 0,
+      selected: 0,
+      skipped: 0,
+      source: { browser: "chrome" },
+      target: "host",
+      cookieImportDomains: [],
+      warnings: [],
+    });
+    // The first worker message is the sync itself: the host flag must be read
+    // before any browser launch, and the failure is the unreachable host tab,
+    // not a consent or validation error.
+    const config = await browser._prepare();
+    assert.equal(config.hostOwnedTarget, true);
+    const result = await browser._dispatch(
+      {
+        type: "cookie_sync",
+        config,
+        cookies: [{
+          name: "session",
+          value: "COOKIE_SECRET_SENTINEL",
+          domain: "example.test",
+          path: "/",
+          secure: true,
+          httpOnly: true,
+        }],
+      },
+      5,
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /could not open the target browser/);
+    assert.doesNotMatch(result.error, /consent|validate|COOKIE_SECRET_SENTINEL/);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("the worker rejects malformed Cookie Sync payloads without echoing values", async () => {
   const browser = new BetterWright({ vault: false });
   const sentinel = "COOKIE_SECRET_SENTINEL";

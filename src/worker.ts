@@ -272,6 +272,19 @@ interface CookieSyncResultSource {
   browser: string;
   profile?: string;
 }
+interface CookieSyncSuccessResult {
+  type: "result";
+  id: unknown;
+  ok: true;
+  synced: number;
+  selected: number;
+  skipped: number;
+  source: CookieSyncResultSource;
+  target: string;
+  cookieImportDomains?: string[];
+  warnings: Array<{ code: string; count: number }>;
+  profileMode: string;
+}
 // Non-empty when caller-supplied Chromium switches were dropped as duplicates
 // of BetterWright's own, so the caller is told rather than left wondering why
 // a switch had no effect.
@@ -7792,9 +7805,16 @@ async function cookieSync(message) {
   }
   cookieSyncActive = true;
   try {
+    // The browser may not have launched yet, so read the host flag from the
+    // request config rather than launchConfig.
+    const hostOwnedTarget = message.config?.hostOwnedTarget === true;
     let target;
     try {
-      target = cookieSyncConsentTarget(message.config?.provider);
+      // SAFETY: host-owned targets are local and host-trusted; the provider is
+      // a placeholder endpoint, so remote-target cloud consent does not apply.
+      target = hostOwnedTarget
+        ? null
+        : cookieSyncConsentTarget(message.config?.provider);
     } catch {
       sendResult({
         type: "result",
@@ -7883,7 +7903,7 @@ async function cookieSync(message) {
         source.profile = "selected";
       }
     }
-    sendResult({
+    const result: CookieSyncSuccessResult = {
       type: "result",
       id: message.id,
       ok: true,
@@ -7891,13 +7911,17 @@ async function cookieSync(message) {
       selected,
       skipped,
       source,
-      target: target || "local",
+      target: target || (hostOwnedTarget ? "host" : "local"),
       warnings: [
         ...sanitizedCookieSyncWarnings(message.warnings),
         ...(missingCookies ? [{ code: "target_not_stored", count: missingCookies }] : []),
       ],
       profileMode,
-    });
+    };
+    if (hostOwnedTarget) {
+      result.cookieImportDomains = [...new Set<string>(storedCookies.map((cookie) => String(cookie.domain)))];
+    }
+    sendResult(result);
   } finally {
     cookieSyncActive = false;
   }
