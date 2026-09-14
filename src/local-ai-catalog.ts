@@ -1,23 +1,183 @@
 // Reviewed model artifacts. Revisions and every downloaded byte are pinned.
-// Quant sources: model authors, Unsloth, and Bartowski. No sub-3-bit builds.
+// Quant sources include model authors, Unsloth, Bartowski, and ISTA-DASLab.
+// Escha W2 is an explicitly reviewed mixed 2/3-bit exception; other models keep the 3-bit floor.
 export interface LocalArtifact {
   name: string;
   bytes: number;
   sha256: string;
   url: string;
+  subdirectory?: "mtp";
 }
 export interface LocalModel {
   id: string;
   name: string;
   quant: string;
   bits: number;
-  runtime: "llama.cpp" | "vllm";
+  runtime: "llama.cpp" | "vllm" | "escha";
   repository: string;
   revision: string;
   files: LocalArtifact[];
   mtp: boolean;
 }
 export const LOCAL_MODELS: LocalModel[] = [
+  {
+    "id": "qwen-27b-escha",
+    "name": "Qwen3.8-27B Escha W2 Vision",
+    "quant": "Escha-W2",
+    "bits": 2.469,
+    "runtime": "escha",
+    "repository": "ProCreations/Qwen3.8-27B-Escha-W2-Vision",
+    "revision": "aba52e1d2544194d84cf86b29dc17c8c70da6f2e",
+    "mtp": true,
+    "files": [
+      {
+        "name": "LICENSE",
+        "bytes": 11444,
+        "sha256": "8dc4cd455799e521ed476b5ddc15a84fd8f25271fef409ed092f01dee6995998",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/LICENSE"
+      },
+      {
+        "name": "chat_template.jinja",
+        "bytes": 8952,
+        "sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/chat_template.jinja"
+      },
+      {
+        "name": "config.json",
+        "bytes": 69751,
+        "sha256": "2ea43844403dde9df94237be9b6aa7269d6cedc0e863788b6c8d8f3175feefa9",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/config.json"
+      },
+      {
+        "name": "generation_config.json",
+        "bytes": 202,
+        "sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/generation_config.json"
+      },
+      {
+        "name": "merges.txt",
+        "bytes": 3353259,
+        "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/merges.txt"
+      },
+      {
+        "name": "model-00001-of-00002.safetensors",
+        "bytes": 5337335240,
+        "sha256": "5eb7bae90fc0dd63710d0215546462c6ab582fb2aa9cf064cbd257ba939df87e",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/model-00001-of-00002.safetensors"
+      },
+      {
+        "name": "model-00002-of-00002.safetensors",
+        "bytes": 4815752984,
+        "sha256": "3fb5d551314e2122db1ad64325b792eae325deafceafda9090761275e39ac7c7",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/model-00002-of-00002.safetensors"
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "bytes": 351387,
+        "sha256": "735247e42563b86b113edaa9a3be92675b851be9d4a04234a70e01192807ac6a",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/model.safetensors.index.json"
+      },
+      {
+        "name": "config.json",
+        "bytes": 3636,
+        "sha256": "75ee6918f289ce855ca196cfdedfa29ae572054441554e7c33977ebde4565b5f",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/mtp/config.json",
+        "subdirectory": "mtp"
+      },
+      {
+        "name": "model.safetensors",
+        "bytes": 849400408,
+        "sha256": "51f430e5c08186ad9ed37043e4c34ee1f7841695e0932a62e28f281048f893a8",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/mtp/model.safetensors",
+        "subdirectory": "mtp"
+      },
+      {
+        "name": "patch_runtime.py",
+        "bytes": 4348,
+        "sha256": "8f54beaf5ae26d852a02ee88e1706ccb1b9ca9bb03bffba558d26f711297aea2",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/patch_runtime.py"
+      },
+      {
+        "name": "preprocessor_config.json",
+        "bytes": 390,
+        "sha256": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/preprocessor_config.json"
+      },
+      {
+        "name": "quantize_config.json",
+        "bytes": 44,
+        "sha256": "a35856553feb607f6278fb4bf76442dfd9d603d2fdb5d30c0cf4087c4cd13c92",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/quantize_config.json"
+      },
+      {
+        "name": "serve_vision.py",
+        "bytes": 2866,
+        "sha256": "1fe5ddf28f2e69c7a6fc11510016cfdd6a35408f6fa104e82acd0c1335130a08",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/serve_vision.py"
+      },
+      {
+        "name": "tokenizer.json",
+        "bytes": 12809320,
+        "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/tokenizer.json"
+      },
+      {
+        "name": "tokenizer_config.json",
+        "bytes": 16357,
+        "sha256": "854e1f9eaf01518389646815c91e914c02554c2e1b0dd1dc1d184751e22f038c",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/tokenizer_config.json"
+      },
+      {
+        "name": "vendor_serve.sh",
+        "bytes": 23951,
+        "sha256": "39862c85f6d9909ab4b7c93bc5edac4b366ae31c2a0cfdcb1a3787053cede81e",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/vendor_serve.sh"
+      },
+      {
+        "name": "video_preprocessor_config.json",
+        "bytes": 385,
+        "sha256": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/video_preprocessor_config.json"
+      },
+      {
+        "name": "vision.safetensors",
+        "bytes": 921497312,
+        "sha256": "c2a83f353af25b17adb9fdbd18e89d4dec47cd89332a82d23f3db063555596f6",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/vision.safetensors"
+      },
+      {
+        "name": "vocab.json",
+        "bytes": 6722759,
+        "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "url": "https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision/resolve/aba52e1d2544194d84cf86b29dc17c8c70da6f2e/vocab.json"
+      }
+    ]
+  },
+  {
+    "id": "qwen-27b-gsq",
+    "name": "Qwen3.8-27B GSQ-RCO",
+    "quant": "IQ3_S",
+    "bits": 3.5,
+    "runtime": "llama.cpp",
+    "repository": "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF",
+    "revision": "d562806dbafae37109975e970aae91b43e73b440",
+    "mtp": true,
+    "files": [
+      {
+        "name": "Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf",
+        "bytes": 12120016960,
+        "sha256": "58fd826723939933dc86f45b7fe04545cbc2de1c70f6fe2cdd3858c87a98c12f",
+        "url": "https://huggingface.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF/resolve/d562806dbafae37109975e970aae91b43e73b440/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf"
+      },
+      {
+        "name": "mmproj-Qwen3.8-27B-BF16.gguf",
+        "bytes": 931146528,
+        "sha256": "13cb7bebccbd04afc8f4090cb949ecf8937cdf7377c5799b1a0c594e7c0d3e16",
+        "url": "https://huggingface.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF/resolve/d562806dbafae37109975e970aae91b43e73b440/mmproj-Qwen3.8-27B-BF16.gguf"
+      }
+    ]
+  },
   {
     "id": "nex-mini",
     "mtp": false,

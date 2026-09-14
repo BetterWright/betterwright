@@ -11,6 +11,12 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Added
 
+- Compact Qwen3.8 27B options for `betterwright --local` with 64K context:
+  GSQ-RCO IQ3_S with vision and native MTP on compatible 24 GB GPUs, and
+  Escha W2 with restored vision, compact INT8 embeddings, native MTP, and FP8
+  KV cache on Linux NVIDIA Ampere or newer. GSQ is the 24 GB default; the
+  speed preference selects Escha where supported. Ornith 9B remains the
+  16 GB recommendation. See `docs/local-ai.md` for formats and testing limits.
 - `cookieImportDomains` on `CookieSyncResult` for host-owned targets: the
   deduplicated cookie domains verified stored in the leased tab, restoring the
   2.4.x field so hosts can scope the session access an import granted.
@@ -19,6 +25,15 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
+- Private runtime extraction works in rootless containers without attempting
+  to restore upstream archive ownership. The Escha installer pins CUDA Torch
+  wheels directly so their package index cannot shadow unrelated dependencies.
+- Compact Qwen local requests honor explicit reasoning effort and preserve
+  reasoning state across tool calls.
+- Escha installs a private NUMA library on fresh Linux systems and reserves
+  repair capacity for missing or broken native dependencies. Its measured live
+  footprint requires at least 23.75 GiB reported and free VRAM before downloads;
+  smaller nominal 24 GB cards select GSQ even for the speed preference.
 - `syncCookies` no longer demands a `cloudConsent` matching the placeholder
   provider endpoint on host-owned targets; consent is only required for real
   remote providers, and results report `target: "host"`.

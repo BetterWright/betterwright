@@ -1853,6 +1853,9 @@ async function discoverModelCandidates(model, options: any = {}) {
   return discovered.flat();
 }
 
+// Only the managed Qwen adapters opt into this provider-specific wire field.
+const LOCAL_QWEN_REASONING = Symbol("managed local Qwen reasoning content");
+
 /**
  * Resolve the model-first user selector. Explicit source/model ids resolve
  * immediately. Bare ids are matched across running/configured endpoint
@@ -1864,9 +1867,18 @@ export async function resolveModelSelection(model, modelOptions: any = {}) {
   if (["local", "local/local"].includes(selector.toLowerCase()) && !modelOptions.baseURL) {
     const { configuredLocalConnection } = await import("./local-ai-service.js");
     const { plan, connection } = await configuredLocalConnection();
+    const compactQwen = ["qwen-27b-gsq", "qwen-27b-escha"].includes(plan.modelId);
+    const bodyExtra = { temperature: plan.modelId === "nex-mini" ? 0.7 : 0.6, top_p: 0.95, top_k: 40 };
+    let effort = modelOptions.effort || (["nex-mini", "qwen-27b"].includes(plan.modelId) && plan.preference !== "speed" ? "medium" : "none");
+    if (compactQwen) {
+      const { localQwenReasoning } = await import("./local-ai.js");
+      const reasoning = localQwenReasoning(modelOptions.effort || "none");
+      effort = reasoning.effort;
+      Object.assign(bodyExtra, { chat_template_kwargs: reasoning.chat_template_kwargs });
+    }
+    Object.assign(bodyExtra, modelOptions.bodyExtra);
     return endpointModel({ ...modelOptions, ...connection, source: "custom", protocol: "chat",
-      effort: modelOptions.effort || (["nex-mini", "qwen-27b"].includes(plan.modelId) && plan.preference !== "speed" ? "medium" : "none"),
-      bodyExtra: { temperature: plan.modelId === "nex-mini" ? 0.7 : 0.6, top_p: 0.95, top_k: 40, ...modelOptions.bodyExtra } });
+      effort, bodyExtra, [LOCAL_QWEN_REASONING]: compactQwen });
   }
   const qualified = qualifiedModelSelector(selector);
   if (modelOptions.baseURL || qualified) {
@@ -2080,7 +2092,7 @@ export function claudeModel(options: any = {}) {
 
 // --- OpenAI-compatible (codex, grok) --------------------------------------
 
-function openaiMessages(system, messages, cerebrasModel = "") {
+function openaiMessages(system, messages, cerebrasModel = "", localQwenReasoning = false) {
   const out: any[] = [{ role: "system", content: system }];
   for (const m of messages) {
     if (m.role === "user") {
@@ -2103,6 +2115,7 @@ function openaiMessages(system, messages, cerebrasModel = "") {
     } else {
       const turn: any = { role: "assistant", content: m.text || null };
       if (cerebrasModel && isString(m.reasoning)) turn.reasoning = m.reasoning;
+      else if (localQwenReasoning && isString(m.reasoning)) turn.reasoning_content = m.reasoning;
       if (m.toolCalls?.length)
         turn.tool_calls = m.toolCalls.map((tc) => ({
           id: tc.id,
@@ -2201,6 +2214,7 @@ export function openaiModel(options: any = {}) {
   const maxTokens = Number(options.maxTokens) || DEFAULT_MAX_TOKENS;
   const maxTokensField = options.maxTokensField || "max_completion_tokens";
   const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const reasoningField = options[LOCAL_QWEN_REASONING] ? "reasoning_content" : options.name === "cerebras" ? "reasoning" : null;
   if (!modelId) throw new Error(`The ${options.name || "openai"} model needs a model id.`);
   if (!isFetchImplementation(fetchImpl))
     throw new Error("No fetch implementation available (need Node 22+ or a fetchImpl).");
@@ -2216,7 +2230,7 @@ export function openaiModel(options: any = {}) {
       const body: any = {
         model: modelId,
         [maxTokensField]: maxTokens,
-        messages: openaiMessages(system, messages, options.name === "cerebras" ? modelId : ""),
+        messages: openaiMessages(system, messages, options.name === "cerebras" ? modelId : "", reasoningField === "reasoning_content"),
         tools: tools.length ? tools.map((t) => ({
           type: "function",
           function: { name: t.name, description: t.description, parameters: t.parameters },
@@ -2250,8 +2264,8 @@ export function openaiModel(options: any = {}) {
         throw new Error(`${options.name || "openai"} returned a non-JSON chat response.`);
       }
       const parsed = parseOpenaiResponse(data);
-      return options.name === "cerebras" && isString(data?.choices?.[0]?.message?.reasoning)
-        ? { ...parsed, reasoning: data.choices[0].message.reasoning } : parsed;
+      const reasoning = reasoningField ? data?.choices?.[0]?.message?.[reasoningField] : undefined;
+      return isString(reasoning) ? { ...parsed, reasoning } : parsed;
     },
   };
 }

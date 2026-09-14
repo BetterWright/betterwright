@@ -11,7 +11,7 @@ for (const model of [...LOCAL_MODELS, LOCAL_DFLASH2]) {
   const key = `${model.repository}@${model.revision}`;
   let group = groups.get(key);
   if (!group) { group = { repository: model.repository, revision: model.revision, files: new Map() }; groups.set(key, group); }
-  for (const artifact of model.files) group.files.set(artifact.name, artifact);
+  for (const artifact of model.files) group.files.set(`${artifact.subdirectory ? `${artifact.subdirectory}/` : ""}${artifact.name}`, artifact);
 }
 let count = 0;
 for (const [key, group] of groups) {
@@ -22,10 +22,11 @@ for (const [key, group] of groups) {
   const siblings = untrustedField(metadata, "siblings");
   assert.ok(Array.isArray(siblings), `No file metadata for ${key}`);
   for (const artifact of group.files.values()) {
-    const sibling = siblings.find(file => untrustedField(file, "rfilename") === artifact.name);
+    const remoteName = `${artifact.subdirectory ? `${artifact.subdirectory}/` : ""}${artifact.name}`;
+    const sibling = siblings.find(file => untrustedField(file, "rfilename") === remoteName);
     assert.ok(sibling, `Missing ${key}/${artifact.name}`);
     assert.equal(untrustedField(sibling, "size"), artifact.bytes, `${artifact.name}: size drift`);
-    assert.equal(artifact.url, `https://huggingface.co/${group.repository}/resolve/${group.revision}/${artifact.name}`);
+    assert.equal(artifact.url, `https://huggingface.co/${group.repository}/resolve/${group.revision}/${remoteName}`);
     const hash = untrustedField(untrustedField(sibling, "lfs"), "sha256");
     if (isString(hash)) assert.equal(hash, artifact.sha256, `${artifact.name}: LFS hash drift`);
     else {

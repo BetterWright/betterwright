@@ -6,13 +6,14 @@ import path from "node:path";
 import test from "node:test";
 
 import { modelReadiness, preferredModelId } from "../../dist/src/doctor.js";
-import { decodeLocalPlan, detectAmdGpus, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
+import { decodeLocalPlan, detectAmdGpus, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localQwenReasoning, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
 import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
-import { downloadLocalArtifact, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { LOCAL_ESCHA_REQUIREMENTS } from "../../dist/src/local-ai-escha-lock.js";
+import { checkLocalDisk, downloadLocalArtifact, ESCHA_LIBRARIES_VERSION, GCC_VERSION, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeEnvironment, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
 import { localProcessInstance, localProcessIsGone } from "../../dist/src/local-ai-process.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService, stopLocalServiceIfOwned } from "../../dist/src/local-ai-service.js";
-import { LOCAL_GCC_ARTIFACTS } from "../../dist/src/local-ai-toolchain-lock.js";
+import { LOCAL_ESCHA_LIBRARIES, LOCAL_GCC_ARTIFACTS } from "../../dist/src/local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "../../dist/src/local-ai-vllm-lock.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -26,7 +27,11 @@ function hardware(memory = 64, vram = memory, vendor = "apple", platform = vendo
 const cases: Array<[string, ReturnType<typeof hardware>, string, string, string]> = [
   ["5090", hardware(64, 32, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
   ["Pro 6000 Blackwell", hardware(128, 96, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
-  ["A10G Ampere", hardware(16, 24, "nvidia", "linux", 8.6), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["A10G Ampere", hardware(16, 24, "nvidia", "linux", 8.6), "qwen-27b-gsq", "IQ3_S", "llama.cpp"],
+  ["RTX 4090", hardware(64, 24, "nvidia", "linux", 8.9), "qwen-27b-gsq", "IQ3_S", "llama.cpp"],
+  ["RTX 4080 16 GB", hardware(32, 16, "nvidia", "linux", 8.9), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["Radeon 7900 XTX", hardware(64, 24, "amd"), "qwen-27b-gsq", "IQ3_S", "llama.cpp"],
+  ["Windows RTX 4090", hardware(64, 24, "nvidia", "win32", 8.9), "qwen-27b-gsq", "IQ3_S", "llama.cpp"],
   ["A100 Ampere", hardware(128, 80, "nvidia", "linux", 8), "nex-mini", "Q6_K", "llama.cpp"],
   ["H100 Hopper", hardware(128, 80, "nvidia", "linux", 9), "qwen-27b", "FP8", "vllm"],
   ["H200 Hopper", hardware(256, 141, "nvidia", "linux", 9), "qwen-27b", "FP8", "vllm"],
@@ -108,19 +113,19 @@ test("hardware parsers recognize real Metal, Vulkan and CUDA output without coun
 });
 test("all catalog downloads are immutable, checksummed and from reviewed publishers", () => {
   for (const model of LOCAL_MODELS) {
-    assert.ok(model.bits >= 3); assert.match(model.revision, /^[a-f0-9]{40}$/);
-    assert.match(model.repository, /^(bartowski|ornith-ai|unsloth|Qwen)\//);
+    assert.ok(model.bits >= 3 || model.id === "qwen-27b-escha" && model.quant === "Escha-W2"); assert.match(model.revision, /^[a-f0-9]{40}$/);
+    assert.match(model.repository, /^(bartowski|ornith-ai|unsloth|Qwen|ISTA-DASLab|ProCreations)\//);
     if (model.runtime === "llama.cpp") assert.ok(model.files.some(f => f.name.startsWith("mmproj-")));
     for (const file of model.files) {
       assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);
-      assert.equal(file.url, `https://huggingface.co/${model.repository}/resolve/${model.revision}/${file.name}`);
+      assert.equal(file.url, `https://huggingface.co/${model.repository}/resolve/${model.revision}/${file.subdirectory ? `${file.subdirectory}/` : ""}${file.name}`);
     }
   }
   for (const key of Object.keys(LOCAL_RUNTIMES)) for (const file of LOCAL_RUNTIMES[key]) {
     assert.ok(file.url.startsWith("https://github.com/ggml-org/llama.cpp/releases/download/b") || file.url.startsWith("https://ghcr.io/v2/ggml-org/llama.cpp/blobs/sha256:"));
     assert.match(file.sha256, /^[a-f0-9]{64}$/);
   }
-  for (const file of LOCAL_GCC_ARTIFACTS) {
+  for (const file of [...LOCAL_GCC_ARTIFACTS, ...LOCAL_ESCHA_LIBRARIES]) {
     assert.match(file.url, /^https:\/\/conda\.anaconda\.org\/conda-forge\/(linux-64|noarch)\//);
     assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);
     assert.ok(file.url.endsWith(`/${file.name}`));
@@ -235,6 +240,7 @@ test("readiness requires a parsed tool call with the actual image color", async 
   await verifyLocalModel(connection, async (_url, init) => {
     const request = JSON.parse(init.body);
     assert.equal(init.headers.authorization, "Bearer private-probe-key");
+    assert.deepEqual(request.chat_template_kwargs, { enable_thinking: false, reasoning_effort: "medium" });
     assert.match(request.messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
     return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: "betterwright_probe", arguments: JSON.stringify({ color: "red", marker: "local-setup-check" }) } }] } }] });
   });
@@ -686,4 +692,189 @@ test("forced startup cancellation discovers ownership published during the final
     if (model.exitCode === null && model.signalCode === null) model.kill("SIGKILL");
     if (daemon && daemon.exitCode === null && daemon.signalCode === null) daemon.kill("SIGKILL");
   }
+});
+
+test("27B profiles keep long context and a portable default, with an explicit Escha exception", () => {
+  const gpu = hardware(64, 24, "nvidia", "linux", 8.9);
+  for (const preference of ["balanced", "quality"]) {
+    const result = recommendLocalModel(gpu, { preference });
+    assert.equal(result.model.id, "qwen-27b-gsq");
+    assert.equal(result.plan.context, 65536);
+    assert.equal(result.plan.acceleration, "mtp");
+    const args = localServerArguments(result.plan, 9876);
+    assert.ok(args.includes("draft-mtp")); assert.ok(args.includes("q8_0"));
+    assert.ok(args.includes("65536"));
+  }
+  const escha = recommendLocalModel(gpu, { preference: "speed" });
+  assert.equal(escha.model.id, "qwen-27b-escha"); assert.equal(escha.plan.runtime, "escha");
+  assert.equal(escha.plan.context, 65536); assert.equal(escha.plan.acceleration, "mtp");
+  assert.ok(localServerArguments(escha.plan, 9876).includes("fp8_e4m3"));
+  assert.ok(localInstallArtifacts(escha.plan).some(item => item.artifact.name === "model.safetensors" && item.directory === path.join(modelDirectory(escha.plan), "mtp")));
+  assert.deepEqual(decodeLocalPlan(escha.plan), escha.plan);
+  for (const host of [hardware(32, 16, "nvidia", "linux", 8.9), hardware(64, 24, "amd"), hardware(64, 24, "nvidia", "win32", 8.9)]) {
+    assert.throws(() => recommendLocalModel(host, { model: "qwen-27b-escha" }), /Escha vision requires/);
+  }
+  assert.throws(() => recommendLocalModel(hardware(32, 16, "amd"), { model: "qwen-27b-gsq" }), /long context/);
+  assert.throws(() => recommendLocalModel(gpu, { model: "qwen-27b-gsq", quant: "IQ2_S" }), /not in the reviewed catalog/);
+  assert.throws(() => recommendLocalModel(gpu, { model: "qwen-27b-gsq", acceleration: "dflash2" }), /DFlash2 needs/);
+  assert.throws(() => decodeLocalPlan({ ...escha.plan, platform: "win32" }), /Invalid Escha hardware/);
+  const apple = recommendLocalModel(hardware(32, 24), { model: "qwen-27b-gsq" });
+  assert.deepEqual(decodeLocalPlan(apple.plan), apple.plan);
+  assert.ok(apple.downloadBytes + apple.acceleratorReserveBytes <= 24 * GIB);
+  assert.throws(() => recommendLocalModel(hardware(32, 16), { model: "qwen-27b-gsq" }), /fits/);
+  assert.throws(() => decodeLocalPlan({ ...apple.plan, gpu: { ...apple.plan.gpu, memory: 16 * GIB } }), /headroom/);
+});
+
+test("Escha requires its measured live footprint plus headroom before any download", async () => {
+  for (const memory of [22, 22.5, 23.74]) {
+    const host = hardware(64, memory, "nvidia", "linux", 8.6);
+    for (const acceleration of ["auto", "none", "mtp"]) {
+      assert.equal(recommendLocalModel(host, { preference: "speed", acceleration }).model.id, "qwen-27b-gsq");
+      assert.throws(() => recommendLocalModel(host, { model: "qwen-27b-escha", acceleration }), /23.75 GiB/);
+    }
+  }
+  for (const memory of [23.75, 24 - 64 / 1024, 24]) {
+    const host = hardware(64, memory, "nvidia", "linux", 8.9);
+    const recommendation = recommendLocalModel(host, { preference: "speed" });
+    assert.equal(recommendation.model.id, "qwen-27b-escha");
+    assert.equal(recommendation.downloadBytes + recommendation.acceleratorReserveBytes, 23.75 * GIB);
+    assert.deepEqual(decodeLocalPlan(recommendation.plan), recommendation.plan);
+    assert.throws(() => decodeLocalPlan({ ...recommendation.plan, gpu: { ...recommendation.plan.gpu, memory: 22.5 * GIB } }), /Invalid Escha hardware/);
+  }
+  const busy = hardware(64, 24, "nvidia", "linux", 8.9);
+  busy.gpus[0].freeMemory = 23.74 * GIB;
+  let touchedInstaller = false;
+  const unexpected = async () => { touchedInstaller = true; throw new Error("must reject before installation"); };
+  await assert.rejects(setupLocalAI({ preference: "speed" }, makeTempDir("bw-local-escha-headroom-"), quiet, {
+    detect: async () => busy, status: async () => ({ running: false }),
+    installRuntime: unexpected, download: unexpected, disk: unexpected,
+  }), /not enough free accelerator memory/);
+  assert.equal(touchedInstaller, false);
+});
+
+test("Escha installs its CUDA-12 Torch ABI without shadowing the PyPI dependency index", () => {
+  const pins = LOCAL_ESCHA_REQUIREMENTS.trim().split("\n");
+  assert.ok(!pins.some(pin => pin.startsWith("--extra-index-url")));
+  assert.ok(pins.some(pin => pin.startsWith("torch @ https://download-r2.pytorch.org/whl/cu128/torch-2.9.1%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=")));
+  assert.ok(pins.some(pin => pin.startsWith("torchvision @ https://download-r2.pytorch.org/whl/cu128/torchvision-0.24.1%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=")));
+  assert.ok(pins.includes("transformers==5.10.2"));
+  assert.ok(!pins.some(pin => pin.startsWith("sglang==") || pin.startsWith("vllm==")));
+  for (const pin of pins) assert.match(pin, /^([a-z0-9_.-]+==[a-z0-9.+_-]+|[a-z0-9_.-]+ @ https:\/\/[^ ]+#sha256=[a-f0-9]{64})$/i);
+});
+
+test("automatic Escha failure falls back to long-context GSQ before model downloads", async () => {
+  const home = makeTempDir("bw-local-escha-fallback-"), downloads: string[] = [];
+  const result = await setupLocalAI({ preference: "speed", acceleration: "none" }, home, quiet, {
+    detect: async () => hardware(64, 24, "nvidia", "linux", 8.9), status: async () => ({ running: false }), disk: async () => {},
+    installRuntime: async plan => { if (plan.runtime === "escha") throw new Error("unsupported runtime"); return "cuda"; },
+    installLlama: async () => "cuda", probe: async () => "CUDA0: nvidia test GPU (24576 MiB, 24576 MiB free)",
+    download: async artifact => { downloads.push(artifact.name); return "file"; },
+    connect: async () => ({ model: "local", apiKey: "fake", baseURL: "http://127.0.0.1:1/v1" }), verify: async () => {},
+  });
+  assert.equal(result.plan.modelId, "qwen-27b-gsq"); assert.equal(result.plan.context, 65536);
+  assert.ok(downloads.length > 0); assert.ok(downloads.every(name => name.endsWith(".gguf")));
+  assert.equal(readLocalPlan(home)?.modelId, "qwen-27b-gsq");
+});
+
+test("Escha disk checks reserve repair for missing, broken, or stale native dependencies", { skip: process.platform === "win32" }, async t => {
+  const home = makeTempDir("bw-local-escha-disk-");
+  const { plan } = recommendLocalModel(hardware(64, 24, "nvidia", "linux", 8.9), { model: "qwen-27b-escha" });
+  const directory = runtimeDirectory(plan, home), python = path.join(directory, "venv", "bin", "python");
+  fs.mkdirSync(path.dirname(python), { recursive: true }); fs.writeFileSync(python, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  fs.writeFileSync(path.join(directory, ".ready"), path.basename(directory).slice("escha-".length));
+  const env = localRuntimeEnvironment(plan, home), gcc = env.CC, gxx = env.CXX;
+  assert.ok(gcc && gxx);
+  const compiler = path.dirname(path.dirname(gcc));
+  fs.mkdirSync(path.dirname(gcc), { recursive: true });
+  fs.symlinkSync(process.execPath, gcc); fs.symlinkSync(process.execPath, gxx);
+  fs.writeFileSync(path.join(compiler, ".ready"), GCC_VERSION);
+  const libraries = path.join(localRoot(home), "runtimes", `escha-libraries-${ESCHA_LIBRARIES_VERSION}`);
+  const numa = path.join(libraries, "lib", "libnuma.so.1"), marker = path.join(libraries, ".ready");
+  fs.mkdirSync(path.dirname(numa), { recursive: true }); fs.writeFileSync(numa, "mock native library");
+  fs.writeFileSync(marker, ESCHA_LIBRARIES_VERSION);
+  assert.ok(env.LD_LIBRARY_PATH?.split(path.delimiter).includes(path.dirname(numa)));
+  const stats = fs.statfsSync(home);
+  let available = 64 * GIB;
+  t.mock.method(fs, "statfsSync", () => ({ ...stats, bsize: 1, bavail: available }));
+  const healthy = await checkLocalDisk(plan, home);
+  fs.rmSync(gcc);
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.symlinkSync(process.execPath, gcc);
+  fs.rmSync(gxx); fs.writeFileSync(gxx, "broken", { mode: 0o700 });
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.rmSync(gxx); fs.symlinkSync(process.execPath, gxx);
+  fs.writeFileSync(path.join(compiler, ".ready"), "stale-version");
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.writeFileSync(path.join(compiler, ".ready"), GCC_VERSION);
+  fs.rmSync(numa);
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.writeFileSync(numa, "");
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.writeFileSync(numa, "mock native library"); fs.writeFileSync(marker, "stale-version");
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.writeFileSync(marker, ESCHA_LIBRARIES_VERSION);
+  // Python still answers --version but the native loader rejects this library.
+  fs.writeFileSync(python, '#!/bin/sh\n[ "$1" != "-c" ]\n');
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  available = healthy.required + GIB;
+  await assert.rejects(checkLocalDisk(plan, home), /free disk space/);
+});
+
+test("compact Qwen effort honors the HTTP and chat-template vocabularies", () => {
+  assert.deepEqual(localQwenReasoning(), { effort: "medium", chat_template_kwargs: { enable_thinking: false, reasoning_effort: "medium" } });
+  assert.deepEqual(localQwenReasoning("none"), localQwenReasoning());
+  for (const value of ["low", "medium"]) {
+    assert.deepEqual(localQwenReasoning(value), { effort: value, chat_template_kwargs: { enable_thinking: true, reasoning_effort: value } });
+  }
+  for (const value of ["high", "xhigh", "max"]) {
+    assert.deepEqual(localQwenReasoning(value), { effort: "high", chat_template_kwargs: { enable_thinking: true, reasoning_effort: "xhigh" } });
+  }
+  assert.throws(() => localQwenReasoning("unrecognized"), /reasoning effort/);
+});
+
+test("managed compact Qwen retains reasoning through the actual harness tool loop", () => {
+  // Isolate the connection mock so parallel tests still exercise real services.
+  const source = `
+    import assert from 'node:assert/strict';
+    import {mock} from 'bun:test';
+    let modelId = 'qwen-27b-escha';
+    mock.module(${JSON.stringify(path.resolve("dist/src/local-ai-service.js"))}, () => ({
+      configuredLocalConnection: async () => ({plan: {modelId, preference: 'speed'},
+        connection: {model: 'local', baseURL: 'http://127.0.0.1:9876/v1', apiKey: 'fixture'}})
+    }));
+    const {resolveModelSelection, endpointModel, runAgentTask} = await import(${JSON.stringify(path.resolve("dist/src/agent.js"))});
+    for (const id of ['qwen-27b-escha', 'qwen-27b-gsq']) {
+      modelId = id;
+      let requests = 0, browserCalls = 0;
+      const model = await resolveModelSelection('local', {effort: 'high', fetchImpl: async (_url, init) => {
+        const body = JSON.parse(init.body);
+        assert.equal(body.chat_template_kwargs.reasoning_effort, 'xhigh');
+        assert.equal(body.reasoning_effort, 'high');
+        if (++requests === 1) return Response.json({choices: [{message: {content: null,
+          reasoning_content: 'Synthetic reasoning marker', tool_calls: [{id: 'call-1', type: 'function',
+            function: {name: 'browser', arguments: JSON.stringify({code: 'return page.title()'})}}]}, finish_reason: 'tool_calls'}]});
+        const previous = body.messages.find(m => m.role === 'assistant');
+        assert.equal(previous.reasoning_content, 'Synthetic reasoning marker');
+        assert.equal(previous.reasoning, undefined);
+        assert.match(body.messages.find(m => m.role === 'tool').content, /Synthetic title/);
+        return Response.json({choices: [{message: {content: 'Synthetic title'}, finish_reason: 'stop'}]});
+      }});
+      const browser = {vault: null, async run() {browserCalls++; return {ok: true, result: 'Synthetic title', artifacts: []};}, async close() {}};
+      const result = await runAgentTask({model, browser, task: 'Read the page title', liveView: false});
+      assert.equal(result.ok, true); assert.equal(result.answer, 'Synthetic title');
+      assert.equal(requests, 2); assert.equal(browserCalls, 1);
+      assert.equal(result.transcript.find(m => m.role === 'assistant').reasoning, 'Synthetic reasoning marker');
+      assert.equal(result.transcript.find(m => m.role === 'assistant').text, '');
+    }
+    // The same opaque model ID on a generic custom endpoint keeps its schema.
+    const generic = endpointModel({source: 'custom', model: 'local', baseURL: 'http://127.0.0.1:9876/v1', fetchImpl: async (_url, init) => {
+      const previous = JSON.parse(init.body).messages.find(m => m.role === 'assistant');
+      assert.equal(previous.reasoning_content, undefined); assert.equal(previous.reasoning, undefined);
+      return Response.json({choices: [{message: {content: 'done', reasoning_content: 'must not opt in', reasoning: 'also not opted in'}}]});
+    }});
+    const parsed = await generic.complete({system: '', tools: [], messages: [{role: 'assistant', text: '', toolCalls: [], reasoning: 'fixture'}]});
+    assert.equal(parsed.reasoning, undefined);
+  `;
+  const result = spawnSync(process.execPath, ["--eval", source], { encoding: "utf8", timeout: 30_000 });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 });
