@@ -24,7 +24,9 @@ Releases before 1.1.3 predate this file; their notes live on the
   to restore upstream archive ownership. The Escha installer pins CUDA Torch
   wheels directly so their package index cannot shadow unrelated dependencies.
 - Compact Qwen local requests use supported chat-template controls for image,
-  tool-call, and harness responses.
+  tool-call, and harness responses, including explicit reasoning efforts.
+- Escha disk checks reserve repair capacity when the shared compiler files
+  are missing, broken, or marked with a stale version.
 
 ## [2.8.0] - 2026-09-13
 

@@ -573,6 +573,12 @@ export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {
       const env = localRuntimeEnvironment(plan, home);
       installed = Boolean(env.CC && env.CXX && env.CUDA_HOME && [env.CC, env.CXX, path.join(env.CUDA_HOME, "bin", "nvcc"), path.join(env.CUDA_HOME, "lib64", "libcudart.so.13"), path.join(env.CUDA_HOME, "include", "cuda_runtime.h")].every(file => fs.existsSync(file)));
     }
+    if (installed && plan.runtime === "escha") {
+      const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
+      const env = localRuntimeEnvironment(plan, home);
+      installed = await localRuntimeReady(compiler, GCC_VERSION, env.CC || null) &&
+        await localRuntimeReady(compiler, GCC_VERSION, env.CXX || null);
+    }
   } catch { /* Damaged runtimes reserve the full repair allowance. */ }
   const required = pending + (installed ? 0 : plan.runtime !== "llama.cpp" ? 30 : 2) * GIB + 5 * GIB;
   if (available < required) throw new Error(`Local AI needs ${(required / GIB).toFixed(1)} GiB of free disk space including runtime and safety headroom; ${(available / GIB).toFixed(1)} GiB is available.`);

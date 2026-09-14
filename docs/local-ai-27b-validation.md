@@ -67,11 +67,12 @@ dependency-index collision, and Escha's rejection of the generic `none`
 reasoning effort. Default and explicit `none` harness requests now use the
 supported API value while disabling thinking through the chat template.
 
-Repository validation: `bun run release:check` passed (1,254 unit tests passed,
+Repository validation: `bun run release:check` passed (1,256 unit tests passed,
 3 skipped). The live catalog verifier checked all 127 distinct pinned artifacts
 without downloading model weights. Hardware fixtures cover the new 24 GB
 defaults, 16 GB exclusions, runtime restrictions, and fallback to GSQ before
-model downloads if automatic Escha installation fails.
+model downloads if automatic Escha installation fails. Review regressions cover
+compiler-repair disk headroom and the different HTTP/template effort names.
 
 ## Remaining physical coverage
 

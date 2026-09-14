@@ -12,6 +12,15 @@ import { LOCAL_DFLASH2, LOCAL_MODELS, type LocalModel } from "./local-ai-catalog
 import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 export const GIB = 1024 ** 3;
+/** The HTTP API and Qwen template use different names for their highest effort. */
+export function localQwenReasoning(effort = "none") {
+  if (!["none", "low", "medium", "high", "xhigh", "max"].includes(effort)) {
+    throw new Error("Compact Qwen reasoning effort must be none, low, medium, high, xhigh, or max.");
+  }
+  const template = effort === "low" ? "low" : ["high", "xhigh", "max"].includes(effort) ? "xhigh" : "medium";
+  return { effort: template === "xhigh" ? "high" : template,
+    chat_template_kwargs: { enable_thinking: effort !== "none", reasoning_effort: template } };
+}
 export type LocalPreference = "balanced" | "speed" | "quality";
 export type LocalAcceleration = "none" | "mtp" | "dflash2";
 export interface LocalSetupOptions { preference?: string; model?: string; quant?: string; acceleration?: string; }

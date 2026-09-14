@@ -256,6 +256,10 @@ keys from appearing in the server configuration log. Its MTP and vision weights
 retain their original precision. This runtime supports Linux NVIDIA only; it
 is not an AMD, Apple, Ollama, or standard Transformers format.
 
+The default compact-Qwen request disables thinking. Explicit `--effort low` or
+`medium` enables that template effort; `high`, `xhigh`, and `max` select Qwen's `xhigh` template effort while using the HTTP API's supported `high` value.
+`--effort none` disables thinking with valid API controls.
+
 Escha uses FP8 E4M3 KV cache; GSQ uses Q8_0 K/V cache. These cache formats are
 separate from weight quantization. Escha's default KV scale is 1.0, with no
 separately calibrated scales in this checkpoint. The model card documents the

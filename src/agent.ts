@@ -1866,14 +1866,14 @@ export async function resolveModelSelection(model, modelOptions: any = {}) {
     const { plan, connection } = await configuredLocalConnection();
     const compactQwen = ["qwen-27b-gsq", "qwen-27b-escha"].includes(plan.modelId);
     const bodyExtra = { temperature: plan.modelId === "nex-mini" ? 0.7 : 0.6, top_p: 0.95, top_k: 40 };
+    let effort = modelOptions.effort || (["nex-mini", "qwen-27b"].includes(plan.modelId) && plan.preference !== "speed" ? "medium" : "none");
     if (compactQwen) {
-      Object.assign(bodyExtra, { chat_template_kwargs: { enable_thinking: false, reasoning_effort: "medium" } });
+      const { localQwenReasoning } = await import("./local-ai.js");
+      const reasoning = localQwenReasoning(modelOptions.effort || "none");
+      effort = reasoning.effort;
+      Object.assign(bodyExtra, { chat_template_kwargs: reasoning.chat_template_kwargs });
     }
     Object.assign(bodyExtra, modelOptions.bodyExtra);
-    // Escha accepts low/medium/high at the HTTP boundary even when thinking is
-    // disabled by the template. Its schema rejects the generic "none" value.
-    const effort = compactQwen && (!modelOptions.effort || modelOptions.effort === "none") ? "medium" :
-      modelOptions.effort || (["nex-mini", "qwen-27b"].includes(plan.modelId) && plan.preference !== "speed" ? "medium" : "none");
     return endpointModel({ ...modelOptions, ...connection, source: "custom", protocol: "chat",
       effort, bodyExtra });
   }

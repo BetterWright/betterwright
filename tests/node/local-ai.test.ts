@@ -6,11 +6,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { modelReadiness, preferredModelId } from "../../dist/src/doctor.js";
-import { decodeLocalPlan, detectAmdGpus, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
+import { decodeLocalPlan, detectAmdGpus, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localQwenReasoning, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
 import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
 import { LOCAL_ESCHA_REQUIREMENTS } from "../../dist/src/local-ai-escha-lock.js";
-import { downloadLocalArtifact, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { checkLocalDisk, downloadLocalArtifact, GCC_VERSION, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeEnvironment, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
 import { localProcessInstance, localProcessIsGone } from "../../dist/src/local-ai-process.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService, stopLocalServiceIfOwned } from "../../dist/src/local-ai-service.js";
 import { LOCAL_GCC_ARTIFACTS } from "../../dist/src/local-ai-toolchain-lock.js";
@@ -747,4 +747,44 @@ test("automatic Escha failure falls back to long-context GSQ before model downlo
   assert.equal(result.plan.modelId, "qwen-27b-gsq"); assert.equal(result.plan.context, 65536);
   assert.ok(downloads.length > 0); assert.ok(downloads.every(name => name.endsWith(".gguf")));
   assert.equal(readLocalPlan(home)?.modelId, "qwen-27b-gsq");
+});
+
+test("Escha disk checks reserve compiler repair for missing, broken, or stale tooling", { skip: process.platform === "win32" }, async t => {
+  const home = makeTempDir("bw-local-escha-disk-");
+  const { plan } = recommendLocalModel(hardware(64, 24, "nvidia", "linux", 8.9), { model: "qwen-27b-escha" });
+  const directory = runtimeDirectory(plan, home), python = path.join(directory, "venv", "bin", "python");
+  fs.mkdirSync(path.dirname(python), { recursive: true }); fs.symlinkSync(process.execPath, python);
+  fs.writeFileSync(path.join(directory, ".ready"), path.basename(directory).slice("escha-".length));
+  const env = localRuntimeEnvironment(plan, home), gcc = env.CC, gxx = env.CXX;
+  assert.ok(gcc && gxx);
+  const compiler = path.dirname(path.dirname(gcc));
+  fs.mkdirSync(path.dirname(gcc), { recursive: true });
+  fs.symlinkSync(process.execPath, gcc); fs.symlinkSync(process.execPath, gxx);
+  fs.writeFileSync(path.join(compiler, ".ready"), GCC_VERSION);
+  const stats = fs.statfsSync(home);
+  let available = 64 * GIB;
+  t.mock.method(fs, "statfsSync", () => ({ ...stats, bsize: 1, bavail: available }));
+  const healthy = await checkLocalDisk(plan, home);
+  fs.rmSync(gcc);
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.symlinkSync(process.execPath, gcc);
+  fs.rmSync(gxx); fs.writeFileSync(gxx, "broken", { mode: 0o700 });
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.rmSync(gxx); fs.symlinkSync(process.execPath, gxx);
+  fs.writeFileSync(path.join(compiler, ".ready"), "stale-version");
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  available = healthy.required + GIB;
+  await assert.rejects(checkLocalDisk(plan, home), /free disk space/);
+});
+
+test("compact Qwen effort honors the HTTP and chat-template vocabularies", () => {
+  assert.deepEqual(localQwenReasoning(), { effort: "medium", chat_template_kwargs: { enable_thinking: false, reasoning_effort: "medium" } });
+  assert.deepEqual(localQwenReasoning("none"), localQwenReasoning());
+  for (const value of ["low", "medium"]) {
+    assert.deepEqual(localQwenReasoning(value), { effort: value, chat_template_kwargs: { enable_thinking: true, reasoning_effort: value } });
+  }
+  for (const value of ["high", "xhigh", "max"]) {
+    assert.deepEqual(localQwenReasoning(value), { effort: "high", chat_template_kwargs: { enable_thinking: true, reasoning_effort: "xhigh" } });
+  }
+  assert.throws(() => localQwenReasoning("unrecognized"), /reasoning effort/);
 });
