@@ -725,6 +725,33 @@ test("27B profiles keep long context and a portable default, with an explicit Es
   assert.throws(() => decodeLocalPlan({ ...apple.plan, gpu: { ...apple.plan.gpu, memory: 16 * GIB } }), /headroom/);
 });
 
+test("Escha requires its measured live footprint plus headroom before any download", async () => {
+  for (const memory of [22, 22.5, 23.74]) {
+    const host = hardware(64, memory, "nvidia", "linux", 8.6);
+    for (const acceleration of ["auto", "none", "mtp"]) {
+      assert.equal(recommendLocalModel(host, { preference: "speed", acceleration }).model.id, "qwen-27b-gsq");
+      assert.throws(() => recommendLocalModel(host, { model: "qwen-27b-escha", acceleration }), /23.75 GiB/);
+    }
+  }
+  for (const memory of [23.75, 24 - 64 / 1024, 24]) {
+    const host = hardware(64, memory, "nvidia", "linux", 8.9);
+    const recommendation = recommendLocalModel(host, { preference: "speed" });
+    assert.equal(recommendation.model.id, "qwen-27b-escha");
+    assert.equal(recommendation.downloadBytes + recommendation.acceleratorReserveBytes, 23.75 * GIB);
+    assert.deepEqual(decodeLocalPlan(recommendation.plan), recommendation.plan);
+    assert.throws(() => decodeLocalPlan({ ...recommendation.plan, gpu: { ...recommendation.plan.gpu, memory: 22.5 * GIB } }), /Invalid Escha hardware/);
+  }
+  const busy = hardware(64, 24, "nvidia", "linux", 8.9);
+  busy.gpus[0].freeMemory = 23.74 * GIB;
+  let touchedInstaller = false;
+  const unexpected = async () => { touchedInstaller = true; throw new Error("must reject before installation"); };
+  await assert.rejects(setupLocalAI({ preference: "speed" }, makeTempDir("bw-local-escha-headroom-"), quiet, {
+    detect: async () => busy, status: async () => ({ running: false }),
+    installRuntime: unexpected, download: unexpected, disk: unexpected,
+  }), /not enough free accelerator memory/);
+  assert.equal(touchedInstaller, false);
+});
+
 test("Escha installs its CUDA-12 Torch ABI without shadowing the PyPI dependency index", () => {
   const pins = LOCAL_ESCHA_REQUIREMENTS.trim().split("\n");
   assert.ok(!pins.some(pin => pin.startsWith("--extra-index-url")));

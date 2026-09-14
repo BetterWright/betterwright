@@ -12,6 +12,9 @@ import { LOCAL_DFLASH2, LOCAL_MODELS, type LocalModel } from "./local-ai-catalog
 import { isNumber, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 export const GIB = 1024 ** 3;
+// Measured Escha MTP peak: 23,051 MiB. Keep at least 1.2 GiB extra
+// capacity instead of trusting a card's marketed "24 GB" class.
+const ESCHA_MIN_MEMORY = 23.75 * GIB;
 /** The HTTP API and Qwen template use different names for their highest effort. */
 export function localQwenReasoning(effort = "none") {
   if (!["none", "low", "medium", "high", "xhigh", "max"].includes(effort)) {
@@ -217,14 +220,14 @@ function recommendOnGpu(hardware: LocalHardware, options: LocalSetupOptions): Lo
     ((gpu.compute >= 10 && capacity >= 30 * GIB) || (gpu.compute >= 8.9 && capacity >= 44 * GIB));
   const id = options.model || (cudaQuality && preference !== "speed" ? "qwen-27b" :
     !apple && capacity >= 22 * GIB && capacity < 30 * GIB ?
-      (preference === "speed" && hardware.platform === "linux" && gpu.backend === "cuda" && gpu.compute >= 8 && gpu.uuid ? "qwen-27b-escha" : "qwen-27b-gsq") :
+      (preference === "speed" && capacity >= ESCHA_MIN_MEMORY && hardware.platform === "linux" && gpu.backend === "cuda" && gpu.compute >= 8 && gpu.uuid ? "qwen-27b-escha" : "qwen-27b-gsq") :
     capacity >= (apple ? 60 : 30) * GIB ? "nex-mini" : "ornith-9b");
   if (!LOCAL_MODELS.some(m => m.id === id)) throw new Error("--model must be nex-mini, ornith-35b, ornith-9b, qwen-27b, qwen-27b-gsq, or qwen-27b-escha.");
   if (id === "qwen-27b" && !cudaQuality) {
     throw new Error("The reviewed Qwen 27B NVFP4/FP8 runtime needs Linux and a supported NVIDIA GPU (32 GB Blackwell, or 48 GB+ with FP8 support). Use nex-mini on this platform, or run setup inside GPU-enabled WSL2.");
   }
-  if (id === "qwen-27b-escha" && !(hardware.platform === "linux" && gpu.backend === "cuda" && gpu.vendor === "nvidia" && gpu.compute >= 8 && gpu.uuid && capacity >= 22 * GIB)) {
-    throw new Error("Escha vision requires Linux x64, an NVIDIA Ampere-or-newer GPU, and nominal 24 GB+ VRAM. Use qwen-27b-gsq on other 24 GB platforms, or ornith-9b on 16 GB cards.");
+  if (id === "qwen-27b-escha" && !(hardware.platform === "linux" && gpu.backend === "cuda" && gpu.vendor === "nvidia" && gpu.compute >= 8 && gpu.uuid && capacity >= ESCHA_MIN_MEMORY)) {
+    throw new Error("Escha vision requires Linux x64, an NVIDIA Ampere-or-newer GPU, and at least 23.75 GiB reported VRAM for its measured footprint plus headroom. Use qwen-27b-gsq on smaller 24 GB cards, or ornith-9b on 16 GB cards.");
   }
   if (id === "qwen-27b-gsq" && capacity < (apple ? 30 : 22) * GIB) {
     throw new Error("GSQ IQ3_S reserves a long context on nominal 24 GB+ GPUs or 32 GB+ Apple Silicon. Use ornith-9b on 16 GB hardware.");
@@ -246,6 +249,9 @@ function recommendOnGpu(hardware: LocalHardware, options: LocalSetupOptions): Lo
     .sort((a, b) => b.bits - a.bits)[0];
   if (!model) throw new Error("No reviewed quant of that model fits with browser and context-cache headroom. Choose ornith-9b, close GPU-heavy applications, or use hardware with more memory.");
   const modelBytes = model.files.reduce((n, f) => n + f.bytes, 0);
+  // On-disk Escha weights are much smaller than the live model plus KV/MTP
+  // workspace. Setup's free-memory gate must cover the measured live footprint.
+  const runtimeReserve = model.id === "qwen-27b-escha" ? Math.max(reserve, ESCHA_MIN_MEMORY - modelBytes) : reserve;
   const draftBytes = LOCAL_DFLASH2.files.reduce((n, f) => n + f.bytes, 0);
   const dflashFits = model.id === "qwen-27b" && model.runtime === "vllm" && modelBytes + draftBytes + 2 * GIB <= budget;
   let acceleration: LocalAcceleration = model.mtp ? "mtp" : "none";
@@ -258,9 +264,9 @@ function recommendOnGpu(hardware: LocalHardware, options: LocalSetupOptions): Lo
   const context = id === "qwen-27b-gsq" || id === "qwen-27b-escha" || capacity >= 48 * GIB ? 65536 : 32768;
   const plan: LocalPlan = { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform: hardware.platform,
     arch: hardware.arch, gpu, context, acceleration, preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced" };
-  return { plan, model, downloadBytes: modelBytes + (acceleration === "dflash2" ? draftBytes : 0), reserveBytes: reserve + (acceleration === "dflash2" ? 2 * GIB : 0),
-    acceleratorReserveBytes: gpu.memory - budget + (acceleration === "dflash2" ? 2 * GIB : 0),
-    reason: `${gpu.name}: ${model.quant} preserves quality while reserving ${(reserve / GIB).toFixed(1)} GiB for context, runtime${apple ? ", browser and macOS" : " workspace"}. ${acceleration === "dflash2" ? "DFlash2 with a pinned BF16 drafter and 2 GiB extra workspace." : acceleration === "mtp" ? "Native MTP heads enabled; no separate draft download." : "Ordinary decoding selected."}`.trim() };
+  return { plan, model, downloadBytes: modelBytes + (acceleration === "dflash2" ? draftBytes : 0), reserveBytes: runtimeReserve + (acceleration === "dflash2" ? 2 * GIB : 0),
+    acceleratorReserveBytes: (apple ? gpu.memory - budget : runtimeReserve) + (acceleration === "dflash2" ? 2 * GIB : 0),
+    reason: `${gpu.name}: ${model.quant} preserves quality while reserving ${(runtimeReserve / GIB).toFixed(1)} GiB for context, runtime${apple ? ", browser and macOS" : " workspace"}. ${acceleration === "dflash2" ? "DFlash2 with a pinned BF16 drafter and 2 GiB extra workspace." : acceleration === "mtp" ? "Native MTP heads enabled; no separate draft download." : "Ordinary decoding selected."}`.trim() };
 }
 
 export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
@@ -287,7 +293,7 @@ export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
     preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced",
     gpu: { id, name, memory, freeMemory, backend: backend === "metal" ? "metal" : backend === "cuda" ? "cuda" : backend === "rocm" ? "rocm" : "vulkan",
       vendor: gpuVendor === "apple" ? "apple" : gpuVendor === "nvidia" ? "nvidia" : gpuVendor === "amd" ? "amd" : gpuVendor === "intel" ? "intel" : "other", compute, uuid } };
-  if (model.runtime === "escha" && !(platform === "linux" && arch === "x64" && backend === "cuda" && gpuVendor === "nvidia" && compute >= 8 && memory >= 22 * GIB && uuid)) {
+  if (model.runtime === "escha" && !(platform === "linux" && arch === "x64" && backend === "cuda" && gpuVendor === "nvidia" && compute >= 8 && memory >= ESCHA_MIN_MEMORY && uuid)) {
     throw new Error("Invalid Escha hardware configuration. Run betterwright --local to repair it.");
   }
   // Metal reports its working-set limit, not total unified memory. Validate

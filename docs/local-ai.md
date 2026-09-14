@@ -30,7 +30,7 @@ model weights, and reports a repairable error when a driver is missing.
 | Linux x64, RTX 5090 / RTX Pro 6000 Blackwell with 32+ GiB | Qwen3.8-27B NVFP4 | vLLM with CUDA |
 | Linux x64, pre-Blackwell NVIDIA with 48+ GiB and FP8 support, such as RTX 6000 Ada | Qwen3.8-27B FP8 | vLLM with CUDA |
 | Nominal 24 GB GPUs, including RTX 4090 / RTX 3090 / A10G / Radeon 7900 XTX | Qwen3.8-27B GSQ-RCO IQ3_S with vision and MTP, 64K context | llama.cpp with CUDA, ROCm, or Vulkan |
-| Linux x64, NVIDIA Ampere+ with nominal 24 GB, `--preference speed` | Qwen3.8-27B Escha W2 with restored vision and MTP, 64K context | Escha SGLang with CUDA |
+| Linux x64, NVIDIA Ampere+ with 23.75+ GiB reported VRAM, `--preference speed` | Qwen3.8-27B Escha W2 with restored vision and MTP, 64K context | Escha SGLang with CUDA |
 | Ampere with 32+ GiB, such as A100 | Nex GGUF | llama.cpp with CUDA |
 | Apple Silicon with 64+ GiB unified memory | Nex-N2.5-mini GGUF | llama.cpp with Metal |
 | Linux x64, AMD Instinct MI100/MI200/MI300/MI350 families | Nex-N2.5-mini GGUF | llama.cpp with private ROCm 10.0 |
@@ -70,7 +70,7 @@ when FP8 also fits. Compatible older NVIDIA GPUs use FP8. An explicit
 
 Memory budgeting includes the vision projector and reserves space for the
 context cache and compute workspace. Apple Silicon also reserves macOS and
-browser memory, using the runtime's Metal working-set limit. Context is 32K on smaller accelerators and 64K for both new 27B profiles and at 48+ GiB. Ornith 1.5 9B remains the 16 GB default so model weights leave room for agent history. Both new 27B profiles require nominal 24 GB discrete GPUs; explicit GSQ selection also supports Apple Silicon with at least 32 GB unified memory and enough reported Metal memory. Other running GPU applications can still
+browser memory, using the runtime's Metal working-set limit. Context is 32K on smaller accelerators and 64K for both new 27B profiles and at 48+ GiB. Ornith 1.5 9B remains the 16 GB default so model weights leave room for agent history. Both new 27B profiles require nominal 24 GB discrete GPUs; Escha additionally requires at least 23.75 GiB reported and free VRAM, including over 1.2 GiB above its measured MTP peak. Nominal 24 GB cards reporting less (such as some A10G/L4 configurations) select GSQ even for speed. Explicit GSQ selection also supports Apple Silicon with at least 32 GB unified memory and enough reported Metal memory. Other running GPU applications can still
 prevent loading; close them and retry if the free-memory check fails.
 
 Setup also selects compatible speculative decoding automatically. This uses a
@@ -236,7 +236,7 @@ these verified archives offline; it does not resolve newer compiler packages.
 # Portable 24 GB default: GSQ IQ3_S, native MTP, Q8_0 KV cache, 64K context.
 betterwright --local --model qwen-27b-gsq
 
-# Linux NVIDIA Ampere+ with nominal 24 GB or more: Escha, FP8 KV cache, 64K.
+# Linux NVIDIA Ampere+ with at least 23.75 GiB free: Escha, FP8 KV, 64K.
 betterwright --local --model qwen-27b-escha
 ```
 

@@ -67,10 +67,11 @@ dependency-index collision, and Escha's rejection of the generic `none`
 reasoning effort. Default and explicit `none` harness requests now use the
 supported API value while disabling thinking through the chat template.
 
-Repository validation: lint, type checking, build/package checks, the complete
-GitHub CI suite, and 67 focused local-AI tests passed. Two local full-suite
-retries encountered unrelated subprocess timeouts (credential-fill and
-profile-lock); the timed-out cases passed separately or in CI. The live catalog verifier checked all 127 distinct pinned artifacts
+Repository validation: the final `bun run release:check` after the native-library
+fix passed: 1,256 tests passed, 3 optional live tests skipped, zero failures,
+plus lint, types, build, declarations, version and package checks. Two earlier
+local retries encountered unrelated subprocess timeouts; the final full run
+and the separate 75-test local-AI/profile-lock suite passed. The live catalog verifier checked all 127 distinct pinned artifacts
 without downloading model weights. Hardware fixtures cover the new 24 GB
 defaults, 16 GB exclusions, runtime restrictions, and fallback to GSQ before
 model downloads if automatic Escha installation fails. Review regressions cover
@@ -89,7 +90,11 @@ still need physical RTX 4090 acceptance testing.
 The new checkpoints have physical acceptance coverage on the PRO 6000 only.
 GSQ uses the existing Metal/CUDA/Vulkan/ROCm runtime paths, but this checkpoint
 has not been physically tested on Apple, AMD, Windows, Ampere, or Ada hardware.
-Escha is restricted to Linux NVIDIA Ampere or newer. Hardware fixtures verify
+Escha is restricted to Linux NVIDIA Ampere or newer with at least 23.75 GiB
+reported VRAM. Setup also requires 23.75 GiB free, covering the measured
+22.51 GiB MTP peak plus over 1.2 GiB of headroom. Marginal A10G/L4 configurations
+select GSQ for speed before downloading any model. Ordinary decoding keeps the
+same conservative threshold; this is not a claim of physical-card validation. Hardware fixtures verify
 selection and refusal rules; they do not substitute for physical GPU tests.
 Every installation checks its runtime before downloading model weights and
 checks image/tool responses before changing the harness default.
