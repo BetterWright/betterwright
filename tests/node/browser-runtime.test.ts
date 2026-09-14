@@ -119,7 +119,7 @@ test("managed fork args pin WebRTC to the proxy and the profile seed", () => {
   assert.ok(args.includes("--renderer-process-limit=2"));
   // A null/empty seed withholds the --fingerprint switch entirely, which is how
   // the fingerprintNoise:false path turns the fork's farbling off.
-  assert.deepEqual(managedForkArgs(""), [
+  assert.deepEqual(managedForkArgs("", { platform: "darwin" }), [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--renderer-process-limit=2",
     "--use-gl=angle",
@@ -138,7 +138,15 @@ test("GPU-less Linux binds the SwiftShader WebGL fallback", () => {
   ]);
   // A GPU host binds the hardware GL backend instead, so a headless launch's
   // implicit --use-angle=swiftshader-webgl never wins and forces software GL.
-  const gpuArgs = managedForkArgs("seed");
+  const gpuArgs = managedForkArgs("seed", { platform: "linux" });
   assert.ok(!gpuArgs.includes("--use-angle=swiftshader"));
   assert.ok(gpuArgs.includes("--use-angle=gl"));
+});
+
+test("Windows binds D3D11 so accelerated canvas and WebGPU keep working", () => {
+  const args = managedForkArgs("seed", { platform: "win32" });
+  assert.ok(args.includes("--use-gl=angle"));
+  assert.ok(args.includes("--use-angle=d3d11"));
+  assert.ok(!args.includes("--use-angle=gl"));
+  assert.ok(!args.some((arg) => arg.includes("swiftshader")));
 });

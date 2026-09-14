@@ -65,10 +65,21 @@ export interface CloudBrowserProvider {
   sessionOptions?: Record<string, UntrustedValue>;
 }
 
+/**
+ * The managed BetterChromium fork as an explicit chain entry. Only meaningful
+ * inside a `provider` array — it names the same backend an absent option
+ * uses, so `[{ provider: "browserbase" }, { provider: "managed" }]` reads
+ * "the cloud first, the local fork when the cloud is out".
+ */
+export interface ManagedBrowserProvider {
+  provider: "managed";
+}
+
 export type BrowserProviderOptions =
   | LocalExecutableProvider
   | CdpEndpointProvider
-  | CloudBrowserProvider;
+  | CloudBrowserProvider
+  | ManagedBrowserProvider;
 
 export interface CookieSyncSource {
   /** Browser id from `listCookieSourceBrowsers()`, such as `chrome` or `firefox`. */
@@ -113,7 +124,17 @@ export type CookieSyncResult =
       warnings?: CookieSyncWarning[];
       profileMode?: "persistent" | "ephemeral";
     }
-  | { ok: false; error: string; cookieReaderCode?: string; cookiePermissionDenied?: boolean; cookieReaderStage?: string };
+  | {
+      ok: false;
+      error: string;
+      cookieReaderCode?: string;
+      cookiePermissionDenied?: boolean;
+      cookieReaderStage?: string;
+      /** Host takeover returns BW_ABORTED, or BW_ABORT_TEARDOWN_FAILED if draining failed. */
+      errorCode?: string;
+      /** False for an abort before dispatch; true when an in-flight import may have committed. */
+      effectMayHaveCommitted?: boolean;
+    };
 
 export interface CookieSourceBrowser {
   id: string;
@@ -170,18 +191,29 @@ export interface BetterWrightOptions {
    *   (BETTERWRIGHT_CDP_URL is the env shorthand);
    * - `{ provider, apiKey?, sessionOptions? }` — mint a cloud browser over a
    *   named provider's API: "browser-use", "kernel", "browserbase", "steel",
-   *   "anchor", "hyperbrowser", "browserless", "brightdata", "oxylabs", or a
-   *   custom name defined with `betterwright configure`.
+   *   "anchor", "hyperbrowser", "browserless", "brightdata", "oxylabs",
+   *   "managed" (the managed fork), or a custom name defined with
+   *   `betterwright configure`.
+   *
+   * An array is an ordered fallback chain: the launch tries each candidate in
+   * turn and lands on the first that launches, so a provider that is out of
+   * quota or down does not fail the session. An entry that cannot resolve —
+   * an unknown name, an unset key, a binary that is not installed — is
+   * skipped with a launch warning rather than vetoing the chain; the chain
+   * cannot resolve when no entry survives. If a failed candidate's session
+   * cannot be released, launch stops and identifies the potentially billed
+   * session instead of advancing to another browser.
    *
    * When the option is absent, the default saved by `betterwright configure`
-   * (in `<home>/config.json`) applies; BETTERWRIGHT_CDP_URL overrides it.
+   * (in `<home>/config.json`) applies, extended by its configured fallbacks;
+   * BETTERWRIGHT_CDP_URL overrides it.
    *
    * Remote browsers run outside the guard proxy — page traffic cannot be
    * network-policy enforced there; the launch warning says so. Provider
    * credentials are redacted from result envelopes. See
    * docs/browser-providers.md.
    */
-  provider?: BrowserProviderOptions | null;
+  provider?: BrowserProviderOptions | BrowserProviderOptions[] | null;
   headless?: HeadlessMode;
   /** Ghostery ad/tracker blocking for every page and frame. Default on;
    * BETTERWRIGHT_AD_BLOCK=0 disables it. Explicit options override the env.

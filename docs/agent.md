@@ -1,5 +1,10 @@
 # The built-in agent harness (`betterwright exec`)
 
+For automatic hardware detection, model/quant selection, and runtime installation,
+run `betterwright --local`. See [one-command local AI](local-ai.md). Once setup
+passes its image/tool-call check, the harness uses `local` by default unless you
+explicitly select another model or endpoint.
+
 This page covers the **standalone** shape: BetterWright supplies a
 browser-tuned agent loop, you plug a *model* into it, and you hand it a
 natural-language task. For how it compares to the integrated shape, see
@@ -201,7 +206,7 @@ Meta-commands (a line starting with `/`):
 | --- | --- |
 | `/help` | list the commands |
 | `/endpoint <url>` | switch to a custom OpenAI-compatible base URL |
-| `/models [source]` | list available ids, optionally limited to `openrouter`, `ollama`, or `vllm` |
+| `/models [source]` | list available ids, optionally limited to `openrouter`, `cerebras`, `ollama`, or `vllm` |
 | `/model <id>` | switch model id; use `source/id` only to resolve a collision |
 | `/reasoning <level>` | change reasoning effort (`/effort` also works) |
 | `/headed` | show the browser window (`/headless` to hide it again) |
@@ -271,6 +276,7 @@ What bare-id discovery probes:
 | **Ollama** | Always (default `http://127.0.0.1:11434/v1`; short timeout if down) |
 | **vLLM** | Always (default `http://127.0.0.1:8000/v1`) |
 | **OpenRouter** | Only when `OPENROUTER_API_KEY` is set |
+| **Cerebras** | Only when `CEREBRAS_API_KEY` is set |
 | **Native Claude / Codex / Grok** | When the id's family prefix matches (`claude*`, `gpt*` / `o*`, `grok*`, …) |
 
 Listing is separate from selection:
@@ -279,6 +285,7 @@ Listing is separate from selection:
 betterwright models                 # native defaults + reachable endpoints
 betterwright models ollama          # only Ollama
 betterwright models openrouter      # only OpenRouter
+betterwright models cerebras        # public catalog also works without a key
 betterwright models --json          # machine-readable
 ```
 
@@ -323,6 +330,10 @@ OPENROUTER_API_KEY=… betterwright exec "inspect example.com" \
 OPENROUTER_API_KEY=… betterwright exec "inspect example.com" \
   --model openrouter/anthropic/claude-sonnet-5
 
+# Cerebras — Qwen supports images and tools; no extra SDK dependency
+CEREBRAS_API_KEY=… betterwright exec "inspect example.com" \
+  --model cerebras/qwen-3.8-27b
+
 # Any other OpenAI-compatible /v1 base URL
 BETTERWRIGHT_MODEL_API_KEY=… betterwright exec "inspect example.com" \
   --base-url https://models.example/v1 --model <model-id>
@@ -333,12 +344,13 @@ BETTERWRIGHT_MODEL_API_KEY=… betterwright exec "inspect example.com" \
 | Source | Default base URL | Key env var | Notes |
 | --- | --- | --- | --- |
 | OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` (required for runs) | Listing can work without a key; execution needs one |
+| Cerebras | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` (required for runs) | Public catalog without a key; keyed listing includes available account models |
 | Ollama | `http://127.0.0.1:11434/v1` | `OLLAMA_API_KEY` (optional) | No key for local defaults |
 | vLLM | `http://127.0.0.1:8000/v1` | `VLLM_API_KEY` (optional) | Start the server with tool-calling flags (below) |
 | Custom | from `--base-url` or `BETTERWRIGHT_MODEL_BASE_URL` | `BETTERWRIGHT_MODEL_API_KEY` (optional) | `--base-url` alone pins the source |
 
 Override a preset URL with `OPENROUTER_BASE_URL`, `OLLAMA_BASE_URL`, or
-`VLLM_BASE_URL`. Use `--api-key-env MY_KEY` when the key lives under another
+`VLLM_BASE_URL`, or `CEREBRAS_BASE_URL`. Use `--api-key-env MY_KEY` when the key lives under another
 name (CLI flags never accept raw key values). BetterWright refuses to send a
 key to a non-loopback `http://` URL unless `--allow-insecure-model-endpoint`
 is set; HTTPS and loopback HTTP are fine without it.
@@ -374,6 +386,30 @@ model will not work, even if chat completions succeed.
   `--tool-call-parser` required by the served model.
 - **OpenRouter / custom** — pick models known to support tools; partial
   OpenAI compatibility without tools is not enough.
+
+### Cerebras
+
+Use `CEREBRAS_API_KEY` and `--model cerebras/<id>` with Chat Completions.
+If Cerebras is the only configured backend, the default is
+`cerebras/qwen-3.8-27b`; `BETTERWRIGHT_CEREBRAS_MODEL` changes that default.
+Existing configured local/native backends keep their precedence, and an explicit
+`--model` or `BETTERWRIGHT_MODEL` still overrides the default. `betterwright doctor`
+reports Cerebras readiness. No additional SDK or OAuth sign-in is needed.
+
+`qwen-3.8-27b` accepts screenshots and tool calls. `gpt-oss-120b` supports tools
+but has no vision; the harness sends DOM observations and an explicit image
+omission notice for that model. Screenshot inputs use base64 PNG/JPEG data URIs,
+and tool replies remain contiguous before image observations are appended.
+Cerebras reasoning is retained separately in the transcript for subsequent
+turns, rather than being displayed as the final answer. Set `--effort none|low|medium|high`
+for Qwen; GPT OSS supports `low|medium|high`. `--protocol responses` is rejected
+for Cerebras, which uses the Chat Completions API.
+
+The public model catalog and request formats were checked against the
+[Cerebras compatibility documentation](https://inference-docs.cerebras.ai/resources/openai)
+and [reasoning documentation](https://inference-docs.cerebras.ai/capabilities/reasoning).
+Automated tests cover the provider's tool loop and message formats. Authenticated
+Cerebras inference was not tested for this release because no API key was supplied.
 
 ### Native Claude, Codex, and Grok
 
@@ -533,7 +569,7 @@ For a preset-compatible endpoint, prefer `endpointModel`:
 import { endpointModel, runAgentTask } from "betterwright/agent";
 
 const model = endpointModel({
-  source: "ollama",          // openrouter | ollama | vllm | custom
+  source: "ollama",          // openrouter | cerebras | ollama | vllm | custom
   model: "qwen3.8:27b",
   // baseURL: "http://127.0.0.1:11434/v1",  // optional override
 });

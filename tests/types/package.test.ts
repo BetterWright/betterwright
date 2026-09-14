@@ -188,7 +188,7 @@ const customEndpointAdapter: AgentModel = endpointModel({
   model: "vendor/opaque-id",
 });
 const endpointModels: Promise<{
-  source: "openrouter" | "ollama" | "vllm" | "custom";
+  source: "openrouter" | "cerebras" | "ollama" | "vllm" | "custom";
   baseURL: string;
   models: string[];
 }> = listEndpointModels({ source: "vllm" });
@@ -368,3 +368,23 @@ void [
   missingRecordingError,
   idleEncoder,
 ];
+
+// Cancellation metadata is available on Cookie Sync failures.
+async function cookieSyncCancellation(browser: BetterWright) {
+  const result = await browser.syncCookies({ source: { browser: "chrome" } });
+  if (!result.ok) {
+    const code: string | undefined = result.errorCode;
+    const committed: boolean | undefined = result.effectMayHaveCommitted;
+    void code;
+    void committed;
+  }
+}
+void cookieSyncCancellation;
+
+function cookieSyncHostLease(target: NonNullable<BetterWrightOptions["hostTarget"]>) {
+  return target.run?.(async () => ({
+    ok: true, synced: 0, selected: 0, skipped: 0,
+    source: { browser: "chrome" }, target: "host", cookieImportDomains: [],
+  }));
+}
+void cookieSyncHostLease;

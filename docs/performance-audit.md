@@ -1,5 +1,9 @@
 # Performance and recording audit
 
+These are historical Chromium 151 measurements. See
+[BetterChromium](chromium-fork.md) for the current managed browser and update
+instructions; the timings below do not measure the newer security release.
+
 The original measurements below compare the pre-integration implementation with commit `72a2ba9eb` on Linux x64, using Node 24.13.1, BetterChromium 151.0.7922.108, and an AMD Ryzen 9 7950X3D host. It covers CLI startup, daemon and worker execution, snapshots, model observations, input, recording, live view, network policy, credentials, artifacts, packaging, and the test harness. Measurements describe these fixtures on this host, not every website or model task.
 
 ## Changes retained

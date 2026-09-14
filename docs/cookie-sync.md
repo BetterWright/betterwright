@@ -61,6 +61,13 @@ writes this requires when `createElectronHostTarget({ cookieImport: true })` is
 set; otherwise `Network.getAllCookies`/`Network.setCookies` stay forbidden on
 the leased tab.
 
+Cookie Sync runs inside the host's input lease and honors its takeover signal,
+including when the tab is already connected. An abort before import returns
+`BW_ABORTED` with `effectMayHaveCommitted: false`. An abort after dispatch drains
+the worker before settling and sets `effectMayHaveCommitted: true`, because a
+cookie write may already have reached the browser. If draining fails, the code
+is `BW_ABORT_TEARDOWN_FAILED`; inspect the host store before retrying.
+
 On macOS, a permission-denied result requires Full Disk Access for the app
 running BetterWright. Restart that app after granting access, then retry.
 Profile-discovery failures are reported separately from an empty profile list.

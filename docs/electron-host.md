@@ -108,3 +108,55 @@ account is required.
 The existing `full-stack-e2e-review` skill and proof screenshot support remain
 available. Hosts still implement their own subagent scheduling and chat image
 rendering; BetterWright supplies browser evidence, not a chat UI.
+
+## Migrating from a custom CDP bridge
+
+Hosts that attach through a custom loopback CDP bridge can migrate to the
+`betterwright/electron` adapter introduced in 2.5.0. For example, a custom
+bridge might be used like this:
+
+```js
+const connection = await openMyConnection(contents); // host code
+const browser = new BetterWright({
+  provider: connection.provider,   // { cdpUrl, headers }
+  downloadPolicy: "deny",
+  credentialCapture: false,
+});
+```
+
+Replace the custom bridge with the adapter:
+
+```js
+configureElectronNetwork(); // before app.ready
+const browser = new BetterWright({
+  hostTarget: createElectronHostTarget({ contents, signal: takeover.signal }),
+  headless: false,
+  parkBackgroundPages: false,
+});
+```
+
+Behavior differences to expect:
+
+- The leased session's traffic now passes through BetterWright's policy-checked
+  SOCKS guard (`session.setProxy`), including subresource loads that bypass
+  Playwright routing. The old `provider:` path was the documented guard
+  exception; the adapter closes it. `configureElectronNetwork()` must run
+  before `app.ready` so QUIC and non-proxied WebRTC UDP cannot leak around it.
+- `downloadPolicy: "deny"` and `credentialCapture: false` are implied on host
+  targets and no longer need to be passed. Downloads are denied by the adapter
+  itself (`will-download`), before the worker's CDP byte limit.
+- For uploads, pass the same approved paths in BetterWright's `hostUploadFiles`
+  and the adapter's `uploadFiles`.
+- `syncCookies` on a leased tab requires the host-target Cookie Sync fix
+  ([#186](https://github.com/BetterWright/betterwright/pull/186), unreleased as
+  of 2.8.0). With it, pass `cookieImport: true` in the adapter options; the
+  call needs no `cloudConsent`, reports `target: "host"`, and returns
+  `cookieImportDomains` for scoping the granted session access. The takeover
+  signal also cancels Cookie Sync; see [cancellation semantics](cookie-sync.md).
+  Without this fix the adapter has no `cookieImport` option and the worker rejects the call with
+  `Cookie Sync to cdp:127.0.0.1:1 requires consent for that exact target.`
+- `browser.run(code, { automaticUI: false })` omits the automatic UI catalog
+  on calls that do not need it; it defaults to on.
+- The adapter owns the capability-authenticated loopback WebSocket, CDP
+  allowlist, and per-tab cookie scoping in `electron-connection.ts`. Remove the
+  corresponding custom bridge once migrated.

@@ -1,5 +1,10 @@
 # Embedded browser verification
 
+This is a historical embedding report. See [BetterChromium](chromium-fork.md)
+for the current managed browser and update instructions. Updating that browser
+does not update Chromium inside an Electron host; the host must update Electron
+separately.
+
 Verified on macOS on September 9, 2026, using Bun 1.4.0, Electron 43.4.1,
 and managed BetterChromium 151.0.7922.108. All browser profiles and credentials
 were disposable fixtures. No personal app profile or real account was used.

@@ -22,6 +22,86 @@ Releases before 1.1.3 predate this file; their notes live on the
 - `syncCookies` no longer demands a `cloudConsent` matching the placeholder
   provider endpoint on host-owned targets; consent is only required for real
   remote providers, and results report `target: "host"`.
+- Host-target `syncCookies` honors human takeover before extraction and import.
+  Cancellation after dispatch drains the worker and reports whether a cookie
+  write may already have committed.
+
+## [2.8.0] - 2026-09-13
+
+### Added
+
+- `betterwright --local`: hardware-aware model and quant selection, private
+  Metal/Vulkan/CUDA/ROCm inference runtimes, resumable checksum-verified downloads,
+  and image/tool-call validation before selecting the built-in harness default.
+  Automatically compares DFlash2 or native MTP with ordinary decoding where
+  compatible, retaining acceleration when it improves measured throughput.
+  Includes verified draft downloads, memory headroom, and private compiler tooling.
+  Includes `local plan`, `status`, `start`, and `stop`; skills and MCP hosts
+  retain their own model configuration. See `docs/local-ai.md` for supported
+  hardware and validation limits.
+
+- Cerebras support in the built-in harness through `cerebras/<model-id>`,
+  `CEREBRAS_API_KEY`, `CEREBRAS_BASE_URL`, public/account model listing, and
+  doctor/default-model discovery. Qwen 3.8 27B supports screenshot input and
+  tool calls; reasoning is preserved across turns. No additional SDK is needed.
+  See `docs/agent.md#cerebras` for usage and validation limits.
+
+- Ordered browser-provider fallback chains. The `provider` option accepts an
+  array of candidates tried in order — a provider that is out of quota, down,
+  or unreachable falls through to the next entry instead of failing the
+  launch. `browser.fallbacks` in `config.json` extends the configured default
+  the same way (`betterwright configure --browser-fallback <name|url|path>`,
+  repeatable; `--clear-fallbacks` removes them). `{ provider: "managed" }`
+  names the managed BetterChromium fork as a chain entry, and a chain with no
+  configured default still tries the fork first. A candidate that mints a
+  remote session but fails to connect releases it before the next candidate
+  runs. If two bounded release attempts fail, the chain stops and identifies
+  the potentially billed session. Skipped-candidate warnings survive an
+  exhausted chain, and an invalid configured default always fails validation.
+  A chain entry that cannot resolve at all — an unknown name, an unset key, a
+  binary that is not installed — is skipped with a warning instead of
+  vetoing the chain; resolution fails only when no entry survives. Changing
+  `browser.fallbacks` changes the session daemon's compatibility signature,
+  so a running daemon is never silently reused on a stale chain.
+  `betterwright doctor` reports the resolved chain under **Browser →
+  Fallbacks**. Cookie Sync consent for a chained launch names every remote
+  candidate, joined with `+`.
+- Connected provider accounts now supply the API key for any launch that
+  names the provider — an explicit `provider` option or a fallback ref — not
+  just `boxes`. Precedence stays flag > account > well-known env var.
+
+## [2.7.3] - 2026-09-13
+
+Version 2.7.2 was held before npm publication to incorporate final review
+corrections. This release includes the complete upgrade from 2.7.1.
+
+### Security
+
+- Upgrade the managed BetterChromium browser to Chromium `153.0.8010.36`,
+  including the upstream fixes for CVE-2026-85046 and CVE-2026-87491 (#188).
+  After updating the package, stop CLI sessions with `betterwright close --all`
+  and run `betterwright setup` or `betterwright update`. Close SDK applications
+  before installing the browser and restart them afterward.
+  Electron hosts, explicit browser paths, and remote providers require their
+  own browser updates.
+
+### Fixed
+
+- Replace older or unverified managed browser installations automatically.
+  Setup records the verified release and checksum; default discovery refuses
+  a stale installation and gives setup guidance.
+- Stage and validate browser updates before replacing the installed tree.
+  A failed download preserves existing files, and setup recovers an interrupted
+  directory swap before requiring network access.
+- Package the native browser's runtime dependencies and matching Windows
+  assembly manifest, including the Linux launcher and sandbox helper.
+- Use Direct3D 11 for Windows rendering, fixing blank accelerated 2D canvas
+  readback and unavailable WebGPU when desktop OpenGL is forced.
+- Honor disabled GeoIP and launch identity settings by suppressing the Linux
+  browser's implicit timezone lookup. Explicit timezones remain supported.
+- Correct the Linux Web Share documentation to describe the existing
+  platform-dependent API availability.
+- Correct the Electron host-owned tab integration documentation (#187).
 
 ## [2.7.1] - 2026-09-11
 
@@ -1606,7 +1686,9 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/BetterWright/betterwright/compare/v2.7.3...v2.8.0
+[2.7.3]: https://github.com/BetterWright/betterwright/compare/v2.7.1...v2.7.3
 [2.7.1]: https://github.com/BetterWright/betterwright/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/BetterWright/betterwright/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/BetterWright/betterwright/compare/v2.5.2...v2.6.0

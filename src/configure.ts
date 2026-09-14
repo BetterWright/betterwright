@@ -26,6 +26,7 @@ import {
   type ProviderAccount,
   removeCustomProvider,
   removeProviderAccount,
+  saveBrowserFallbacks,
   saveCustomProvider,
   saveDefaultBrowser,
   saveProviderAccount,
@@ -36,7 +37,7 @@ import {
   describeCdpUrl,
   resolveBrowserProvider,
 } from "./browser-providers.js";
-import { flagValue, positionalArgs } from "./cli-flags.js";
+import { collectValues, flagValue, positionalArgs } from "./cli-flags.js";
 import { type CliPaint, cliPaint, paintedError, paintedLog } from "./cli-theme.js";
 import { defaultHome } from "./home.js";
 import { isCallable } from "./untrusted-value.js";
@@ -72,7 +73,7 @@ function envKeyState(env, name) {
  * comes from. Never prints a key, only its source.
  */
 export function describeDefaultBrowser(ref: DefaultBrowserRef, { env = process.env, custom = {} }: any = {}) {
-  if (!ref) return "the managed BetterChromium fork";
+  if (!ref || ref.provider === "managed") return "the managed BetterChromium fork";
   if (ref.cdpUrl) return `CDP endpoint ${describeCdpUrl(ref.cdpUrl)}`;
   if (ref.executablePath) return `local Chromium at ${ref.executablePath}`;
   const info = browserProviderInfo(ref.provider);
@@ -113,7 +114,14 @@ function describeAccount(name, account: ProviderAccount, env) {
 
 function summaryLines(config, env, home) {
   const lines = [`  Config file: ${browserConfigPath(home)}`];
-  lines.push(`  Default:     ${describeDefaultBrowser(config.default, { env, custom: config.custom })}`);
+  lines.push(`  Default:     ${config.defaultError || describeDefaultBrowser(config.default, { env, custom: config.custom })}`);
+  if (config.fallbacks?.length) {
+    lines.push("  Fallbacks:");
+    for (const ref of config.fallbacks) {
+      lines.push(`    · ${describeDefaultBrowser(ref, { env, custom: config.custom })}`);
+    }
+  }
+  for (const error of config.fallbackErrors || []) lines.push(`    · ${error}`);
   const accountNames = Object.keys(config.accounts);
   if (accountNames.length) {
     lines.push("  Connected:");
@@ -173,18 +181,16 @@ function showConfig({ home, env, log, json, paint }) {
     for (const [name, account] of Object.entries(config.accounts)) {
       accounts[name] = maskEntry({ provider: name, ...account }, env);
     }
-    log(
-      JSON.stringify(
-        {
-          file: browserConfigPath(home),
-          default: config.default ? maskEntry(config.default, env) : null,
-          accounts,
-          custom,
-        },
-        null,
-        2,
-      ),
-    );
+    const report = {
+      file: browserConfigPath(home),
+      default: config.default ? maskEntry(config.default, env) : null,
+      fallbacks: (config.fallbacks || []).map((ref) => maskEntry(ref, env)),
+      accounts,
+      custom,
+    };
+    if (config.defaultError) Object.assign(report, { default_error: config.defaultError });
+    if (config.fallbackErrors) Object.assign(report, { fallback_errors: config.fallbackErrors });
+    log(JSON.stringify(report, null, 2));
     return 0;
   }
   log("");
@@ -260,12 +266,39 @@ async function connectOverCdp({ cdpUrl, headers, timeout }: any) {
 /**
  * Resolve the configured default the way a launch would, mint a session if the
  * provider needs one, and connect. Returns 0 when the browser answered.
+ * Configured fallbacks are resolved (never connected) afterwards, so a dead
+ * link in the chain shows up before a launch finds it.
  */
 async function testConnection({ home, env, log, fail, connect, fetchJson }) {
   const config = loadBrowserConfig(home);
+  const reportFallbacks = () => {
+    let broken = Boolean(config.fallbackErrors?.length);
+    for (const error of config.fallbackErrors || []) fail(`  ✗ ${error}`);
+    for (const ref of config.fallbacks || []) {
+      try {
+        // Same two steps launch takes: expand against accounts/keyEnv/custom
+        // providers, then the provider-layer validator (no sessions minted).
+        const expanded = expandProviderChoice(ref, { home, env, config });
+        resolveBrowserProvider(expanded, { env });
+        log(`  ✓ Fallback ${describeDefaultBrowser(ref, { env, custom: config.custom })} resolves.`);
+      } catch (error) {
+        broken = true;
+        fail(
+          `  ✗ Fallback ${describeDefaultBrowser(ref, { env, custom: config.custom })}: ` +
+            `${String(error?.message || error).split("\n")[0]}`,
+        );
+      }
+    }
+    return broken ? 1 : 0;
+  };
+  if (config.defaultError) {
+    fail(`  ✗ ${config.defaultError}`);
+    reportFallbacks();
+    return 1;
+  }
   if (!config.default) {
     log("  · No default is configured, so launches use the managed BetterChromium fork.");
-    return 0;
+    return reportFallbacks();
   }
   let plan;
   try {
@@ -273,19 +306,25 @@ async function testConnection({ home, env, log, fail, connect, fetchJson }) {
     plan = resolveBrowserProvider(expanded, { env })?.plan;
   } catch (error) {
     fail(`  ✗ ${error?.message || error}`);
+    reportFallbacks();
     return 1;
   }
   if (!plan) {
     log("  · Nothing to connect to.");
-    return 0;
+    return reportFallbacks();
   }
   if (plan.kind === "local") {
     // resolveBrowserProvider already checked the path exists and is absolute.
     log(`  ✓ Chromium binary found at ${plan.executablePath}.`);
-    return 0;
+    return reportFallbacks();
+  }
+  if (plan.kind === "managed") {
+    log("  · The managed BetterChromium fork launches locally; nothing to connect to.");
+    return reportFallbacks();
   }
   log(`  · Connecting to ${plan.endpointLabel || plan.provider}…`);
   let live = plan;
+  let code = 0;
   try {
     // A session-minting provider bills for this; the finally below releases it.
     if (plan.create) live = await plan.create({ fetchJson });
@@ -296,14 +335,13 @@ async function testConnection({ home, env, log, fail, connect, fetchJson }) {
     });
     const version = trimmed(result?.version) || "connected";
     log(`  ✓ ${version}`);
-    return 0;
   } catch (error) {
     // First line only: playwright-core appends a multi-line call log that
     // repeats the endpoint this command already printed.
     const detail = String(error?.message || error).split("\n")[0];
     fail(`  ✗ Could not connect: ${detail}`);
     fail("    The choice is saved but unverified.");
-    return 1;
+    code = 1;
   } finally {
     if (live && live !== plan) {
       try {
@@ -313,6 +351,8 @@ async function testConnection({ home, env, log, fail, connect, fetchJson }) {
       }
     }
   }
+  const fallbackCode = reportFallbacks();
+  return code || fallbackCode;
 }
 
 function createPrompter() {
@@ -563,6 +603,8 @@ export async function runConfigure(argv: string[] = [], options: any = {}) {
       (positionals[0] === "disconnect" ? positionals[1] : undefined),
   ).toLowerCase();
   const managed = hasFlag(argv, "--managed") || hasFlag(argv, "--reset");
+  const fallbackArgs = collectValues(argv, "--browser-fallback");
+  const clearFallbacks = hasFlag(argv, "--clear-fallbacks");
   const wantsTest = hasFlag(argv, "--test");
   const wantsJson = hasFlag(argv, "--json");
   const wantsShow = hasFlag(argv, "--show");
@@ -570,6 +612,8 @@ export async function runConfigure(argv: string[] = [], options: any = {}) {
     managed ||
     Boolean(connectName) ||
     Boolean(disconnectName) ||
+    clearFallbacks ||
+    Boolean(fallbackArgs.length) ||
     [browser, add, remove].some((value) => value !== undefined);
   if (!acts && (apiKey !== undefined || keyEnv !== undefined)) {
     fail(
@@ -652,6 +696,36 @@ export async function runConfigure(argv: string[] = [], options: any = {}) {
         saveProviderAccount(ref.provider, { apiKey: ref.apiKey, keyEnv: ref.keyEnv }, home);
       }
       log(`✓ Default browser: ${describeDefaultBrowser(ref, { env, custom: loadBrowserConfig(home).custom })}`);
+    }
+    if (fallbackArgs.length) {
+      // The same <name|wss-url|path> vocabulary --browser takes. Keys come
+      // from each provider's account or env var — a fallback entry never
+      // carries a key of its own on this command.
+      const refs = fallbackArgs.map((value) =>
+        defaultRefFromValue(value, { apiKey: undefined, keyEnv: undefined }),
+      );
+      saveBrowserFallbacks(refs, home);
+      const custom = loadBrowserConfig(home).custom;
+      log(
+        `✓ Fallback browsers: ${refs
+          .map((ref) => describeDefaultBrowser(ref, { env, custom }))
+          .join(" → ")}`,
+      );
+      const config = loadBrowserConfig(home);
+      for (const ref of refs) {
+        try {
+          const expanded = expandProviderChoice(ref, { home, env, config });
+          resolveBrowserProvider(expanded, { env });
+        } catch (error) {
+          log(
+            `  · ${describeDefaultBrowser(ref, { env, custom })} does not resolve right now: ` +
+              `${error?.message || error} Its key may come from the environment later.`,
+          );
+        }
+      }
+    } else if (clearFallbacks) {
+      saveBrowserFallbacks(null, home);
+      log("✓ Cleared the browser fallbacks.");
     }
   } catch (error) {
     fail(`✗ ${error?.message || error}`);

@@ -11,8 +11,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadCodexAuth, loadGrokAuth } from "./auth.js";
-import { configuredDefaultProvider } from "./browser-config.js";
-import { browserProviderInfo, resolveBrowserProvider } from "./browser-providers.js";
+import { configuredDefaultProvider, configuredProviderChain } from "./browser-config.js";
+import {
+  browserProviderInfo,
+  providerPlanLabel,
+  providerResolutionPlans,
+  resolveBrowserProvider,
+} from "./browser-providers.js";
 import { chromiumNeedsSoftwareGpu } from "./browser-runtime.js";
 import {
   BETTERWRIGHT_CHROMIUM_VERSION,
@@ -20,6 +25,8 @@ import {
   selectManagedBrowserBackend,
 } from "./chromium-fork.js";
 import { defaultHome } from "./home.js";
+import { hasLocalSelection } from "./local-ai.js";
+import { hasReadyLocalInstallation } from "./local-ai-install.js";
 import { installHint, optionalPeerAvailable } from "./optional-peer.js";
 import {
   runtimeFix,
@@ -81,14 +88,19 @@ export async function doctorReport() {
   const browser = chromiumForkError ? "unavailable" : browserSelection.browser;
   let provider = null;
   let providerError = null;
+  let providerChain = null;
+  let providerNotes = null;
+  // Tri-state: does any launch candidate resolve to a browser that can start?
+  // null while unsettled — the env-shorthand path falls back to the default's
+  // own check below.
+  let providerReady = null;
+  const envShorthand = String(process.env.BETTERWRIGHT_CDP_URL || "").trim();
   try {
     // The same ladder a launch walks: the env shorthand (which
     // resolveBrowserProvider reads itself), then the default persisted by
     // `betterwright configure`. A configured default whose key is missing
     // throws here and is reported as the provider problem it is.
-    const configured = String(process.env.BETTERWRIGHT_CDP_URL || "").trim()
-      ? undefined
-      : configuredDefaultProvider();
+    const configured = envShorthand ? undefined : configuredDefaultProvider();
     const resolved = resolveBrowserProvider(configured ?? undefined);
     if (resolved?.plan) {
       const plan = resolved.plan;
@@ -104,10 +116,51 @@ export async function doctorReport() {
   } catch (error) {
     providerError = error instanceof Error ? error.message : String(error);
   }
+  if (!envShorthand) {
+    // The fallbacks sit beneath the default: report the whole chain so a
+    // dead link (or a skipped one) is visible before a launch finds it.
+    try {
+      const chain = configuredProviderChain();
+      const resolution = resolveBrowserProvider(chain.provider ?? undefined);
+      const plans = providerResolutionPlans(resolution);
+      if (plans.length > 1) {
+        providerChain = plans.map((entry) => providerPlanLabel(entry));
+      }
+      // Config notes cover refs skipped at expansion; resolution notes cover
+      // candidates that expanded but no longer validate (a binary removed
+      // since configure ran).
+      const notes = [...chain.notes, ...(resolution?.notes || [])];
+      if (notes.length) providerNotes = notes;
+      // Readiness follows the whole chain: a launch succeeds when ANY
+      // candidate can start, so a working remote fallback still reports
+      // ready with the managed fork missing. An empty chain is the implicit
+      // managed candidate; a resolved remote/local plan is launchable on its
+      // face (key present, binary found, endpoint parseable).
+      const effective = plans.length ? plans : [{ kind: "managed" }];
+      providerReady = effective.some((plan) =>
+        plan.kind === "managed"
+          ? browser === "chromium-fork" && !chromiumForkError
+          : true,
+      );
+    } catch (error) {
+      providerError =
+        providerError ||
+        (error instanceof Error ? error.message : String(error));
+      providerReady = false;
+    }
+  }
+  // Resolved once so the report can expose it: "some launch candidate can
+  // start" — the piece of `ready` that is about the provider chain rather
+  // than the runtime (worker, pinned playwright).
+  const providerUsable =
+    providerReady ??
+    (!provider || provider.kind === "managed"
+      ? browser === "chromium-fork" && !chromiumForkError
+      : !providerError);
   const ready =
     workerOk &&
     version === PINNED_PLAYWRIGHT_VERSION &&
-    (provider ? !providerError : browser === "chromium-fork" && !chromiumForkError);
+    providerUsable;
   return {
     node: process.execPath,
     runtime: runtimeLabel(),
@@ -124,6 +177,9 @@ export async function doctorReport() {
     browser_selection_reason: browserSelection.selectionReason,
     provider,
     provider_error: providerError,
+    provider_chain: providerChain,
+    provider_notes: providerNotes,
+    provider_ready: providerUsable,
     stealth_driver: stealth,
     stealth_available: Boolean(stealth),
     browser,
@@ -160,17 +216,22 @@ export function modelReadiness({ env = process.env, auth = null }: any = {}) {
   const codex = auth ? Boolean(auth.codex) : Boolean(loadCodexAuth());
   const grok = auth ? Boolean(auth.grok) : Boolean(loadGrokAuth());
   const sources = [];
+  const home = env.BETTERWRIGHT_HOME || defaultHome();
+  const localConfigured = hasLocalSelection(home), localValid = hasReadyLocalInstallation(home);
+  const localError = localConfigured && !localValid ? "The saved local model selection is invalid or its installation is missing or damaged." : null;
+  if (localValid) sources.push("local (managed harness model)");
   if (codex) sources.push("codex (signed in)");
   if (grok) sources.push("grok (signed in)");
   if (env.ANTHROPIC_API_KEY && moduleAvailable("@anthropic-ai/sdk")) {
     sources.push("claude (ANTHROPIC_API_KEY)");
   }
   if (env.OPENROUTER_API_KEY) sources.push("openrouter (OPENROUTER_API_KEY)");
+  if (env.CEREBRAS_API_KEY) sources.push("cerebras (CEREBRAS_API_KEY)");
   if (env.XAI_API_KEY || env.GROK_API_KEY) sources.push("grok (API key)");
   if (env.OPENAI_API_KEY) sources.push("codex (OPENAI_API_KEY)");
   const anthropicKeyNoSdk =
     Boolean(env.ANTHROPIC_API_KEY) && !moduleAvailable("@anthropic-ai/sdk");
-  return { sources, anthropicKeyNoSdk };
+  return { sources, anthropicKeyNoSdk, localError };
 }
 
 /**
@@ -187,6 +248,9 @@ export function modelReadiness({ env = process.env, auth = null }: any = {}) {
  * @returns {{model: string, reason: string, configured: boolean}}
  */
 export function preferredModelId({ env = process.env, auth = null }: any = {}) {
+  if (hasLocalSelection(env.BETTERWRIGHT_HOME || defaultHome())) {
+    return { model: "local", reason: "configured with `betterwright --local`", configured: true };
+  }
   const codex = auth ? Boolean(auth.codex) : Boolean(loadCodexAuth());
   const grok = auth ? Boolean(auth.grok) : Boolean(loadGrokAuth());
   if (env.ANTHROPIC_API_KEY && moduleAvailable("@anthropic-ai/sdk")) {
@@ -223,6 +287,13 @@ export function preferredModelId({ env = process.env, auth = null }: any = {}) {
       configured: true,
     };
   }
+  if (env.CEREBRAS_API_KEY) {
+    return {
+      model: `cerebras/${String(env.BETTERWRIGHT_CEREBRAS_MODEL || "qwen-3.8-27b").replace(/^cerebras\//i, "")}`,
+      reason: "CEREBRAS_API_KEY",
+      configured: true,
+    };
+  }
   // OpenRouter, Ollama, and vLLM have no bare-id default — a model there has
   // to be named `source/id` — so they are usable but cannot supply a default.
   return { model: "claude-opus-4-8", reason: "default", configured: false };
@@ -247,6 +318,7 @@ export function modelSetupHint({ env = process.env, auth = null }: any = {}) {
     "  Sign in:  betterwright auth --login codex     (a ChatGPT/Codex subscription)\n" +
     "        or:  betterwright auth --login grok\n" +
     `        or:  export ANTHROPIC_API_KEY=… && ${installHint("@anthropic-ai/sdk")}\n` +
+    "        or:  export CEREBRAS_API_KEY=…   (Cerebras Qwen 3.8 27B)\n" +
     "  Local:    run Ollama, then --model ollama/<id>   (see `betterwright models`)"
   );
 }
@@ -301,7 +373,9 @@ export function doctorChecks(
       provider.kind === "remote" ? "warn" : "ok",
       provider.kind === "remote"
         ? `${provider.name || provider.provider} (remote CDP${provider.endpoint ? ` — ${provider.endpoint}` : ""}) — outside the guard proxy`
-        : `custom local Chromium — ${provider.executablePath}`,
+        : provider.kind === "managed"
+          ? "the managed BetterChromium fork"
+          : `custom local Chromium — ${provider.executablePath}`,
       provider.kind === "remote"
         ? "Remote page traffic cannot be network-policy enforced; see docs/browser-providers.md."
         : null,
@@ -309,7 +383,24 @@ export function doctorChecks(
   } else if (report.provider_error) {
     add("Browser", "Provider", "fail", report.provider_error);
   }
+  // The chain also exists without a configured default (implicit managed
+  // first), so report it independently of the Provider row.
+  if (report.provider_chain?.length > 1) {
+    add(
+      "Browser",
+      "Fallbacks",
+      "ok",
+      report.provider_chain.slice(1).join(" → "),
+      null,
+    );
+  }
+  for (const note of report.provider_notes || []) {
+    add("Browser", "Fallbacks", "warn", note, null);
+  }
 
+  // When a non-managed candidate can still launch, a missing fork is a
+  // warning, not a failure: doctor's exit code must agree with `ready`.
+  const forkOptional = report.provider_ready === true;
   if (report.chromium_fork) {
     add(
       "Browser",
@@ -327,25 +418,31 @@ export function doctorChecks(
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       report.chromium_fork_error,
-      "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Run `betterwright setup`, or unset BETTERWRIGHT_CHROMIUM_PATH/ROOT.",
     );
   } else if (report.browser_selection_reason === "unsupported-platform") {
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       "no artifact is published for this platform",
-      "Use the provider option to bring your own or a cloud browser — docs/browser-providers.md.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Use the provider option to bring your own or a cloud browser — docs/browser-providers.md.",
     );
   } else if (!report.provider) {
     add(
       "Browser",
       "BetterChromium",
-      "fail",
+      forkOptional ? "warn" : "fail",
       "not installed",
-      "Run `betterwright setup`.",
+      forkOptional
+        ? "Not required — another provider candidate can launch (see Fallbacks)."
+        : "Run `betterwright setup`.",
     );
   }
   add("Browser", "In use", report.ready ? "ok" : "fail",
@@ -410,13 +507,15 @@ export function doctorChecks(
       : installHint("@modelcontextprotocol/sdk"),
   );
 
-  const models = modelReadiness({ env });
+  const models = modelReadiness({ env: { ...env, BETTERWRIGHT_HOME: home } });
   add(
     "Built-in agent",
     "Model backends",
-    models.sources.length ? "ok" : "warn",
-    models.sources.length ? models.sources.join(", ") : "none configured",
-    models.sources.length
+    models.localError ? "fail" : models.sources.length ? "ok" : "warn",
+    models.localError || (models.sources.length ? models.sources.join(", ") : "none configured"),
+    models.localError
+      ? "Run `betterwright --local` to repair the saved local model, or select another model explicitly."
+      : models.sources.length
       ? null
       : "Only needed for `betterwright exec`. Run `betterwright auth --login codex`, or set ANTHROPIC_API_KEY.",
   );

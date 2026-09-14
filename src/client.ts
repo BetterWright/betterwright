@@ -19,7 +19,8 @@ import type { HostConnection, HostTarget } from "../types/host.js";
 import type { BetterWrightOptions, CookieSyncResult, LiveViewOptions } from "../types/public.js";
 import { resolveAdBlock } from "./ad-block-config.js";
 import {
-  configuredDefaultProvider,
+  configuredProviderChain,
+  expandProviderChainOption,
   expandProviderChoice,
 } from "./browser-config.js";
 import {
@@ -114,17 +115,35 @@ function workerStartTimeoutMs() {
 function resolveProviderOption(options, home) {
   // Explicit option wins; BETTERWRIGHT_CDP_URL is the host-level shorthand
   // for "attach to this CDP endpoint" (validated in the worker); beneath
-  // both sits the default persisted by `betterwright configure`. Custom
-  // provider names expand here, on the client side, so the worker's
-  // validator stays free of filesystem access.
+  // both sits the default persisted by `betterwright configure`, extended by
+  // the configured fallbacks into an ordered chain. Custom provider names
+  // expand here, on the client side, so the worker's validator stays free of
+  // filesystem access.
   if (Object.hasOwn(options, "provider")) {
-    return options.provider == null
-      ? null
-      : expandProviderChoice(options.provider, { home });
+    const raw = options.provider;
+    if (raw == null) return { provider: null, notes: [] };
+    // An array is an ordered fallback chain: expand it leniently so one
+    // unresolvable entry is a skipped candidate (surfaced via notes), not a
+    // veto of the chain. A single choice stays strict.
+    if (Array.isArray(raw)) return expandProviderChainOption(raw, { home });
+    return { provider: expandProviderChoice(raw, { home }), notes: [] };
   }
   const env = String(process.env.BETTERWRIGHT_CDP_URL || "").trim();
-  if (env) return { cdpUrl: env };
-  return configuredDefaultProvider({ home });
+  if (env) return { provider: { cdpUrl: env }, notes: [] };
+  return configuredProviderChain({ home });
+}
+
+// A selection of only managed-fork entries is still "the managed backend" —
+// stealth stays legal for it, while any local or remote candidate gets the
+// pinned stock driver.
+function isManagedOnlyProvider(provider) {
+  const list = Array.isArray(provider) ? provider : [provider];
+  return (
+    list.length > 0 &&
+    list.every(
+      (entry) => isRecord(entry) && untrustedField(entry, "provider") === "managed",
+    )
+  );
 }
 
 /** The managed-browser legacy toggles are gone; reject them with the fix. */
@@ -305,6 +324,7 @@ export class BetterWright {
   declare credentialCapture: boolean;
   declare browserFlavor: "chromium-fork";
   declare provider: any;
+  declare providerChainNotes: string[];
   declare hostTarget: HostTarget | undefined;
   declare hostUploadFiles: readonly string[];
   private readonly hostConnections = new WeakMap<object, HostConnection>();
@@ -399,17 +419,21 @@ export class BetterWright {
    *   genuine GPU rendering — consistency checkers (PixelScan's "Masking
    *   detected") flag farbled output because it no longer matches a stock
    *   hardware signature. Only affects the managed fork.
-   * @param {object|null} [options.provider] non-managed browser, opt-in:
-   *   `{ executablePath }` launches a caller-supplied local Chromium binary
-   *   (guard proxy still applies); `{ cdpUrl, headers? }` attaches to any CDP
-   *   WebSocket endpoint; `{ provider: "browser-use"|"kernel"|"browserbase"|
-   *   "steel"|"anchor"|"hyperbrowser"|"browserless"|"brightdata"|"oxylabs",
-   *   apiKey?, sessionOptions? }` mints a cloud browser over that provider's
-   *   API. Remote browsers run outside the guard proxy — the launch warning
-   *   says so. BETTERWRIGHT_CDP_URL is the host-level shorthand for
+   * @param {object|object[]|null} [options.provider] non-managed browser,
+   *   opt-in: `{ executablePath }` launches a caller-supplied local Chromium
+   *   binary (guard proxy still applies); `{ cdpUrl, headers? }` attaches to
+   *   any CDP WebSocket endpoint; `{ provider: "browser-use"|"kernel"|
+   *   "browserbase"|"steel"|"anchor"|"hyperbrowser"|"browserless"|
+   *   "brightdata"|"oxylabs"|"managed", apiKey?, sessionOptions? }` mints a
+   *   cloud browser over that provider's API ("managed" is the managed
+   *   BetterChromium fork). An array is an ordered fallback chain — the
+   *   launch tries each candidate in turn and lands on the first that
+   *   launches, so a provider that is out of quota or down does not fail the
+   *   session. Remote browsers run outside the guard proxy — the launch
+   *   warning says so. BETTERWRIGHT_CDP_URL is the host-level shorthand for
    *   `{ cdpUrl }`; beneath both sits the default saved by `betterwright
-   *   configure`, where custom provider names are defined too. See
-   *   docs/browser-providers.md.
+   *   configure` plus its configured fallbacks, where custom provider names
+   *   are defined too. See docs/browser-providers.md.
    * @param {string} [options.upstreamProxy] http:// or socks5:// egress proxy
    *   chained through the local policy guard (the IP layer): targets observe
    *   the upstream IP while policy and DNS-rebinding checks stay local.
@@ -486,7 +510,9 @@ export class BetterWright {
       ? options.credentialCapture !== false
       : false;
     assertNoLegacyBrowserOptions();
-    this.provider = resolveProviderOption(options, this.home);
+    const resolvedProvider = resolveProviderOption(options, this.home);
+    this.provider = resolvedProvider.provider;
+    this.providerChainNotes = resolvedProvider.notes;
     this.browserFlavor = "chromium-fork";
     this.headless = resolveHeadless(options.headless);
     this.adBlock = resolveAdBlock(options.adBlock);
@@ -594,6 +620,7 @@ export class BetterWright {
       downloadsDir: downloads,
       browserFlavor: this.browserFlavor,
       provider: this.hostTarget ? { cdpUrl: "ws://127.0.0.1:1" } : this.provider,
+      providerChainNotes: this.providerChainNotes,
       hostOwnedTarget: Boolean(this.hostTarget),
       hostUploadFiles: this.hostUploadFiles,
       stealthRuntimeFix: this.stealthRuntimeFix,
@@ -657,7 +684,7 @@ export class BetterWright {
     // or remote) gets the pinned stock driver.
     const execArgv = [];
     if (this.stealthRuntimeFix) {
-      if (this.provider) {
+      if (this.provider && !isManagedOnlyProvider(this.provider)) {
         throw new BrowserError(
           "stealthRuntimeFix applies only to the managed BetterChromium " +
             "backend; it cannot be combined with a provider browser.",
@@ -1196,7 +1223,10 @@ export class BetterWright {
    * context. Extraction and injection stay in trusted host code.
    */
   syncCookies(options: any = {}) {
-    return this._enqueueExclusive(() => this._syncCookiesNow(options));
+    return this._enqueueExclusive(() => {
+      const execute = (signal?: AbortSignal) => this._syncCookiesNow(options, signal);
+      return this.hostTarget?.run ? this.hostTarget.run(execute) : execute();
+    });
   }
 
   /** Owner control only; deliberately absent from the worker's snippet bindings. */
@@ -1215,7 +1245,8 @@ export class BetterWright {
     return this.vault.ownerLock();
   }
 
-  async _syncCookiesNow(options) {
+  async _syncCookiesNow(options, signal?: AbortSignal) {
+    if (signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
     if (this._closed) {
       return { ok: false, error: "This browser has been closed." };
     }
@@ -1239,6 +1270,7 @@ export class BetterWright {
     try {
       extracted = await this._extractCookieSync(normalized);
     } catch (error) {
+      if (signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
       return {
         ok: false,
         error: "Cookie Sync could not read the selected local browser profile.",
@@ -1247,6 +1279,9 @@ export class BetterWright {
         cookieReaderStage: error?.cookieReaderStage,
       };
     }
+    // Extraction may have yielded while the human took control. Never prepare
+    // or import the selected cookies after that lease has been revoked.
+    if (signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
     if (!extracted.cookies.length) {
       const empty: Extract<CookieSyncResult, { ok: true }> = {
         ok: true,
@@ -1279,6 +1314,7 @@ export class BetterWright {
         cloudConsent: normalized.cloudConsent,
       },
       timeoutSeconds,
+      signal,
     );
   }
 

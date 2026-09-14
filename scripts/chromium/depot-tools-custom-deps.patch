@@ -1,0 +1,12 @@
+diff --git a/gclient.py b/gclient.py
+--- a/gclient.py
++++ b/gclient.py
+@@ -856,7 +856,7 @@
+ 
+         for name, dep_value in deps.items():
+             should_process = self.should_process
+-            if dep_value is None:
++            if dep_value is None or self.get_custom_deps(name, "") is None:
+                 continue
+ 
+             condition = dep_value.get("condition")

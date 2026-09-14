@@ -9,7 +9,9 @@ import {
   BETTERWRIGHT_CHROMIUM_VERSION,
   browserSelectionWarning,
   chromiumForkContextOptions,
+  chromiumForkInstallReceipt,
   chromiumForkPlatformSupported,
+  chromiumForkReceiptPath,
   configuredBrowserBackend,
   ensureWindowsChromiumAssembly,
   resolveChromiumForkBinary,
@@ -29,7 +31,7 @@ test("Chromium fork stays unresolved when no runtime path is configured", () => 
     resolveChromiumForkBinary({ env: {}, home: NO_FORK_HOME }),
     null,
   );
-  assert.equal(BETTERWRIGHT_CHROMIUM_VERSION, "151.0.7922.108");
+  assert.equal(BETTERWRIGHT_CHROMIUM_VERSION, "153.0.8010.36");
 });
 
 test("default root discovers a deployed artifact (zero-config fork)", () => {
@@ -42,6 +44,7 @@ test("default root discovers a deployed artifact (zero-config fork)", () => {
       arch: "x64",
       home,
       existsSync: (p) => p === binary,
+      readFileSync: () => JSON.stringify(chromiumForkInstallReceipt({ platform: "linux", arch: "x64" })),
     }),
     binary,
   );
@@ -78,6 +81,10 @@ test("default Windows install repairs Chromium's missing private assembly manife
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(binary, "test executable");
     fs.writeFileSync(path.join(directory, "chrome_elf.dll"), "test dll");
+
+    fs.writeFileSync(chromiumForkReceiptPath(path.dirname(directory), "win32", "x64"), JSON.stringify(
+      chromiumForkInstallReceipt({ platform: "win32", arch: "x64" }),
+    ));
 
     assert.equal(
       resolveChromiumForkBinary({
@@ -440,3 +447,16 @@ test("no cloak sources remain in the built worker", () => {
   assert.doesNotMatch(workerSource, /forkMacIdentity/);
   assert.doesNotMatch(workerSource, /FONTCONFIG_FILE/);
 });
+
+for (const receipt of [null, "{", JSON.stringify({ version: "150.0.7871.24" })]) {
+  test(`managed browser rejects an unverified installation (${receipt}) before Windows repair`, () => {
+    let writes = 0;
+    assert.throws(() => resolveChromiumForkBinary({
+      env: {}, platform: "win32", arch: "x64", home: NO_FORK_HOME,
+      existsSync: () => true,
+      readFileSync: () => { if (receipt === null) throw new Error("missing"); return receipt; },
+      writeFileSync: () => { writes++; },
+    }), /outdated.*receipt.*betterwright setup/);
+    assert.equal(writes, 0);
+  });
+}

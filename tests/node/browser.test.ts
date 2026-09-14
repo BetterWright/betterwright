@@ -1,7 +1,7 @@
 // End-to-end Node tests. Skipped unless doctor reports a ready managed browser,
 // so the policy suite still runs on machines without BetterChromium installed.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
@@ -9,12 +9,19 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
 import { fromPath } from "rookie-cookies";
+import { WebSocket, WebSocketServer } from "ws";
 import { AD_BLOCK_CACHE_FILE } from "../../dist/src/ad-blocker.js";
+import { saveBrowserFallbacks, saveDefaultBrowser } from "../../dist/src/browser-config.js";
+import { chromiumNeedsSoftwareGpu, managedForkArgs } from "../../dist/src/browser-runtime.js";
+import { guardProxyLaunchArgs } from "../../dist/src/chromium-args.js";
+import { resolveChromiumForkBinary } from "../../dist/src/chromium-fork.js";
 import { normalizeCookieSnapshot, normalizeCookieSyncOptions } from "../../dist/src/cookie-sync.js";
 import { doctorReport } from "../../dist/src/doctor.js";
+import { createGuardProxy } from "../../dist/src/guard-proxy.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
 import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
 import { isBoolean, isCallable, isString } from "../../dist/src/untrusted-value.js";
@@ -50,6 +57,13 @@ function tempHome() {
   fs.mkdirSync(runtime, { recursive: true });
   fs.writeFileSync(path.join(runtime, AD_BLOCK_CACHE_FILE), PlaywrightBlocker.empty().serialize());
   return home;
+}
+
+function removeBrowserHome(home) {
+  // Windows can briefly retain closed Chromium files (including antivirus
+  // handles). Match the bounded retries used by the shared temp-dir cleanup;
+  // a persistent lock still fails instead of being silently ignored.
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 function firstPngPixel(filePath: string) {
@@ -179,6 +193,114 @@ test("navigate and read the title", opts, async () => {
     assert.equal(result.result, "Example Domain");
   } finally {
     await bw.close();
+  }
+});
+
+for (const disabledIdentity of [{ geoip: false }, { launchIdentity: false }]) {
+  test(`disabled identity ${JSON.stringify(disabledIdentity)} preserves the host timezone without geo lookups`, opts, async () => {
+    const attemptedHosts: string[] = [];
+    const site = await listen((_request, response) => {
+      response.end("<!doctype html><title>Identity opt-out fixture</title>");
+    });
+    const home = tempHome();
+    const bw = new BetterWright({
+      home,
+      headless: true,
+      adBlock: false,
+      ...disabledIdentity,
+      policy: new NetworkPolicy({
+        allowLoopback: true,
+        custom: (url) => {
+          const hostname = new URL(url).hostname;
+          attemptedHosts.push(hostname);
+          return { allowed: hostname === "127.0.0.1", reason: "Identity opt-out fixture only" };
+        },
+      }),
+    });
+    try {
+      const result = await bw.run(`
+        await page.goto(${JSON.stringify(site.origin)});
+        return page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+      `);
+      assert.equal(result.ok, true, result.error);
+      // Bun's test runner fixes its own ICU timezone to UTC. A normal child
+      // process reads the host timezone inherited by the native browser.
+      const hostTimezone = spawnSync(process.execPath, [
+        "-e", "console.log(Intl.DateTimeFormat().resolvedOptions().timeZone)",
+      ], { encoding: "utf8" });
+      assert.equal(hostTimezone.status, 0, hostTimezone.stderr);
+      assert.equal(result.result, hostTimezone.stdout.trim());
+      assert.ok(attemptedHosts.includes("127.0.0.1"), "the fixture must exercise the network policy");
+      assert.deepEqual(
+        attemptedHosts.filter((hostname) => hostname === "ipwho.is" || hostname === "ip-api.com"),
+        [],
+        "disabled identity must not attempt a geo lookup",
+      );
+    } finally {
+      await bw.close();
+      await site.close();
+      removeBrowserHome(home);
+    }
+  });
+}
+
+test("the managed browser preserves an explicit locale and timezone in pages, workers and requests", opts, async () => {
+  const site = await listen((request, response) => {
+    if (request.url === "/worker.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(`postMessage({
+        language: navigator.language,
+        languages: navigator.languages,
+        locale: Intl.DateTimeFormat().resolvedOptions().locale,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      });`);
+      return;
+    }
+    if (request.url === "/headers") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ language: request.headers["accept-language"] }));
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end("<!doctype html><title>Locale fixture</title>");
+  });
+  const bw = new BetterWright({
+    home: tempHome(),
+    policy: new NetworkPolicy(),
+    headless: true,
+    geoip: false,
+    locale: "fr-FR",
+    timezone: "Europe/Paris",
+  });
+  try {
+    const result = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      return page.evaluate(async () => {
+        const worker = await new Promise((resolve, reject) => {
+          const child = new Worker('/worker.js');
+          child.onmessage = ({ data }) => { child.terminate(); resolve(data); };
+          child.onerror = () => { child.terminate(); reject(new Error('Locale worker failed')); };
+        });
+        return {
+          page: {
+            language: navigator.language,
+            languages: navigator.languages,
+            locale: Intl.DateTimeFormat().resolvedOptions().locale,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+          },
+          worker,
+          headers: await fetch('/headers').then(response => response.json())
+        };
+      });
+    `);
+    assert.equal(result.ok, true, result.error);
+    const expected = { language: "fr-FR", languages: ["fr-FR", "fr"], locale: "fr-FR", timezone: "Europe/Paris" };
+    assert.deepEqual(result.result.page, expected);
+    assert.deepEqual(result.result.worker, expected);
+    assert.equal(result.result.headers.language, "fr-FR,fr;q=0.9");
+  } finally {
+    await bw.close();
+    await site.close();
   }
 });
 
@@ -340,6 +462,12 @@ test("the selected managed browser keeps WebGL rendering available with a cohere
       assert.doesNotMatch(result.result.webgl2.renderer, /SwiftShader|llvmpipe|softpipe/i, result.result.webgl2.renderer);
       assert.match(result.result.webgl.renderer, /ANGLE/, result.result.webgl.renderer);
       assert.match(result.result.webgl2.renderer, /ANGLE/, result.result.webgl2.renderer);
+      assert.equal(result.result.webgl.vendor, result.result.webgl2.vendor);
+      assert.equal(result.result.webgl.renderer, result.result.webgl2.renderer);
+      if (chromiumNeedsSoftwareGpu()) {
+        assert.equal(result.result.webgl.vendor, "Google Inc. (Intel)");
+        assert.match(result.result.webgl.renderer, /Mesa Intel\(R\) UHD Graphics 620/);
+      }
     } else if (/Macintosh/.test(result.result.webgl.userAgent)) {
       assert.equal(result.result.webgl.platform, "MacIntel");
     } else if (/Windows/.test(result.result.webgl.userAgent)) {
@@ -3932,7 +4060,7 @@ test("two named profiles browse concurrently, both persistent", opts, async () =
     assert.equal(fs.existsSync(path.join(home, "browser", "profile")), false);
   } finally {
     await Promise.all([social.close(), review.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -3979,7 +4107,7 @@ test("cookies are per profile, and survive a restart of the same profile", opts,
   } finally {
     await Promise.all([social.close(), review.close()]);
     await server.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4120,7 +4248,7 @@ test("Cookie Sync installs an HttpOnly cookie and persists it across restart", o
   } finally {
     await browser.close();
     await server.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4193,7 +4321,7 @@ test("Cookie Sync refuses a batch that could evict target cookies", opts, async 
     assert.equal(JSON.stringify(result).includes(sentinel), false);
   } finally {
     await browser.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4232,7 +4360,7 @@ test("Cookie Sync refuses a local ephemeral target profile", opts, async () => {
     assert.equal(retried.profileMode, "persistent");
   } finally {
     await Promise.all([owner.close(), contender.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4295,7 +4423,7 @@ test("Cookie Sync cannot reuse an in-flight ephemeral browser launch", opts, asy
     assert.equal(retried.profileMode, "persistent");
   } finally {
     await Promise.all([owner.close(), contender.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4312,7 +4440,7 @@ test("a second browser on the SAME profile falls back to ephemeral", opts, async
     assert.equal(b.profileMode, "ephemeral");
   } finally {
     await Promise.all([first.close(), second.close()]);
-    fs.rmSync(home, { recursive: true, force: true });
+    removeBrowserHome(home);
   }
 });
 
@@ -4506,7 +4634,7 @@ test("optional ad blocker covers pages, nested frames and popups while preservin
         if (!adBlock) assert.equal(fs.existsSync(path.join(runtime, AD_BLOCK_CACHE_FILE)), false);
       } finally {
         await browser.close();
-        fs.rmSync(home, { recursive: true, force: true });
+        removeBrowserHome(home);
       }
     }
   } finally { await site.close(); }
@@ -4778,4 +4906,391 @@ test("reading an edited field does not bypass a subsequent pending submission", 
     assert.equal(result.result.results.verify.value,'After');
     assert.equal(committed,true,'a field edited before Submit must not bypass that pending write');
   } finally {await bw.close();await server.close();}
+});
+
+
+// --- Provider fallback chains ------------------------------------------------
+// Ordered `provider` arrays walk candidates at launch: a dead endpoint must
+// fall through to the next entry, a winner's warnings must name what failed,
+// and a fully dead chain must list every candidate it tried. The remote side
+// of these tests is the managed binary itself, spawned with
+// --remote-debugging-port — no cloud account needed.
+
+// A real CDP endpoint: the managed binary with --remote-debugging-port=0
+// prints "DevTools listening on ws://…" on stderr once the socket is live.
+async function spawnCdpEndpoint() {
+  const binary = resolveChromiumForkBinary();
+  const profile = makeTempDir("bw-cdp-profile-");
+  // Even a CDP fixture launched locally must stay on the guard proxy. These
+  // tests only use about:blank/setContent, so deny all page network traffic.
+  const guard = createGuardProxy({
+    guardUrl: async () => ({ allowed: false, reason: "CDP fixture denies network traffic" }),
+    executeId: () => "provider-chain-test",
+  });
+  const guardPort = await guard.ensure();
+  const child = spawn(
+    binary,
+    [
+      "--headless",
+      "--no-first-run",
+      "--bw-timezone=",
+      ...managedForkArgs(null, { softwareGpu: chromiumNeedsSoftwareGpu() }),
+      ...guardProxyLaunchArgs(guardPort),
+      "--remote-debugging-port=0",
+      `--user-data-dir=${profile}`,
+      "about:blank",
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  const exited = new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+    child.once("error", () => resolve());
+  });
+  const close = async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await exited;
+    await guard.close();
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  };
+  let stderr = "";
+  const cdpUrl = await new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`CDP endpoint did not start: ${stderr.slice(-400)}`)),
+      20_000,
+    );
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      const match = stderr.match(/DevTools listening on (ws:\/\/\S+)/);
+      if (match) {
+        clearTimeout(timer);
+        resolve(match[1]);
+      }
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(
+        new Error(`BetterChromium exited (${code}) before exposing CDP: ${stderr.slice(-400)}`),
+      );
+    });
+  }).catch(async (error) => {
+    await close();
+    throw error;
+  });
+  return {
+    cdpUrl,
+    close,
+  };
+}
+
+test("provider chain: a dead endpoint falls through to the managed fork", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    provider: [{ cdpUrl: "ws://127.0.0.1:1/unreachable" }, { provider: "managed" }],
+  });
+  try {
+    const result = await bw.run("return 42");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 42);
+    assert.ok(
+      result.warnings.some(
+        (warning) => /127\.0\.0\.1/.test(warning) && /failed to launch/i.test(warning),
+      ),
+      `expected a failed-candidate warning, got ${JSON.stringify(result.warnings)}`,
+    );
+  } finally {
+    await bw.close();
+  }
+});
+
+test("provider chain: a dead endpoint falls through to a real CDP endpoint", opts, async () => {
+  const cdp = await spawnCdpEndpoint();
+  try {
+    const bw = new BetterWright({
+      home: tempHome(),
+      headless: true,
+      provider: [{ cdpUrl: "ws://127.0.0.1:1/dead" }, { cdpUrl: cdp.cdpUrl }],
+    });
+    try {
+      const result = await bw.run(
+        "await page.setContent('<title>fallback landed</title>'); return page.title()",
+      );
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result, "fallback landed");
+      assert.ok(
+        result.warnings.some((warning) => /failed to launch/.test(warning)),
+        `expected a failed-candidate warning, got ${JSON.stringify(result.warnings)}`,
+      );
+      // The winner is remote, so its outside-the-guard warning must ride along.
+      assert.ok(
+        result.warnings.some((warning) => /guard proxy/i.test(warning)),
+        `expected the remote-egress warning, got ${JSON.stringify(result.warnings)}`,
+      );
+    } finally {
+      await bw.close();
+    }
+  } finally {
+    await cdp.close();
+  }
+});
+
+test("provider chain: the first healthy candidate wins and later entries are never tried", opts, async () => {
+  const cdp = await spawnCdpEndpoint();
+  try {
+    const bw = new BetterWright({
+      home: tempHome(),
+      headless: true,
+      provider: [{ cdpUrl: cdp.cdpUrl }, { cdpUrl: "ws://127.0.0.1:1/never-tried" }],
+    });
+    try {
+      const result = await bw.run("return 7");
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result, 7);
+      assert.ok(
+        !result.warnings.some((warning) => /127\.0\.0\.1:1/.test(warning)),
+        `the dead tail entry must not be attempted: ${JSON.stringify(result.warnings)}`,
+      );
+    } finally {
+      await bw.close();
+    }
+  } finally {
+    await cdp.close();
+  }
+});
+
+test("provider chain: a fully dead chain names every candidate it tried", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    provider: [
+      { cdpUrl: "ws://127.0.0.1:1/one" },
+      { cdpUrl: "ws://127.0.0.1:2/two" },
+    ],
+  });
+  try {
+    const result = await bw.run("return 1");
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Every browser provider in the chain failed/);
+    assert.match(result.error, /127\.0\.0\.1:1/);
+    assert.match(result.error, /127\.0\.0\.1:2/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("provider chain: configured fallbacks run after a failing default", opts, async () => {
+  const home = tempHome();
+  saveDefaultBrowser({ cdpUrl: "ws://127.0.0.1:1/default" }, home);
+  saveBrowserFallbacks([{ provider: "managed" }], home);
+  const bw = new BetterWright({ home, headless: true });
+  try {
+    const result = await bw.run("return 'via-fallback'");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, "via-fallback");
+    assert.ok(
+      result.warnings.some((warning) => /failed to launch/i.test(warning)),
+      `expected a failed-candidate warning, got ${JSON.stringify(result.warnings)}`,
+    );
+  } finally {
+    await bw.close();
+    removeBrowserHome(home);
+  }
+});
+
+test("provider chain: an unresolvable entry is skipped with a warning, not a veto", opts, async () => {
+  const bw = new BetterWright({
+    home: tempHome(),
+    headless: true,
+    provider: [
+      { executablePath: "/definitely/not/installed/chromium" },
+      { provider: "managed" },
+    ],
+  });
+  try {
+    const result = await bw.run("return 11");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 11);
+    assert.ok(
+      result.warnings.some(
+        (warning) => /provider\[0\] skipped/.test(warning) && /does not exist/.test(warning),
+      ),
+      `expected a skipped-candidate warning, got ${JSON.stringify(result.warnings)}`,
+    );
+  } finally {
+    await bw.close();
+  }
+});
+
+test("provider chain: malformed configured refs never expose credentials in envelopes", opts, async () => {
+  const home = tempHome();
+  const secret = "synthetic-fallback-secret";
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ browser: { fallbacks: [
+    { cdpUrl: `wss://bad host/connect?apiKey=${secret}` },
+    { provider: "managed", cdpUrl: `wss://host?apiKey=${secret}` },
+    {},
+  ] } }));
+  const bw = new BetterWright({ home, headless: true });
+  try {
+    const result = await bw.run("return 42");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 42);
+    assert.ok(result.warnings.some((warning) => /Skipped a browser fallback/.test(warning)));
+    assert.ok(result.warnings.some((warning) => /browser\.fallbacks\[1\]/.test(warning)));
+    assert.ok(result.warnings.some((warning) => /browser\.fallbacks\[2\]/.test(warning)));
+    assert.ok(!JSON.stringify(result).includes(secret), "a skipped fallback leaked its credential");
+  } finally {
+    await bw.close();
+    removeBrowserHome(home);
+  }
+});
+
+test("provider chain: failed guard setup disconnects the candidate and tries the next browser", opts, async () => {
+  const cdp = await spawnCdpEndpoint();
+  const sockets = new Set<WebSocket>();
+  const proxy = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  let bw: BetterWright | undefined;
+  let rejected = 0;
+  let disconnected = false;
+  try {
+    await once(proxy, "listening");
+    proxy.on("connection", (front) => {
+      const back = new WebSocket(cdp.cdpUrl);
+      for (const socket of [front, back]) {
+        sockets.add(socket);
+        socket.on("error", () => {});
+        socket.on("close", () => sockets.delete(socket));
+      }
+      const queue: string[] = [];
+      back.on("open", () => { for (const data of queue) back.send(data); });
+      front.on("message", (raw) => {
+        const data = raw.toString();
+        const message = JSON.parse(data);
+        // Playwright's initial download defaults use the root session. The
+        // worker's guard uses a separate browser CDP session, after connect.
+        if (message.method === "Browser.setDownloadBehavior" && message.sessionId) {
+          rejected++;
+          front.send(JSON.stringify({
+            id: message.id,
+            sessionId: message.sessionId,
+            error: { code: -32000, message: "Fixture download guard unavailable" },
+          }));
+          return;
+        }
+        if (back.readyState === WebSocket.OPEN) back.send(data);
+        else queue.push(data);
+      });
+      back.on("message", (raw) => {
+        if (front.readyState === WebSocket.OPEN) front.send(raw.toString());
+      });
+      front.on("close", () => { disconnected = true; back.close(); });
+      back.on("close", () => front.close());
+    });
+    // SAFETY: the listening event above completed a TCP bind, so address()
+    // is an AddressInfo rather than an unbound null or a Unix socket path.
+    const address = proxy.address() as AddressInfo;
+    bw = new BetterWright({
+      home: tempHome(),
+      headless: true,
+      provider: [{ cdpUrl: `ws://127.0.0.1:${address.port}` }, { provider: "managed" }],
+    });
+    const result = await bw.run("return 42");
+    assert.equal(rejected, 1, "the fixture must fail during guard setup, after connection");
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result, 42);
+    assert.equal(disconnected, true, "the rejected CDP connection must be closed before fallback completes");
+    assert.equal(result.profileMode, "persistent", "candidate cleanup must retain the profile lock");
+    assert.ok(result.warnings.some((warning) => /failed to launch:.*Fixture download guard unavailable/.test(warning)));
+    assert.ok(!result.warnings.some((warning) => /a remote browser/.test(warning)), "warnings must describe the winning browser");
+    const again = await bw.run("return 43");
+    assert.equal(again.ok, true, again.error);
+    assert.equal(again.result, 43);
+  } finally {
+    await bw?.close();
+    for (const socket of sockets) socket.terminate();
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    await cdp.close();
+  }
+});
+
+test("provider chain: exhaustion retains expansion and resolution skip diagnostics", opts, async () => {
+  const home = tempHome();
+  const missing = path.join(home, "missing-chromium");
+  for (const provider of [
+    [{ provider: "missing-review-provider" }, { executablePath: missing }, { cdpUrl: "ws://127.0.0.1:1/dead" }],
+    [{ provider: "missing-review-provider" }, { executablePath: missing }],
+  ]) {
+    const bw = new BetterWright({ home, headless: true, provider });
+    try {
+      const result = await bw.run("return 1");
+      assert.equal(result.ok, false);
+      const diagnostics = [result.error, ...result.warnings].join("\n");
+      assert.ok(diagnostics.includes("missing-review-provider"));
+      assert.ok(diagnostics.includes(missing));
+      if (provider.length === 3) assert.ok(diagnostics.includes("127.0.0.1:1"));
+    } finally {
+      await bw.close();
+    }
+  }
+  saveDefaultBrowser({ cdpUrl: "ws://127.0.0.1:1/default" }, home);
+  saveBrowserFallbacks([{ executablePath: missing }], home);
+  const configured = new BetterWright({ home, headless: true });
+  try {
+    const result = await configured.run("return 1");
+    assert.equal(result.ok, false);
+    assert.match(result.error, /127\.0\.0\.1:1/);
+    assert.ok(result.warnings.some((warning) => warning.includes(missing)));
+  } finally {
+    await configured.close();
+    removeBrowserHome(home);
+  }
+});
+
+test("provider chain: a failed release reports the session instead of starting another browser", opts, () => {
+  const home = tempHome();
+  const preload = path.join(home, "provider-fixture.mjs");
+  const probe = path.join(home, "release-probe.mjs");
+  const calls = path.join(home, "calls.jsonl");
+  const clientUrl = new URL("../../dist/src/client.js", import.meta.url).href;
+  // A trusted preload replaces only the worker's provider REST transport.
+  // Every request is answered locally; there are no cloud sessions or keys.
+  fs.writeFileSync(preload, `
+    import fs from "node:fs";
+    globalThis.fetch = async (url, init) => {
+      if (!String(url).startsWith("https://api.onkernel.com/browsers")) throw new Error("Unexpected fixture request");
+      fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({method:init.method}) + "\\n");
+      if (init.method === "POST") return Response.json({session_id:"fixture-session", cdp_ws_url:process.env.BW_TEST_CDP_URL});
+      return Response.json({message:"Stop failed; SYNTHETIC_API_KEY"}, {status:503});
+    };
+  `);
+  fs.writeFileSync(probe, `
+    import { BetterWright } from ${JSON.stringify(clientUrl)};
+    const bw = new BetterWright({home:${JSON.stringify(home)}, headless:true, adBlock:false,
+      provider:[{provider:"kernel",apiKey:"SYNTHETIC_API_KEY"},{provider:"managed"}]});
+    try { console.log(JSON.stringify(await bw.run("return 42"))); }
+    finally { await bw.close(); }
+  `);
+  try {
+    for (const endpoint of ["ws://127.0.0.1:1/dead", "not-a-url"]) {
+      fs.writeFileSync(calls, "");
+      const child = spawnSync(process.execPath, [probe], {
+        env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, BW_TEST_CDP_URL: endpoint },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+      assert.equal(child.status, 0, child.stderr);
+      const result = JSON.parse(child.stdout.trim());
+      assert.equal(result.ok, false, "an unconfirmed release must not fall through to managed");
+      assert.equal(result.errorCode, "BW_PROVIDER_CLEANUP_FAILED");
+      assert.match(result.error, /kernel session "fixture-session"/);
+      assert.match(result.error, /billing/);
+      assert.ok(!JSON.stringify(result).includes("SYNTHETIC_API_KEY"));
+      assert.deepEqual(fs.readFileSync(calls, "utf8").trim().split("\n").map((line) => JSON.parse(line).method), ["POST", "DELETE", "DELETE"]);
+    }
+  } finally {
+    removeBrowserHome(home);
+  }
 });

@@ -1,4 +1,5 @@
 import type { RunResult } from "./common.js";
+import type { CookieSyncResult } from "./public.js";
 
 export interface HostConnection {
   /** A capability-authenticated CDP endpoint exposing exactly one tab. */
@@ -15,6 +16,8 @@ export interface HostConnection {
 export interface HostTarget {
   /** Configure the dedicated session to use this SOCKS guard before exposing the tab. */
   connect(options: { proxyUrl: string }): Promise<HostConnection>;
-  /** Optional host input/focus lease; abort its signal to hand control back to the human. */
-  run?(operation: (signal?: AbortSignal) => Promise<RunResult>): Promise<RunResult>;
+  /** Optional lease around run() and syncCookies(); abort its signal to hand control
+   * back to the human. In-flight worker operations drain before the promise settles.
+   */
+  run?(operation: (signal?: AbortSignal) => Promise<RunResult | CookieSyncResult>): Promise<RunResult | CookieSyncResult>;
 }

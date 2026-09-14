@@ -53,7 +53,7 @@ whole path works by loading a real page.
 | [Launch identity](launch-identity.md) | The coherent locale/timezone/geo identity layer; launch modes and egress matching |
 | [Browser providers](browser-providers.md) | Managed fork, local executables, CDP endpoints, named cloud browsers, connected API keys, and `betterwright boxes` |
 | [Chromium fork](chromium-fork.md) | BetterWright's own Chromium build: farbling, discovery |
-| [Chromium fork patches](chromium-fork-patches.md) | What each source patch in the pinned Chromium 151 build changes, and why |
+| [Chromium fork patches](chromium-fork-patches.md) | What each source patch in the pinned Chromium 153 build changes, and why |
 | [Headed / headless](attach-mode.md) | Display modes over one persistent profile |
 | [Runtime performance](runtime-performance.md) | Measured scan and Linux renderer improvements, with reproducer benchmarks |
 

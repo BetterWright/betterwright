@@ -37,7 +37,7 @@ const READY_REPORT = {
   playwright_version: "1.61.1",
   playwright_pinned: "1.61.1",
   chromium_fork: "/x/fork/chrome",
-  chromium_fork_version: "151.0.7922.108",
+  chromium_fork_version: "153.0.8010.36",
   chromium_fork_error: null,
   software_gpu: false,
   browser_selection_reason: "native-available",
@@ -288,6 +288,19 @@ test("doctor checks translate a raw report into fixable lines", () => {
   assert.ok(failures.every((check) => check.fix));
 });
 
+test("doctor fails an invalid local default with repair guidance even when cloud is available", () => {
+  const home = tempHome();
+  fs.mkdirSync(path.join(home, "local-ai"));
+  fs.writeFileSync(path.join(home, "local-ai", "selection.json"), "broken");
+  const env = { BETTERWRIGHT_HOME: home, OPENAI_API_KEY: "configured-cloud-key" };
+  const readiness = modelReadiness({ env, auth: {} });
+  assert.match(readiness.localError, /invalid/);
+  assert.ok(!readiness.sources.some(source => source.startsWith("local")));
+  const check = doctorChecks(READY_REPORT, { home, env }).find(row => row.label === "Model backends");
+  assert.equal(check.status, "fail"); assert.match(check.fix, /betterwright --local/);
+  assert.equal(preferredModelId({ env, auth: {} }).model, "local");
+});
+
 test("doctor surfaces the SwiftShader fallback on GPU-less Linux", () => {
   const checks = doctorChecks({
     ...READY_REPORT,
@@ -298,6 +311,21 @@ test("doctor surfaces the SwiftShader fallback on GPU-less Linux", () => {
   assert.equal(native.status, "warn");
   assert.match(native.detail, /SwiftShader/);
   assert.match(native.fix, /render device/);
+});
+
+test("doctor lists fallbacks and skipped notes without a configured default", () => {
+  const checks = doctorChecks({
+    ...READY_REPORT,
+    provider: null,
+    provider_chain: ["managed BetterChromium fork", "ws://127.0.0.1:1/dead"],
+    provider_notes: ["Skipped a browser fallback (executablePath): missing binary"],
+  });
+  const fallbacks = checks.filter((check) => check.label === "Fallbacks");
+  assert.equal(fallbacks.length, 2);
+  assert.equal(fallbacks[0].status, "ok");
+  assert.match(fallbacks[0].detail, /ws:\/\/127\.0\.0\.1:1\/dead/);
+  assert.equal(fallbacks[1].status, "warn");
+  assert.match(fallbacks[1].detail, /Skipped a browser fallback/);
 });
 
 test("doctor explains provider browsers and the missing artifact", () => {

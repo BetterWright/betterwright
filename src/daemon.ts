@@ -320,7 +320,8 @@ interface NormalizedDaemonBrowser {
   headedInvisible: boolean;
   platform: "macos" | "windows" | "linux" | null;
   stealthRuntimeFix: boolean;
-  provider: DaemonProviderConfig | null;
+  provider: DaemonProviderConfig | DaemonProviderConfig[] | null;
+  providerChainNotes: string[];
 }
 
 // `policy` and `browser` are always present in a finished config; they are
@@ -377,6 +378,16 @@ export function normalizeDaemonConfig(config: any = {}): NormalizedDaemonConfig 
     platform: identityPlatform(untrustedField(browser, "platform")),
     stealthRuntimeFix: untrustedField(browser, "stealthRuntimeFix") === true,
     provider: normalizeDaemonProvider(untrustedField(browser, "provider")),
+    // Skipped-candidate lines the launcher already computed (the persisted
+    // chain's dead refs). Part of the signature: they reflect the effective
+    // configuration, and a daemon built on different notes is a different
+    // browser.
+    providerChainNotes: (() => {
+      const notes = untrustedField(browser, "providerChainNotes");
+      return (Array.isArray(notes) ? notes : [])
+        .map((note) => String(note))
+        .filter((note) => note.trim());
+    })(),
   };
   // Include both modes in the signature: a pre-blocker daemon must not be
   // silently reused when the default now requires blocking.
@@ -395,8 +406,20 @@ type DaemonProviderConfig = Partial<
   >
 >;
 
-function normalizeDaemonProvider(provider: UntrustedValue): DaemonProviderConfig | null {
+function normalizeDaemonProvider(
+  provider: UntrustedValue,
+): DaemonProviderConfig | DaemonProviderConfig[] | null {
   if (provider == null || provider === false) return null;
+  // An ordered fallback chain: every element normalizes like a single
+  // provider so the signature covers whichever candidate a launch lands on —
+  // a client asking for [kernel, managed] must not reuse a daemon on
+  // [browserbase, managed].
+  if (Array.isArray(provider)) {
+    const chain = provider
+      .map((entry) => normalizeDaemonProvider(entry))
+      .filter((entry): entry is DaemonProviderConfig => Boolean(entry));
+    return chain.length ? chain : null;
+  }
   const record = isString(provider) ? { provider } : provider;
   if (!isObjectPayload(record)) return null;
   const normalized: DaemonProviderConfig = {};
@@ -445,9 +468,20 @@ export async function createBrowserFromDaemonConfig(config) {
     // crossed the daemon boundary as parsed JSON and BetterWright forwards the
     // record opaquely to the worker, which validates provider configs at
     // launch — nothing on this side relies on the asserted field types.
-    options.provider = normalized.browser.provider as BrowserProviderOptions;
+    options.provider = normalized.browser.provider as BrowserProviderOptions | BrowserProviderOptions[];
   }
-  return new BetterWright(options);
+  const browser = new BetterWright(options);
+  // Notes the CLI computed while resolving the persisted chain (dead fallback
+  // refs skipped at expansion). The explicit provider option can't reproduce
+  // them, so they ride the config and prepend whatever the daemon's own
+  // expansion derives — daemon and in-process envelopes stay identical.
+  if (normalized.browser.providerChainNotes.length) {
+    browser.providerChainNotes = [
+      ...normalized.browser.providerChainNotes,
+      ...browser.providerChainNotes,
+    ];
+  }
+  return browser;
 }
 
 // BetterWright methods a client may invoke, and where the session name pins
@@ -1148,21 +1182,37 @@ export async function startSessionDaemon(options: SessionDaemonOptions = {}) {
 }
 
 /**
- * Entry point for the hidden `betterwright __daemon` command: parse the
- * base64 config from argv, start the daemon, and stay alive until the empty
- * reaper or a signal ends the process.
+ * The daemon's JSON config from its stdin pipe (exported for tests).
+ * Decoding happens at the stream: a multi-byte character split across chunks
+ * would otherwise corrupt into replacement characters when each Buffer is
+ * stringified on its own. An empty payload means defaults.
  */
-export async function runSessionDaemon(argv = process.argv) {
-  process.title = "betterwright-daemon";
-  const flagIndex = argv.indexOf("--config");
-  let config: UntrustedValue = {};
-  if (flagIndex !== -1 && argv[flagIndex + 1]) {
-    try {
-      config = JSON.parse(Buffer.from(argv[flagIndex + 1], "base64url").toString("utf8"));
-    } catch {
-      process.stderr.write("Invalid --config payload; starting with defaults.\n");
-    }
+export async function daemonConfigFromStdin(stream) {
+  stream.setEncoding("utf8");
+  let payload = "";
+  for await (const chunk of stream) payload += chunk;
+  if (!payload.trim()) return {};
+  try {
+    return JSON.parse(payload);
+  } catch {
+    process.stderr.write("Invalid daemon config on stdin; starting with defaults.\n");
+    return {};
   }
+}
+
+/**
+ * Entry point for the hidden `betterwright __daemon` command: read the JSON
+ * config from stdin (written by spawnDaemon — never argv, where credentials
+ * in provider refs would be visible to any same-user process), start the
+ * daemon, and stay alive until the empty reaper or a signal ends it.
+ */
+export async function runSessionDaemon() {
+  process.title = "betterwright-daemon";
+  // A TTY stdin means a manual invocation: no config is coming, so start with
+  // defaults instead of waiting on input that never arrives.
+  const config: UntrustedValue = process.stdin.isTTY
+    ? {}
+    : await daemonConfigFromStdin(process.stdin);
   let daemon;
   try {
     daemon = await startSessionDaemon({ config });
