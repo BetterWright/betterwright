@@ -110,15 +110,26 @@ export function parseNvidiaGpus(output: string): LocalGpu[] {
   });
 }
 export function parseLlamaDevices(output: string, native: LocalGpu[] = []): LocalGpu[] {
-  return output.split(/\r?\n/).flatMap(line => {
+  const devices = output.split(/\r?\n/).flatMap(line => {
     const match = line.match(/^\s*((?:MTL|Metal|Vulkan|CUDA|ROCm|HIP)\d+):\s+(.+?)\s+\((\d+)\s+MiB,\s*(\d+)\s+MiB free\)/i);
     if (!match) return [];
     const [, id, name, total, free] = match;
-    const normalize = (value: string) => value.toLowerCase().replace(/\s+oam$/, "");
-    const physical = native.find(g => normalize(g.name) === normalize(name));
     const backend = /^(MTL|Metal)/i.test(id) ? "metal" : /^(ROCm|HIP)/i.test(id) ? "rocm" : /^CUDA/i.test(id) ? "cuda" : "vulkan";
     return [{ id, name, memory: Number(total) * 1024 ** 2, freeMemory: Number(free) * 1024 ** 2,
-      backend, vendor: vendor(name), compute: physical?.compute || 0, uuid: physical?.uuid || "", gfx: physical?.gfx } satisfies LocalGpu];
+      backend, vendor: backend === "rocm" ? "amd" : vendor(name), compute: 0, uuid: "" } satisfies LocalGpu];
+  });
+  return devices.map(device => {
+    const normalize = (value: string) => value.toLowerCase().replace(/\s+oam$/, "");
+    const matches = native.filter(g => normalize(g.name) === normalize(device.name));
+    const amd = native.filter(g => g.vendor === "amd");
+    // Kernel product names are optional. A sole ROCm device with matching
+    // capacity can use the sole AMD kernel record; multiple devices stay
+    // ambiguous instead of assuming DRM and HIP enumeration orders agree.
+    const singleAmd = device.backend === "rocm" && amd.length === 1 && devices.filter(g => g.backend === "rocm").length === 1 &&
+      Math.abs(amd[0].memory - device.memory) <= Math.max(64 * 1024 ** 2, amd[0].memory * 0.01) ? amd[0] : null;
+    const physical = matches.length === 1 ? matches[0] : singleAmd;
+    const commonGfx = device.backend === "rocm" && matches.length > 1 && matches.every(gpu => gpu.gfx && gpu.gfx === matches[0].gfx) ? matches[0].gfx : undefined;
+    return { ...device, compute: physical?.compute || 0, uuid: physical?.uuid || "", gfx: physical?.gfx || commonGfx };
   });
 }
 /** Kernel-reported VRAM and PCI topology avoid the 32-bit AdapterRAM limit and

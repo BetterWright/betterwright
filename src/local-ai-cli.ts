@@ -99,12 +99,14 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
         const preferred = provisional?.plan.gpu;
         const amd = preferred?.vendor === "amd" && preferred.gfx && LOCAL_ROCM_ARCHIVES[preferred.gfx] ? preferred : null;
         const backends = hardware.platform === "darwin" ? ["metal"] : preferred?.vendor === "nvidia" && preferred.compute >= 7.5 ? ["cuda", "vulkan"] : hardware.platform === "linux" && amd ? ["rocm", "vulkan"] : ["vulkan"];
-        let devices = "";
+        let devices: ReturnType<typeof parseLlamaDevices> = [];
         for (const [index, backend] of backends.entries()) {
           try {
             const executable = await installLlama(hardware.platform, backend, home, log, amd?.gfx);
-            devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend, amd?.gfx));
-            if (!parseLlamaDevices(devices, native).length) throw new Error(`The runtime found no accelerated GPU. Check your GPU driver; no model weights were downloaded. ${devices.trim().slice(0, 1800)}`);
+            const output = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend, amd?.gfx));
+            devices = parseLlamaDevices(output, native);
+            if (backend === "rocm") devices = devices.filter(gpu => gpu.backend === "rocm" && gpu.gfx === amd?.gfx && LOCAL_ROCM_ARCHIVES[gpu.gfx || ""]);
+            if (!devices.length) throw new Error(`The runtime found no accelerated GPU with matching architecture information. Check your GPU driver; no model weights were downloaded. ${output.trim().slice(0, 1800)}`);
             break;
           } catch (error) {
             log(`${backend.toUpperCase()} runtime check failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -112,7 +114,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
             log(`Checking ${backends[index + 1]} acceleration as a fallback.`);
           }
         }
-        hardware = accountForManagedWeights({ ...hardware, gpus: parseLlamaDevices(devices, native) });
+        hardware = accountForManagedWeights({ ...hardware, gpus: devices });
         if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working GPU driver and rerun betterwright --local; no model weights were downloaded.");
       }
       const recommendation = recommendLocalModel(hardware, options);

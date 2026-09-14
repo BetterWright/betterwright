@@ -532,6 +532,11 @@ test("AMD kernel detection pairs accessible PCI nodes with VRAM and ROCm archite
   assert.equal(native.length, 1); assert.equal(native[0].memory, 192 * GIB); assert.equal(native[0].freeMemory, 190 * GIB); assert.equal(native[0].gfx, "gfx942");
   const runtime = parseLlamaDevices("ROCm0: AMD Instinct MI300X (196592 MiB, 196054 MiB free)", native);
   assert.equal(runtime[0].gfx, "gfx942"); assert.equal(runtime[0].backend, "rocm");
+  assert.equal(parseLlamaDevices("ROCm0: AMD Instinct MI300X (196592 MiB, 196054 MiB free)", [...native, { ...native[0], id: "ROCm1" }])[0].gfx, "gfx942");
+  const unnamed = native.map(gpu => ({ ...gpu, name: "AMD GPU" }));
+  assert.equal(parseLlamaDevices("ROCm0: AMD Instinct MI300X (196592 MiB, 196054 MiB free)", unnamed)[0].gfx, "gfx942");
+  assert.equal(parseLlamaDevices("ROCm0: AMD Instinct MI300X (196592 MiB, 196054 MiB free)", [...unnamed, { ...unnamed[0], id: "ROCm1" }])[0].gfx, undefined);
+  assert.equal(parseLlamaDevices("ROCm0: AMD Instinct MI300X (98304 MiB, 98000 MiB free)", unnamed)[0].gfx, undefined);
   const plan = recommendLocalModel({ platform: "linux", arch: "x64", memory: 256 * GIB, gpus: runtime }).plan;
   assert.deepEqual(decodeLocalPlan(plan), plan); assert.equal(plan.modelId, "nex-mini");
   assert.throws(() => decodeLocalPlan({ ...plan, gpu: { ...plan.gpu, gfx: "../../invalid" } }), /Invalid/);
@@ -556,6 +561,22 @@ test("MI300X setup selects private ROCm before downloading model weights", async
   });
   assert.equal(calls[0], "rocm:gfx942"); assert.equal(result.plan.gpu.backend, "rocm"); assert.equal(readLocalPlan(home)?.gpu.gfx, "gfx942");
   assert.match(runtimeDirectory(result.plan, home), /linuxRocm$/);
+});
+
+test("ambiguous AMD runtime names try Vulkan before downloading weights", async () => {
+  const home = makeTempDir("bw-local-rocm-name-fallback-"), calls: string[] = [];
+  const host = hardware(256, 192, "amd");
+  Object.assign(host.gpus[0], { id: "ROCm0", name: "AMD GPU", backend: "rocm", gfx: "gfx942" });
+  host.gpus.push({ ...host.gpus[0], id: "ROCm1" });
+  const result = await setupLocalAI({}, home, quiet, {
+    detect: async () => host, status: async () => ({ running: false }), disk: async () => {},
+    installLlama: async (_platform, backend) => { calls.push(backend); return backend; },
+    probe: async executable => `${executable === "rocm" ? "ROCm0" : "Vulkan0"}: AMD Instinct MI300X (196592 MiB, 196054 MiB free)`,
+    installRuntime: async plan => { assert.equal(plan.gpu.backend, "vulkan"); return "vulkan"; },
+    download: async () => { calls.push("weights"); return "file"; },
+    connect: async () => ({ model: "local", apiKey: "fake", baseURL: "http://127.0.0.1:1/v1" }), verify: async () => {},
+  });
+  assert.deepEqual(calls.slice(0, 2), ["rocm", "vulkan"]); assert.equal(calls[2], "weights"); assert.equal(result.plan.gpu.backend, "vulkan");
 });
 
 test("startup timeout terminates a suspended supervisor before it can publish ownership", { skip: process.platform === "win32" }, async () => {
