@@ -67,7 +67,9 @@ and awaits host-lease teardown. An abort before import returns
 `BW_ABORTED` with `effectMayHaveCommitted: false`. An abort after dispatch drains
 the worker before settling and sets `effectMayHaveCommitted: true`, because a
 cookie write may already have reached the browser. If draining fails, the code
-is `BW_ABORT_TEARDOWN_FAILED`; inspect the host store before retrying.
+is `BW_ABORT_TEARDOWN_FAILED`; inspect the host store before retrying. Teardown
+failures survive worker exit and prevent this client from attaching again.
+Confirm the old host lease is released before creating a fresh client.
 
 On macOS, a permission-denied result requires Full Disk Access for the app
 running BetterWright. Restart that app after granting access, then retry.
