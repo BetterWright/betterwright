@@ -95,8 +95,9 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     const provisional = native.some(g => g.memory > 8 * GIB) ? recommendLocalModel(hardware, options) : null;
     if (provisional?.plan.runtime !== "vllm") {
       log("Checking the accelerated runtime before downloading model weights…");
-      const amd = native.find(g => g.vendor === "amd" && g.gfx && LOCAL_ROCM_ARCHIVES[g.gfx]);
-      const backends = hardware.platform === "darwin" ? ["metal"] : native.some(g => g.vendor === "nvidia" && g.compute >= 7.5) ? ["cuda", "vulkan"] : hardware.platform === "linux" && amd ? ["rocm", "vulkan"] : ["vulkan"];
+      const preferred = provisional?.plan.gpu;
+      const amd = preferred?.vendor === "amd" && preferred.gfx && LOCAL_ROCM_ARCHIVES[preferred.gfx] ? preferred : null;
+      const backends = hardware.platform === "darwin" ? ["metal"] : preferred?.vendor === "nvidia" && preferred.compute >= 7.5 ? ["cuda", "vulkan"] : hardware.platform === "linux" && amd ? ["rocm", "vulkan"] : ["vulkan"];
       let devices = "";
       for (const [index, backend] of backends.entries()) {
         try {
@@ -127,6 +128,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     const updateRecommendation = () => {
       const oldDraft = recommendation.plan.acceleration === "dflash2";
       recommendation.reserveBytes += ((plan.acceleration === "dflash2" ? 1 : 0) - (oldDraft ? 1 : 0)) * 2 * GIB;
+      recommendation.acceleratorReserveBytes += ((plan.acceleration === "dflash2" ? 1 : 0) - (oldDraft ? 1 : 0)) * 2 * GIB;
       recommendation.plan = plan;
       recommendation.downloadBytes = localInstallArtifacts(plan, home).reduce((sum, item) => sum + item.artifact.bytes, 0);
       if (plan.accelerationTuned) recommendation.reason = `The saved speed check on this hardware selected ${plan.acceleration}. Model quality and the reserved memory budget are unchanged.`;
@@ -139,7 +141,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
     log(`Model download: ${(recommendation.downloadBytes / GIB).toFixed(2)} GiB including vision support`);
     log(recommendation.reason);
     if (running.running && running.planId !== localPlanId(plan)) throw new Error("Another local model is running. Run betterwright local stop, then repeat setup to change models.");
-    if (!running.running && plan.gpu.freeMemory < recommendation.downloadBytes + 2 * GIB) throw new Error("There is not enough free accelerator memory for the selected model and context. Close GPU-heavy applications and retry; the recommendation will not silently drop to a lower-quality model.");
+    if (!running.running && plan.gpu.freeMemory < recommendation.downloadBytes + recommendation.acceleratorReserveBytes) throw new Error("There is not enough free accelerator memory for the selected model and context. Close GPU-heavy applications and retry; the recommendation will not silently drop to a lower-quality model.");
     await (dependencies.disk || checkLocalDisk)(plan, home);
     const executable = await installRuntime(plan, home, log);
     if (plan.runtime === "vllm") {

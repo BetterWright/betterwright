@@ -139,6 +139,43 @@ export function localServerArguments(plan: LocalPlan, port: number, home = defau
     ...(plan.acceleration === "mtp" ? ["--spec-type", "draft-mtp", "--spec-draft-n-max", "3", "--spec-draft-device", plan.gpu.id, "--spec-draft-ngl", "999"] : []),
     "--chat-template-kwargs", JSON.stringify(plan.modelId === "nex-mini" ? { reasoning_effort: "medium" } : { enable_thinking: false })];
 }
+/** A failed startup still owns its unpublished supervisor. TERM followed by
+ * CONT lets a suspended supervisor run its child cleanup; force termination
+ * remains limited to this launch and its matching published child group. */
+async function cancelLocalLaunch(daemon: ChildProcess, instance: string, home: string) {
+  const pid = daemon.pid;
+  if (!pid) return;
+  const matchingService = () => {
+    const service = readService(home);
+    return service?.supervisorPid === pid && (!instance || service.supervisorInstance === instance) ? service : null;
+  };
+  let owned = matchingService();
+  const signal = (name: NodeJS.Signals) => {
+    if (daemon.exitCode !== null || daemon.signalCode !== null || localProcessIsGone(pid, instance)) return;
+    try { daemon.kill(name); } catch (error) { if (error?.code !== "ESRCH") throw error; }
+  };
+  signal("SIGTERM");
+  if (process.platform !== "win32") signal("SIGCONT");
+  for (let attempt = 0; attempt < 60; attempt++) {
+    owned ||= matchingService();
+    if (daemon.exitCode !== null || daemon.signalCode !== null) break;
+    await pause(100);
+  }
+  owned ||= matchingService();
+  if (owned && !childGroupIsGone(owned)) {
+    try { process.kill(process.platform === "win32" ? owned.childPid : -owned.childPid, "SIGKILL"); }
+    catch (error) { if (error?.code !== "ESRCH") throw error; }
+  }
+  signal("SIGKILL");
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if ((daemon.exitCode !== null || daemon.signalCode !== null) && (!owned || ownersAreGone(owned))) {
+      if (owned) removeService(owned, home);
+      return;
+    }
+    await pause(100);
+  }
+  throw new Error("The failed local startup is still shutting down. Its ownership was retained; check local-ai/runtime.log before retrying.");
+}
 export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), timeoutMs = 10 * 60_000, verify: typeof verifyLocalArtifact = verifyLocalArtifact, launch: typeof spawn = spawn): Promise<LocalConnection> {
   if (plan.platform !== process.platform || plan.arch !== process.arch) throw new Error("This local AI installation belongs to different hardware. Run betterwright --local on this machine.");
   const planId = localPlanId(plan);
@@ -162,6 +199,7 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
     writeLocalJson(path.join(localRoot(home), "plans", `${planId}.json`), plan);
     const current = await localServiceStatus(home);
     let daemon: ChildProcess | null = null;
+    let daemonInstance = "";
     let launchFailure = "";
     let logOffset = 0;
     if (!current.running) {
@@ -173,22 +211,28 @@ export async function ensureLocalService(plan: LocalPlan, home = defaultHome(), 
           env: { ...process.env, BETTERWRIGHT_HOME: home }, detached: true, windowsHide: true, stdio: ["ignore", log, log],
         });
         daemon.on("error", error => { launchFailure = error.message; });
+        daemonInstance = localProcessInstance(daemon.pid || 0) || "";
         daemon.unref();
       } finally { fs.closeSync(log); }
     }
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (launchFailure) throw new Error(`Cannot start the local supervisor: ${launchFailure}`);
-      if (daemon && (daemon.exitCode !== null || daemon.signalCode !== null)) throw startupFailure(home, logOffset);
-      const service = readService(home);
-      if (service?.planId === planId) {
-        const status = await control(service, "status").catch(() => null);
-        if (status && untrustedField(status, "ready") === true) return { baseURL: `http://127.0.0.1:${service.port}/v1`, apiKey: service.token, model: LOCAL_MODEL_ALIAS, started: Boolean(daemon) };
+    try {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (launchFailure) throw new Error(`Cannot start the local supervisor: ${launchFailure}`);
+        if (daemon && (daemon.exitCode !== null || daemon.signalCode !== null)) throw startupFailure(home, logOffset);
+        const service = readService(home);
+        if (service?.planId === planId) {
+          const status = await control(service, "status").catch(() => null);
+          if (status && untrustedField(status, "ready") === true) return { baseURL: `http://127.0.0.1:${service.port}/v1`, apiKey: service.token, model: LOCAL_MODEL_ALIAS, started: Boolean(daemon) };
+        }
+        await pause(500);
       }
-      await pause(500);
+      throw new Error(`Local model startup timed out. Check ${path.join(localRoot(home), "runtime.log")}.`);
+    } catch (error) {
+      if (daemon) await cancelLocalLaunch(daemon, daemonInstance, home);
+      else await stopLocalServiceUnlocked(home);
+      throw error;
     }
-    await stopLocalServiceUnlocked(home);
-    throw new Error(`Local model startup timed out. Check ${path.join(localRoot(home), "runtime.log")}.`);
   });
 }
 export async function configuredLocalConnection(home = defaultHome()) {

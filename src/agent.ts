@@ -1845,7 +1845,7 @@ async function discoverModelCandidates(model, options: any = {}) {
 export async function resolveModelSelection(model, modelOptions: any = {}) {
   if (isAgentModel(model)) return model;
   const selector = String(model || "").trim();
-  if (["local", "local/local"].includes(selector) && !modelOptions.baseURL) {
+  if (["local", "local/local"].includes(selector.toLowerCase()) && !modelOptions.baseURL) {
     const { configuredLocalConnection } = await import("./local-ai-service.js");
     const { plan, connection } = await configuredLocalConnection();
     return endpointModel({ ...modelOptions, ...connection, source: "custom", protocol: "chat",

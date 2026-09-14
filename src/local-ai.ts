@@ -51,6 +51,7 @@ export interface LocalRecommendation {
   model: LocalModel;
   downloadBytes: number;
   reserveBytes: number;
+  acceleratorReserveBytes: number;
   reason: string;
 }
 export type LocalProbe = (command: string, args: string[]) => Promise<string>;
@@ -172,7 +173,7 @@ export function recommendLocalModel(hardware: LocalHardware, options: LocalSetup
     try {
       const candidate = recommendOnGpu({ ...hardware, gpus: [gpu] }, options);
       first ||= candidate;
-      if (gpu.freeMemory >= candidate.downloadBytes + 2 * GIB) return candidate;
+      if (gpu.freeMemory >= candidate.downloadBytes + candidate.acceleratorReserveBytes) return candidate;
     } catch (error) { failure ||= error; }
   }
   // Preserve a useful headroom error when all otherwise suitable GPUs are
@@ -230,6 +231,7 @@ function recommendOnGpu(hardware: LocalHardware, options: LocalSetupOptions): Lo
   const plan: LocalPlan = { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform: hardware.platform,
     arch: hardware.arch, gpu, context, acceleration, preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced" };
   return { plan, model, downloadBytes: modelBytes + (acceleration === "dflash2" ? draftBytes : 0), reserveBytes: reserve + (acceleration === "dflash2" ? 2 * GIB : 0),
+    acceleratorReserveBytes: gpu.memory - budget + (acceleration === "dflash2" ? 2 * GIB : 0),
     reason: `${gpu.name}: ${model.quant} preserves quality while reserving ${(reserve / GIB).toFixed(1)} GiB for context, runtime${apple ? ", browser and macOS" : " workspace"}. ${acceleration === "dflash2" ? "DFlash2 with a pinned BF16 drafter and 2 GiB extra workspace." : acceleration === "mtp" ? "Native MTP heads enabled; no separate draft download." : "Ordinary decoding selected."}`.trim() };
 }
 

@@ -524,3 +524,47 @@ test("MI300X setup selects private ROCm before downloading model weights", async
   assert.equal(calls[0], "rocm:gfx942"); assert.equal(result.plan.gpu.backend, "rocm"); assert.equal(readLocalPlan(home)?.gpu.gfx, "gfx942");
   assert.match(runtimeDirectory(result.plan, home), /linuxRocm$/);
 });
+
+test("startup timeout terminates a suspended supervisor before it can publish ownership", { skip: process.platform === "win32" }, async () => {
+  const home = makeTempDir("bw-local-suspended-start-");
+  const plan = { ...recommendLocalModel(hardware()).plan, platform: process.platform, arch: process.arch };
+  const runtime = runtimeDirectory(plan, home), marker = path.join(home, "resumed");
+  fs.mkdirSync(runtime, { recursive: true }); fs.writeFileSync(path.join(runtime, "llama-server"), "fixture");
+  let child: ReturnType<typeof spawn> | null = null;
+  try {
+    await assert.rejects(ensureLocalService(plan, home, 1000, async () => true, (_command, _args, options) => {
+      child = spawn(process.execPath, ["--eval", "process.kill(process.pid, 'SIGSTOP'); require('node:fs').writeFileSync(process.argv[1], 'orphan'); setInterval(()=>{},1000)", marker], options);
+      return child;
+    }), /startup timed out/);
+    assert.ok(child && (child.exitCode !== null || child.signalCode !== null));
+    assert.ok(!fs.existsSync(marker)); assert.ok(!fs.existsSync(path.join(localRoot(home), "service.json")));
+    assert.ok(!fs.existsSync(path.join(localRoot(home), "lifecycle.lock")));
+  } finally { if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }
+});
+
+test("free VRAM must include the planned workspace without double-counting macOS", async () => {
+  const host = hardware(32, 16, "amd"), home = makeTempDir("bw-local-busy-gpu-");
+  host.gpus[0].freeMemory = 10.5 * GIB;
+  const candidate = recommendLocalModel(host);
+  assert.ok(candidate.downloadBytes + 2 * GIB < host.gpus[0].freeMemory);
+  assert.ok(candidate.downloadBytes + candidate.acceleratorReserveBytes > host.gpus[0].freeMemory);
+  let downloaded = false;
+  await assert.rejects(setupLocalAI({}, home, quiet, {
+    detect: async () => host, status: async () => ({ running: false }), installLlama: async () => "vulkan",
+    probe: async () => "Vulkan0: amd test GPU (16384 MiB, 10752 MiB free)", download: async () => { downloaded = true; return "file"; },
+  }), /not enough free accelerator memory/);
+  assert.equal(downloaded, false);
+  const apple = recommendLocalModel(hardware(16, 12));
+  assert.equal(apple.reserveBytes, 6 * GIB); assert.equal(apple.acceleratorReserveBytes, 2 * GIB);
+  assert.ok(apple.downloadBytes + apple.acceleratorReserveBytes <= 12 * GIB);
+});
+
+test("mixed-case local aliases take the managed setup path", () => {
+  const home = makeTempDir("bw-local-uppercase-");
+  for (const selector of ["LOCAL", "LoCaL/LOCAL"]) {
+    const result = spawnSync(process.execPath, ["--eval", `import {resolveModelSelection} from ${JSON.stringify(path.resolve("dist/src/agent.js"))}; try { await resolveModelSelection(${JSON.stringify(selector)}); } catch (error) { console.log(error.message); }`], {
+      env: { ...process.env, BETTERWRIGHT_HOME: home }, encoding: "utf8", timeout: 10000,
+    });
+    assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /No local model is configured/);
+  }
+});
