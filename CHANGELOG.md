@@ -23,7 +23,8 @@ Releases before 1.1.3 predate this file; their notes live on the
   provider endpoint on host-owned targets; consent is only required for real
   remote providers, and results report `target: "host"`.
 - Host-target `syncCookies` honors human takeover before extraction and import.
-  Cancellation after dispatch drains the worker and reports whether a cookie
+  Every cancellation drains the worker and releases its host lease. Cancellation
+  after dispatch reports whether a cookie
   write may already have committed.
 
 ## [2.8.0] - 2026-09-13

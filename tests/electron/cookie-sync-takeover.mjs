@@ -23,9 +23,17 @@ async function check(phase) {
   const contents = window.webContents;
   await contents.loadURL("about:blank");
   const takeover = new AbortController();
+  const target = createElectronHostTarget({ contents, signal: takeover.signal, cookieImport: true });
+  let connection;
+  let connectionCloses = 0;
   const browser = new BetterWright({
     home: path.join(home, phase), vault: false, adBlock: false,
-    hostTarget: createElectronHostTarget({ contents, signal: takeover.signal, cookieImport: true }),
+    hostTarget: { ...target, async connect(options) {
+      connection = await target.connect(options);
+      const close = connection.close.bind(connection);
+      connection.close = () => { connectionCloses++; return close(); };
+      return connection;
+    } },
   });
   let release = () => {};
   const sendCommand = contents.debugger.sendCommand.bind(contents.debugger);
@@ -63,6 +71,11 @@ async function check(phase) {
     assert.equal(cancelled.errorCode, "BW_ABORTED", JSON.stringify(cancelled));
     assert.equal(cancelled.effectMayHaveCommitted, phase === "dispatch");
     assert.equal(contents.isDestroyed(), false);
+    assert.equal(connection.closed, true, "takeover retained the old CDP lease");
+    assert.equal(connectionCloses, 1, "host teardown ran more than once");
+    assert.equal(browser._process, null, "takeover retained the worker");
+    const reclaimed = await createElectronHostTarget({ contents }).connect({ proxyUrl: "socks5://127.0.0.1:1" });
+    await reclaimed.close();
     assert.equal((await contents.session.cookies.get({ name: "after_takeover" })).length, 0);
     if (phase === "dispatch") assert.equal((await contents.session.cookies.get({ name: "during_dispatch" })).length, 1);
 

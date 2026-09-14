@@ -328,6 +328,7 @@ export class BetterWright {
   declare hostTarget: HostTarget | undefined;
   declare hostUploadFiles: readonly string[];
   private readonly hostConnections = new WeakMap<object, HostConnection>();
+  private readonly hostConnectionClosures = new WeakMap<HostConnection, Promise<void>>();
   declare headless: boolean;
   declare searchMinIntervalMs: number;
   declare publicSearchPolicy: "block" | "allow";
@@ -805,7 +806,8 @@ export class BetterWright {
           }
         } finally {
           clearTimeout(drainTimer);
-          await this.hostConnections.get(child)?.close().catch(() => {});
+          const connection = this.hostConnections.get(child);
+          if (connection) await this._closeHostConnection(connection).catch(() => {});
           this.hostConnections.delete(child);
           await this._resetVaultRedactionForWorker(child);
           resolveWorkerClose();
@@ -936,6 +938,15 @@ export class BetterWright {
     );
   }
 
+  _closeHostConnection(connection: HostConnection): Promise<void> {
+    let closing = this.hostConnectionClosures.get(connection);
+    if (!closing) {
+      closing = Promise.resolve().then(() => connection.close());
+      this.hostConnectionClosures.set(connection, closing);
+    }
+    return closing;
+  }
+
   async _serviceRpc(message, child = this._process) {
     const requestId = String(message.requestId || "");
     let response;
@@ -952,7 +963,7 @@ export class BetterWright {
         // run may reconnect, but only after the previous lease has drained.
         const previous = this.hostConnections.get(child);
         if (previous) {
-          await previous.close();
+          await this._closeHostConnection(previous);
           this.hostConnections.delete(child);
         }
         if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
@@ -960,7 +971,7 @@ export class BetterWright {
         }
         const connection = await this.hostTarget.connect({ proxyUrl });
         if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
-          await connection.close();
+          await this._closeHostConnection(connection);
           throw new Error("Host worker stopped during connection.");
         }
         this.hostConnections.set(child, connection);
@@ -1246,7 +1257,7 @@ export class BetterWright {
   }
 
   async _syncCookiesNow(options, signal?: AbortSignal) {
-    if (signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
+    if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
     if (this._closed) {
       return { ok: false, error: "This browser has been closed." };
     }
@@ -1270,7 +1281,7 @@ export class BetterWright {
     try {
       extracted = await this._extractCookieSync(normalized);
     } catch (error) {
-      if (signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
+      if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
       return {
         ok: false,
         error: "Cookie Sync could not read the selected local browser profile.",
@@ -1281,7 +1292,7 @@ export class BetterWright {
     }
     // Extraction may have yielded while the human took control. Never prepare
     // or import the selected cookies after that lease has been revoked.
-    if (signal?.aborted) return { ok: false, error: "Browser operation aborted.", errorCode: "BW_ABORTED", effectMayHaveCommitted: false };
+    if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
     if (!extracted.cookies.length) {
       const empty: Extract<CookieSyncResult, { ok: true }> = {
         ok: true,
@@ -1297,6 +1308,7 @@ export class BetterWright {
     }
 
     const config = await this._prepare();
+    if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
     const timeoutSeconds = Math.max(
       Math.ceil(normalized.timeoutMs / 1000),
       this.defaultTimeout,
@@ -1316,6 +1328,29 @@ export class BetterWright {
       timeoutSeconds,
       signal,
     );
+  }
+
+  async _stopAbortedWorker(child = this._process) {
+    const connection = child && this.hostConnections.get(child);
+    // Revoke the host lease as well as stopping its worker. Observe the close
+    // promise directly: worker-exit cleanup deliberately suppresses its errors.
+    const stopped = await Promise.allSettled([
+      this.close({ child, restart: true }),
+      connection ? this._closeHostConnection(connection) : Promise.resolve(),
+    ]);
+    if (stopped.some(result => result.status === "rejected")) throw new Error("Browser operation teardown failed.");
+  }
+
+  async _cancelCookieSyncBeforeDispatch() {
+    let failed = false;
+    try { await this._stopAbortedWorker(); }
+    catch { failed = true; }
+    return {
+      ok: false,
+      error: failed ? "Browser operation aborted; teardown failed." : "Browser operation aborted.",
+      errorCode: failed ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED",
+      effectMayHaveCommitted: false,
+    };
   }
 
   _extractCookieSync(options) {
@@ -1723,7 +1758,7 @@ export class BetterWright {
         aborting = true;
         this._pending.get(id).preserveRecovery = true;
         clearTimeout(timer);
-        void this.close({ child, restart: true }).then(() => {
+        void this._stopAbortedWorker(child).then(() => {
           finishAbort("Browser operation aborted.", "BW_ABORTED");
         }, () => {
           finishAbort("Browser operation aborted; teardown failed.", "BW_ABORT_TEARDOWN_FAILED");

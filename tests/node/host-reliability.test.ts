@@ -128,6 +128,7 @@ for (const phase of ["already-aborted", "extraction", "empty-extraction", "faile
     let extracts = 0;
     let imports = 0;
     let prepares = 0;
+    let closes = 0;
     let cancel = false;
     const browser = new BetterWright({ vault: false, hostTarget: {
       async connect() { return { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() {} }; },
@@ -139,6 +140,12 @@ for (const phase of ["already-aborted", "extraction", "empty-extraction", "faile
     } });
     const child = {};
     browser._process = child;
+    browser.close = async options => {
+      assert.equal(options.child, child);
+      assert.equal(options.restart, true);
+      closes++;
+      browser._process = null;
+    };
     browser._prepare = async () => {
       prepares++;
       if (cancel && phase === "preparation") takeover.abort();
@@ -173,10 +180,53 @@ for (const phase of ["already-aborted", "extraction", "empty-extraction", "faile
     assert.equal(imports, 1);
     assert.equal(extracts, phase === "already-aborted" ? 1 : 2);
     assert.equal(prepares, phase === "preparation" ? 2 : 1);
+    assert.equal(closes, 1);
+    assert.equal(browser._process, null);
     assert.equal(browser._pending.size, 0);
     assert.equal(leased, false);
-    browser._process = null;
-    await browser.close();
+  });
+}
+
+for (const dispatched of [false, true]) for (const teardownFails of [false, true]) {
+  test(`Cookie Sync waits for its existing host lease, dispatched=${dispatched}, teardown failure=${teardownFails}`, async () => {
+    const takeover = new AbortController();
+    let release: () => void;
+    const drain = new Promise<void>(resolve => { release = resolve; });
+    let closes = 0;
+    let settled = false;
+    const browser = new BetterWright({ vault: false, hostTarget: {
+      async connect() {
+        return {
+          provider: { cdpUrl: "ws://127.0.0.1:1" },
+          async close() {
+            closes++;
+            await drain;
+            if (teardownFails) throw new Error("synthetic host teardown failure");
+          },
+        };
+      },
+      async run(operation) { return operation(takeover.signal); },
+    } });
+    const child = { exitCode: null, signalCode: null };
+    browser._process = child;
+    browser._send = () => {};
+    await browser._serviceRpc({ method: "host_connect", payload: { proxyUrl: "socks5://127.0.0.1:12345" } }, child);
+    browser._prepare = async () => browser._workerConfig();
+    browser._extractCookieSync = async () => {
+      assert.equal(dispatched, true, "extraction ran after takeover");
+      return { cookies: [{ name: "synthetic", value: "test", domain: "example.test", path: "/" }], source: { browser: "chrome" } };
+    };
+    browser.close = async () => { browser._process = null; };
+    browser._send = () => { takeover.abort(); };
+    if (!dispatched) takeover.abort();
+    const pending = browser.syncCookies({ source: { browser: "chrome" } }).then(result => { settled = true; return result; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(closes, 1);
+    assert.equal(settled, false);
+    release();
+    const result = await pending;
+    assert.equal(result.errorCode, teardownFails ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED");
+    assert.equal(result.effectMayHaveCommitted, dispatched);
   });
 }
 
