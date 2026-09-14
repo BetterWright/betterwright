@@ -831,3 +831,50 @@ test("compact Qwen effort honors the HTTP and chat-template vocabularies", () =>
   }
   assert.throws(() => localQwenReasoning("unrecognized"), /reasoning effort/);
 });
+
+test("managed compact Qwen retains reasoning through the actual harness tool loop", () => {
+  // Isolate the connection mock so parallel tests still exercise real services.
+  const source = `
+    import assert from 'node:assert/strict';
+    import {mock} from 'bun:test';
+    let modelId = 'qwen-27b-escha';
+    mock.module(${JSON.stringify(path.resolve("dist/src/local-ai-service.js"))}, () => ({
+      configuredLocalConnection: async () => ({plan: {modelId, preference: 'speed'},
+        connection: {model: 'local', baseURL: 'http://127.0.0.1:9876/v1', apiKey: 'fixture'}})
+    }));
+    const {resolveModelSelection, endpointModel, runAgentTask} = await import(${JSON.stringify(path.resolve("dist/src/agent.js"))});
+    for (const id of ['qwen-27b-escha', 'qwen-27b-gsq']) {
+      modelId = id;
+      let requests = 0, browserCalls = 0;
+      const model = await resolveModelSelection('local', {effort: 'high', fetchImpl: async (_url, init) => {
+        const body = JSON.parse(init.body);
+        assert.equal(body.chat_template_kwargs.reasoning_effort, 'xhigh');
+        assert.equal(body.reasoning_effort, 'high');
+        if (++requests === 1) return Response.json({choices: [{message: {content: null,
+          reasoning_content: 'Synthetic reasoning marker', tool_calls: [{id: 'call-1', type: 'function',
+            function: {name: 'browser', arguments: JSON.stringify({code: 'return page.title()'})}}]}, finish_reason: 'tool_calls'}]});
+        const previous = body.messages.find(m => m.role === 'assistant');
+        assert.equal(previous.reasoning_content, 'Synthetic reasoning marker');
+        assert.equal(previous.reasoning, undefined);
+        assert.match(body.messages.find(m => m.role === 'tool').content, /Synthetic title/);
+        return Response.json({choices: [{message: {content: 'Synthetic title'}, finish_reason: 'stop'}]});
+      }});
+      const browser = {vault: null, async run() {browserCalls++; return {ok: true, result: 'Synthetic title', artifacts: []};}, async close() {}};
+      const result = await runAgentTask({model, browser, task: 'Read the page title', liveView: false});
+      assert.equal(result.ok, true); assert.equal(result.answer, 'Synthetic title');
+      assert.equal(requests, 2); assert.equal(browserCalls, 1);
+      assert.equal(result.transcript.find(m => m.role === 'assistant').reasoning, 'Synthetic reasoning marker');
+      assert.equal(result.transcript.find(m => m.role === 'assistant').text, '');
+    }
+    // The same opaque model ID on a generic custom endpoint keeps its schema.
+    const generic = endpointModel({source: 'custom', model: 'local', baseURL: 'http://127.0.0.1:9876/v1', fetchImpl: async (_url, init) => {
+      const previous = JSON.parse(init.body).messages.find(m => m.role === 'assistant');
+      assert.equal(previous.reasoning_content, undefined); assert.equal(previous.reasoning, undefined);
+      return Response.json({choices: [{message: {content: 'done', reasoning_content: 'must not opt in', reasoning: 'also not opted in'}}]});
+    }});
+    const parsed = await generic.complete({system: '', tools: [], messages: [{role: 'assistant', text: '', toolCalls: [], reasoning: 'fixture'}]});
+    assert.equal(parsed.reasoning, undefined);
+  `;
+  const result = spawnSync(process.execPath, ["--eval", source], { encoding: "utf8", timeout: 30_000 });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
