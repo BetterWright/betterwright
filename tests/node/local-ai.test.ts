@@ -506,6 +506,10 @@ test("AMD kernel detection pairs accessible PCI nodes with VRAM and ROCm archite
   const plan = recommendLocalModel({ platform: "linux", arch: "x64", memory: 256 * GIB, gpus: runtime }).plan;
   assert.deepEqual(decodeLocalPlan(plan), plan); assert.equal(plan.modelId, "nex-mini");
   assert.throws(() => decodeLocalPlan({ ...plan, gpu: { ...plan.gpu, gfx: "../../invalid" } }), /Invalid/);
+  for (const [target, gfx] of [[90010, "gfx90a"], [90008, "gfx908"], [90500, "gfx950"]]) {
+    fs.writeFileSync(path.join(node, "properties"), `gfx_target_version ${target}\nvendor_id 4098\nlocation_id 1280\ndomain 0\n`);
+    assert.equal(detectAmdGpus(drm, kfd)[0].gfx, gfx);
+  }
   fs.writeFileSync(path.join(device, "mem_info_vram_total"), "unknown");
   assert.equal(detectAmdGpus(drm, kfd).length, 0);
 });

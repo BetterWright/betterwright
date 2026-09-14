@@ -48,6 +48,24 @@ export const LOCAL_RUNTIMES = {
 export const LOCAL_ROCM_ARCHIVES = {
   gfx942: { name: "therock-dist-linux-gfx94X-dcgpu-10.0.0.tar.gz", bytes: 3259456349, sha256: "a7e105c74c26ef88d12f66712a0af1a107ded0405890a8e2389254ed046e7b06",
     url: "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx94X-dcgpu-10.0.0.tar.gz" },
+  gfx908: {
+    "name": "therock-dist-linux-gfx908-10.0.0.tar.gz",
+    "url": "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx908-10.0.0.tar.gz",
+    "bytes": 1959475470,
+    "sha256": "d66ea48f449cdf9fa3e5d89a608998e465aeef01531be94be5f2cbd80c4712d3"
+  },
+  gfx90a: {
+    "name": "therock-dist-linux-gfx90a-10.0.0.tar.gz",
+    "url": "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx90a-10.0.0.tar.gz",
+    "bytes": 2123617772,
+    "sha256": "19cc76973a79622fd9d9be67101abf2c2a0a997658083e359c5b9accf10fef79"
+  },
+  gfx950: {
+    "name": "therock-dist-linux-gfx950-dcgpu-10.0.0.tar.gz",
+    "url": "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-gfx950-dcgpu-10.0.0.tar.gz",
+    "bytes": 2358163738,
+    "sha256": "3bf27df141e78dbb14e4e1af3b5f8a4238ff8bf97565ccedd965ae4dddc5e9c8"
+  },
 } satisfies Record<string, LocalArtifact>;
 const UV_ARCHIVE: LocalArtifact = { name: "uv-x86_64-unknown-linux-gnu.tar.gz", bytes: 19391575,
   sha256: "745765a3b6e360ad76743599ae5c42e9278c7edf8bbff9fc76d05bf2623a04dd",
@@ -353,7 +371,8 @@ export async function installLlamaRuntime(platform: string, backend: string, hom
     const libraries = ["libamdhip64.so.7", "libhipblas.so.3", "librocblas.so.5"];
     if (!fs.existsSync(path.join(directory, ".ready")) || !libraries.every(file => fs.existsSync(path.join(directory, "lib", file)))) {
       const disk = fs.statfsSync(localRoot(home));
-      if (Number(disk.bavail) * Number(disk.bsize) < artifact.bytes * 5 + 5 * GIB) throw new Error("The private ROCm runtime needs 21 GiB of free disk space for download, extraction and safety headroom. No model weights were downloaded.");
+      const required = artifact.bytes * 5 + 5 * GIB;
+      if (Number(disk.bavail) * Number(disk.bsize) < required) throw new Error(`The private ROCm runtime needs ${(required / GIB).toFixed(1)} GiB of free disk space for download, extraction and safety headroom. No model weights were downloaded.`);
       const archive = await downloadLocalArtifact(artifact, path.join(localRoot(home), "downloads"), { log });
       await stageLocalRuntime(directory, async staging => {
         await extractRuntime(archive, staging);
