@@ -381,10 +381,11 @@ async function cookieSyncCancellation(browser: BetterWright) {
 }
 void cookieSyncCancellation;
 
-function cookieSyncHostLease(target: NonNullable<BetterWrightOptions["hostTarget"]>) {
-  return target.run?.(async () => ({
-    ok: true, synced: 0, selected: 0, skipped: 0,
-    source: { browser: "chrome" }, target: "host", cookieImportDomains: [],
-  }));
-}
-void cookieSyncHostLease;
+// Existing host adapters keep the RunResult callback contract for Cookie Sync.
+const compatibleHostTarget: NonNullable<BetterWrightOptions["hostTarget"]> = {
+  async connect() { return { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() {} }; },
+  async run(operation: (signal?: AbortSignal) => Promise<RunResult>): Promise<RunResult> {
+    return operation();
+  },
+};
+void compatibleHostTarget;

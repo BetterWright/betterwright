@@ -1234,9 +1234,15 @@ export class BetterWright {
    * context. Extraction and injection stay in trusted host code.
    */
   syncCookies(options: any = {}) {
-    return this._enqueueExclusive(() => {
-      const execute = (signal?: AbortSignal) => this._syncCookiesNow(options, signal);
-      return this.hostTarget?.run ? this.hostTarget.run(execute) : execute();
+    return this._enqueueExclusive(async () => {
+      if (!this.hostTarget?.run) return this._syncCookiesNow(options);
+      const leased = await this.hostTarget.run(async signal => {
+        const synced = await this._syncCookiesNow(options, signal);
+        return synced.ok ? { ok: true, result: synced } : synced;
+      });
+      // SAFETY: the trusted host lease returns the Cookie Sync result supplied
+      // by this callback. Preserve its existing RunResult wrapper contract.
+      return leased.ok ? leased.result as CookieSyncResult : leased;
     });
   }
 

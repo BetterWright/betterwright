@@ -121,6 +121,24 @@ for (const failure of [false, true]) {
   });
 }
 
+test("Cookie Sync preserves an existing host lease's RunResult callback contract", async () => {
+  const browser = new BetterWright({ vault: false, hostTarget: {
+    async connect() { return { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() {} }; },
+    async run(operation) {
+      const envelope = await operation();
+      assert.equal(envelope.ok, true);
+      assert.equal(envelope.result.synced, 0);
+      return envelope;
+    },
+  } });
+  browser._extractCookieSync = async () => ({ cookies: [], selected: 0, skipped: 0, source: { browser: "chrome" }, warnings: [] });
+  const synced = await browser.syncCookies({ source: { browser: "chrome" } });
+  assert.equal(synced.ok, true);
+  assert.equal(synced.synced, 0);
+  assert.deepEqual(synced.cookieImportDomains, []);
+  await browser.close();
+});
+
 for (const phase of ["already-aborted", "extraction", "empty-extraction", "failed-extraction", "preparation"]) {
   test(`host Cookie Sync prevents import after takeover during ${phase}`, async () => {
     const takeover = new AbortController();
