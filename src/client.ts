@@ -1354,7 +1354,12 @@ export class BetterWright {
       return empty;
     }
 
-    const config = await this._prepare();
+    let config;
+    try { config = await this._prepare(); }
+    catch (error) {
+      if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
+      throw error;
+    }
     if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
     const timeoutSeconds = Math.max(
       Math.ceil(normalized.timeoutMs / 1000),

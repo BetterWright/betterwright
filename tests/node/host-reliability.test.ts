@@ -140,7 +140,7 @@ test("Cookie Sync preserves an existing host lease's RunResult callback contract
   await browser.close();
 });
 
-for (const phase of ["already-aborted", "extraction", "empty-extraction", "failed-extraction", "preparation"]) {
+for (const phase of ["already-aborted", "extraction", "empty-extraction", "failed-extraction", "preparation", "failed-preparation"]) {
   test(`host Cookie Sync prevents import after takeover during ${phase}`, async () => {
     const takeover = new AbortController();
     let leased = false;
@@ -167,7 +167,8 @@ for (const phase of ["already-aborted", "extraction", "empty-extraction", "faile
     };
     browser._prepare = async () => {
       prepares++;
-      if (cancel && phase === "preparation") takeover.abort();
+      if (cancel && phase.includes("preparation")) takeover.abort();
+      if (cancel && phase === "failed-preparation") throw new Error("synthetic preparation failure");
       return browser._workerConfig();
     };
     browser._extractCookieSync = async () => {
@@ -198,7 +199,7 @@ for (const phase of ["already-aborted", "extraction", "empty-extraction", "faile
     assert.equal(result.effectMayHaveCommitted, false);
     assert.equal(imports, 1);
     assert.equal(extracts, phase === "already-aborted" ? 1 : 2);
-    assert.equal(prepares, phase === "preparation" ? 2 : 1);
+    assert.equal(prepares, phase.includes("preparation") ? 2 : 1);
     assert.equal(closes, 1);
     assert.equal(browser._process, null);
     assert.equal(browser._pending.size, 0);
