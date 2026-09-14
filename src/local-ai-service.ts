@@ -54,11 +54,13 @@ async function control(service: LocalService, command: "status" | "stop") {
   return body;
 }
 function childGroupIsGone(service: LocalService) {
+  if (service.childPid === 0) return true; // A failed spawn never owned a child.
   if (process.platform === "win32" || service.childInstance && localProcessIsGone(service.childPid, service.childInstance)) return localProcessIsGone(service.childPid, service.childInstance);
   if (service.childPid <= 0) return false;
   try { process.kill(-service.childPid, 0); return false; } catch (error) { return error?.code === "ESRCH"; }
 }
-function ownersAreGone(service: LocalService) { return localProcessIsGone(service.supervisorPid, service.supervisorInstance) && localProcessIsGone(service.childPid, service.childInstance) && childGroupIsGone(service); }
+function childProcessIsGone(service: LocalService) { return service.childPid === 0 || localProcessIsGone(service.childPid, service.childInstance); }
+function ownersAreGone(service: LocalService) { return localProcessIsGone(service.supervisorPid, service.supervisorInstance) && childProcessIsGone(service) && childGroupIsGone(service); }
 const OWNERSHIP_ERROR = "The local supervisor is unreachable, but its processes may still be alive. Ownership was retained; no replacement was started. Resume or stop the recorded runtime processes, then retry local stop. See local-ai/runtime.log and local-ai/service.json.";
 function removeService(service: LocalService, home: string) {
   if (readService(home)?.token === service.token) fs.rmSync(serviceFile(home), { force: true });
@@ -111,7 +113,7 @@ async function stopLocalServiceUnlocked(home: string): Promise<boolean> {
   try { await control(service, "stop"); }
   catch { if (ownersAreGone(service)) { removeService(service, home); return false; } throw new Error(OWNERSHIP_ERROR); }
   for (let attempt = 0; attempt < 80; attempt++) {
-    if (localProcessIsGone(service.childPid, service.childInstance) && childGroupIsGone(service) && (!fs.existsSync(serviceFile(home)) || ownersAreGone(service))) { removeService(service, home); return true; }
+    if (childProcessIsGone(service) && childGroupIsGone(service) && (!fs.existsSync(serviceFile(home)) || ownersAreGone(service))) { removeService(service, home); return true; }
     await pause(100);
   }
   throw new Error("The local runtime is still shutting down. Check local-ai/runtime.log and retry local stop.");
@@ -157,17 +159,19 @@ async function cancelLocalLaunch(daemon: ChildProcess, instance: string, home: s
   signal("SIGTERM");
   if (process.platform !== "win32") signal("SIGCONT");
   for (let attempt = 0; attempt < 60; attempt++) {
-    owned ||= matchingService();
+    owned = matchingService() || owned;
     if (daemon.exitCode !== null || daemon.signalCode !== null) break;
     await pause(100);
   }
-  owned ||= matchingService();
-  if (owned && !childGroupIsGone(owned)) {
-    try { process.kill(process.platform === "win32" ? owned.childPid : -owned.childPid, "SIGKILL"); }
-    catch (error) { if (error?.code !== "ESRCH") throw error; }
-  }
   signal("SIGKILL");
   for (let attempt = 0; attempt < 50; attempt++) {
+    // Publication can race the final signal. Read again after the supervisor
+    // exits, when it can no longer publish another child ownership record.
+    owned = matchingService() || owned;
+    if (owned && Number.isSafeInteger(owned.childPid) && owned.childPid > 0 && !childGroupIsGone(owned)) {
+      try { process.kill(process.platform === "win32" ? owned.childPid : -owned.childPid, "SIGKILL"); }
+      catch (error) { if (error?.code !== "ESRCH") throw error; }
+    }
     if ((daemon.exitCode !== null || daemon.signalCode !== null) && (!owned || ownersAreGone(owned))) {
       if (owned) removeService(owned, home);
       return;

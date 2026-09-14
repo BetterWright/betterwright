@@ -31,7 +31,8 @@ model weights, and reports a repairable error when a driver is missing.
 | Linux x64, pre-Blackwell NVIDIA with 48+ GiB and FP8 support, such as RTX 6000 Ada | Qwen3.8-27B FP8 | vLLM with CUDA |
 | Linux x64, Ampere (A10G / RTX 30-series / A100) | Ornith 9B or Nex GGUF, according to VRAM | llama.cpp with CUDA |
 | Apple Silicon with 64+ GiB unified memory | Nex-N2.5-mini GGUF | llama.cpp with Metal |
-| Other supported GPUs with 32+ GiB, including Windows NVIDIA and AMD | Nex-N2.5-mini GGUF | llama.cpp with CUDA or Vulkan |
+| Linux x64, AMD Instinct MI100/MI200/MI300/MI350 families | Nex-N2.5-mini GGUF | llama.cpp with private ROCm 10.0 |
+| Other supported GPUs with 32+ GiB, including Windows NVIDIA and AMD Radeon | Nex-N2.5-mini GGUF | llama.cpp with CUDA or Vulkan |
 | Smaller supported GPUs / Apple Silicon with enough headroom | Ornith-1.5-9B GGUF | llama.cpp with Metal, Vulkan, or CUDA |
 | 8 GiB or less system or accelerator memory; CPU-only | No recommendation | No model installed |
 
@@ -39,7 +40,14 @@ Hopper (H100/H200) and Ada use native FP8 when Qwen fits. Ampere has no
 native FP8/NVFP4 support and uses reviewed GGUF quants instead.
 
 Linux and Windows x64 try CUDA for NVIDIA and fall back to Vulkan when CUDA
-is unavailable. AMD and compatible Intel GPUs use Vulkan. Linux CUDA uses only
+is unavailable. If an automatically selected vLLM installation or preflight
+fails, setup checks llama.cpp and chooses a compatible reviewed GGUF model
+before downloading weights. Explicit model, quant, or speculative-draft choices
+remain strict and report the failure. AMD Radeon and compatible Intel GPUs use Vulkan. Supported Instinct families use
+a private, checksummed AMD ROCm 10.0 SDK, selected from kernel-reported GPU
+architecture and VRAM. It does not install or change kernel drivers. The ROCm
+SDK download is about 2–3 GiB; MI300X expands to about 11 GiB; setup
+checks disk headroom before downloading it. Linux CUDA uses only
 the application layers from the official, pinned llama.cpp CUDA 12.8 image, plus
 verified NVIDIA runtime libraries; it needs neither Docker nor a system CUDA
 toolkit. Setup installs a private Vulkan loader and required GNU/X11 libraries. A working
@@ -133,7 +141,7 @@ Installation lives under `~/.betterwright/local-ai` (or
 `BETTERWRIGHT_HOME/local-ai`). Model downloads need roughly 6–38 GiB depending on
 the quant. The isolated vLLM/Python installation additionally reserves 30 GiB;
 llama.cpp needs much less. Setup checks free disk space with safety headroom and
-never downloads model weights to another machine. To remove the installation,
+downloads model weights only on the machine where the command runs. To remove the installation,
 stop it, then delete this `local-ai` directory. That also removes the default.
 
 Every fresh model load rechecks the catalog SHA-256 hashes. If a supervisor
@@ -172,13 +180,38 @@ is executed with `trust_remote_code`.
 - [llama.cpp speculative decoding](https://github.com/ggml-org/llama.cpp/blob/b10902/docs/speculative.md).
 
 Automated tests cover the hardware/quant matrix, download corruption and resume,
-setup failure behavior, and private service lifecycle. Real acceptance testing
-used an M4 Max 64 GiB with Ornith 9B Q4_K_M: image/tool-call setup check, guarded
-browser navigation, clicking, result verification, and screenshot proof. AMD,
-Windows, high-end NVIDIA and the larger models still need real hardware
-acceptance testing; fixture coverage does not establish their speed or universal
-compatibility. Each installation performs its own image/tool check before the
-harness default changes.
+setup failure behavior, private service lifecycle, suspended startup cancellation,
+and process-ID reuse. Real acceptance tests exercise initial image/tool-call
+validation, the saved harness default, guarded browser navigation and clicking,
+result verification, screenshot proof, and stop/restart:
+
+| Hardware | Model and quant | Acceptance result |
+| --- | --- | --- |
+| M4 Max, 64 GiB | Ornith 9B Q4_K_M, Metal | Passed, including automatic MTP comparison |
+| NVIDIA A10G, Ampere | Ornith 9B Q6_K, CUDA 12.8 | Passed, including automatic MTP comparison |
+| NVIDIA H200, Hopper | Qwen 27B FP8, vLLM | Passed with DFlash2 and ordinary decoding |
+| NVIDIA L40S, Ada | Qwen 27B FP8, vLLM | Passed with DFlash2 and ordinary decoding |
+| Rented RTX Pro 6000, Blackwell | Unsloth Qwen 27B NVFP4, vLLM | Passed with DFlash2 and ordinary decoding |
+| AMD Instinct MI300X, 192 GiB | Nex Q8_0, ROCm 10.0 | Passed; Ornith 9B Q6_K also passed image/tool checks with MTP and ordinary decoding |
+
+On three synthetic 256-token JSON, code, and workflow requests, DFlash2 improved
+end-to-end throughput by 2.8–4.5× on Blackwell, 2.9–4.1× on H200, and 3.8–4.9×
+on L40S. On MI300X, Nex decoded at 134–137 tokens/s; Ornith's MTP decoded at
+174–241 tokens/s versus 132–133 with ordinary decoding. The first-install
+speed check selected MTP on A10G (97.6 versus 57.5 output tokens/s) and ordinary
+decoding on M4 Max (61.0 versus 52.9). These are short acceptance measurements,
+not guarantees for longer contexts or other workloads.
+
+The first Nex browser run completed the requested interaction but used the wrong
+screenshot API and did not register proof. Repeating with an explicit instruction
+to use `screenshot({kind:'proof'})` passed the proof-file assertion. Local model
+outputs still require the harness's normal result and proof verification.
+
+Windows, consumer Radeon/Intel GPUs, Instinct families other than MI300X,
+RTX 5090 with 32 GiB, and Nex on Metal
+still need physical acceptance testing. Cross-platform CI and hardware fixtures
+do not establish universal compatibility. Each installation performs its own
+image/tool check before the harness default changes.
 
 Maintainers can run `bun run build:harness` followed by
 `bun research/verify-local-ai-catalog.ts` to verify every model/draft pin against

@@ -79,116 +79,129 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
   const benchmark = dependencies.benchmark || benchmarkLocalModel;
   const status = dependencies.status || localServiceStatus, stop = dependencies.stop || stopLocalServiceIfOwned;
   return withLocalLock(home, "setup", async () => {
-    const previouslyConfigured = hasLocalSelection(home);
-    const running = await status(home);
-    if (running.error) throw new Error(running.error);
-    let managedPlan = null;
-    try { const saved = readLocalPlan(home); if (saved && running.ready && running.planId === localPlanId(saved)) managedPlan = saved; } catch { /* Setup can repair invalid selections. */ }
-    const accountForManagedWeights = (hardware: Awaited<ReturnType<typeof detect>>) => ({ ...hardware, gpus: hardware.gpus.map(gpu =>
-      managedPlan && (gpu.uuid ? gpu.uuid === managedPlan.gpu.uuid : gpu.id === managedPlan.gpu.id)
-        ? { ...gpu, freeMemory: gpu.memory } : gpu) });
-    let hardware = accountForManagedWeights(await detect());
-    if (hardware.memory <= 8 * GIB || !((hardware.platform === "darwin" && hardware.arch === "arm64") || (["linux", "win32"].includes(hardware.platform) && hardware.arch === "x64"))) {
-      recommendLocalModel(hardware, options); // Fail before installing even a small runtime.
-    }
-    const native = hardware.gpus;
-    const provisional = native.some(g => g.memory > 8 * GIB) ? recommendLocalModel(hardware, options) : null;
-    if (provisional?.plan.runtime !== "vllm") {
-      log("Checking the accelerated runtime before downloading model weights…");
-      const preferred = provisional?.plan.gpu;
-      const amd = preferred?.vendor === "amd" && preferred.gfx && LOCAL_ROCM_ARCHIVES[preferred.gfx] ? preferred : null;
-      const backends = hardware.platform === "darwin" ? ["metal"] : preferred?.vendor === "nvidia" && preferred.compute >= 7.5 ? ["cuda", "vulkan"] : hardware.platform === "linux" && amd ? ["rocm", "vulkan"] : ["vulkan"];
-      let devices = "";
-      for (const [index, backend] of backends.entries()) {
-        try {
-          const executable = await installLlama(hardware.platform, backend, home, log, amd?.gfx);
-          devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend, amd?.gfx));
-          if (!parseLlamaDevices(devices, native).length) throw new Error(`The runtime found no accelerated GPU. Check your GPU driver; no model weights were downloaded. ${devices.trim().slice(0, 1800)}`);
-          break;
-        } catch (error) {
-          log(`${backend.toUpperCase()} runtime check failed: ${error instanceof Error ? error.message : String(error)}`);
-          if (index === backends.length - 1) throw error;
-          log(`Checking ${backends[index + 1]} acceleration as a fallback.`);
+    const attempt = async (options: LocalSetupOptions, allowFallback: boolean): Promise<ReturnType<typeof recommendLocalModel>> => {
+      const previouslyConfigured = hasLocalSelection(home);
+      const running = await status(home);
+      if (running.error) throw new Error(running.error);
+      let managedPlan = null;
+      try { const saved = readLocalPlan(home); if (saved && running.ready && running.planId === localPlanId(saved)) managedPlan = saved; } catch { /* Setup can repair invalid selections. */ }
+      const accountForManagedWeights = (hardware: Awaited<ReturnType<typeof detect>>) => ({ ...hardware, gpus: hardware.gpus.map(gpu =>
+        managedPlan && (gpu.uuid ? gpu.uuid === managedPlan.gpu.uuid : gpu.id === managedPlan.gpu.id)
+          ? { ...gpu, freeMemory: gpu.memory } : gpu) });
+      let hardware = accountForManagedWeights(await detect());
+      if (hardware.memory <= 8 * GIB || !((hardware.platform === "darwin" && hardware.arch === "arm64") || (["linux", "win32"].includes(hardware.platform) && hardware.arch === "x64"))) {
+        recommendLocalModel(hardware, options); // Fail before installing even a small runtime.
+      }
+      const native = hardware.gpus;
+      const provisional = native.some(g => g.memory > 8 * GIB) ? recommendLocalModel(hardware, options) : null;
+      if (provisional?.plan.runtime !== "vllm") {
+        log("Checking the accelerated runtime before downloading model weights…");
+        const preferred = provisional?.plan.gpu;
+        const amd = preferred?.vendor === "amd" && preferred.gfx && LOCAL_ROCM_ARCHIVES[preferred.gfx] ? preferred : null;
+        const backends = hardware.platform === "darwin" ? ["metal"] : preferred?.vendor === "nvidia" && preferred.compute >= 7.5 ? ["cuda", "vulkan"] : hardware.platform === "linux" && amd ? ["rocm", "vulkan"] : ["vulkan"];
+        let devices = "";
+        for (const [index, backend] of backends.entries()) {
+          try {
+            const executable = await installLlama(hardware.platform, backend, home, log, amd?.gfx);
+            devices = await probe(executable, ["--list-devices"], llamaRuntimeEnvironment(hardware.platform, home, backend, amd?.gfx));
+            if (!parseLlamaDevices(devices, native).length) throw new Error(`The runtime found no accelerated GPU. Check your GPU driver; no model weights were downloaded. ${devices.trim().slice(0, 1800)}`);
+            break;
+          } catch (error) {
+            log(`${backend.toUpperCase()} runtime check failed: ${error instanceof Error ? error.message : String(error)}`);
+            if (index === backends.length - 1) throw error;
+            log(`Checking ${backends[index + 1]} acceleration as a fallback.`);
+          }
         }
+        hardware = accountForManagedWeights({ ...hardware, gpus: parseLlamaDevices(devices, native) });
+        if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working GPU driver and rerun betterwright --local; no model weights were downloaded.");
       }
-      hardware = accountForManagedWeights({ ...hardware, gpus: parseLlamaDevices(devices, native) });
-      if (!hardware.gpus.length) throw new Error("The runtime found no accelerated GPU. Install a working GPU driver and rerun betterwright --local; no model weights were downloaded.");
-    }
-    const recommendation = recommendLocalModel(hardware, options);
-    let { plan } = recommendation;
-    const { model } = recommendation;
-    const automatic = !options.acceleration || options.acceleration === "auto";
-    try {
-      const saved = readLocalPlan(home);
-      if (automatic && saved?.accelerationTuned && modelDirectory(saved, home) === modelDirectory(plan, home) &&
-        saved.context === plan.context && saved.platform === plan.platform && saved.gpu.id === plan.gpu.id && saved.gpu.uuid === plan.gpu.uuid) {
-        plan = { ...plan, acceleration: saved.acceleration, accelerationTuned: true };
+      const recommendation = recommendLocalModel(hardware, options);
+      let { plan } = recommendation;
+      const { model } = recommendation;
+      const automatic = !options.acceleration || options.acceleration === "auto";
+      try {
+        const saved = readLocalPlan(home);
+        if (automatic && saved?.accelerationTuned && modelDirectory(saved, home) === modelDirectory(plan, home) &&
+          saved.context === plan.context && saved.platform === plan.platform && saved.gpu.id === plan.gpu.id && saved.gpu.uuid === plan.gpu.uuid) {
+          plan = { ...plan, acceleration: saved.acceleration, accelerationTuned: true };
+        }
+      } catch { /* Invalid selections remain repairable by setup. */ }
+      const updateRecommendation = () => {
+        const oldDraft = recommendation.plan.acceleration === "dflash2";
+        recommendation.reserveBytes += ((plan.acceleration === "dflash2" ? 1 : 0) - (oldDraft ? 1 : 0)) * 2 * GIB;
+        recommendation.acceleratorReserveBytes += ((plan.acceleration === "dflash2" ? 1 : 0) - (oldDraft ? 1 : 0)) * 2 * GIB;
+        recommendation.plan = plan;
+        recommendation.downloadBytes = localInstallArtifacts(plan, home).reduce((sum, item) => sum + item.artifact.bytes, 0);
+        if (plan.accelerationTuned) recommendation.reason = `The saved speed check on this hardware selected ${plan.acceleration}. Model quality and the reserved memory budget are unchanged.`;
+      };
+      updateRecommendation();
+      log(`Hardware: ${plan.gpu.name} (${(plan.gpu.memory / GIB).toFixed(1)} GiB accelerator memory)`);
+      log(`Model: ${model.name} · ${model.quant} · ${plan.runtime} · ${plan.context.toLocaleString()} token context`);
+      log(`Acceleration: ${plan.acceleration}`);
+      log(`Source: ${model.repository}@${model.revision.slice(0, 12)}`);
+      log(`Model download: ${(recommendation.downloadBytes / GIB).toFixed(2)} GiB including vision support`);
+      log(recommendation.reason);
+      if (running.running && running.planId !== localPlanId(plan)) throw new Error("Another local model is running. Run betterwright local stop, then repeat setup to change models.");
+      if (!running.running && plan.gpu.freeMemory < recommendation.downloadBytes + recommendation.acceleratorReserveBytes) throw new Error("There is not enough free accelerator memory for the selected model and context. Close GPU-heavy applications and retry; the recommendation will not silently drop to a lower-quality model.");
+      try {
+        await (dependencies.disk || checkLocalDisk)(plan, home);
+        const executable = await installRuntime(plan, home, log);
+        if (plan.runtime === "vllm") {
+          // Validate both CUDA and the pinned runtime's real argument parser
+          // before spending bandwidth on weights. Request logging defaults off.
+          const preflight = "import json,sys,torch; from vllm.entrypoints.launchers.cli_args import make_arg_parser,validate_parsed_serve_args; from vllm.utils.argparse_utils import FlexibleArgumentParser; args=make_arg_parser(FlexibleArgumentParser()).parse_args(json.loads(sys.argv[1])); validate_parsed_serve_args(args); assert not args.enable_log_requests, 'Request logging must be disabled'; assert torch.cuda.is_available(), 'CUDA driver/runtime is unavailable'; from triton.backends.nvidia.driver import CudaUtils; CudaUtils(); print(torch.cuda.get_device_name(0))";
+          await probe(path.join(path.dirname(executable), "python"), ["-c", preflight, JSON.stringify(localServerArguments(plan, 8000, home).slice(1))], { ...localRuntimeEnvironment(plan, home), CUDA_VISIBLE_DEVICES: plan.gpu.uuid }, 120_000);
+        }
+      } catch (error) {
+        const automaticModel = !options.model && !options.quant && (!options.acceleration || ["auto", "none"].includes(options.acceleration));
+        if (allowFallback && automaticModel && plan.runtime === "vllm" && !running.running) {
+          log(`The preferred vLLM runtime is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+          log("Checking llama.cpp acceleration and choosing a compatible reviewed GGUF model before downloading weights.");
+          return attempt({ ...options, model: plan.gpu.memory >= 30 * GIB ? "nex-mini" : "ornith-9b" }, false);
+        }
+        throw error;
       }
-    } catch { /* Invalid selections remain repairable by setup. */ }
-    const updateRecommendation = () => {
-      const oldDraft = recommendation.plan.acceleration === "dflash2";
-      recommendation.reserveBytes += ((plan.acceleration === "dflash2" ? 1 : 0) - (oldDraft ? 1 : 0)) * 2 * GIB;
-      recommendation.acceleratorReserveBytes += ((plan.acceleration === "dflash2" ? 1 : 0) - (oldDraft ? 1 : 0)) * 2 * GIB;
-      recommendation.plan = plan;
-      recommendation.downloadBytes = localInstallArtifacts(plan, home).reduce((sum, item) => sum + item.artifact.bytes, 0);
-      if (plan.accelerationTuned) recommendation.reason = `The saved speed check on this hardware selected ${plan.acceleration}. Model quality and the reserved memory budget are unchanged.`;
-    };
-    updateRecommendation();
-    log(`Hardware: ${plan.gpu.name} (${(plan.gpu.memory / GIB).toFixed(1)} GiB accelerator memory)`);
-    log(`Model: ${model.name} · ${model.quant} · ${plan.runtime} · ${plan.context.toLocaleString()} token context`);
-    log(`Acceleration: ${plan.acceleration}`);
-    log(`Source: ${model.repository}@${model.revision.slice(0, 12)}`);
-    log(`Model download: ${(recommendation.downloadBytes / GIB).toFixed(2)} GiB including vision support`);
-    log(recommendation.reason);
-    if (running.running && running.planId !== localPlanId(plan)) throw new Error("Another local model is running. Run betterwright local stop, then repeat setup to change models.");
-    if (!running.running && plan.gpu.freeMemory < recommendation.downloadBytes + recommendation.acceleratorReserveBytes) throw new Error("There is not enough free accelerator memory for the selected model and context. Close GPU-heavy applications and retry; the recommendation will not silently drop to a lower-quality model.");
-    await (dependencies.disk || checkLocalDisk)(plan, home);
-    const executable = await installRuntime(plan, home, log);
-    if (plan.runtime === "vllm") {
-      // Validate both CUDA and the pinned runtime's real argument parser
-      // before spending bandwidth on weights. Request logging defaults off.
-      const preflight = "import json,sys,torch; from vllm.entrypoints.launchers.cli_args import make_arg_parser,validate_parsed_serve_args; from vllm.utils.argparse_utils import FlexibleArgumentParser; args=make_arg_parser(FlexibleArgumentParser()).parse_args(json.loads(sys.argv[1])); validate_parsed_serve_args(args); assert not args.enable_log_requests, 'Request logging must be disabled'; assert torch.cuda.is_available(), 'CUDA driver/runtime is unavailable'; from triton.backends.nvidia.driver import CudaUtils; CudaUtils(); print(torch.cuda.get_device_name(0))";
-      await probe(path.join(path.dirname(executable), "python"), ["-c", preflight, JSON.stringify(localServerArguments(plan, 8000, home).slice(1))], { ...localRuntimeEnvironment(plan, home), CUDA_VISIBLE_DEVICES: plan.gpu.uuid }, 120_000);
-    }
-    for (const { artifact, directory } of localInstallArtifacts(plan, home)) await (dependencies.download || downloadLocalArtifact)(artifact, directory, { log });
-    log("Loading the model and checking image input plus tool calls…");
-    let connection: LocalConnection | null = null;
-    try {
-      connection = await connect(plan, home);
-      await verify(connection);
-      // Only tune a first installation we own. Existing selections may be
-      // serving concurrent tasks, so repeating setup never benchmarks/stops
-      // their service. The selected speed result is retained for later use.
-      if (automatic && !previouslyConfigured && connection.started && plan.acceleration !== "none") {
-        log(`Comparing ${plan.acceleration} with ordinary decoding on synthetic tasks…`);
-        const acceleratedPlan = plan;
-        const acceleratedRate = await benchmark(connection);
-        if (!await stop(home, connection.apiKey)) throw new Error("Local runtime ownership changed during the speed check. Retry setup.");
-        connection = null;
-        plan = { ...plan, acceleration: "none" };
+      for (const { artifact, directory } of localInstallArtifacts(plan, home)) await (dependencies.download || downloadLocalArtifact)(artifact, directory, { log });
+      log("Loading the model and checking image input plus tool calls…");
+      let connection: LocalConnection | null = null;
+      try {
         connection = await connect(plan, home);
         await verify(connection);
-        const baselineRate = await benchmark(connection);
-        if (acceleratedRate > baselineRate * 1.05) {
+        // Only tune a first installation we own. Existing selections may be
+        // serving concurrent tasks, so repeating setup never benchmarks/stops
+        // their service. The selected speed result is retained for later use.
+        if (automatic && !previouslyConfigured && connection.started && plan.acceleration !== "none") {
+          log(`Comparing ${plan.acceleration} with ordinary decoding on synthetic tasks…`);
+          const acceleratedPlan = plan;
+          const acceleratedRate = await benchmark(connection);
           if (!await stop(home, connection.apiKey)) throw new Error("Local runtime ownership changed during the speed check. Retry setup.");
           connection = null;
-          plan = acceleratedPlan;
+          plan = { ...plan, acceleration: "none" };
           connection = await connect(plan, home);
           await verify(connection);
+          const baselineRate = await benchmark(connection);
+          if (acceleratedRate > baselineRate * 1.05) {
+            if (!await stop(home, connection.apiKey)) throw new Error("Local runtime ownership changed during the speed check. Retry setup.");
+            connection = null;
+            plan = acceleratedPlan;
+            connection = await connect(plan, home);
+            await verify(connection);
+          }
+          plan = { ...plan, accelerationTuned: true };
+          updateRecommendation();
+          log(`Speed check: ${acceleratedPlan.acceleration} ${acceleratedRate.toFixed(1)} vs ordinary ${baselineRate.toFixed(1)} output tokens/s. Selected ${plan.acceleration}.`);
         }
-        plan = { ...plan, accelerationTuned: true };
-        updateRecommendation();
-        log(`Speed check: ${acceleratedPlan.acceleration} ${acceleratedRate.toFixed(1)} vs ordinary ${baselineRate.toFixed(1)} output tokens/s. Selected ${plan.acceleration}.`);
+        writeLocalJson(path.join(localRoot(home), "selection.json"), plan);
+      } catch (error) {
+        if (connection?.started) await stop(home, connection.apiKey).catch(() => {});
+        throw error;
       }
-      writeLocalJson(path.join(localRoot(home), "selection.json"), plan);
-    } catch (error) {
-      if (connection?.started) await stop(home, connection.apiKey).catch(() => {});
-      throw error;
-    }
-    log("Local AI is ready and selected for the BetterWright harness.");
-    log("Run betterwright or betterwright exec \"<task>\". Use --model local to select it explicitly.");
-    log("The runtime starts automatically when needed. betterwright local stop releases its memory.");
-    return recommendation;
+      log("Local AI is ready and selected for the BetterWright harness.");
+      log("Run betterwright or betterwright exec \"<task>\". Use --model local to select it explicitly.");
+      log("The runtime starts automatically when needed. betterwright local stop releases its memory.");
+      return recommendation;
+    };
+    return attempt(options, true);
   });
 }
 

@@ -376,6 +376,35 @@ test("Windows retries Vulkan if a CUDA binary starts but cannot enumerate its GP
   assert.deepEqual(backends, ["cuda", "vulkan"]); assert.equal(r.plan.gpu.backend, "vulkan");
 });
 
+test("automatic vLLM installation or preflight failure selects verified CUDA GGUF before weights", async () => {
+  for (const failure of ["install", "preflight"]) {
+    const home = makeTempDir("bw-local-vllm-fallback-"), backends: string[] = [], downloads: string[] = [];
+    const result = await setupLocalAI({}, home, quiet, {
+      detect: async () => hardware(128, 96, "nvidia", "linux", 12), status: async () => ({ running: false }), disk: async () => {},
+      installRuntime: async plan => { if (plan.runtime === "vllm" && failure === "install") throw new Error("unsupported runtime"); return "/private/bin/vllm"; },
+      installLlama: async (_platform, backend) => { backends.push(backend); return backend; },
+      probe: async (_executable, args) => { if (args[0] === "-c") throw new Error("unsupported runtime"); return "CUDA0: nvidia test GPU (98304 MiB, 98304 MiB free)"; },
+      download: async artifact => { downloads.push(artifact.name); return "file"; },
+      connect: async () => ({ model: "local", apiKey: "fake", baseURL: "http://127.0.0.1:1/v1" }), verify: async () => {},
+    });
+    assert.deepEqual(backends, ["cuda"]); assert.equal(result.plan.runtime, "llama.cpp"); assert.equal(result.plan.modelId, "nex-mini");
+    assert.ok(downloads.length > 0); assert.ok(downloads.every(name => name.endsWith(".gguf"))); assert.equal(readLocalPlan(home)?.modelId, "nex-mini");
+  }
+});
+
+test("explicit vLLM model, quant and draft choices never silently switch models", async () => {
+  for (const options of [{ model: "qwen-27b" }, { quant: "NVFP4" }, { acceleration: "dflash2" }]) {
+    const home = makeTempDir("bw-local-vllm-explicit-");
+    let fallback = false, downloaded = false;
+    await assert.rejects(setupLocalAI(options, home, quiet, {
+      detect: async () => hardware(128, 96, "nvidia", "linux", 12), status: async () => ({ running: false }), disk: async () => {},
+      installRuntime: async () => { throw new Error("unsupported runtime"); },
+      installLlama: async () => { fallback = true; return "cuda"; }, download: async () => { downloaded = true; return "file"; },
+    }), /unsupported runtime/);
+    assert.equal(fallback, false); assert.equal(downloaded, false); assert.equal(readLocalPlan(home), null);
+  }
+});
+
 test("a complete verified partial is installed without another download after a crash", async () => {
   const dir = makeTempDir("bw-local-complete-partial-");
   fs.writeFileSync(path.join(dir, "model.gguf.part"), bytes);
@@ -570,5 +599,70 @@ test("mixed-case local aliases take the managed setup path", () => {
       env: { ...process.env, BETTERWRIGHT_HOME: home }, encoding: "utf8", timeout: 10000,
     });
     assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /No local model is configured/);
+  }
+});
+
+test("failed child spawn never signals PID zero or retains empty ownership", { skip: process.platform === "win32" }, async () => {
+  const home = makeTempDir("bw-local-zero-child-");
+  const source = `
+    import {spawn} from 'node:child_process';
+    import fs from 'node:fs'; import path from 'node:path';
+    import {recommendLocalModel,localRoot,localPlanId,writeLocalJson,GIB} from ${JSON.stringify(path.resolve("dist/src/local-ai.js"))};
+    import {runtimeDirectory} from ${JSON.stringify(path.resolve("dist/src/local-ai-install.js"))};
+    import {ensureLocalService} from ${JSON.stringify(path.resolve("dist/src/local-ai-service.js"))};
+    import {localProcessInstance} from ${JSON.stringify(path.resolve("dist/src/local-ai-process.js"))};
+    const home=${JSON.stringify(home)};
+    const plan=recommendLocalModel({platform:process.platform,arch:process.arch,memory:64*GIB,gpus:[{id:'MTL0',name:'Apple test',memory:64*GIB,freeMemory:64*GIB,backend:'metal',vendor:'apple',compute:0,uuid:''}]}).plan;
+    const runtime=runtimeDirectory(plan,home);fs.mkdirSync(runtime,{recursive:true});fs.writeFileSync(path.join(runtime,'llama-server'),'fixture');
+    try { await ensureLocalService(plan,home,20,async()=>true,(_command,_args,options)=>{
+      const child=spawn(process.execPath,['--eval','setInterval(()=>{},1000)'],options);
+      writeLocalJson(path.join(localRoot(home),'service.json'),{supervisorPid:child.pid,supervisorInstance:localProcessInstance(child.pid)||'',childPid:0,planId:localPlanId(plan),token:'a'.repeat(64),port:1,controlPort:1});
+      return child;
+    });throw new Error('Expected timeout'); } catch(error) { if(!error.message.includes('startup timed out'))throw error; }
+    if(fs.existsSync(path.join(localRoot(home),'service.json')))throw new Error('Stale zero-child ownership');
+    console.log('ZERO_CHILD_CLEANUP_PASS');
+  `;
+  // Isolate the fixture's process group so a regression cannot signal the test runner.
+  const child = spawn(process.execPath, ["--eval", source], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", chunk => { stdout += chunk; }); child.stderr.on("data", chunk => { stderr += chunk; });
+  const timer = setTimeout(() => child.kill("SIGKILL"), 15000);
+  try {
+    const status = await new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
+    assert.equal(status, 0, stderr); assert.match(stdout, /ZERO_CHILD_CLEANUP_PASS/);
+  } finally { clearTimeout(timer); }
+});
+
+test("forced startup cancellation discovers ownership published during the final signal", { skip: process.platform === "win32", timeout: 15000 }, async () => {
+  const home = makeTempDir("bw-local-late-child-");
+  const plan = { ...recommendLocalModel(hardware()).plan, platform: process.platform, arch: process.arch };
+  const runtime = runtimeDirectory(plan, home);
+  fs.mkdirSync(runtime, { recursive: true }); fs.writeFileSync(path.join(runtime, "llama-server"), "fixture");
+  const model = spawn(process.execPath, ["--eval", "setInterval(()=>{},1000)"], { detached: true, stdio: "ignore" });
+  let daemon: ReturnType<typeof spawn> | null = null, published = false;
+  try {
+    await assert.rejects(ensureLocalService(plan, home, 1000, async () => true, (_command, _args, options) => {
+      const supervisor = spawn(process.execPath, ["--eval", "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"], options);
+      daemon = supervisor;
+      const kill = supervisor.kill.bind(supervisor);
+      supervisor.kill = signal => {
+        if (signal === "SIGKILL") {
+          published = true;
+          writeLocalJson(path.join(localRoot(home), "service.json"), {
+            supervisorPid: supervisor.pid, supervisorInstance: localProcessInstance(supervisor.pid) || "",
+            childPid: model.pid, childInstance: localProcessInstance(model.pid) || "",
+            planId: localPlanId(plan), token: "b".repeat(64), port: 1, controlPort: 1,
+          });
+        }
+        return kill(signal);
+      };
+      return supervisor;
+    }), /startup timed out/);
+    assert.equal(published, true);
+    assert.ok(model.exitCode !== null || model.signalCode !== null);
+    assert.ok(!fs.existsSync(path.join(localRoot(home), "service.json")));
+  } finally {
+    if (model.exitCode === null && model.signalCode === null) model.kill("SIGKILL");
+    if (daemon && daemon.exitCode === null && daemon.signalCode === null) daemon.kill("SIGKILL");
   }
 });
