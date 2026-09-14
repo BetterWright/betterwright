@@ -10,10 +10,10 @@ import { decodeLocalPlan, detectAmdGpus, detectLocalHardware, draftDirectory, GI
 import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
 import { LOCAL_ESCHA_REQUIREMENTS } from "../../dist/src/local-ai-escha-lock.js";
-import { checkLocalDisk, downloadLocalArtifact, GCC_VERSION, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeEnvironment, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
+import { checkLocalDisk, downloadLocalArtifact, ESCHA_LIBRARIES_VERSION, GCC_VERSION, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeEnvironment, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
 import { localProcessInstance, localProcessIsGone } from "../../dist/src/local-ai-process.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService, stopLocalServiceIfOwned } from "../../dist/src/local-ai-service.js";
-import { LOCAL_GCC_ARTIFACTS } from "../../dist/src/local-ai-toolchain-lock.js";
+import { LOCAL_ESCHA_LIBRARIES, LOCAL_GCC_ARTIFACTS } from "../../dist/src/local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "../../dist/src/local-ai-vllm-lock.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
 
@@ -125,7 +125,7 @@ test("all catalog downloads are immutable, checksummed and from reviewed publish
     assert.ok(file.url.startsWith("https://github.com/ggml-org/llama.cpp/releases/download/b") || file.url.startsWith("https://ghcr.io/v2/ggml-org/llama.cpp/blobs/sha256:"));
     assert.match(file.sha256, /^[a-f0-9]{64}$/);
   }
-  for (const file of LOCAL_GCC_ARTIFACTS) {
+  for (const file of [...LOCAL_GCC_ARTIFACTS, ...LOCAL_ESCHA_LIBRARIES]) {
     assert.match(file.url, /^https:\/\/conda\.anaconda\.org\/conda-forge\/(linux-64|noarch)\//);
     assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);
     assert.ok(file.url.endsWith(`/${file.name}`));
@@ -749,11 +749,11 @@ test("automatic Escha failure falls back to long-context GSQ before model downlo
   assert.equal(readLocalPlan(home)?.modelId, "qwen-27b-gsq");
 });
 
-test("Escha disk checks reserve compiler repair for missing, broken, or stale tooling", { skip: process.platform === "win32" }, async t => {
+test("Escha disk checks reserve repair for missing, broken, or stale native dependencies", { skip: process.platform === "win32" }, async t => {
   const home = makeTempDir("bw-local-escha-disk-");
   const { plan } = recommendLocalModel(hardware(64, 24, "nvidia", "linux", 8.9), { model: "qwen-27b-escha" });
   const directory = runtimeDirectory(plan, home), python = path.join(directory, "venv", "bin", "python");
-  fs.mkdirSync(path.dirname(python), { recursive: true }); fs.symlinkSync(process.execPath, python);
+  fs.mkdirSync(path.dirname(python), { recursive: true }); fs.writeFileSync(python, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   fs.writeFileSync(path.join(directory, ".ready"), path.basename(directory).slice("escha-".length));
   const env = localRuntimeEnvironment(plan, home), gcc = env.CC, gxx = env.CXX;
   assert.ok(gcc && gxx);
@@ -761,6 +761,11 @@ test("Escha disk checks reserve compiler repair for missing, broken, or stale to
   fs.mkdirSync(path.dirname(gcc), { recursive: true });
   fs.symlinkSync(process.execPath, gcc); fs.symlinkSync(process.execPath, gxx);
   fs.writeFileSync(path.join(compiler, ".ready"), GCC_VERSION);
+  const libraries = path.join(localRoot(home), "runtimes", `escha-libraries-${ESCHA_LIBRARIES_VERSION}`);
+  const numa = path.join(libraries, "lib", "libnuma.so.1"), marker = path.join(libraries, ".ready");
+  fs.mkdirSync(path.dirname(numa), { recursive: true }); fs.writeFileSync(numa, "mock native library");
+  fs.writeFileSync(marker, ESCHA_LIBRARIES_VERSION);
+  assert.ok(env.LD_LIBRARY_PATH?.split(path.delimiter).includes(path.dirname(numa)));
   const stats = fs.statfsSync(home);
   let available = 64 * GIB;
   t.mock.method(fs, "statfsSync", () => ({ ...stats, bsize: 1, bavail: available }));
@@ -772,6 +777,17 @@ test("Escha disk checks reserve compiler repair for missing, broken, or stale to
   assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
   fs.rmSync(gxx); fs.symlinkSync(process.execPath, gxx);
   fs.writeFileSync(path.join(compiler, ".ready"), "stale-version");
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.writeFileSync(path.join(compiler, ".ready"), GCC_VERSION);
+  fs.rmSync(numa);
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.writeFileSync(numa, "");
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.writeFileSync(numa, "mock native library"); fs.writeFileSync(marker, "stale-version");
+  assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
+  fs.writeFileSync(marker, ESCHA_LIBRARIES_VERSION);
+  // Python still answers --version but the native loader rejects this library.
+  fs.writeFileSync(python, '#!/bin/sh\n[ "$1" != "-c" ]\n');
   assert.equal((await checkLocalDisk(plan, home)).required, healthy.required + 30 * GIB);
   available = healthy.required + GIB;
   await assert.rejects(checkLocalDisk(plan, home), /free disk space/);

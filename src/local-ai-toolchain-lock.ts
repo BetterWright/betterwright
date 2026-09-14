@@ -119,6 +119,18 @@ export const LOCAL_GCC_ARTIFACTS: LocalArtifact[] = [
   }
 ];
 
+// SGLang's native kernels link libnuma even on single-GPU hosts. Keep the
+// complete non-system dependency closure private; fresh Linux needs no sudo.
+export const LOCAL_ESCHA_LIBRARIES: LocalArtifact[] = [
+  ...LOCAL_GCC_ARTIFACTS.filter(file => /^(libgcc-|libgomp-|_openmp_mutex-)/.test(file.name)),
+  {
+    name: "libnuma-2.0.18-hb03c661_4.conda",
+    url: "https://conda.anaconda.org/conda-forge/linux-64/libnuma-2.0.18-hb03c661_4.conda",
+    bytes: 44657,
+    sha256: "db0a0fc67104196afe6732ff055b30829f984f4cf1e8efff4ea5b2bbb1640da2",
+  },
+];
+
 // Shared libraries for the official Linux Vulkan runtime.
 export const LOCAL_LINUX_LIBRARIES: LocalArtifact[] = [
   {

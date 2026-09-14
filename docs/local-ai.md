@@ -249,7 +249,8 @@ improves throughput; use `--acceleration mtp` to select it explicitly.
 
 [Escha W2 Vision](https://huggingface.co/ProCreations/Qwen3.8-27B-Escha-W2-Vision)
 restores the original Qwen vision encoder and merger to the Escha language
-checkpoint. It installs a separate Python 3.12 environment with the vendor's
+checkpoint. It installs a separate Python 3.12 environment, a private pinned
+NUMA library for fresh Linux hosts, and the vendor's
 SGLang fork, PyTorch 2.9.1+cu128, and Transformers 5.10.2. A hash-checked runtime
 patch keeps the existing INT8 embeddings compact and prevents authentication
 keys from appearing in the server configuration log. Its MTP and vision weights

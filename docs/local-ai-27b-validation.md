@@ -67,12 +67,22 @@ dependency-index collision, and Escha's rejection of the generic `none`
 reasoning effort. Default and explicit `none` harness requests now use the
 supported API value while disabling thinking through the chat template.
 
-Repository validation: `bun run release:check` passed (1,256 unit tests passed,
-3 skipped). The live catalog verifier checked all 127 distinct pinned artifacts
+Repository validation: lint, type checking, build/package checks, the complete
+GitHub CI suite, and 67 focused local-AI tests passed. Two local full-suite
+retries encountered unrelated subprocess timeouts (credential-fill and
+profile-lock); the timed-out cases passed separately or in CI. The live catalog verifier checked all 127 distinct pinned artifacts
 without downloading model weights. Hardware fixtures cover the new 24 GB
 defaults, 16 GB exclusions, runtime restrictions, and fallback to GSQ before
 model downloads if automatic Escha installation fails. Review regressions cover
-compiler-repair disk headroom and the different HTTP/template effort names.
+compiler/library repair disk headroom and the different HTTP/template effort names.
+
+Clean Ubuntu 24.04 Hugging Face jobs on A10G (Ampere) and L4 (Ada) stopped
+during runtime preflight, before model downloads. Diagnosis exposed a missing
+`libnuma.so.1` dependency. The installer now supplies pinned private libnuma and
+its GCC runtime dependencies, probes the managed library directly, and reserves
+repair space if it is missing or unloadable. Further paid GPU testing was
+stopped at the requester's direction; the repaired installer and these models
+still need physical RTX 4090 acceptance testing.
 
 ## Remaining physical coverage
 
@@ -83,3 +93,26 @@ Escha is restricted to Linux NVIDIA Ampere or newer. Hardware fixtures verify
 selection and refusal rules; they do not substitute for physical GPU tests.
 Every installation checks its runtime before downloading model weights and
 checks image/tool responses before changing the harness default.
+
+## RTX 4090 follow-up
+
+From a checkout of this PR, use Bun 1.4.0, run `bun install --frozen-lockfile`
+and `bun run build`, then test the default profile:
+
+```sh
+bun dist/bin/betterwright.js local plan --json
+bun dist/bin/betterwright.js --local --model qwen-27b-gsq
+bun dist/bin/betterwright.js local status --json
+bun dist/bin/betterwright.js exec --model local "Open example.com and report its page heading."
+bun dist/bin/betterwright.js local stop
+```
+
+On Linux x64 with glibc 2.35+ (Ubuntu 22.04+), repeat setup with
+`--model qwen-27b-escha`, then the status, harness, and stop commands above.
+Windows uses GSQ; Escha is Linux-only. Explicit selection makes an Escha
+installation error visible rather than automatically falling back to GSQ.
+Capture GPU/driver and OS versions, the plan's 65,536-token context, setup's
+vision/tool result and acceleration comparison, runtime memory, and the
+harness result. Also exercise a real long-running task, then stop and restart
+the runtime. A successful short setup check alone does not establish 64K
+history correctness or memory headroom on this card.

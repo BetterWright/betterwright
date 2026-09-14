@@ -10,7 +10,7 @@ import { GIB, type LocalPlan, localInstallArtifacts, localRoot, readLocalPlan, r
 import type { LocalArtifact } from "./local-ai-catalog.js";
 import { LOCAL_ESCHA_REQUIREMENTS } from "./local-ai-escha-lock.js";
 import { localProcessInstance, localProcessIsGone } from "./local-ai-process.js";
-import { LOCAL_CUDA_LIBRARIES, LOCAL_GCC_ARTIFACTS, LOCAL_LINUX_LIBRARIES } from "./local-ai-toolchain-lock.js";
+import { LOCAL_CUDA_LIBRARIES, LOCAL_ESCHA_LIBRARIES, LOCAL_GCC_ARTIFACTS, LOCAL_LINUX_LIBRARIES } from "./local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
 import { isNumber, isString, untrustedField } from "./untrusted-value.js";
 
@@ -18,6 +18,7 @@ export const LLAMA_VERSION = "b10902";
 export const VLLM_VERSION = "0.29.0";
 const VLLM_INSTALL_ID = `${VLLM_VERSION}-${createHash("sha256").update(LOCAL_VLLM_REQUIREMENTS).digest("hex").slice(0, 12)}`;
 export const ESCHA_VERSION = "1.2.1-qwen3dense";
+export const ESCHA_LIBRARIES_VERSION = "numa-2.0.18-4";
 const ESCHA_INSTALL_ID = `${ESCHA_VERSION}-${createHash("sha256").update(LOCAL_ESCHA_REQUIREMENTS).digest("hex").slice(0, 12)}`;
 const UV_VERSION = "0.12.13";
 export const LOCAL_PYTHON_VERSION = "3.12.13";
@@ -262,6 +263,7 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
     if (plan.runtime === "escha") {
       const env = localRuntimeEnvironment(plan, home);
       if (!env.CC || !env.CXX || !fs.existsSync(env.CC) || !fs.existsSync(env.CXX)) return false;
+      if (!hasEschaLibraries(home)) return false;
     }
     if (plan.gpu.backend === "rocm") {
       const env = localRuntimeEnvironment(plan, home);
@@ -293,7 +295,7 @@ export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): 
     const bin = path.join(runtimeDirectory(plan, home), "venv", "bin");
     return { ...process.env, PATH: [bin, compilerBin, process.env.PATH].filter(Boolean).join(path.delimiter),
       CC: path.join(compilerBin, "x86_64-conda-linux-gnu-gcc"), CXX: path.join(compilerBin, "x86_64-conda-linux-gnu-g++"),
-      LD_LIBRARY_PATH: [path.join(compiler, "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
+      LD_LIBRARY_PATH: [path.join(eschaLibrariesDirectory(home), "lib"), path.join(compiler, "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
   }
   if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home, plan.gpu.backend, plan.gpu.gfx);
   const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
@@ -431,6 +433,25 @@ function runInstall(command: string, args: string[], env: NodeJS.ProcessEnv): Pr
     child.once("exit", (code, signal) => { clearTimeout(timer); if (code === 0) resolve(); else reject(new Error(`The managed runtime installer failed (${signal || code}). Rerun betterwright --local to retry.`)); });
   });
 }
+function eschaLibrariesDirectory(home: string) {
+  return path.join(localRoot(home), "runtimes", `escha-libraries-${ESCHA_LIBRARIES_VERSION}`);
+}
+function hasEschaLibraries(home: string) {
+  try {
+    const directory = eschaLibrariesDirectory(home);
+    const library = fs.statSync(path.join(directory, "lib", "libnuma.so.1"));
+    return library.isFile() && library.size > 0 && fs.readFileSync(path.join(directory, ".ready"), "utf8") === ESCHA_LIBRARIES_VERSION;
+  } catch { return false; }
+}
+function eschaLibraryProbe(home: string) {
+  // Load the managed file by absolute path, so a system copy cannot hide a
+  // damaged private installation during repair checks.
+  return ["-c", "import ctypes,sys; ctypes.CDLL(sys.argv[1])", path.join(eschaLibrariesDirectory(home), "lib", "libnuma.so.1")];
+}
+async function eschaLibrariesReady(plan: LocalPlan, home: string, python: string) {
+  return hasEschaLibraries(home) && await localRuntimeReady(eschaLibrariesDirectory(home), ESCHA_LIBRARIES_VERSION, python,
+    eschaLibraryProbe(home), localRuntimeEnvironment(plan, home));
+}
 /** Escha ships its own SGLang fork and a CUDA-12 Torch ABI. Keep this
  * environment separate from vLLM's CUDA-13 dependencies. */
 async function installEschaRuntime(plan: LocalPlan, home: string, log: LocalLog): Promise<string> {
@@ -473,6 +494,12 @@ async function installEschaRuntime(plan: LocalPlan, home: string, log: LocalLog)
     await runInstall(uv, ["pip", "sync", "--only-binary", ":all:", "--python", python, requirements], env);
   }
   fs.rmSync(ready, { force: true });
+  if (!await eschaLibrariesReady(plan, home, python)) {
+    const libraries = eschaLibrariesDirectory(home);
+    await installCondaArchives(libraries, LOCAL_ESCHA_LIBRARIES, home, log);
+    await runLocalProbe(python, eschaLibraryProbe(home), localRuntimeEnvironment(plan, home));
+    fs.writeFileSync(path.join(libraries, ".ready"), ESCHA_LIBRARIES_VERSION, { mode: 0o600 });
+  }
   await runLocalProbe(python, ["-c", "import torch,escha,sglang,transformers; assert torch.__version__ == '2.9.1+cu128'; assert transformers.__version__ == '5.10.2'; assert torch.cuda.is_available(); assert hasattr(torch.ops.escha, 'escha_gemv'); from triton.backends.nvidia.driver import CudaUtils; CudaUtils(); from sglang.srt.multimodal.processors.qwen_vl import QwenVLImageProcessor; print(torch.cuda.get_device_name(0))"],
     { ...localRuntimeEnvironment(plan, home), CUDA_VISIBLE_DEVICES: plan.gpu.uuid }, 120_000);
   fs.writeFileSync(ready, ESCHA_INSTALL_ID, { mode: 0o600 });
@@ -577,7 +604,8 @@ export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {
       const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
       const env = localRuntimeEnvironment(plan, home);
       installed = await localRuntimeReady(compiler, GCC_VERSION, env.CC || null) &&
-        await localRuntimeReady(compiler, GCC_VERSION, env.CXX || null);
+        await localRuntimeReady(compiler, GCC_VERSION, env.CXX || null) &&
+        await eschaLibrariesReady(plan, home, localRuntimeExecutable(plan, home));
     }
   } catch { /* Damaged runtimes reserve the full repair allowance. */ }
   const required = pending + (installed ? 0 : plan.runtime !== "llama.cpp" ? 30 : 2) * GIB + 5 * GIB;
