@@ -368,3 +368,24 @@ void [
   missingRecordingError,
   idleEncoder,
 ];
+
+// Cancellation metadata is available on Cookie Sync failures.
+async function cookieSyncCancellation(browser: BetterWright) {
+  const result = await browser.syncCookies({ source: { browser: "chrome" } });
+  if (!result.ok) {
+    const code: string | undefined = result.errorCode;
+    const committed: boolean | undefined = result.effectMayHaveCommitted;
+    void code;
+    void committed;
+  }
+}
+void cookieSyncCancellation;
+
+// Existing host adapters keep the RunResult callback contract for Cookie Sync.
+const compatibleHostTarget: NonNullable<BetterWrightOptions["hostTarget"]> = {
+  async connect() { return { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() {} }; },
+  async run(operation: (signal?: AbortSignal) => Promise<RunResult>): Promise<RunResult> {
+    return operation();
+  },
+};
+void compatibleHostTarget;

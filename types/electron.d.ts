@@ -14,6 +14,12 @@ export interface ElectronHostOptions {
   expectAgentInput?: (input: ExpectedInput) => (() => void) | undefined;
   /** A trusted host's takeover signal. Aborts automation without retrying. */
   signal?: AbortSignal;
+  /**
+   * Permit bounded whole-store cookie import into the leased tab via
+   * `syncCookies`. Off by default; the host should scope the granted domains
+   * with `CookieSyncResult.cookieImportDomains`.
+   */
+  cookieImport?: boolean;
 }
 
 /** Call before app.ready. Disables transports that bypass the mandatory proxy. */
