@@ -301,7 +301,7 @@ notes are in [SETUP.md](../SETUP.md#3--mcp-client).
 `betterwright --local` aliases `betterwright local setup`. Installs and verifies
 a hardware-matched model and accelerated runtime for the built-in harness.
 Options: `--preference balanced|speed|quality`, `--model
-nex-mini|ornith-35b|ornith-9b|qwen-27b`, a compatible reviewed `--quant`, and
+nex-mini|ornith-35b|ornith-9b|qwen-27b|qwen-27b-gsq|qwen-27b-escha`, a compatible reviewed `--quant`, and
 `--acceleration auto|none|mtp|dflash2` (default: auto).
 `local plan` and `local status` accept `--json`; plan is read-only and setup
 verifies the actual accelerator. Stop releases GPU memory; the next harness

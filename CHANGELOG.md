@@ -9,6 +9,23 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- Compact Qwen3.8 27B options for `betterwright --local` with 64K context:
+  GSQ-RCO IQ3_S with vision and native MTP on compatible 24 GB GPUs, and
+  Escha W2 with restored vision, compact INT8 embeddings, native MTP, and FP8
+  KV cache on Linux NVIDIA Ampere or newer. GSQ is the 24 GB default; the
+  speed preference selects Escha where supported. Ornith 9B remains the
+  16 GB recommendation. See `docs/local-ai.md` for formats and testing limits.
+
+### Fixed
+
+- Private runtime extraction works in rootless containers without attempting
+  to restore upstream archive ownership. The Escha installer pins CUDA Torch
+  wheels directly so their package index cannot shadow unrelated dependencies.
+- Compact Qwen local requests use supported chat-template controls for image,
+  tool-call, and harness responses.
+
 ## [2.8.0] - 2026-09-13
 
 ### Added

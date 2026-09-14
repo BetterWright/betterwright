@@ -1864,9 +1864,18 @@ export async function resolveModelSelection(model, modelOptions: any = {}) {
   if (["local", "local/local"].includes(selector.toLowerCase()) && !modelOptions.baseURL) {
     const { configuredLocalConnection } = await import("./local-ai-service.js");
     const { plan, connection } = await configuredLocalConnection();
+    const compactQwen = ["qwen-27b-gsq", "qwen-27b-escha"].includes(plan.modelId);
+    const bodyExtra = { temperature: plan.modelId === "nex-mini" ? 0.7 : 0.6, top_p: 0.95, top_k: 40 };
+    if (compactQwen) {
+      Object.assign(bodyExtra, { chat_template_kwargs: { enable_thinking: false, reasoning_effort: "medium" } });
+    }
+    Object.assign(bodyExtra, modelOptions.bodyExtra);
+    // Escha accepts low/medium/high at the HTTP boundary even when thinking is
+    // disabled by the template. Its schema rejects the generic "none" value.
+    const effort = compactQwen && (!modelOptions.effort || modelOptions.effort === "none") ? "medium" :
+      modelOptions.effort || (["nex-mini", "qwen-27b"].includes(plan.modelId) && plan.preference !== "speed" ? "medium" : "none");
     return endpointModel({ ...modelOptions, ...connection, source: "custom", protocol: "chat",
-      effort: modelOptions.effort || (["nex-mini", "qwen-27b"].includes(plan.modelId) && plan.preference !== "speed" ? "medium" : "none"),
-      bodyExtra: { temperature: plan.modelId === "nex-mini" ? 0.7 : 0.6, top_p: 0.95, top_k: 40, ...modelOptions.bodyExtra } });
+      effort, bodyExtra });
   }
   const qualified = qualifiedModelSelector(selector);
   if (modelOptions.baseURL || qualified) {

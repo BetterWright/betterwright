@@ -8,6 +8,7 @@ import { mkdirPrivate, writePrivate } from "./fs-private.js";
 import { defaultHome } from "./home.js";
 import { GIB, type LocalPlan, localInstallArtifacts, localRoot, readLocalPlan, runLocalProbe } from "./local-ai.js";
 import type { LocalArtifact } from "./local-ai-catalog.js";
+import { LOCAL_ESCHA_REQUIREMENTS } from "./local-ai-escha-lock.js";
 import { localProcessInstance, localProcessIsGone } from "./local-ai-process.js";
 import { LOCAL_CUDA_LIBRARIES, LOCAL_GCC_ARTIFACTS, LOCAL_LINUX_LIBRARIES } from "./local-ai-toolchain-lock.js";
 import { LOCAL_VLLM_REQUIREMENTS } from "./local-ai-vllm-lock.js";
@@ -16,6 +17,8 @@ import { isNumber, isString, untrustedField } from "./untrusted-value.js";
 export const LLAMA_VERSION = "b10902";
 export const VLLM_VERSION = "0.29.0";
 const VLLM_INSTALL_ID = `${VLLM_VERSION}-${createHash("sha256").update(LOCAL_VLLM_REQUIREMENTS).digest("hex").slice(0, 12)}`;
+export const ESCHA_VERSION = "1.2.1-qwen3dense";
+const ESCHA_INSTALL_ID = `${ESCHA_VERSION}-${createHash("sha256").update(LOCAL_ESCHA_REQUIREMENTS).digest("hex").slice(0, 12)}`;
 const UV_VERSION = "0.12.13";
 export const LOCAL_PYTHON_VERSION = "3.12.13";
 function llamaArchive(name: string, bytes: number, sha256: string): LocalArtifact {
@@ -233,12 +236,12 @@ export function llamaRuntimeKey(platform: string, backend: string): keyof typeof
   throw new Error("No managed inference runtime is published for this platform.");
 }
 export function runtimeDirectory(plan: LocalPlan, home = defaultHome()) {
-  const id = plan.runtime === "vllm" ? `vllm-${VLLM_VERSION}` : `llama-${LLAMA_VERSION}-${llamaRuntimeKey(plan.platform, plan.gpu.backend)}`;
+  const id = plan.runtime === "escha" ? `escha-${ESCHA_INSTALL_ID}` : plan.runtime === "vllm" ? `vllm-${VLLM_VERSION}` : `llama-${LLAMA_VERSION}-${llamaRuntimeKey(plan.platform, plan.gpu.backend)}`;
   return path.join(localRoot(home), "runtimes", id);
 }
 export function localRuntimeExecutable(plan: LocalPlan, home = defaultHome()) {
   const directory = runtimeDirectory(plan, home);
-  const executable = plan.runtime === "vllm" ? path.join(directory, "venv", "bin", "vllm") :
+  const executable = plan.runtime === "escha" ? path.join(directory, "venv", "bin", "python") : plan.runtime === "vllm" ? path.join(directory, "venv", "bin", "vllm") :
     fs.existsSync(directory) ? findExecutable(directory, plan.platform === "win32" ? "llama-server.exe" : "llama-server") : null;
   if (!executable || !fs.existsSync(executable)) throw new Error("The managed local runtime is missing. Run betterwright --local to repair it.");
   return executable;
@@ -250,11 +253,15 @@ export function hasReadyLocalInstallation(home = defaultHome()): boolean {
     if (!plan) return false;
     const executable = localRuntimeExecutable(plan, home);
     if (!fs.statSync(executable).isFile() || !fs.statSync(executable).size) return false;
-    const version = plan.runtime === "vllm" ? VLLM_INSTALL_ID : LLAMA_VERSION;
+    const version = plan.runtime === "escha" ? ESCHA_INSTALL_ID : plan.runtime === "vllm" ? VLLM_INSTALL_ID : LLAMA_VERSION;
     if (fs.readFileSync(path.join(runtimeDirectory(plan, home), ".ready"), "utf8").trim() !== version) return false;
     if (plan.runtime === "vllm") {
       const env = localRuntimeEnvironment(plan, home);
       if (!env.CC || !env.CXX || !env.CUDA_HOME || ![env.CC, env.CXX, path.join(env.CUDA_HOME, "bin", "nvcc"), path.join(env.CUDA_HOME, "lib", "libcudart.so.13")].every(file => fs.existsSync(file))) return false;
+    }
+    if (plan.runtime === "escha") {
+      const env = localRuntimeEnvironment(plan, home);
+      if (!env.CC || !env.CXX || !fs.existsSync(env.CC) || !fs.existsSync(env.CXX)) return false;
     }
     if (plan.gpu.backend === "rocm") {
       const env = localRuntimeEnvironment(plan, home);
@@ -280,6 +287,14 @@ export function llamaRuntimeEnvironment(platform: string, home = defaultHome(), 
   return env;
 }
 export function localRuntimeEnvironment(plan: LocalPlan, home = defaultHome()): NodeJS.ProcessEnv {
+  if (plan.runtime === "escha") {
+    const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
+    const compilerBin = path.join(compiler, "bin");
+    const bin = path.join(runtimeDirectory(plan, home), "venv", "bin");
+    return { ...process.env, PATH: [bin, compilerBin, process.env.PATH].filter(Boolean).join(path.delimiter),
+      CC: path.join(compilerBin, "x86_64-conda-linux-gnu-gcc"), CXX: path.join(compilerBin, "x86_64-conda-linux-gnu-g++"),
+      LD_LIBRARY_PATH: [path.join(compiler, "lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter) };
+  }
   if (plan.runtime !== "vllm") return llamaRuntimeEnvironment(plan.platform, home, plan.gpu.backend, plan.gpu.gfx);
   const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
   const compilerBin = path.join(compiler, "bin");
@@ -298,7 +313,7 @@ async function extractRuntime(archive: string, directory: string) {
     throw new Error("Unsafe path in the pinned inference runtime archive.");
   }
   mkdirPrivate(directory);
-  await runLocalProbe("tar", ["-xf", archive, "-C", directory], process.env, 10 * 60_000);
+  await runLocalProbe("tar", ["--no-same-owner", "-xf", archive, "-C", directory], process.env, 10 * 60_000);
 }
 /** Only publish a complete, validated extraction. Setup holds the install lock. */
 export async function stageLocalRuntime(directory: string, populate: (staging: string) => Promise<void>) {
@@ -416,7 +431,56 @@ function runInstall(command: string, args: string[], env: NodeJS.ProcessEnv): Pr
     child.once("exit", (code, signal) => { clearTimeout(timer); if (code === 0) resolve(); else reject(new Error(`The managed runtime installer failed (${signal || code}). Rerun betterwright --local to retry.`)); });
   });
 }
+/** Escha ships its own SGLang fork and a CUDA-12 Torch ABI. Keep this
+ * environment separate from vLLM's CUDA-13 dependencies. */
+async function installEschaRuntime(plan: LocalPlan, home: string, log: LocalLog): Promise<string> {
+  if (plan.platform !== "linux" || plan.arch !== "x64" || plan.gpu.backend !== "cuda" || plan.gpu.compute < 8 || !plan.gpu.uuid) {
+    throw new Error("The Escha runtime requires Linux x64 and an NVIDIA Ampere-or-newer GPU.");
+  }
+  const libc = await runLocalProbe("getconf", ["GNU_LIBC_VERSION"]).catch(() => "");
+  const version = libc.match(/glibc\s+(\d+)\.(\d+)/);
+  if (!version || Number(version[1]) < 2 || Number(version[1]) === 2 && Number(version[2]) < 35) {
+    throw new Error("The pinned Escha dependency set requires glibc 2.35+ (Ubuntu 22.04+). No model weights were downloaded.");
+  }
+  const compiler = path.join(localRoot(home), "runtimes", `gcc-${GCC_VERSION}`);
+  const gcc = path.join(compiler, "bin", "x86_64-conda-linux-gnu-gcc");
+  const gxx = path.join(compiler, "bin", "x86_64-conda-linux-gnu-g++");
+  if (!await localRuntimeReady(compiler, GCC_VERSION, gcc) || !await localRuntimeReady(compiler, GCC_VERSION, gxx)) {
+    await installCondaArchives(compiler, LOCAL_GCC_ARTIFACTS, home, log);
+    await runLocalProbe(gcc, ["--version"]); await runLocalProbe(gxx, ["--version"]);
+    fs.writeFileSync(path.join(compiler, ".ready"), GCC_VERSION, { mode: 0o600 });
+  }
+  const directory = runtimeDirectory(plan, home), python = path.join(directory, "venv", "bin", "python");
+  const ready = path.join(directory, ".ready");
+  if (!await localRuntimeReady(directory, ESCHA_INSTALL_ID, python)) {
+    fs.rmSync(ready, { force: true });
+    const uvDirectory = path.join(localRoot(home), "runtimes", `uv-${UV_VERSION}`);
+    const archive = await downloadLocalArtifact(UV_ARCHIVE, path.join(localRoot(home), "downloads"), { log });
+    await stageLocalRuntime(uvDirectory, async staging => {
+      await extractRuntime(archive, staging);
+      const uv = findExecutable(staging, "uv");
+      if (!uv) throw new Error("The pinned uv archive contains no executable.");
+      await runLocalProbe(uv, ["--version"]);
+    });
+    const uv = findExecutable(uvDirectory, "uv");
+    if (!uv) throw new Error("The pinned uv archive contains no executable.");
+    const env = { ...process.env, UV_PYTHON_INSTALL_DIR: path.join(localRoot(home), "python"), UV_CACHE_DIR: path.join(localRoot(home), "uv-cache") };
+    mkdirPrivate(directory);
+    log(`Installing isolated Python ${LOCAL_PYTHON_VERSION} and Escha ${ESCHA_VERSION}.`);
+    await runInstall(uv, ["venv", "--clear", "--python", LOCAL_PYTHON_VERSION, "--managed-python", path.join(directory, "venv")], env);
+    const requirements = path.join(directory, "requirements.txt");
+    writePrivate(requirements, LOCAL_ESCHA_REQUIREMENTS);
+    await runInstall(uv, ["pip", "sync", "--only-binary", ":all:", "--python", python, requirements], env);
+  }
+  fs.rmSync(ready, { force: true });
+  await runLocalProbe(python, ["-c", "import torch,escha,sglang,transformers; assert torch.__version__ == '2.9.1+cu128'; assert transformers.__version__ == '5.10.2'; assert torch.cuda.is_available(); assert hasattr(torch.ops.escha, 'escha_gemv'); from triton.backends.nvidia.driver import CudaUtils; CudaUtils(); from sglang.srt.multimodal.processors.qwen_vl import QwenVLImageProcessor; print(torch.cuda.get_device_name(0))"],
+    { ...localRuntimeEnvironment(plan, home), CUDA_VISIBLE_DEVICES: plan.gpu.uuid }, 120_000);
+  fs.writeFileSync(ready, ESCHA_INSTALL_ID, { mode: 0o600 });
+  return python;
+}
+
 export async function installLocalRuntime(plan: LocalPlan, home = defaultHome(), log: LocalLog = console.log) {
+  if (plan.runtime === "escha") return installEschaRuntime(plan, home, log);
   if (plan.runtime !== "vllm") return installLlamaRuntime(plan.platform, plan.gpu.backend, home, log, plan.gpu.gfx);
   if (process.platform !== "linux" || process.arch !== "x64") throw new Error("The managed vLLM runtime requires Linux x64.");
   const libc = await runLocalProbe("getconf", ["GNU_LIBC_VERSION"]).catch(() => "");
@@ -504,13 +568,13 @@ export async function checkLocalDisk(plan: LocalPlan, home = defaultHome()) {
   }
   let installed = false;
   try {
-    installed = await localRuntimeReady(runtimeDirectory(plan, home), plan.runtime === "vllm" ? VLLM_INSTALL_ID : LLAMA_VERSION, localRuntimeExecutable(plan, home), ["--version"], localRuntimeEnvironment(plan, home));
+    installed = await localRuntimeReady(runtimeDirectory(plan, home), plan.runtime === "escha" ? ESCHA_INSTALL_ID : plan.runtime === "vllm" ? VLLM_INSTALL_ID : LLAMA_VERSION, localRuntimeExecutable(plan, home), ["--version"], localRuntimeEnvironment(plan, home));
     if (installed && plan.runtime === "vllm") {
       const env = localRuntimeEnvironment(plan, home);
       installed = Boolean(env.CC && env.CXX && env.CUDA_HOME && [env.CC, env.CXX, path.join(env.CUDA_HOME, "bin", "nvcc"), path.join(env.CUDA_HOME, "lib64", "libcudart.so.13"), path.join(env.CUDA_HOME, "include", "cuda_runtime.h")].every(file => fs.existsSync(file)));
     }
   } catch { /* Damaged runtimes reserve the full repair allowance. */ }
-  const required = pending + (installed ? 0 : plan.runtime === "vllm" ? 30 : 2) * GIB + 5 * GIB;
+  const required = pending + (installed ? 0 : plan.runtime !== "llama.cpp" ? 30 : 2) * GIB + 5 * GIB;
   if (available < required) throw new Error(`Local AI needs ${(required / GIB).toFixed(1)} GiB of free disk space including runtime and safety headroom; ${(available / GIB).toFixed(1)} GiB is available.`);
   return { available, required };
 }

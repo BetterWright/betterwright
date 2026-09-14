@@ -120,6 +120,11 @@ async function stopLocalServiceUnlocked(home: string): Promise<boolean> {
 }
 export function localServerArguments(plan: LocalPlan, port: number, home = defaultHome()): string[] {
   const directory = modelDirectory(plan, home), model = localModel(plan);
+  if (plan.runtime === "escha") {
+    return [path.join(directory, "serve_vision.py"), "--model", directory, "--host", "127.0.0.1", "--port", String(port),
+      "--served-model-name", LOCAL_MODEL_ALIAS, "--context", String(plan.context), "--kv-cache-dtype", "fp8_e4m3",
+      ...(plan.acceleration === "mtp" ? ["--mtp"] : [])];
+  }
   if (plan.runtime === "vllm") {
     const speculative = plan.acceleration === "dflash2" ? { method: "dflash", model: draftDirectory(home), num_speculative_tokens: 7 } :
       plan.acceleration === "mtp" ? { method: "mtp", num_speculative_tokens: 3 } : null;
@@ -139,7 +144,7 @@ export function localServerArguments(plan: LocalPlan, port: number, home = defau
     "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--batch-size", "512", "--ubatch-size", "128",
     "--image-max-tokens", "4096", "--jinja", "--reasoning-format", "deepseek", "--no-webui",
     ...(plan.acceleration === "mtp" ? ["--spec-type", "draft-mtp", "--spec-draft-n-max", "3", "--spec-draft-device", plan.gpu.id, "--spec-draft-ngl", "999"] : []),
-    "--chat-template-kwargs", JSON.stringify(plan.modelId === "nex-mini" ? { reasoning_effort: "medium" } : { enable_thinking: false })];
+    "--chat-template-kwargs", JSON.stringify(plan.modelId === "nex-mini" ? { reasoning_effort: "medium" } : plan.modelId === "qwen-27b-gsq" ? { enable_thinking: false, reasoning_effort: "medium" } : { enable_thinking: false })];
 }
 /** A failed startup still owns its unpublished supervisor. TERM followed by
  * CONT lets a suspended supervisor run its child cleanup; force termination
@@ -277,8 +282,8 @@ export async function serveLocalAI(planId: string, home = defaultHome(), launch:
   if (!address || isString(address)) throw new Error("Could not allocate the local supervisor port.");
   state = { controlPort: address.port, port, token, planId, supervisorPid: process.pid, childPid: 0 };
   mkdirPrivate(localRoot(home));
-  const env: NodeJS.ProcessEnv = { ...localRuntimeEnvironment(plan, home), LLAMA_API_KEY: token, VLLM_API_KEY: token, HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" };
-  if (plan.runtime === "vllm" && plan.gpu.uuid) env.CUDA_VISIBLE_DEVICES = plan.gpu.uuid;
+  const env: NodeJS.ProcessEnv = { ...localRuntimeEnvironment(plan, home), LLAMA_API_KEY: token, VLLM_API_KEY: token, API_KEY: token, HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" };
+  if (plan.runtime !== "llama.cpp" && plan.gpu.uuid) env.CUDA_VISIBLE_DEVICES = plan.gpu.uuid;
   let childDone = Promise.resolve();
   let probe: ReturnType<typeof setInterval> | null = null;
   const onSignal = () => void finish();

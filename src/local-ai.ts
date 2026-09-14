@@ -37,7 +37,7 @@ export interface LocalPlan {
   version: 1;
   modelId: string;
   quant: string;
-  runtime: "llama.cpp" | "vllm";
+  runtime: "llama.cpp" | "vllm" | "escha";
   platform: string;
   arch: string;
   gpu: LocalGpu;
@@ -76,7 +76,7 @@ export function modelDirectory(plan: LocalPlan, home = defaultHome()) {
 }
 export function draftDirectory(home = defaultHome()) { return path.join(localRoot(home), "drafts", "qwen-27b-dflash2", LOCAL_DFLASH2.revision); }
 export function localInstallArtifacts(plan: LocalPlan, home = defaultHome()) {
-  const files = localModel(plan).files.map(artifact => ({ artifact, directory: modelDirectory(plan, home) }));
+  const files = localModel(plan).files.map(artifact => ({ artifact, directory: path.join(modelDirectory(plan, home), artifact.subdirectory || "") }));
   if (plan.acceleration === "dflash2") files.push(...LOCAL_DFLASH2.files.map(artifact => ({ artifact, directory: draftDirectory(home) })));
   return files;
 }
@@ -207,20 +207,28 @@ function recommendOnGpu(hardware: LocalHardware, options: LocalSetupOptions): Lo
   const cudaQuality = hardware.platform === "linux" && gpu.vendor === "nvidia" && gpu.uuid &&
     ((gpu.compute >= 10 && capacity >= 30 * GIB) || (gpu.compute >= 8.9 && capacity >= 44 * GIB));
   const id = options.model || (cudaQuality && preference !== "speed" ? "qwen-27b" :
+    !apple && capacity >= 22 * GIB && capacity < 30 * GIB ?
+      (preference === "speed" && hardware.platform === "linux" && gpu.backend === "cuda" && gpu.compute >= 8 && gpu.uuid ? "qwen-27b-escha" : "qwen-27b-gsq") :
     capacity >= (apple ? 60 : 30) * GIB ? "nex-mini" : "ornith-9b");
-  if (!LOCAL_MODELS.some(m => m.id === id)) throw new Error("--model must be nex-mini, ornith-35b, ornith-9b, or qwen-27b.");
+  if (!LOCAL_MODELS.some(m => m.id === id)) throw new Error("--model must be nex-mini, ornith-35b, ornith-9b, qwen-27b, qwen-27b-gsq, or qwen-27b-escha.");
   if (id === "qwen-27b" && !cudaQuality) {
     throw new Error("The reviewed Qwen 27B NVFP4/FP8 runtime needs Linux and a supported NVIDIA GPU (32 GB Blackwell, or 48 GB+ with FP8 support). Use nex-mini on this platform, or run setup inside GPU-enabled WSL2.");
   }
+  if (id === "qwen-27b-escha" && !(hardware.platform === "linux" && gpu.backend === "cuda" && gpu.vendor === "nvidia" && gpu.compute >= 8 && gpu.uuid && capacity >= 22 * GIB)) {
+    throw new Error("Escha vision requires Linux x64, an NVIDIA Ampere-or-newer GPU, and nominal 24 GB+ VRAM. Use qwen-27b-gsq on other 24 GB platforms, or ornith-9b on 16 GB cards.");
+  }
+  if (id === "qwen-27b-gsq" && capacity < (apple ? 30 : 22) * GIB) {
+    throw new Error("GSQ IQ3_S reserves a long context on nominal 24 GB+ GPUs or 32 GB+ Apple Silicon. Use ornith-9b on 16 GB hardware.");
+  }
   // Reserve OS/browser memory on unified-memory machines as well as the
   // model's KV cache and compute workspace. Discrete VRAM is never summed.
-  const budget = apple ? Math.min(capacity - Math.max(4 * GIB, capacity * 0.25), gpu.memory) - (capacity >= 48 * GIB ? 4 : 2) * GIB : capacity - 4 * GIB;
+  const budget = apple ? Math.min(capacity - Math.max(4 * GIB, capacity * 0.25), gpu.memory) - (id === "qwen-27b-gsq" ? 6 : capacity >= 48 * GIB ? 4 : 2) * GIB : capacity - 4 * GIB;
   const reserve = capacity - budget;
   const maxBits = preference === "speed" ? 4 : preference === "quality" || capacity >= 90 * GIB ? 8 : 6;
-  let candidates = LOCAL_MODELS.filter(m => m.id === id && m.bits >= 3);
+  let candidates = LOCAL_MODELS.filter(m => m.id === id && (m.bits >= 3 || m.id === "qwen-27b-escha"));
   if (options.quant) {
     candidates = candidates.filter(m => m.quant.toLowerCase() === options.quant.toLowerCase());
-    if (!candidates.length) throw new Error("That quant is not in the reviewed catalog. Supported quants are Q4_K_M, Q5_K_M, Q6_K, Q8_0, NVFP4 and FP8 where compatible; no quant below 3 bits is permitted.");
+    if (!candidates.length) throw new Error("That quant is not in the reviewed catalog. Supported quants are Q4_K_M, Q5_K_M, Q6_K, Q8_0, IQ3_S, NVFP4, FP8, and the reviewed Escha-W2 exception where compatible.");
   } else if (id === "qwen-27b") {
     candidates = candidates.filter(m => m.quant === (gpu.compute >= 10 ? "NVFP4" : "FP8"));
   } else candidates = candidates.filter(m => m.bits <= maxBits);
@@ -238,7 +246,7 @@ function recommendOnGpu(hardware: LocalHardware, options: LocalSetupOptions): Lo
     if (options.acceleration === "dflash2" && !dflashFits) throw new Error("DFlash2 needs the reviewed Qwen 27B vLLM target and enough memory for its BF16 drafter plus extra workspace.");
     acceleration = options.acceleration === "dflash2" ? "dflash2" : options.acceleration === "mtp" ? "mtp" : "none";
   }
-  const context = capacity >= 48 * GIB ? 65536 : 32768;
+  const context = id === "qwen-27b-gsq" || id === "qwen-27b-escha" || capacity >= 48 * GIB ? 65536 : 32768;
   const plan: LocalPlan = { version: 1, modelId: model.id, quant: model.quant, runtime: model.runtime, platform: hardware.platform,
     arch: hardware.arch, gpu, context, acceleration, preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced" };
   return { plan, model, downloadBytes: modelBytes + (acceleration === "dflash2" ? draftBytes : 0), reserveBytes: reserve + (acceleration === "dflash2" ? 2 * GIB : 0),
@@ -270,6 +278,15 @@ export function decodeLocalPlan(value: UntrustedValue): LocalPlan {
     preference: preference === "quality" ? "quality" : preference === "speed" ? "speed" : "balanced",
     gpu: { id, name, memory, freeMemory, backend: backend === "metal" ? "metal" : backend === "cuda" ? "cuda" : backend === "rocm" ? "rocm" : "vulkan",
       vendor: gpuVendor === "apple" ? "apple" : gpuVendor === "nvidia" ? "nvidia" : gpuVendor === "amd" ? "amd" : gpuVendor === "intel" ? "intel" : "other", compute, uuid } };
+  if (model.runtime === "escha" && !(platform === "linux" && arch === "x64" && backend === "cuda" && gpuVendor === "nvidia" && compute >= 8 && memory >= 22 * GIB && uuid)) {
+    throw new Error("Invalid Escha hardware configuration. Run betterwright --local to repair it.");
+  }
+  // Metal reports its working-set limit, not total unified memory. Validate
+  // weights plus the same long-context reserve used by the recommender.
+  const gsqMinimum = backend === "metal" ? model.files.reduce((sum, file) => sum + file.bytes, 0) + 6 * GIB : 22 * GIB;
+  if (model.id === "qwen-27b-gsq" && memory < gsqMinimum) {
+    throw new Error("GSQ requires long-context memory headroom. Run betterwright --local to repair it.");
+  }
   if (isString(gfx)) plan.gpu.gfx = gfx;
   if (get("accelerationTuned") === true) plan.accelerationTuned = true;
   return plan;

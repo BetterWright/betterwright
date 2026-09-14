@@ -15,8 +15,8 @@ export async function verifyLocalModel(connection: LocalConnection, fetchImpl: t
   const marker = "local-setup-check";
   const response = await fetchImpl(`${connection.baseURL}/chat/completions`, {
     method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}` }, redirect: "error", signal: AbortSignal.timeout(180_000),
-    body: JSON.stringify({ model: connection.model, temperature: 0, max_tokens: 512, reasoning_effort: "none",
-      chat_template_kwargs: { enable_thinking: false, reasoning_effort: "none" },
+    body: JSON.stringify({ model: connection.model, temperature: 0, max_tokens: 512, reasoning_effort: "medium",
+      chat_template_kwargs: { enable_thinking: false, reasoning_effort: "medium" },
       messages: [{ role: "user", content: [{ type: "text", text: `Use the betterwright_probe tool to report the single solid color of this image. Copy marker '${marker}' into the call. Do not answer in prose.` },
         { type: "image_url", image_url: { url: PROBE_IMAGE } }] }],
       tools: [{ type: "function", function: { name: "betterwright_probe", description: "Report the observed image color and the supplied marker.",
@@ -48,8 +48,8 @@ export async function benchmarkLocalModel(connection: LocalConnection, fetchImpl
     const start = performance.now();
     const response = await fetchImpl(`${connection.baseURL}/chat/completions`, {
       method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}` }, redirect: "error", signal: AbortSignal.timeout(120_000),
-      body: JSON.stringify({ model: connection.model, temperature: 0, max_tokens: i ? 128 : 8, reasoning_effort: "none",
-        chat_template_kwargs: { enable_thinking: false, reasoning_effort: "none" }, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({ model: connection.model, temperature: 0, max_tokens: i ? 128 : 8, reasoning_effort: "medium",
+        chat_template_kwargs: { enable_thinking: false, reasoning_effort: "medium" }, messages: [{ role: "user", content: prompt }] }),
     });
     const body: UntrustedValue = await response.json();
     const tokens = untrustedField(untrustedField(body, "usage"), "completion_tokens");
@@ -94,7 +94,7 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
       }
       const native = hardware.gpus;
       const provisional = native.some(g => g.memory > 8 * GIB) ? recommendLocalModel(hardware, options) : null;
-      if (provisional?.plan.runtime !== "vllm") {
+      if (!provisional || provisional.plan.runtime === "llama.cpp") {
         log("Checking the accelerated runtime before downloading model weights…");
         const preferred = provisional?.plan.gpu;
         const amd = preferred?.vendor === "amd" && preferred.gfx && LOCAL_ROCM_ARCHIVES[preferred.gfx] ? preferred : null;
@@ -156,10 +156,10 @@ export async function setupLocalAI(options: LocalSetupOptions, home = defaultHom
         }
       } catch (error) {
         const automaticModel = !options.model && !options.quant && (!options.acceleration || ["auto", "none"].includes(options.acceleration));
-        if (allowFallback && automaticModel && plan.runtime === "vllm" && !running.running) {
-          log(`The preferred vLLM runtime is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        if (allowFallback && automaticModel && plan.runtime !== "llama.cpp" && !running.running) {
+          log(`The preferred ${plan.runtime} runtime is unavailable: ${error instanceof Error ? error.message : String(error)}`);
           log("Checking llama.cpp acceleration and choosing a compatible reviewed GGUF model before downloading weights.");
-          return attempt({ ...options, model: plan.gpu.memory >= 30 * GIB ? "nex-mini" : "ornith-9b" }, false);
+          return attempt({ ...options, model: plan.gpu.memory >= 30 * GIB ? "nex-mini" : plan.gpu.memory >= 22 * GIB ? "qwen-27b-gsq" : "ornith-9b" }, false);
         }
         throw error;
       }

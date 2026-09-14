@@ -68,12 +68,13 @@ Does not configure external agents, skills, MCP hosts, or their models.
 Options:
   --preference <mode>  balanced (default) | speed | quality
   --acceleration <mode>  auto (default) | dflash2 | mtp | none
-  --model <id>         nex-mini | ornith-35b | ornith-9b | qwen-27b
+  --model <id>         nex-mini | ornith-35b | ornith-9b | qwen-27b | qwen-27b-gsq | qwen-27b-escha
   --quant <quant>      override within the reviewed, memory-safe catalog
 
 Apple Silicon uses Metal. Compatible AMD/Intel/NVIDIA GPUs use Vulkan;
 supported NVIDIA systems can use CUDA or vLLM. No automatic recommendation
-for 8 GB or less of system/accelerator memory. Never uses a sub-3-bit quant.
+for 8 GB or less of system/accelerator memory. Escha W2 is the sole reviewed
+mixed 2/3-bit exception; other models retain the 3-bit floor.
 Plan is read-only; setup verifies the actual accelerator before model downloads.
 After setup, betterwright and betterwright exec use it unless a model was
 explicitly selected. --model local selects it again. Stop releases GPU memory;

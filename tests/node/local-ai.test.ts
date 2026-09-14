@@ -9,6 +9,7 @@ import { modelReadiness, preferredModelId } from "../../dist/src/doctor.js";
 import { decodeLocalPlan, detectAmdGpus, detectLocalHardware, draftDirectory, GIB, localInstallArtifacts, localModel, localPlanId, localRoot, modelDirectory, parseLlamaDevices, parseNvidiaGpus, readLocalPlan, recommendLocalModel, writeLocalJson } from "../../dist/src/local-ai.js";
 import { LOCAL_DFLASH2, LOCAL_MODELS } from "../../dist/src/local-ai-catalog.js";
 import { setupLocalAI, verifyLocalModel } from "../../dist/src/local-ai-cli.js";
+import { LOCAL_ESCHA_REQUIREMENTS } from "../../dist/src/local-ai-escha-lock.js";
 import { downloadLocalArtifact, hasReadyLocalInstallation, LLAMA_VERSION, LOCAL_PYTHON_VERSION, LOCAL_RUNTIMES, localRuntimeReady, runtimeDirectory, stageLocalRuntime, VLLM_VERSION, verifyLocalArtifact, withLocalLock } from "../../dist/src/local-ai-install.js";
 import { localProcessInstance, localProcessIsGone } from "../../dist/src/local-ai-process.js";
 import { ensureLocalService, localServerArguments, localServiceStatus, serveLocalAI, stopLocalService, stopLocalServiceIfOwned } from "../../dist/src/local-ai-service.js";
@@ -26,7 +27,11 @@ function hardware(memory = 64, vram = memory, vendor = "apple", platform = vendo
 const cases: Array<[string, ReturnType<typeof hardware>, string, string, string]> = [
   ["5090", hardware(64, 32, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
   ["Pro 6000 Blackwell", hardware(128, 96, "nvidia", "linux", 12), "qwen-27b", "NVFP4", "vllm"],
-  ["A10G Ampere", hardware(16, 24, "nvidia", "linux", 8.6), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["A10G Ampere", hardware(16, 24, "nvidia", "linux", 8.6), "qwen-27b-gsq", "IQ3_S", "llama.cpp"],
+  ["RTX 4090", hardware(64, 24, "nvidia", "linux", 8.9), "qwen-27b-gsq", "IQ3_S", "llama.cpp"],
+  ["RTX 4080 16 GB", hardware(32, 16, "nvidia", "linux", 8.9), "ornith-9b", "Q6_K", "llama.cpp"],
+  ["Radeon 7900 XTX", hardware(64, 24, "amd"), "qwen-27b-gsq", "IQ3_S", "llama.cpp"],
+  ["Windows RTX 4090", hardware(64, 24, "nvidia", "win32", 8.9), "qwen-27b-gsq", "IQ3_S", "llama.cpp"],
   ["A100 Ampere", hardware(128, 80, "nvidia", "linux", 8), "nex-mini", "Q6_K", "llama.cpp"],
   ["H100 Hopper", hardware(128, 80, "nvidia", "linux", 9), "qwen-27b", "FP8", "vllm"],
   ["H200 Hopper", hardware(256, 141, "nvidia", "linux", 9), "qwen-27b", "FP8", "vllm"],
@@ -108,12 +113,12 @@ test("hardware parsers recognize real Metal, Vulkan and CUDA output without coun
 });
 test("all catalog downloads are immutable, checksummed and from reviewed publishers", () => {
   for (const model of LOCAL_MODELS) {
-    assert.ok(model.bits >= 3); assert.match(model.revision, /^[a-f0-9]{40}$/);
-    assert.match(model.repository, /^(bartowski|ornith-ai|unsloth|Qwen)\//);
+    assert.ok(model.bits >= 3 || model.id === "qwen-27b-escha" && model.quant === "Escha-W2"); assert.match(model.revision, /^[a-f0-9]{40}$/);
+    assert.match(model.repository, /^(bartowski|ornith-ai|unsloth|Qwen|ISTA-DASLab|ProCreations)\//);
     if (model.runtime === "llama.cpp") assert.ok(model.files.some(f => f.name.startsWith("mmproj-")));
     for (const file of model.files) {
       assert.match(file.sha256, /^[a-f0-9]{64}$/); assert.ok(file.bytes > 0);
-      assert.equal(file.url, `https://huggingface.co/${model.repository}/resolve/${model.revision}/${file.name}`);
+      assert.equal(file.url, `https://huggingface.co/${model.repository}/resolve/${model.revision}/${file.subdirectory ? `${file.subdirectory}/` : ""}${file.name}`);
     }
   }
   for (const key of Object.keys(LOCAL_RUNTIMES)) for (const file of LOCAL_RUNTIMES[key]) {
@@ -235,6 +240,7 @@ test("readiness requires a parsed tool call with the actual image color", async 
   await verifyLocalModel(connection, async (_url, init) => {
     const request = JSON.parse(init.body);
     assert.equal(init.headers.authorization, "Bearer private-probe-key");
+    assert.deepEqual(request.chat_template_kwargs, { enable_thinking: false, reasoning_effort: "medium" });
     assert.match(request.messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
     return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: "betterwright_probe", arguments: JSON.stringify({ color: "red", marker: "local-setup-check" }) } }] } }] });
   });
@@ -686,4 +692,59 @@ test("forced startup cancellation discovers ownership published during the final
     if (model.exitCode === null && model.signalCode === null) model.kill("SIGKILL");
     if (daemon && daemon.exitCode === null && daemon.signalCode === null) daemon.kill("SIGKILL");
   }
+});
+
+test("27B profiles keep long context and a portable default, with an explicit Escha exception", () => {
+  const gpu = hardware(64, 24, "nvidia", "linux", 8.9);
+  for (const preference of ["balanced", "quality"]) {
+    const result = recommendLocalModel(gpu, { preference });
+    assert.equal(result.model.id, "qwen-27b-gsq");
+    assert.equal(result.plan.context, 65536);
+    assert.equal(result.plan.acceleration, "mtp");
+    const args = localServerArguments(result.plan, 9876);
+    assert.ok(args.includes("draft-mtp")); assert.ok(args.includes("q8_0"));
+    assert.ok(args.includes("65536"));
+  }
+  const escha = recommendLocalModel(gpu, { preference: "speed" });
+  assert.equal(escha.model.id, "qwen-27b-escha"); assert.equal(escha.plan.runtime, "escha");
+  assert.equal(escha.plan.context, 65536); assert.equal(escha.plan.acceleration, "mtp");
+  assert.ok(localServerArguments(escha.plan, 9876).includes("fp8_e4m3"));
+  assert.ok(localInstallArtifacts(escha.plan).some(item => item.artifact.name === "model.safetensors" && item.directory.endsWith("/mtp")));
+  assert.deepEqual(decodeLocalPlan(escha.plan), escha.plan);
+  for (const host of [hardware(32, 16, "nvidia", "linux", 8.9), hardware(64, 24, "amd"), hardware(64, 24, "nvidia", "win32", 8.9)]) {
+    assert.throws(() => recommendLocalModel(host, { model: "qwen-27b-escha" }), /Escha vision requires/);
+  }
+  assert.throws(() => recommendLocalModel(hardware(32, 16, "amd"), { model: "qwen-27b-gsq" }), /long context/);
+  assert.throws(() => recommendLocalModel(gpu, { model: "qwen-27b-gsq", quant: "IQ2_S" }), /not in the reviewed catalog/);
+  assert.throws(() => recommendLocalModel(gpu, { model: "qwen-27b-gsq", acceleration: "dflash2" }), /DFlash2 needs/);
+  assert.throws(() => decodeLocalPlan({ ...escha.plan, platform: "win32" }), /Invalid Escha hardware/);
+  const apple = recommendLocalModel(hardware(32, 24), { model: "qwen-27b-gsq" });
+  assert.deepEqual(decodeLocalPlan(apple.plan), apple.plan);
+  assert.ok(apple.downloadBytes + apple.acceleratorReserveBytes <= 24 * GIB);
+  assert.throws(() => recommendLocalModel(hardware(32, 16), { model: "qwen-27b-gsq" }), /fits/);
+  assert.throws(() => decodeLocalPlan({ ...apple.plan, gpu: { ...apple.plan.gpu, memory: 16 * GIB } }), /headroom/);
+});
+
+test("Escha installs its CUDA-12 Torch ABI without shadowing the PyPI dependency index", () => {
+  const pins = LOCAL_ESCHA_REQUIREMENTS.trim().split("\n");
+  assert.ok(!pins.some(pin => pin.startsWith("--extra-index-url")));
+  assert.ok(pins.some(pin => pin.startsWith("torch @ https://download-r2.pytorch.org/whl/cu128/torch-2.9.1%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=")));
+  assert.ok(pins.some(pin => pin.startsWith("torchvision @ https://download-r2.pytorch.org/whl/cu128/torchvision-0.24.1%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=")));
+  assert.ok(pins.includes("transformers==5.10.2"));
+  assert.ok(!pins.some(pin => pin.startsWith("sglang==") || pin.startsWith("vllm==")));
+  for (const pin of pins) assert.match(pin, /^([a-z0-9_.-]+==[a-z0-9.+_-]+|[a-z0-9_.-]+ @ https:\/\/[^ ]+#sha256=[a-f0-9]{64})$/i);
+});
+
+test("automatic Escha failure falls back to long-context GSQ before model downloads", async () => {
+  const home = makeTempDir("bw-local-escha-fallback-"), downloads: string[] = [];
+  const result = await setupLocalAI({ preference: "speed", acceleration: "none" }, home, quiet, {
+    detect: async () => hardware(64, 24, "nvidia", "linux", 8.9), status: async () => ({ running: false }), disk: async () => {},
+    installRuntime: async plan => { if (plan.runtime === "escha") throw new Error("unsupported runtime"); return "cuda"; },
+    installLlama: async () => "cuda", probe: async () => "CUDA0: nvidia test GPU (24576 MiB, 24576 MiB free)",
+    download: async artifact => { downloads.push(artifact.name); return "file"; },
+    connect: async () => ({ model: "local", apiKey: "fake", baseURL: "http://127.0.0.1:1/v1" }), verify: async () => {},
+  });
+  assert.equal(result.plan.modelId, "qwen-27b-gsq"); assert.equal(result.plan.context, 65536);
+  assert.ok(downloads.length > 0); assert.ok(downloads.every(name => name.endsWith(".gguf")));
+  assert.equal(readLocalPlan(home)?.modelId, "qwen-27b-gsq");
 });
