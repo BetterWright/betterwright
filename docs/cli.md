@@ -265,8 +265,10 @@ need no sign-in. See [agent.md](agent.md#signing-in-betterwright-auth).
 ### `betterwright models [source]`
 
 Lists the models reachable right now: native backends plus local Ollama/vLLM
-servers, and OpenRouter when `OPENROUTER_API_KEY` is set. `source` limits the
-list to `openrouter`, `ollama`, or `vllm`. `--base-url <url>` queries a custom
+servers, OpenRouter when `OPENROUTER_API_KEY` is set, and Cerebras when
+`CEREBRAS_API_KEY` is set. `source` limits the list to `openrouter`, `cerebras`,
+`ollama`, or `vllm`. `betterwright models cerebras` can query the public catalog
+without a key. `--base-url <url>` queries a custom
 endpoint, `--api-key-env <name>` supplies its key, `--json` prints the
 machine-readable catalog. See [agent.md](agent.md#how-selection-works).
 

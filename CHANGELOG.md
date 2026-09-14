@@ -9,16 +9,25 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-09-13
+
 ### Added
 
 - `betterwright --local`: hardware-aware model and quant selection, private
-  Metal/Vulkan/CUDA inference runtimes, resumable checksum-verified downloads,
+  Metal/Vulkan/CUDA/ROCm inference runtimes, resumable checksum-verified downloads,
   and image/tool-call validation before selecting the built-in harness default.
-  Automatically configures DFlash2 or native MTP where compatible, including
-  verified draft downloads, memory headroom, and private compiler tooling.
+  Automatically compares DFlash2 or native MTP with ordinary decoding where
+  compatible, retaining acceleration when it improves measured throughput.
+  Includes verified draft downloads, memory headroom, and private compiler tooling.
   Includes `local plan`, `status`, `start`, and `stop`; skills and MCP hosts
   retain their own model configuration. See `docs/local-ai.md` for supported
   hardware and validation limits.
+
+- Cerebras support in the built-in harness through `cerebras/<model-id>`,
+  `CEREBRAS_API_KEY`, `CEREBRAS_BASE_URL`, public/account model listing, and
+  doctor/default-model discovery. Qwen 3.8 27B supports screenshot input and
+  tool calls; reasoning is preserved across turns. No additional SDK is needed.
+  See `docs/agent.md#cerebras` for usage and validation limits.
 
 - Ordered browser-provider fallback chains. The `provider` option accepts an
   array of candidates tried in order — a provider that is out of quota, down,
@@ -1660,7 +1669,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.3...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/BetterWright/betterwright/compare/v2.7.3...v2.8.0
 [2.7.3]: https://github.com/BetterWright/betterwright/compare/v2.7.1...v2.7.3
 [2.7.1]: https://github.com/BetterWright/betterwright/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/BetterWright/betterwright/compare/v2.6.0...v2.7.0

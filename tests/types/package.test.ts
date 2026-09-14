@@ -188,7 +188,7 @@ const customEndpointAdapter: AgentModel = endpointModel({
   model: "vendor/opaque-id",
 });
 const endpointModels: Promise<{
-  source: "openrouter" | "ollama" | "vllm" | "custom";
+  source: "openrouter" | "cerebras" | "ollama" | "vllm" | "custom";
   baseURL: string;
   models: string[];
 }> = listEndpointModels({ source: "vllm" });

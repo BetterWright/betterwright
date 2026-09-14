@@ -226,6 +226,7 @@ export function modelReadiness({ env = process.env, auth = null }: any = {}) {
     sources.push("claude (ANTHROPIC_API_KEY)");
   }
   if (env.OPENROUTER_API_KEY) sources.push("openrouter (OPENROUTER_API_KEY)");
+  if (env.CEREBRAS_API_KEY) sources.push("cerebras (CEREBRAS_API_KEY)");
   if (env.XAI_API_KEY || env.GROK_API_KEY) sources.push("grok (API key)");
   if (env.OPENAI_API_KEY) sources.push("codex (OPENAI_API_KEY)");
   const anthropicKeyNoSdk =
@@ -286,6 +287,13 @@ export function preferredModelId({ env = process.env, auth = null }: any = {}) {
       configured: true,
     };
   }
+  if (env.CEREBRAS_API_KEY) {
+    return {
+      model: `cerebras/${String(env.BETTERWRIGHT_CEREBRAS_MODEL || "qwen-3.8-27b").replace(/^cerebras\//i, "")}`,
+      reason: "CEREBRAS_API_KEY",
+      configured: true,
+    };
+  }
   // OpenRouter, Ollama, and vLLM have no bare-id default — a model there has
   // to be named `source/id` — so they are usable but cannot supply a default.
   return { model: "claude-opus-4-8", reason: "default", configured: false };
@@ -310,6 +318,7 @@ export function modelSetupHint({ env = process.env, auth = null }: any = {}) {
     "  Sign in:  betterwright auth --login codex     (a ChatGPT/Codex subscription)\n" +
     "        or:  betterwright auth --login grok\n" +
     `        or:  export ANTHROPIC_API_KEY=… && ${installHint("@anthropic-ai/sdk")}\n` +
+    "        or:  export CEREBRAS_API_KEY=…   (Cerebras Qwen 3.8 27B)\n" +
     "  Local:    run Ollama, then --model ollama/<id>   (see `betterwright models`)"
   );
 }

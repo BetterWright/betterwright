@@ -23,7 +23,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { AgentModel, ResolvedAuth, RunAgentTaskOptions } from "../types/agent.js";
+import type { AgentMessage, AgentModel, ResolvedAuth, RunAgentTaskOptions } from "../types/agent.js";
 import type { BetterWrightOptions } from "../types/public.js";
 import { uncachedInputTokens } from "./agent-usage.js";
 import { codexAccessToken, codexHome, grokAccessToken, loadCodexAuth, loadGrokAuth } from "./auth.js";
@@ -156,6 +156,12 @@ const TRUNCATED_STOP_REASONS = new Set(["max_tokens", "length", "incomplete"]);
 const REFUSAL_STOP_REASONS = new Set(["refusal", "content_filter"]);
 
 export const MODEL_ENDPOINT_PRESETS = Object.freeze({
+  cerebras: Object.freeze({
+    baseURL: "https://api.cerebras.ai/v1",
+    baseURLEnv: "CEREBRAS_BASE_URL",
+    apiKeyEnv: "CEREBRAS_API_KEY",
+    requiresApiKey: true,
+  }),
   openrouter: Object.freeze({
     baseURL: "https://openrouter.ai/api/v1",
     baseURLEnv: "OPENROUTER_BASE_URL",
@@ -1111,7 +1117,9 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
         recordUsage(response.usage);
       }
       toolCallCount += toolCalls.length;
-      appendTranscriptMessage({ role: "assistant", text: response.text || "", toolCalls });
+      const assistantTurn: Extract<AgentMessage, { role: "assistant" }> = { role: "assistant", text: response.text || "", toolCalls };
+      if (isString(response.reasoning)) assistantTurn.reasoning = response.reasoning;
+      appendTranscriptMessage(assistantTurn);
 
       // No tool call: the model answered in prose. Treat that text as the
       // result unless steering arrived while the model was answering.
@@ -1514,11 +1522,12 @@ export function endpointSourceName(value) {
     .toLowerCase()
     .replace(/[-_ ]/g, "");
   if (name === "openrouter") return "openrouter";
+  if (name === "cerebras") return "cerebras";
   if (name === "ollama") return "ollama";
   if (name === "vllm") return "vllm";
   if (name === "custom") return "custom";
   throw new Error(
-    `Unknown model source "${value}". Use openrouter, ollama, vllm, or custom.`,
+    `Unknown model source "${value}". Use openrouter, cerebras, ollama, vllm, or custom.`,
   );
 }
 
@@ -1546,12 +1555,13 @@ function modelIdAliases(value) {
 }
 
 // The sources worth probing without an explicit selection: the local runtimes
-// always, OpenRouter only when a key is configured (its probe is a remote
+// always, remote providers only when a key is configured (their probe is a remote
 // call). Exported so CLI model listing discovers from the same set as bare-id
 // resolution.
 export function endpointDiscoverySources() {
   const sources = ["ollama", "vllm"];
   if (process.env.OPENROUTER_API_KEY) sources.push("openrouter");
+  if (process.env.CEREBRAS_API_KEY) sources.push("cerebras");
   return sources;
 }
 
@@ -1559,7 +1569,7 @@ export function endpointDiscoverySources() {
 // headroom than the loopback ollama/vllm probes. Exported so the CLI's quick
 // listing uses the same budgets as bare-id discovery.
 export function discoveryTimeoutMs(source) {
-  return source === "openrouter" ? 3_000 : 750;
+  return ["openrouter", "cerebras"].includes(source) ? 3_000 : 750;
 }
 
 function endpointURL(value, source) {
@@ -1629,7 +1639,7 @@ function endpointConfig(
     );
   if (requireApiKey && preset.requiresApiKey && !apiKey)
     throw new Error(
-      `OpenRouter needs an API key. Set ${preset.apiKeyEnv} or pass --api-key-env <name>.`,
+      `${source === "cerebras" ? "Cerebras" : "OpenRouter"} needs an API key. Set ${preset.apiKeyEnv} or pass --api-key-env <name>.`,
     );
   if (
     apiKey &&
@@ -1658,6 +1668,8 @@ function endpointConfig(
     .toLowerCase();
   if (!["chat", "responses"].includes(protocol))
     throw new Error('Model protocol must be "chat" or "responses".');
+  if (source === "cerebras" && protocol !== "chat")
+    throw new Error("Cerebras uses Chat Completions. Use --protocol chat.");
 
   const headers: Record<string, string> = {};
   if (source === "openrouter") {
@@ -1684,7 +1696,7 @@ export function endpointModel(options: any = {}) {
     headers: config.headers,
     // Generic providers converge on max_tokens. Keep optional OpenAI-only
     // controls out of the baseline request so partial implementations work.
-    maxTokensField: "max_tokens",
+    maxTokensField: config.source === "cerebras" ? "max_completion_tokens" : "max_tokens",
     parallelToolCalls: null,
   };
   if (config.protocol === "responses") {
@@ -1710,7 +1722,11 @@ export async function listEndpointModels(options: any = {}) {
   const requestHeaders: Record<string, string> = {};
   if (config.apiKey) requestHeaders.authorization = `Bearer ${config.apiKey}`;
   Object.assign(requestHeaders, config.headers);
-  const response = await fetchImpl(`${config.baseURL}/models`, {
+  // The official public catalog needs no key. Custom Cerebras endpoints keep
+  // their own /models route, and keyed listing can include private models.
+  const modelsURL = config.source === "cerebras" && !config.apiKey && config.baseURL === MODEL_ENDPOINT_PRESETS.cerebras.baseURL
+    ? "https://api.cerebras.ai/public/v1/models" : `${config.baseURL}/models`;
+  const response = await fetchImpl(modelsURL, {
     headers: requestHeaders,
     redirect: "error",
     signal: options.signal || AbortSignal.timeout(10_000),
@@ -1895,7 +1911,7 @@ export async function resolveModelSelection(model, modelOptions: any = {}) {
   }
   throw new Error(
     `No available model source exposes "${selector}". Run \`betterwright models\`, ` +
-      "or use --model openrouter/<id>, ollama/<id>, vllm/<id>, or --base-url <url>.",
+      "or use --model cerebras/<id>, openrouter/<id>, ollama/<id>, vllm/<id>, or --base-url <url>.",
   );
 }
 
@@ -2064,7 +2080,7 @@ export function claudeModel(options: any = {}) {
 
 // --- OpenAI-compatible (codex, grok) --------------------------------------
 
-function openaiMessages(system, messages) {
+function openaiMessages(system, messages, cerebrasModel = "") {
   const out: any[] = [{ role: "system", content: system }];
   for (const m of messages) {
     if (m.role === "user") {
@@ -2074,10 +2090,19 @@ function openaiMessages(system, messages) {
         out.push({
           role: "tool",
           tool_call_id: r.id,
-          content: openaiToolResultContent(r),
+          content: cerebrasModel ? String(r.content || "") : openaiToolResultContent(r),
         });
+      if (cerebrasModel) {
+        // Tool replies stay contiguous strings; screenshots follow the entire
+        // tool batch as user image parts, as required by Cerebras's chat schema.
+        const images = m.results.flatMap(r => r.images || []);
+        if (images.length) out.push({ role: "user", content: cerebrasModel === "gpt-oss-120b"
+          ? "Browser images were omitted because this model does not support vision. Use DOM observations or a vision-capable model."
+          : openaiToolResultContent({ content: "Browser screenshots from the preceding tool results:", images }) });
+      }
     } else {
       const turn: any = { role: "assistant", content: m.text || null };
+      if (cerebrasModel && isString(m.reasoning)) turn.reasoning = m.reasoning;
       if (m.toolCalls?.length)
         turn.tool_calls = m.toolCalls.map((tc) => ({
           id: tc.id,
@@ -2191,7 +2216,7 @@ export function openaiModel(options: any = {}) {
       const body: any = {
         model: modelId,
         [maxTokensField]: maxTokens,
-        messages: openaiMessages(system, messages),
+        messages: openaiMessages(system, messages, options.name === "cerebras" ? modelId : ""),
         tools: tools.length ? tools.map((t) => ({
           type: "function",
           function: { name: t.name, description: t.description, parameters: t.parameters },
@@ -2224,7 +2249,9 @@ export function openaiModel(options: any = {}) {
       } catch {
         throw new Error(`${options.name || "openai"} returned a non-JSON chat response.`);
       }
-      return parseOpenaiResponse(data);
+      const parsed = parseOpenaiResponse(data);
+      return options.name === "cerebras" && isString(data?.choices?.[0]?.message?.reasoning)
+        ? { ...parsed, reasoning: data.choices[0].message.reasoning } : parsed;
     },
   };
 }

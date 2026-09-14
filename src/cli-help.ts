@@ -333,9 +333,9 @@ Options:
   models: `Usage: betterwright models [source] [options]
 
 List the models reachable right now. With no source, probes the native backends
-plus any local Ollama or vLLM server and OpenRouter when keyed.
+plus any local Ollama or vLLM server, and OpenRouter/Cerebras when keyed.
 
-Sources: openrouter | ollama | vllm | local
+Sources: openrouter | cerebras | ollama | vllm | local
 
 Options:
   --base-url <url>       an OpenAI-compatible endpoint to query

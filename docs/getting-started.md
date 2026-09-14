@@ -14,7 +14,7 @@ you know which one you're in:
   task in plain language — `betterwright exec "<task>" --model <id>` or the
   interactive `betterwright` console — and BetterWright's own browser-tuned
   agent loop does the driving, returning one JSON answer. Pass a real model
-  id (Claude, Codex/GPT, Grok, Ollama, vLLM, OpenRouter, or any
+  id (Claude, Codex/GPT, Grok, Ollama, vLLM, OpenRouter, Cerebras, or any
   OpenAI-compatible endpoint); see [agent.md](agent.md#choosing-a-model). A
   coding agent can treat this as a browser *sub-agent*: one shell command in,
   one answer out, with the entire browsing transcript kept out of its context.

@@ -64,6 +64,16 @@ DFlash2 or MTP acceleration, with draft memory included in the budget.
 See [local AI setup](docs/local-ai.md) for hardware,
 driver requirements, model choices, and validation limits.
 
+Cerebras is also supported by the harness:
+
+```bash
+export CEREBRAS_API_KEY=…
+betterwright models cerebras
+betterwright exec "Open example.com and summarize the page" --model cerebras/qwen-3.8-27b
+```
+
+See [harness providers](docs/agent.md#cerebras) for model selection and limitations.
+
 ## Connect an existing agent
 
 ### CLI and skills

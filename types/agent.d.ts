@@ -21,8 +21,8 @@ export interface AgentToolCall {
 /** A neutral transcript turn the harness passes to a model adapter. */
 export type AgentMessage =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; toolCalls: AgentToolCall[] }
-  | { role: "tool"; results: Array<{ id: string; name: string; content: string }> };
+  | { role: "assistant"; text: string; toolCalls: AgentToolCall[]; reasoning?: string }
+  | { role: "tool"; results: Array<{ id: string; name: string; content: string; images?: Array<{ mimeType: string; data: string }> }> };
 
 /** A tool definition exposed to the model. */
 export interface AgentTool {
@@ -42,7 +42,7 @@ export interface AgentModel {
     tools: AgentTool[];
     /** Aborted when the run's wall-clock budget expires or the caller's `signal` stops the run. */
     signal: AbortSignal;
-  }): Promise<{ text: string; toolCalls: AgentToolCall[]; stopReason?: string; usage?: AgentUsage | null }>;
+  }): Promise<{ text: string; toolCalls: AgentToolCall[]; reasoning?: string; stopReason?: string; usage?: AgentUsage | null }>;
 }
 
 /**
@@ -246,6 +246,7 @@ export function openaiModel(options: OpenAIModelOptions): AgentModel;
 
 export type ModelEndpointSource =
   | "openrouter"
+  | "cerebras"
   | "ollama"
   | "vllm"
   | "custom";
@@ -270,7 +271,7 @@ export function endpointSourceName(value: string): ModelEndpointSource;
 
 /**
  * Sources probed during bare-id model discovery: the loopback runtimes always,
- * OpenRouter only when `OPENROUTER_API_KEY` is set (its probe is a remote call).
+ * OpenRouter/Cerebras only when their API key is set (their probes are remote calls).
  */
 export function endpointDiscoverySources(): ModelEndpointSource[];
 

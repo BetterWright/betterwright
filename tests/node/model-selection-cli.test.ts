@@ -44,6 +44,7 @@ test("models command lists actual native model ids without a provider flag", asy
   const result = await runCli(["models"], {
     BETTERWRIGHT_MODEL_BASE_URL: undefined,
     OPENROUTER_API_KEY: undefined,
+    CEREBRAS_API_KEY: undefined,
   });
 
   assertCliExited(result, 0, "models");
@@ -59,7 +60,7 @@ test("model command help is specific and successful", async () => {
 
   assertCliExited(models, 0, "models --help");
   assert.match(models.stdout, /betterwright models/);
-  assert.match(models.stdout, /openrouter \| ollama \| vllm/);
+  assert.match(models.stdout, /openrouter \| cerebras \| ollama \| vllm/);
   assert.doesNotMatch(models.stdout, /--provider/);
   assertCliExited(exec, 0, "exec --help");
   assert.match(exec.stdout, /betterwright exec.*--base-url/s);
@@ -130,7 +131,7 @@ test("models rejects an unknown source with agent.ts's shared error message", as
   // now come from endpointSourceName.
   assert.match(
     result.stderr,
-    /Unknown model source "bogus"\. Use openrouter, ollama, vllm, or custom\./,
+    /Unknown model source "bogus"\. Use openrouter, cerebras, ollama, vllm, or custom\./,
   );
 });
 
@@ -150,9 +151,11 @@ test("models normalizes source spellings the same way --model parsing does", asy
 test("source parsing and probe budgets are the agent's own exports", () => {
   assert.equal(endpointSourceName("Open-Router"), "openrouter");
   assert.equal(endpointSourceName("v_llm"), "vllm");
+  assert.equal(endpointSourceName("Cerebras"), "cerebras");
+  assert.equal(discoveryTimeoutMs("cerebras"), 3_000);
   assert.throws(
     () => endpointSourceName("bogus"),
-    /Use openrouter, ollama, vllm, or custom\./,
+    /Use openrouter, cerebras, ollama, vllm, or custom\./,
   );
   // OpenRouter's probe crosses the network, so it gets more headroom than the
   // loopback runtimes.
@@ -162,14 +165,25 @@ test("source parsing and probe budgets are the agent's own exports", () => {
 });
 
 test("endpoint discovery probes local runtimes always and OpenRouter only with a key", () => {
-  const saved = process.env.OPENROUTER_API_KEY;
+  const saved = process.env.OPENROUTER_API_KEY, savedCerebras = process.env.CEREBRAS_API_KEY;
   try {
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
     assert.deepEqual(endpointDiscoverySources(), ["ollama", "vllm"]);
     process.env.OPENROUTER_API_KEY = "test-key";
     assert.deepEqual(endpointDiscoverySources(), ["ollama", "vllm", "openrouter"]);
+    process.env.CEREBRAS_API_KEY = "test-key";
+    assert.deepEqual(endpointDiscoverySources(), ["ollama", "vllm", "openrouter", "cerebras"]);
   } finally {
     if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
     else process.env.OPENROUTER_API_KEY = saved;
+    if (savedCerebras === undefined) delete process.env.CEREBRAS_API_KEY;
+    else process.env.CEREBRAS_API_KEY = savedCerebras;
   }
+});
+
+test("Cerebras CLI reports its required key before starting the browser", async () => {
+  const result = await runCli(["exec", "Read example.com", "--model=cerebras/qwen-3.8-27b"], { CEREBRAS_API_KEY: undefined });
+  assertCliExited(result, 1, "cerebras without key");
+  assert.match(result.stderr, /Cerebras needs an API key.*CEREBRAS_API_KEY/s);
 });
