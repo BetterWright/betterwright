@@ -709,7 +709,7 @@ test("27B profiles keep long context and a portable default, with an explicit Es
   assert.equal(escha.model.id, "qwen-27b-escha"); assert.equal(escha.plan.runtime, "escha");
   assert.equal(escha.plan.context, 65536); assert.equal(escha.plan.acceleration, "mtp");
   assert.ok(localServerArguments(escha.plan, 9876).includes("fp8_e4m3"));
-  assert.ok(localInstallArtifacts(escha.plan).some(item => item.artifact.name === "model.safetensors" && item.directory.endsWith("/mtp")));
+  assert.ok(localInstallArtifacts(escha.plan).some(item => item.artifact.name === "model.safetensors" && item.directory === path.join(modelDirectory(escha.plan), "mtp")));
   assert.deepEqual(decodeLocalPlan(escha.plan), escha.plan);
   for (const host of [hardware(32, 16, "nvidia", "linux", 8.9), hardware(64, 24, "amd"), hardware(64, 24, "nvidia", "win32", 8.9)]) {
     assert.throws(() => recommendLocalModel(host, { model: "qwen-27b-escha" }), /Escha vision requires/);
