@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-09-14
+
 ### Added
 
 - Compact Qwen3.8 27B options for `betterwright --local` with 64K context:
@@ -1702,7 +1704,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.1...HEAD
+[2.8.1]: https://github.com/BetterWright/betterwright/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/BetterWright/betterwright/compare/v2.7.3...v2.8.0
 [2.7.3]: https://github.com/BetterWright/betterwright/compare/v2.7.1...v2.7.3
 [2.7.1]: https://github.com/BetterWright/betterwright/compare/v2.7.0...v2.7.1
