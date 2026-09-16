@@ -72,6 +72,24 @@ test("snapshot extras prefer aria refs", () => {
   assert.equal(extras[0].name, "Mercury (planet)");
 });
 
+test("parseObserved keeps multiline snapshot refs as extra candidates", () => {
+  const observed = parseObserved({
+    url: "http://127.0.0.1/",
+    title: "Snapshot",
+    oracle: "",
+    snapshotText: 'page page-1 http://127.0.0.1/\n- generic [active] [ref=e1]:\n  - button "Say hello" [ref=e2]\n  - link "A link" [ref=e3]\n',
+    dialogs: [],
+    directory: { protocol: "betterwright-ui/1", truncated: false, evidence: [], controls: [] },
+  });
+  assert.deepEqual(
+    observed.candidates.map((candidate) => [candidate.id, candidate.role, candidate.name, candidate.target]),
+    [
+      ["opt_00", "button", "Say hello", { ref: "e2" }],
+      ["opt_01", "link", "A link", { ref: "e3" }],
+    ],
+  );
+});
+
 test("directory candidates keep dialog and frame metadata", () => {
   const observed = parseObserved({
     url: "http://127.0.0.1/billing",

@@ -282,7 +282,8 @@ export function parseObserved(value: UntrustedValue): ObservedPage {
   const directory = untrustedField(value, "directory");
   const candidates = candidatesFromDirectory(directory);
   const names = new Set(candidates.map((candidate) => `${candidate.role}:${candidate.name.toLowerCase()}`));
-  for (const extra of extraCandidatesFromSnapshot(clip(untrustedField(value, "snapshotText"), 8_000), candidates.length)) {
+  const snapshotLines = String(untrustedField(value, "snapshotText") ?? "").slice(0, 8_000);
+  for (const extra of extraCandidatesFromSnapshot(snapshotLines, candidates.length)) {
     const key = `${extra.role}:${extra.name.toLowerCase()}`;
     if (names.has(key)) continue;
     candidates.push(extra);
