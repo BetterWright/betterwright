@@ -326,11 +326,11 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
       };
       // Open dialogs first: a login or cookie modal is the next action even
       // when the page behind it already has many buttons.
-      const dialogPrimary = primary.filter((element) => dialogOpen(element));
-      const selectedPrimary = new Set([
-        ...dialogPrimary,
-        ...primary.filter((element) => identities.get(element).role === "button").slice(0, 8),
-      ]);
+      const selectedPrimary = new Set(primary.filter((element) => dialogOpen(element)).slice(0, 36));
+      for (const element of primary.filter((element) => identities.get(element).role === "button").slice(0, 8)) {
+        if (selectedPrimary.size >= 36) break;
+        selectedPrimary.add(element);
+      }
       for (const element of primary) {
         if (selectedPrimary.size >= 36) break;
         selectedPrimary.add(element);
@@ -338,7 +338,7 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
       const selected = [
         ...primary.filter((element) => selectedPrimary.has(element) && dialogOpen(element)),
         ...primary.filter((element) => selectedPrimary.has(element) && !dialogOpen(element)),
-        ...links.slice(0, 40 - selectedPrimary.size),
+        ...links.slice(0, Math.max(0, 40 - selectedPrimary.size)),
       ];
       return {
         total: matching.length,

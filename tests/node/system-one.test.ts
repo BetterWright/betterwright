@@ -9,6 +9,7 @@ import {
   interpretDecision,
   observedLooksLikeLogin,
   parseObserved,
+  postSystemOne,
   runFollowIntent,
   systemOneApiKey,
   systemOneMissingKeyError,
@@ -151,6 +152,25 @@ test("destructive targets are blocked unless the intent names them", () => {
     url: "/", title: "", oracle: "", evidence: [], snapshotText: "", dialogs: [], candidates: [remove], truncated: false,
   }, { intent: "Delete account for this user" }, []);
   assert.equal(allowed.action, "click");
+});
+
+test("text fields are returned as the target instead of filled without a value", () => {
+  const search = candidate({ role: "textbox", name: "Search people", actions: ["fill"], target: { role: "textbox", name: "Search people" } });
+  const decision = interpretDecision(answers({}), [search]);
+  const choice = decideAction(decision, {
+    url: "/", title: "", oracle: "", evidence: [], snapshotText: "", dialogs: [], candidates: [search], truncated: false,
+  }, { intent: "Search for Ada" }, []);
+  assert.deepEqual(choice, { action: "abstain", reason: "unresolved" });
+});
+
+test("postSystemOne fails instead of hanging when the provider stalls", async () => {
+  const stalledFetch: typeof fetch = (_input, init) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+  });
+  await assert.rejects(
+    postSystemOne({ model: "jev-latest", state: {}, questions: {} }, { apiKey: "k", fetch: stalledFetch, timeoutMs: 50 }),
+    /timed out after 50ms/,
+  );
 });
 
 test("runFollowIntent stops when expect is already visible", async () => {

@@ -18,6 +18,7 @@ const MAX_CANDIDATES = 40;
 const DEFAULT_MAX_STEPS = 8;
 const DEFAULT_CONFIDENCE_FLOOR = 0.45;
 const DEFAULT_SETTLE_MS = 300;
+const DEFAULT_ASK_TIMEOUT_MS = 60_000;
 const AUTH_NAME = /\b(sign[\s-]?in|log[\s-]?in|authenticate)\b/i;
 const DESTRUCTIVE_NAME = /\b(delete account|remove account|destroy workspace|wipe (?:all )?data)\b/i;
 const PAGINATION_NAME = /^(next|previous|prev|older|newer)(?:\s|$|[\u2192\u00bb\u203a\u25b8\u25ba])/i;
@@ -457,6 +458,8 @@ export function decideAction(
   if (actionFor(candidate) === "fill" && /password/i.test(candidate.name)) {
     return { action: "abstain", reason: "blocked" };
   }
+  // Jev chooses controls, not text; hand text fields back to the caller.
+  if (actionFor(candidate) === "fill") return { action: "abstain", reason: "unresolved" };
   if (isDestructiveControl(candidate) && !options.allowDestructive && !DESTRUCTIVE_NAME.test(options.intent)) {
     return { action: "abstain", reason: "blocked" };
   }
@@ -548,17 +551,27 @@ export function followIntentDeps(
 
 export async function postSystemOne(
   request: SystemOneAskRequest,
-  options: { apiKey: string; url?: string; fetch?: typeof fetch },
+  options: { apiKey: string; url?: string; fetch?: typeof fetch; timeoutMs?: number },
 ) {
   const fetchImpl = options.fetch || fetch;
-  const response = await fetchImpl(options.url || SYSTEM_ONE_API_URL, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${options.apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(request),
-  });
+  const timeoutMs = isNumber(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_ASK_TIMEOUT_MS;
+  let response: Response;
+  try {
+    response = await fetchImpl(options.url || SYSTEM_ONE_API_URL, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(`System One request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  }
   const text = await response.text();
   let body: UntrustedValue;
   try { body = JSON.parse(text); } catch { body = { raw: clip(text, 400) }; }

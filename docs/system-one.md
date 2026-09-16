@@ -42,7 +42,11 @@ const result = await withBrowser(async (bw) => {
 if (!result.ok) throw new Error(result.error || result.reason);
 ```
 
-`act: false` returns the chosen target without clicking.
+`act: false` returns the chosen target without clicking. Text fields are
+never filled: when Jev picks a textbox the loop stops with
+`reason: "unresolved"` and the field in `target`, since the model chooses a
+control, not the text. Each System One request is bounded to 60 seconds; a
+stalled provider ends the loop with `reason: "error"`.
 
 ## Stop rules
 

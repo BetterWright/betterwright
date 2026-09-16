@@ -38,6 +38,8 @@ async function listen(html: string) {
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  // SAFETY: the listening event above completed a TCP bind, so address()
+  // returns an AddressInfo rather than null or a pipe path string.
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return {
     origin,
@@ -66,6 +68,27 @@ test("open dialog controls are listed before the page behind them", opts, async 
     assert.ok(names.includes("Sign in"), JSON.stringify(names));
     assert.equal(directory.result.controls[0].dialog, true);
     assert.ok(directory.result.controls.find((control) => control.target.name === "Sign in").dialog);
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
+test("a dialog with more controls than the budget stays within the directory bound", opts, async () => {
+  const buttons = Array.from({ length: 50 }, (_, index) => `<button>Dialog action ${index}</button>`).join("");
+  const links = Array.from({ length: 30 }, (_, index) => `<a href="/l${index}">Page link ${index}</a>`).join("");
+  const site = await listen(`<!doctype html>${links}<dialog open>${buttons}</dialog>`);
+  const home = tempHome();
+  const bw = new BetterWright({ home, headless: true });
+  try {
+    const directory = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      return controls.directory();
+    `);
+    assert.equal(directory.ok, true, directory.error);
+    assert.ok(directory.result.controls.length <= 40, `directory listed ${directory.result.controls.length} controls`);
+    assert.equal(directory.result.controls[0].dialog, true);
+    assert.equal(directory.result.truncated, true);
   } finally {
     await bw.close();
     await site.close();
