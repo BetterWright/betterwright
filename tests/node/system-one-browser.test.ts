@@ -38,6 +38,8 @@ async function listen(html: string) {
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
+  // SAFETY: the server finished `listen` on a TCP port, so `address()` returns
+  // an AddressInfo — not the null of an unbound server or a pipe-name string.
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return {
     origin,
