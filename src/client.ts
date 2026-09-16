@@ -16,7 +16,7 @@ import type { HostConnection, HostTarget } from "../types/host.js";
 // The published declarations are hand-written (see AGENTS.md). Typing the
 // implementation against them turns a drift between the two into a compile
 // error instead of something only a consumer would notice.
-import type { BetterWrightOptions, CookieSyncResult, LiveViewOptions } from "../types/public.js";
+import type { BetterWrightOptions, CookieSyncResult, FollowIntentOptions, FollowIntentResult, LiveViewOptions } from "../types/public.js";
 import { resolveAdBlock } from "./ad-block-config.js";
 import {
   configuredProviderChain,
@@ -45,6 +45,13 @@ import { NetworkPolicy } from "./policy.js";
 import { profileDirFor, resolveProfileName } from "./profile-name.js";
 import { bunInheritedExecArgv, packageAddCommand } from "./runtime.js";
 import { listSkills, skillHintsForPages } from "./skills.js";
+import {
+  followIntentDeps,
+  postSystemOne,
+  runFollowIntent,
+  systemOneApiKey,
+  systemOneMissingKeyError,
+} from "./system-one.js";
 import {
   isBoolean,
   isCallable,
@@ -1466,6 +1473,54 @@ export class BetterWright {
   /** List secret-free generated credentials recoverable from the current site. */
   listPendingCredentials(options: any = {}) {
     return this._pendingCredential("list", options);
+  }
+
+  /**
+   * Resolve an intent against the current page with a System One model (Jev)
+   * and optionally act on the chosen control. Host-side only: the API key and
+   * page payload never enter the sandbox. Stops on login walls, repeated
+   * targets, low confidence, and `expect` matches. Does not authorize
+   * credentials, purchases, or network policy.
+   */
+  async followIntent(options: FollowIntentOptions = { intent: "" }): Promise<FollowIntentResult> {
+    if (!isOptionsRecord(options) || !isString(options.intent) || !String(options.intent).trim()) {
+      return { ok: false, reason: "error", intent: "", steps: [], error: "followIntent requires a non-empty intent string." };
+    }
+    const apiKey = systemOneApiKey();
+    if (!apiKey) {
+      return {
+        ok: false,
+        reason: "unresolved",
+        intent: String(options.intent).trim(),
+        steps: [],
+        error: systemOneMissingKeyError(),
+      };
+    }
+    const session = options.session;
+    const timeout = options.timeout;
+    if (options.url) {
+      const opened = await this.run(
+        `await page.goto(${JSON.stringify(options.url)}, { waitUntil: "domcontentloaded" }); return page.url();`,
+        { session, timeout, note: "followIntent open" },
+      );
+      if (!opened.ok) {
+        return {
+          ok: false,
+          reason: "error",
+          intent: String(options.intent).trim(),
+          steps: [],
+          error: opened.error || "followIntent navigation failed",
+        };
+      }
+    }
+    return runFollowIntent(
+      followIntentDeps(
+        (code, runOptions) => this.run(code, runOptions),
+        (request) => postSystemOne(request, { apiKey }),
+        options,
+      ),
+      options,
+    );
   }
 
   _pendingCredential(action, options) {

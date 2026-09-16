@@ -420,3 +420,80 @@ export interface WaitForAskOptions {
   /** Hard bound in seconds (default 1800). */
   timeout?: number;
 }
+
+/** Why `followIntent()` stopped. */
+export type FollowIntentReason =
+  | "completed"
+  | "unresolved"
+  | "blocked"
+  | "loop"
+  | "login"
+  | "error";
+
+/** Host-side System One (Jev) loop over discovered page controls. */
+export interface FollowIntentOptions {
+  /** What the caller wants done. Required. */
+  intent: string;
+  /** Navigate here before observing. */
+  url?: string;
+  /** `controls.directory({ query })` filter. */
+  query?: string | string[];
+  /** Stop successfully when this substring is visible in page evidence. */
+  expect?: string;
+  /** Inclusive cap on observe/decide/act cycles (default 8, max 16). */
+  maxSteps?: number;
+  /** When false, return the chosen target without clicking (default true). */
+  act?: boolean;
+  /** Allow Sign in / password controls (default false). */
+  allowAuthentication?: boolean;
+  /** Allow destructive controls unless the intent names them (default false). */
+  allowDestructive?: boolean;
+  /** Minimum reported confidence to act, except pagination (default 0.45). */
+  confidenceFloor?: number;
+  /** Pause after a mutation so delayed UI can appear (default 300ms). */
+  settleMs?: number;
+  session?: string;
+  timeout?: number;
+  /** System One model id (default `jev-latest`). */
+  model?: string;
+}
+
+export interface FollowIntentStep {
+  step: number;
+  url: string;
+  oracle: string;
+  pageState?: string;
+  targetId?: string;
+  confidence?: number;
+  itemPresent?: number;
+  action: string;
+  reason?: FollowIntentReason;
+  candidate?: { name: string; role: string; context: string; dialog?: boolean };
+}
+
+export interface FollowIntentLocator {
+  ref?: UntrustedValue;
+  role?: UntrustedValue;
+  name?: UntrustedValue;
+  label?: UntrustedValue;
+  text?: UntrustedValue;
+  placeholder?: UntrustedValue;
+  css?: UntrustedValue;
+  exact?: UntrustedValue;
+  nth?: UntrustedValue;
+  frameName?: UntrustedValue;
+  frameUrlIncludes?: UntrustedValue;
+  testId?: UntrustedValue;
+}
+
+export interface FollowIntentResult {
+  ok: boolean;
+  reason: FollowIntentReason;
+  intent: string;
+  url?: string;
+  title?: string;
+  oracle?: string;
+  target?: { id: string; name: string; role: string; target: FollowIntentLocator };
+  steps: FollowIntentStep[];
+  error?: string;
+}

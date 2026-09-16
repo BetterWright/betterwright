@@ -9,6 +9,17 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Added
+
+- `followIntent()` on the host client: an opt-in System One (Jev) loop that
+  chooses among `controls.directory()` targets and optionally acts. Requires
+  `BETTERWRIGHT_TYPESAFE_API_KEY` or `TYPESAFE_API_KEY`. It stops on login
+  walls, repeated targets, low confidence, and `expect` matches, and never
+  fills passwords. See `docs/system-one.md`.
+- `controls.directory()` lists controls inside an open dialog before the page
+  behind it, so cookie and login modals are visible to batches and
+  `followIntent()`.
+
 ## [2.8.1] - 2026-09-14
 
 ### Added

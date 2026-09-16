@@ -58,7 +58,7 @@ Browser client:
 | Export | What it is |
 | --- | --- |
 | `withBrowser(options?, fn)` | Run `fn` with a client and close that client afterwards. |
-| `BetterWright` | The client itself: `run()`, sessions, live view, downloads, credential filling. Full reference in [javascript.md](javascript.md). |
+| `BetterWright` | The client itself: `run()`, sessions, live view, downloads, credential filling, and opt-in `followIntent()`. Full reference in [javascript.md](javascript.md). |
 | `BrowserError` | The error type to throw when a result envelope comes back with `ok: false`. |
 | `validateCredentialMatchMode(value)` | Returns the value when it is one of the four credential URL scopes, and throws a `TypeError` otherwise. |
 | `listCookieSourceBrowsers()` | List local browser sources supported by Cookie Sync. |
@@ -117,11 +117,11 @@ Knowing which failures come back as a value and which ones throw is most of
 what makes an integration robust.
 
 **Anything that happened inside the browser is a value.** `run()`,
-`fillCredential()`, and the live-view calls resolve with an envelope; when the
-snippet threw, the page navigated away, the call timed out, or the worker died
-mid-call, that envelope is `{ ok: false, error }`. Check `ok` and decide.
-Throwing `BrowserError(result.error)` is the conventional way to turn one into
-an exception.
+`fillCredential()`, `followIntent()`, and the live-view calls resolve with an
+envelope; when the snippet threw, the page navigated away, the call timed out,
+or the worker died mid-call, that envelope is `{ ok: false, error }`. Check
+`ok` and decide. Throwing `BrowserError(result.error)` is the conventional way
+to turn one into an exception.
 
 **The client throws only when it cannot work at all**, and always as a
 `BrowserError` (or a `TypeError` for a bad option at construction):
