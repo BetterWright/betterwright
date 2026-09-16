@@ -335,10 +335,12 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
         if (selectedPrimary.size >= 36) break;
         selectedPrimary.add(element);
       }
+      const dialogLinks = links.filter((element) => dialogOpen(element)).slice(0, 8);
       const selected = [
         ...primary.filter((element) => selectedPrimary.has(element) && dialogOpen(element)),
+        ...dialogLinks,
         ...primary.filter((element) => selectedPrimary.has(element) && !dialogOpen(element)),
-        ...links.slice(0, 40 - selectedPrimary.size),
+        ...links.filter((element) => !dialogLinks.includes(element)).slice(0, Math.max(0, 40 - selectedPrimary.size - dialogLinks.length)),
       ];
       return {
         total: matching.length,

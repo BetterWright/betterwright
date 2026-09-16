@@ -74,6 +74,27 @@ test("open dialog controls are listed before the page behind them", opts, async 
   }
 });
 
+test("open dialog links survive the directory limit on a link-heavy page", opts, async () => {
+  const pageLinks = Array.from({ length: 45 }, (_, index) => `<a href="/doc/${index}">Article ${index}</a>`).join(" ");
+  const site = await listen(`<!doctype html>${pageLinks}
+    <dialog open><h2>Terms updated</h2><a href="/terms">Review terms</a></dialog>`);
+  const home = tempHome();
+  const bw = new BetterWright({ home, headless: true });
+  try {
+    const directory = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      return controls.directory();
+    `);
+    assert.equal(directory.ok, true, directory.error);
+    assert.equal(directory.result.controls[0].target.name, "Review terms");
+    assert.equal(directory.result.controls[0].dialog, true);
+    assert.ok(directory.result.controls.length <= 40);
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
 test("followIntent clicks a duplicate row using mocked System One answers", opts, async () => {
   const site = await listen(`<!doctype html><table>
       <tr><td>Alex Chen</td><td>Engineering</td><td><button data-who="eng">Message</button></td></tr>

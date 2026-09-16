@@ -218,6 +218,39 @@ test("runFollowIntent does not click the same target twice", async () => {
   assert.equal(result.steps[1].action, "abstain");
 });
 
+test("runFollowIntent with act: false returns the chosen target as a success without acting", async () => {
+  let acted = 0;
+  const result = await runFollowIntent({
+    observe: async () => ({
+      url: "/shop", title: "Shop", oracle: "", dialogs: [],
+      directory: { controls: [{ target: { role: "button", name: "Add to cart", exact: true }, actions: ["click"], context: "Trail Runner Pro Blue · size 10" }] },
+    }),
+    act: async () => { acted += 1; return { ok: true }; },
+    ask: async () => ({ answers: answers({ item_present: { type: "noul", noul: 0.8 } }) }),
+    wait: async () => {},
+  }, { intent: "Add the blue size 10 Trail Runner Pro", act: false });
+  assert.equal(acted, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "completed");
+  assert.equal(result.target?.name, "Add to cart");
+  assert.equal(result.steps.length, 1);
+  assert.equal(result.steps[0].action, "click");
+});
+
+test("runFollowIntent with act: false still reports abstentions as failures", async () => {
+  const result = await runFollowIntent({
+    observe: async () => ({
+      url: "/shop", title: "Shop", oracle: "", dialogs: [],
+      directory: { controls: [{ target: { role: "button", name: "Add to cart", exact: true }, actions: ["click"] }] },
+    }),
+    act: async () => ({ ok: true }),
+    ask: async () => ({ answers: answers({ target: { type: "choice", choice: "opt_00", confidence: 0.2, probabilities: { opt_00: 0.2 } } }) }),
+    wait: async () => {},
+  }, { intent: "Add the blue size 10 Trail Runner Pro", act: false });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "unresolved");
+});
+
 test("followIntent without a key does not start the worker", async () => {
   const previous = {
     TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY,

@@ -633,10 +633,10 @@ export async function runFollowIntent(
       steps.push(stepRecord);
       const chosen = decision.candidate;
       if (choice.action === "abstain" || !act || !chosen) {
-        const unresolvedOk = choice.reason === "completed";
-        const reason: FollowIntentReason = choice.reason ?? "unresolved";
+        const dryRun = choice.action !== "abstain" && !act && Boolean(chosen);
+        const reason: FollowIntentReason = dryRun ? "completed" : choice.reason ?? "unresolved";
         return {
-          ok: unresolvedOk,
+          ok: dryRun || choice.reason === "completed",
           reason,
           intent,
           url: observed.url,
