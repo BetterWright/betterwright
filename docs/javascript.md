@@ -79,6 +79,7 @@ Install the optional dependency (`npm install patchright-core`) to use it;
 | Method | Description |
 | --- | --- |
 | `run(code, { session, note, timeout, approvedDownloads, automaticUI, signal }) => Promise<envelope>` | Execute one snippet. Calls within a session are queued; different sessions may execute concurrently. `automaticUI: false` omits the automatic UI catalog on a successful call. |
+| `followIntent({ intent, url, query, expect, maxSteps, act }) => Promise<FollowIntentResult>` | Host-side System One (Jev) loop: choose among discovered controls and optionally act. Requires a TypeSafe API key. See [system-one.md](system-one.md). |
 | `close() => Promise<void>` | Shut the worker down. Idempotent. |
 | `closeSession(session?) => Promise<{ ok, closed, pagesClosed, error? }>` | Close one session's pages and forget its state without closing other sessions or the browser. |
 | `syncCookies(options) => Promise<CookieSyncResult>` | Import cookies from a local browser into this identity. See [Cookie Sync](cookie-sync.md). |

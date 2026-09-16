@@ -74,6 +74,7 @@ See [network-policy.md](network-policy.md) and
 | `BETTERWRIGHT_PARK_BACKGROUND_PAGES` | on | `0` keeps idle headless pages running between calls instead of parking them |
 | `BETTERWRIGHT_STEALTH_RUNTIME_FIX` | off | `1` runs snippets in an isolated world through the optional `patchright-core` driver |
 | `BETTERWRIGHT_FFMPEG_PATH` | `PATH` lookup | Absolute path to an FFmpeg binary for recording |
+| `BETTERWRIGHT_TYPESAFE_API_KEY` | unset | Host-side System One (Jev) key for `followIntent()`. `TYPESAFE_API_KEY` is accepted as a fallback. Page text is sent to TypeSafe; the key never enters the sandbox. See [system-one.md](system-one.md) |
 
 ## Live view
 

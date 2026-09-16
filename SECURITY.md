@@ -20,6 +20,12 @@ threat model and the controls that enforce it are documented in
   the local key file does not defend against an attacker who can already read
   files as the same OS user. External vault adapters remain available for a
   stronger key-management boundary.
+- **`followIntent()`** is host-side and opt-in. It sends bounded page
+  observations (URL, title, control labels, a truncated snapshot) to TypeSafe
+  using `BETTERWRIGHT_TYPESAFE_API_KEY` / `TYPESAFE_API_KEY`. The key never
+  enters the sandbox. Do not enable it on pages that display secrets you are
+  unwilling to share with that provider. It does not authorize network policy,
+  credential fill, or purchases.
 
 Please read those sections before deploying BetterWright somewhere it can be
 driven by untrusted input.

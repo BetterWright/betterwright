@@ -318,14 +318,28 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
       });
       const primary = matching.filter((element) => identities.get(element).role !== "link");
       const links = matching.filter((element) => identities.get(element).role === "link");
-      // Reserve action buttons, then fill the remaining slots in DOM order.
-      // Otherwise a submit button after many fields disappears from discovery.
-      const selectedPrimary = new Set(primary.filter((element) => identities.get(element).role === "button").slice(0, 8));
+      const dialogOpen = (element) => {
+        const root = element.closest("dialog, [role='dialog'], [aria-modal='true']");
+        if (!root) return false;
+        if (root instanceof HTMLDialogElement) return root.open;
+        return visible(root);
+      };
+      // Open dialogs first: a login or cookie modal is the next action even
+      // when the page behind it already has many buttons.
+      const dialogPrimary = primary.filter((element) => dialogOpen(element));
+      const selectedPrimary = new Set([
+        ...dialogPrimary,
+        ...primary.filter((element) => identities.get(element).role === "button").slice(0, 8),
+      ]);
       for (const element of primary) {
         if (selectedPrimary.size >= 36) break;
         selectedPrimary.add(element);
       }
-      const selected = [...primary.filter((element) => selectedPrimary.has(element)), ...links.slice(0, 40 - selectedPrimary.size)];
+      const selected = [
+        ...primary.filter((element) => selectedPrimary.has(element) && dialogOpen(element)),
+        ...primary.filter((element) => selectedPrimary.has(element) && !dialogOpen(element)),
+        ...links.slice(0, 40 - selectedPrimary.size),
+      ];
       return {
         total: matching.length,
         entries: selected.map((element) => {
@@ -353,6 +367,7 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
             disabled: "disabled" in element ? Boolean(element.disabled) : element.getAttribute("aria-disabled") === "true",
             options,
             context: contextFor(element),
+            dialog: dialogOpen(element),
             itemContext: role !== "link" && Boolean(element.closest("article,li,[role='listitem'],tr,[role='row']")),
           };
         }).filter((entry) => !(["button", "link"].includes(entry.role) && !entry.name)),
@@ -385,6 +400,7 @@ export async function inspectActionDirectory(page, options: UntrustedValue = und
       if (entry.value) compact.value = entry.value;
       if (entry.checked !== undefined) compact.checked = entry.checked;
       if (entry.disabled) compact.disabled = true;
+      if (entry.dialog) compact.dialog = true;
       if (entry.options) compact.options = entry.options;
       if (entry.context && (entry.duplicateCount > 1 ||
           (entry.itemContext && !entry.name.includes(entry.context) && !seenContexts.has(entry.context)))) {

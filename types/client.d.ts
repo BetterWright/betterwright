@@ -19,6 +19,8 @@ import type {
   RunResult,
   WaitForAskOptions,
   WaitForHandoffOptions,
+  FollowIntentOptions,
+  FollowIntentResult,
 } from "./public.js";
 import type { CredentialVault } from "./common.js";
 import type { NetworkPolicy } from "./policy.js";
@@ -169,6 +171,13 @@ export class BetterWright {
   listPendingCredentials(
     options?: PendingCredentialListOptions,
   ): Promise<PendingCredentialListResult>;
+  /**
+   * Resolve `intent` against discovered page controls with a System One model
+   * (Jev) and optionally act. Requires `BETTERWRIGHT_TYPESAFE_API_KEY` or
+   * `TYPESAFE_API_KEY`. Host-side only; never fills passwords or invents
+   * targets. See docs/system-one.md.
+   */
+  followIntent(options: FollowIntentOptions): Promise<FollowIntentResult>;
   /** Shut the worker down. Idempotent. */
   close(): Promise<void>;
 }
