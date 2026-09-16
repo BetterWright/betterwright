@@ -471,6 +471,21 @@ export interface FollowIntentStep {
   candidate?: { name: string; role: string; context: string; dialog?: boolean };
 }
 
+export interface FollowIntentLocator {
+  ref?: UntrustedValue;
+  role?: UntrustedValue;
+  name?: UntrustedValue;
+  label?: UntrustedValue;
+  text?: UntrustedValue;
+  placeholder?: UntrustedValue;
+  css?: UntrustedValue;
+  exact?: UntrustedValue;
+  nth?: UntrustedValue;
+  frameName?: UntrustedValue;
+  frameUrlIncludes?: UntrustedValue;
+  testId?: UntrustedValue;
+}
+
 export interface FollowIntentResult {
   ok: boolean;
   reason: FollowIntentReason;
@@ -478,7 +493,7 @@ export interface FollowIntentResult {
   url?: string;
   title?: string;
   oracle?: string;
-  target?: { id: string; name: string; role: string; target: Record<string, UntrustedValue> };
+  target?: { id: string; name: string; role: string; target: FollowIntentLocator };
   steps: FollowIntentStep[];
   error?: string;
 }

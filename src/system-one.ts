@@ -24,6 +24,20 @@ const PAGINATION_NAME = /^(next|previous|prev|older|newer)(?:\s|$|[\u2192\u00bb\
 const TRAILING_ARROW = /\s*[\u2192\u00bb\u203a\u25b8\u25ba\u2190]+$/u;
 const PARENTHETICAL = /^(.*) \([^)]+\)$/;
 const SNAPSHOT_CONTROL = /^\s*- (link|button) "([^"]*)" \[ref=([A-Za-z0-9_-]+)\]/;
+const TARGET_KEYS = [
+  "ref",
+  "role",
+  "name",
+  "label",
+  "text",
+  "placeholder",
+  "css",
+  "exact",
+  "nth",
+  "frameName",
+  "frameUrlIncludes",
+  "testId",
+] as const;
 
 export type FollowIntentReason =
   | "completed"
@@ -33,9 +47,24 @@ export type FollowIntentReason =
   | "login"
   | "error";
 
+export interface DirectoryTarget {
+  ref?: UntrustedValue;
+  role?: UntrustedValue;
+  name?: UntrustedValue;
+  label?: UntrustedValue;
+  text?: UntrustedValue;
+  placeholder?: UntrustedValue;
+  css?: UntrustedValue;
+  exact?: UntrustedValue;
+  nth?: UntrustedValue;
+  frameName?: UntrustedValue;
+  frameUrlIncludes?: UntrustedValue;
+  testId?: UntrustedValue;
+}
+
 export interface SystemOneCandidate {
   id: string;
-  target: Record<string, UntrustedValue>;
+  target: DirectoryTarget;
   actions: string[];
   role: string;
   name: string;
@@ -94,7 +123,7 @@ export interface FollowIntentResult {
   url?: string;
   title?: string;
   oracle?: string;
-  target?: { id: string; name: string; role: string; target: Record<string, UntrustedValue> };
+  target?: { id: string; name: string; role: string; target: DirectoryTarget };
   steps: FollowIntentStep[];
   error?: string;
 }
@@ -152,9 +181,19 @@ export function isDestructiveControl(candidate: SystemOneCandidate) {
   return DESTRUCTIVE_NAME.test(candidate.name);
 }
 
-export function fallbackTargets(target: Record<string, UntrustedValue>) {
-  const out: Record<string, UntrustedValue>[] = [target];
-  const push = (next: Record<string, UntrustedValue>) => {
+function copyDirectoryTarget(value: UntrustedValue): DirectoryTarget {
+  const target: DirectoryTarget = {};
+  if (!isRecord(value)) return target;
+  for (const key of TARGET_KEYS) {
+    const field = untrustedField(value, key);
+    if (field !== undefined) target[key] = field;
+  }
+  return target;
+}
+
+export function fallbackTargets(target: DirectoryTarget) {
+  const out = [target];
+  const push = (next: DirectoryTarget) => {
     const key = JSON.stringify(next);
     if (!out.some((entry) => JSON.stringify(entry) === key)) out.push(next);
   };
@@ -186,8 +225,7 @@ export function candidatesFromDirectory(directory: UntrustedValue): SystemOneCan
   const controls = untrustedField(directory, "controls");
   if (!Array.isArray(controls)) return [];
   return controls.slice(0, MAX_CANDIDATES).map((control, index) => {
-    const targetValue = untrustedField(control, "target");
-    const target = isRecord(targetValue) ? { ...targetValue } as Record<string, UntrustedValue> : {};
+    const target = copyDirectoryTarget(untrustedField(control, "target"));
     const actionsValue = untrustedField(control, "actions");
     const optionsValue = untrustedField(control, "options");
     const name = clip(
@@ -299,26 +337,24 @@ export function observedMatchesExpect(observed: ObservedPage, expected: string |
 }
 
 function optionCriteria(candidates: SystemOneCandidate[]) {
-  const criteria: Record<string, string> = {
-    not_applicable: "The next action is not choosing a dropdown option.",
-  };
+  const criteria = new Map([["not_applicable", "The next action is not choosing a dropdown option."]]);
   for (const candidate of candidates) {
     for (const option of candidate.options) {
       const label = clip(Array.isArray(option) ? option[0] : option, 60);
       const value = clip(Array.isArray(option) ? option[1] || option[0] : option, 60);
       if (!label) continue;
-      criteria[`${candidate.id}__${value || label}`] = `${candidate.name}: ${label}`;
+      criteria.set(`${candidate.id}__${value || label}`, `${candidate.name}: ${label}`);
     }
   }
-  return criteria;
+  return Object.fromEntries(criteria);
 }
 
 export function buildSystemOneRequest(intent: string, observed: ObservedPage, model: string): SystemOneAskRequest {
-  const criteria: Record<string, string> = {
-    [SYSTEM_ONE_NONE]: "No safe or matching control. Use this for login walls, missing items, or destructive actions that were not requested.",
-  };
+  const criteria = new Map([
+    [SYSTEM_ONE_NONE, "No safe or matching control. Use this for login walls, missing items, or destructive actions that were not requested."],
+  ]);
   for (const candidate of observed.candidates) {
-    criteria[candidate.id] = describeCandidate(candidate);
+    criteria.set(candidate.id, describeCandidate(candidate));
   }
   return {
     model,
@@ -346,7 +382,7 @@ export function buildSystemOneRequest(intent: string, observed: ObservedPage, mo
       target: {
         type: "choice",
         instructions: "Which control should be used next to accomplish the intent? Choose none if the next action is unsafe, blocked by login, or not present.",
-        criteria,
+        criteria: Object.fromEntries(criteria),
       },
       dropdown_option: {
         type: "choice",
@@ -392,12 +428,17 @@ export function interpretDecision(answers: UntrustedValue, candidates: SystemOne
   };
 }
 
+interface ActionChoice {
+  action: string;
+  reason?: FollowIntentReason;
+}
+
 export function decideAction(
   decision: InterpretedDecision,
   observed: ObservedPage,
   options: FollowIntentOptions,
   history: Array<{ fingerprint: string; url: string }>,
-): { action: string; reason?: FollowIntentReason } {
+): ActionChoice {
   const floor = isNumber(options.confidenceFloor) ? options.confidenceFloor : DEFAULT_CONFIDENCE_FLOOR;
   const candidate = decision.candidate;
   if (observedLooksLikeLogin(observed) && !options.allowAuthentication) {
@@ -593,9 +634,10 @@ export async function runFollowIntent(
       const chosen = decision.candidate;
       if (choice.action === "abstain" || !act || !chosen) {
         const unresolvedOk = choice.reason === "completed";
+        const reason: FollowIntentReason = choice.reason ?? "unresolved";
         return {
           ok: unresolvedOk,
-          reason: choice.reason || "unresolved",
+          reason,
           intent,
           url: observed.url,
           title: observed.title,
