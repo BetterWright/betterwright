@@ -3643,6 +3643,20 @@ test("snapshots admit a typical page by default and cap maxChars at 50000", opts
   }
 });
 
+test("a string result is measured before JSON escaping, so quote-heavy text near the limit arrives whole", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    // 14 chars per repeat, 3 of them escaped in JSON: 21,000 raw, 25,500 serialized.
+    const result = await bw.run(`return 'say "hi" \\\\ ok '.repeat(1500);`);
+    assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
+    assert.equal(result.result.truncated, undefined, JSON.stringify(result.result).slice(0, 200));
+    assert.equal(result.result.length, 21_000);
+    assert.ok(JSON.stringify(result.result).length > 24_000);
+  } finally {
+    await bw.close();
+  }
+});
+
 test("a default-size snapshot returned from run arrives whole with its diagnostics", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {

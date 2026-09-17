@@ -874,6 +874,9 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   // The rest of `durationMs` is loop overhead and human waits (ask/handoff).
   let modelMs = 0;
   let toolMs = 0;
+  // Browser time as of the moment `durationMs` was taken, so a call still in
+  // flight at interruption is not also charged for the owned-browser teardown.
+  let toolMsAtEnd = 0;
   async function timedComplete(request) {
     const startedAt = Date.now();
     try {
@@ -1477,6 +1480,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     // Measure task wall-clock before tearing down an owned browser, so the
     // reported time is the work, not the teardown.
     durationMs = Date.now() - startedAt;
+    toolMsAtEnd = browserMs();
     // Stop only a viewer this run started; a live view the host was already
     // running (e.g. `betterwright view`) is not ours to tear down.
     if (agentStartedLiveView && !ownsBrowser) {
@@ -1510,7 +1514,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     },
     // Task wall-clock in milliseconds (excludes owned-browser teardown).
     durationMs,
-    timing: { modelMs, toolMs: browserMs() },
+    timing: { modelMs, toolMs: toolMsAtEnd },
     transcript: messages,
     proof,
   };

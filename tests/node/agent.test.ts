@@ -2105,6 +2105,27 @@ function liveViewBrowser(overrides: LiveViewOverrides = {}) {
   return browser;
 }
 
+test("tool timing stops with durationMs, before viewer teardown", async () => {
+  const controller = new AbortController();
+  const browser = liveViewBrowser();
+  browser.run = () => new Promise(() => {});
+  browser.stopLiveView = async () => {
+    browser.calls.stops += 1;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return { ok: true, running: false };
+  };
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "h1", name: "handoff", input: { reason: "Approve" } }] },
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "hang" } }] },
+  ]);
+  setTimeout(() => controller.abort(), 60);
+  const result = await runAgentTask({ task: "wait", model, browser, signal: controller.signal, onStep: () => {} });
+  assert.equal(result.reason, "interrupted");
+  assert.equal(browser.calls.stops, 1);
+  assert.ok(result.timing.toolMs > 0, String(result.timing.toolMs));
+  assert.ok(result.timing.toolMs <= result.durationMs, `${result.timing.toolMs} > ${result.durationMs}`);
+});
+
 test("the handoff tool pauses on waitForHandoff and resumes with the human note", async () => {
   const browser = liveViewBrowser();
   const steps = [];

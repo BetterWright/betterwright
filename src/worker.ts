@@ -188,14 +188,15 @@ const MAX_CONSOLE_MESSAGE_CHARS = 300;
 const MAX_PAGES_PER_SESSION = 32;
 const MAX_RESPONSE_PAGES = 32;
 const MAX_TRACKED_ARTIFACTS = 500;
-// Sized so a default-limit run result (below) plus its console, events, and
-// page list fit without sendResult stripping the diagnostics.
-const MAX_RESULT_ENVELOPE_CHARS = 40_000;
+// Sized so a default-limit run result (below) fits with its console, events,
+// and page list even when JSON escaping doubles it (a string result is
+// measured before escaping), without sendResult stripping the diagnostics.
+const MAX_RESULT_ENVELOPE_CHARS = 64_000;
 const QUESTION_PAGE_HOLD_MS = 24 * 60 * 60 * 1_000;
-// Must admit a default-size snapshot (DEFAULT_SNAPSHOT_MAX_CHARS) after JSON
-// escaping, or returning snapshot() spills it to a file and hands the model a
-// preview with the middle cut out. Keep in step with the client's outputLimit
-// default and the agent loop's OBSERVATION_LIMIT.
+// Must admit a default-size snapshot (DEFAULT_SNAPSHOT_MAX_CHARS), or
+// returning snapshot() spills it to a file and hands the model a preview with
+// the middle cut out. Keep in step with the client's outputLimit default and
+// the agent loop's OBSERVATION_LIMIT.
 const DEFAULT_OUTPUT_LIMIT = 24_000;
 /**
  * How long a single element interaction waits before giving up. Playwright's
@@ -8190,7 +8191,12 @@ async function execute(message) {
     await enforceArtifactQuota(session);
 
     let publicResult = summarized;
-    const serialized = JSON.stringify(publicResult);
+    // The limit is on what the model reads. A string result (a snapshot, page
+    // text) is read as-is, so measure it before JSON escaping: quotes and
+    // backslashes in labels must not push an accepted snapshot into a spill.
+    const serialized = isString(publicResult)
+      ? publicResult
+      : JSON.stringify(publicResult);
     const outputLimit = Number(
       message.config.outputLimit || DEFAULT_OUTPUT_LIMIT,
     );

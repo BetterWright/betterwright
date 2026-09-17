@@ -20,10 +20,11 @@ Releases before 1.1.3 predate this file; their notes live on the
   goes up to 50,000 (was 20,000). A typical page's compressed tree is
   12-40K, so the old default refused most first looks and cost a model round
   trip for a scoped re-read.
-- The default run output limit is 24,000 characters (was 12,000), and the
-  result envelope keeps its console and event diagnostics up to 40,000 (was
-  28,000), so a default-size snapshot returned from `run` reaches the caller
-  whole instead of being spilled to `browser-output.json` with a preview.
+- The default run output limit is 24,000 characters (was 12,000), a string
+  result is measured before JSON escaping, and the result envelope keeps its
+  console and event diagnostics up to 64,000 (was 28,000), so a default-size
+  snapshot returned from `run` reaches the caller whole instead of being
+  spilled to `browser-output.json` with a preview.
 - `usePage()` and `closePage()` accept the page object `openPage()` or `pages`
   hand out, not only a page id or index.
 - Snippet code can use `URL` and `URLSearchParams`; the sandbox previously
