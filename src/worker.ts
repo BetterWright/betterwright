@@ -197,8 +197,13 @@ const DEFAULT_OUTPUT_LIMIT = 12_000;
  * waiting on an element that is never going to appear; 10s is past the point
  * where a slow-but-real element resolves.
  */
-const DEFAULT_ACTION_TIMEOUT_MS = 10_000;
+const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000;
+// A real page's compressed tree is often 12-40K chars. Refusing at 10K sent the
+// model on a scoped re-read (one more round trip) for most first looks, so the
+// default admits a typical page and the ceiling covers a large one.
+const DEFAULT_SNAPSHOT_MAX_CHARS = 20_000;
+const MAX_SNAPSHOT_MAX_CHARS = 50_000;
 /**
  * Hard ceiling on graceful shutdown. If the browser or a page handler wedges,
  * the process still exits rather than lingering and holding the profile lock.
@@ -1637,8 +1642,11 @@ function adoptPage(page, sessionId) {
   pageToSession.set(page, session.id);
   // A missing semantic locator should fail while the snippet still has time to
   // inspect and recover. Otherwise Playwright's 30s default consumes the whole
-  // run deadline and the worker must tear down the timed-out realm. Navigation
-  // keeps its larger budget because a real network load is not a bad selector.
+  // run deadline and the worker must tear down the timed-out realm. Agent code
+  // misses locators far more often than pages are slow, and every miss costs
+  // the full budget, so the default matches Playwright MCP's 5s; a snippet that
+  // expects a slow transition passes its own `{timeout}`. Navigation keeps its
+  // larger budget because a real network load is not a bad selector.
   page.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT_MS);
   page.setDefaultNavigationTimeout(DEFAULT_NAVIGATION_TIMEOUT_MS);
   session.pages.set(id, page);
@@ -1834,7 +1842,7 @@ async function snapshotPage(page, options: any = {}) {
   }
   const limit = Math.max(
     1_000,
-    Math.min(Number(options?.maxChars || 10_000), 20_000),
+    Math.min(Number(options?.maxChars || DEFAULT_SNAPSHOT_MAX_CHARS), MAX_SNAPSHOT_MAX_CHARS),
   );
   if (text.length <= limit) {
     store.set(key, current);
@@ -1851,7 +1859,7 @@ async function snapshotPage(page, options: any = {}) {
       ? "a smaller {depth} or a deeper {ref}/{selector} to narrow this subtree"
       : "{ref} or {selector} to scope to one element, or {depth} to limit nesting",
   );
-  if (limit < 20_000) hints.push("{maxChars} up to 20000");
+  if (limit < MAX_SNAPSHOT_MAX_CHARS) hints.push(`{maxChars} up to ${MAX_SNAPSHOT_MAX_CHARS}`);
   return (
     `${header}\nSnapshot is ${text.length} chars, over the ${limit} limit. ` +
     `Retry with ${hints.join(", ")}.`
@@ -2817,10 +2825,28 @@ function validateMethodArguments(property, args) {
 }
 
 function assertPageHandle(value, helper) {
-  if (isString(value) || isNumber(value)) return;
+  if (isString(value) || isNumber(value) || facadeToRaw.has(value)) return;
   throw new TypeError(
-    `${helper} page handle must be a page ID string or numeric index, received ${argumentType(value)}.`,
+    `${helper} page handle must be a page ID string, numeric index, or page object, received ${argumentType(value)}.`,
   );
+}
+
+// Resolve a page handle — an id, an index, or the page object `openPage`/`pages`
+// hand out — to the session's `[id, page]` entry, or undefined when it is not
+// an open page of this session.
+function findPageEntry(entries, handle) {
+  if (isNumber(handle)) return entries[handle];
+  if (facadeToRaw.has(handle)) {
+    const raw = facadeToRaw.get(handle);
+    return entries.find(([, page]) => page === raw);
+  }
+  return entries.find(([id]) => id === String(handle));
+}
+
+function describePageHandle(handle) {
+  if (!facadeToRaw.has(handle)) return String(handle);
+  const id = pageIds.get(facadeToRaw.get(handle));
+  return id ? `page object ${id}` : "page object";
 }
 
 function validateMethodPaths(kind, property, args) {
@@ -5001,6 +5027,10 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.console = Object.freeze(consoleFacade);
   sandbox.context = wrap(browserContext, realm);
   sandbox.state = session.state;
+  // WHATWG URL is not a JS intrinsic, so a fresh vm context lacks it; snippets
+  // that resolve hrefs or read query strings need it as much as `JSON`.
+  sandbox.URL = URL;
+  sandbox.URLSearchParams = URLSearchParams;
   sandbox.pages = realm.makePages(getPages);
   sandbox.openPage = realm.safeFunction(async (url = null, options: any = {}) => {
     if (launchConfig.hostOwnedTarget) throw new Error("Open another tab through the host.");
@@ -5022,13 +5052,10 @@ function buildSandbox(session, consoleMessages, execution) {
     const entries = [...session.pages.entries()].filter(
       ([, page]) => !page.isClosed(),
     );
-    const entry =
-      isNumber(selector)
-        ? entries[selector]
-        : entries.find(([id]) => id === String(selector));
+    const entry = findPageEntry(entries, selector);
     if (!entry)
       throw new Error(
-        `Unknown page ${selector}; available: ${entries.map(([id]) => id).join(", ")}`,
+        `Unknown page ${describePageHandle(selector)}; available: ${entries.map(([id]) => id).join(", ")}`,
       );
     session.currentId = entry[0];
     notifyLiveViewPreferred();
@@ -5039,10 +5066,7 @@ function buildSandbox(session, consoleMessages, execution) {
     const target = selector === undefined ? session.currentId : selector;
     assertPageHandle(target, "closePage");
     const entries = [...session.pages.entries()];
-    const entry =
-      isNumber(target)
-        ? entries[target]
-        : entries.find(([id]) => id === String(target));
+    const entry = findPageEntry(entries, target);
     if (!entry) return { closed: false };
     await stopPageRecording(entry[1]);
     await entry[1].close();

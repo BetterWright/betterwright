@@ -377,6 +377,36 @@ test("runAgentTask reports uncached input, cache usage, and full final context",
   assert.ok(result.durationMs >= 0);
 });
 
+test("runAgentTask splits wall-clock into model and browser time", async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const browser = fakeBrowser();
+  browser.run = async () => {
+    await sleep(30);
+    return { ok: true, result: "seen", artifacts: [], durationMs: 30 };
+  };
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "1" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const complete = model.complete;
+  model.complete = async (request) => {
+    await sleep(40);
+    return complete(request);
+  };
+
+  const result = await runAgentTask({ task: "time it", model, browser });
+
+  assert.equal(result.ok, true);
+  // Two model turns of 40ms and one browser call of 30ms; timers may fire a
+  // hair early, so the bounds leave a few milliseconds of slack.
+  assert.ok(result.timing.modelMs >= 70, `modelMs ${result.timing.modelMs}`);
+  assert.ok(result.timing.toolMs >= 25, `toolMs ${result.timing.toolMs}`);
+  assert.ok(
+    result.timing.modelMs + result.timing.toolMs <= result.durationMs,
+    `split ${JSON.stringify(result.timing)} exceeds durationMs ${result.durationMs}`,
+  );
+});
+
 test("cache-aware usage formatting is shared by every CLI summary", () => {
   assert.equal(
     formatAgentUsage({

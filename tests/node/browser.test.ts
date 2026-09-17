@@ -834,11 +834,11 @@ test("role names and page handles reject objects at the call boundary", opts, as
     );
     assert.doesNotMatch(roleName.error, /\[object Object\]|InvalidSelector|timed out/i);
 
-    const pageHandle = await bw.run("await usePage(pages[0]);");
+    const pageHandle = await bw.run("await usePage({pageId: 'page-1'});");
     assert.equal(pageHandle.ok, false);
     assert.equal(
       pageHandle.error,
-      "usePage page handle must be a page ID string or numeric index, received object.",
+      "usePage page handle must be a page ID string, numeric index, or page object, received object.",
     );
     assert.doesNotMatch(pageHandle.error, /\[object Object\]|Unknown page/i);
 
@@ -846,7 +846,7 @@ test("role names and page handles reject objects at the call boundary", opts, as
     assert.equal(closeHandle.ok, false);
     assert.equal(
       closeHandle.error,
-      "closePage page handle must be a page ID string or numeric index, received object.",
+      "closePage page handle must be a page ID string, numeric index, or page object, received object.",
     );
   } finally {
     await bw.close();
@@ -2863,8 +2863,8 @@ test("a missing locator fails before the run deadline and preserves the page", o
       { timeout: 25_000 },
     );
     assert.equal(missed.ok, false);
-    assert.match(missed.error, /Timeout 10000ms exceeded/);
-    assert.ok(Date.now() - started < 20_000, `locator miss took ${Date.now() - started}ms`);
+    assert.match(missed.error, /Timeout 5000ms exceeded/);
+    assert.ok(Date.now() - started < 10_000, `locator miss took ${Date.now() - started}ms`);
 
     const recovered = await bw.run("return page.locator('#kept').textContent()");
     assert.equal(recovered.ok, true, recovered.error);
@@ -3506,6 +3506,83 @@ test("snapshot compresses wrappers and urls but keeps refs actionable", opts, as
     assert.ok(!result.result.plain.includes("/url"), result.result.plain);
     assert.match(result.result.plain, /text: First\. Second\./);
     assert.match(result.result.withUrls, /\/url: \/docs/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("usePage and closePage accept the page objects openPage and pages hand out", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<h1>first</h1>');
+      const second = await openPage();
+      await second.setContent('<h1>second</h1>');
+      const backToFirst = await usePage(pages[0]);
+      const firstTitle = await page.locator('h1').innerText();
+      const viaObject = await usePage(second);
+      const secondTitle = await page.locator('h1').innerText();
+      const sameHandle = viaObject === second;
+      const closed = await closePage(second);
+      return { firstTitle, secondTitle, sameHandle, closed, remaining: pages.length };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result, {
+      firstTitle: "first",
+      secondTitle: "second",
+      sameHandle: true,
+      closed: { closed: true, pageId: "page-2" },
+      remaining: 1,
+    });
+
+    const stale = await bw.run("const gone = await openPage(); await closePage(gone); await usePage(gone);");
+    assert.equal(stale.ok, false);
+    assert.match(stale.error, /^Unknown page page object page-\d+; available: page-1$/);
+    assert.doesNotMatch(stale.error, /\[object Object\]/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("snippet code can use URL and URLSearchParams", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<a id="rel" href="/item?id=7&x=1">item</a>');
+      const href = await page.locator('#rel').getAttribute('href');
+      const absolute = new URL(href, 'https://example.com/list/').href;
+      const id = new URL(absolute).searchParams.get('id');
+      const query = new URLSearchParams({ q: 'oled tv', size: '65' }).toString();
+      return { absolute, id, query };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result, {
+      absolute: "https://example.com/item?id=7&x=1",
+      id: "7",
+      query: "q=oled+tv&size=65",
+    });
+  } finally {
+    await bw.close();
+  }
+});
+
+test("snapshots admit a typical page by default and cap maxChars at 50000", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      const rows = Array.from({length: 200}, (_, i) =>
+        \`<li><a href="/item/\${i}">Item number \${i} with some label text</a></li>\`).join("");
+      await page.setContent(\`<ul>\${rows}</ul>\`);
+      const full = await snapshot();
+      const capped = await snapshot({maxChars: 100000});
+      const refused = await snapshot({maxChars: 1000});
+      return { fullLength: full.length, fullTail: full.slice(-60), cappedLength: capped.length, refused };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.ok(result.result.fullLength > 10_000 && result.result.fullLength <= 20_000, String(result.result.fullLength));
+    assert.match(result.result.fullTail, /Item number 199 with some label text/);
+    assert.equal(result.result.cappedLength, result.result.fullLength);
+    assert.match(result.result.refused, /over the 1000 limit\. Retry with .*\{maxChars\} up to 50000/);
   } finally {
     await bw.close();
   }

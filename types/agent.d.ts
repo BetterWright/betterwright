@@ -197,6 +197,12 @@ export interface AgentResult {
   };
   /** Task wall-clock in milliseconds (excludes owned-browser teardown). */
   durationMs: number;
+  /**
+   * Where `durationMs` went: milliseconds spent waiting on model turns and
+   * inside browser calls. The remainder is loop overhead and human waits
+   * (`ask`, `handoff`).
+   */
+  timing: { modelMs: number; toolMs: number };
   transcript: AgentMessage[];
   proof: string | null;
 }

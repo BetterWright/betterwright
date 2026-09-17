@@ -40,7 +40,7 @@ is indented by default; pass `--pretty` to retain indentation in a pipe or file.
 | `page` | The current page. Always points at the active page for this session. |
 | `pages` | Live array of open pages in this session. |
 | `openPage(url?, options?)` | Open a new page, optionally navigating. Returns the page. |
-| `usePage(idOrIndex)` | Make another page current; accepts a `pageId` or an index. |
+| `usePage(idOrIndexOrPage)` | Make another page current; accepts a `pageId`, an index, or a page object from `openPage`/`pages`. |
 | `closePage(idOrIndex?)` | Close a page (the current one if omitted). |
 | `context` | The Playwright `BrowserContext`, with mutating methods removed (see below). |
 
@@ -131,8 +131,8 @@ halves the size of a real page's tree without losing anything actionable.
 | `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
 | `depth` | — | Limit tree depth. |
 | `urls` | `false` | Keep `- /url:` property lines on links. |
-| `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns a diagnostic string with the actual size and scoping hints instead of a cut-off tree. It does not throw or make the run envelope fail. |
-| `timeout` | `10000` | Milliseconds. |
+| `maxChars` | `20000` | Size limit, capped at 50000. An over-limit snapshot returns a diagnostic string with the actual size and scoping hints instead of a cut-off tree. It does not throw or make the run envelope fail. |
+| `timeout` | `5000` | Milliseconds. |
 
 Interactive snapshots retain short text beside list/table controls, table column
 labels, and status/alert contents. This keeps prices, quantities, and outcomes

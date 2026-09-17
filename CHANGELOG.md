@@ -9,6 +9,25 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- The default action timeout for snippet code is 5 seconds (was 10), matching
+  Playwright MCP. Agent code misses a locator far more often than a page is
+  slow, and every miss cost the full budget: on a Google Flights task four
+  misses spent 40 of the run's 188 seconds waiting. Pass `{timeout}` on an
+  action that expects a slow transition. Navigation keeps its 30-second budget.
+- `snapshot()` admits 20,000 characters by default (was 10,000) and `maxChars`
+  goes up to 50,000 (was 20,000). A typical page's compressed tree is
+  12-40K, so the old default refused most first looks and cost a model round
+  trip for a scoped re-read.
+- `usePage()` and `closePage()` accept the page object `openPage()` or `pages`
+  hand out, not only a page id or index.
+- Snippet code can use `URL` and `URLSearchParams`; the sandbox previously
+  lacked both, so resolving a relative `href` threw `URL is not defined`.
+- `runAgentTask` results and `betterwright exec` output carry `timing:
+  {modelMs, toolMs}` — how much of `durationMs` was spent waiting on the model
+  versus inside browser calls — and the exec summary line prints the split.
+
 ### Added
 
 - Ordered browser-provider fallback chains. The `provider` option accepts an
