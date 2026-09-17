@@ -222,6 +222,24 @@ test("runAgentTask records each finished take once across restart", async () => 
   assert.deepEqual(result.recordings, ["/tmp/first.mp4", "/tmp/second.webm"]);
 });
 
+test("runAgentTask picks up a recording that finished between browser calls", async () => {
+  const video = { kind: "recording", path: "/tmp/demo.mp4", mimeType: "video/mp4" };
+  const browser = fakeBrowser({
+    runs: [
+      { ok: true, result: { state: "recording", path: "/tmp/demo.mp4" }, artifacts: [], durationMs: 3 },
+      { ok: true, result: { state: "completed", path: "/tmp/demo.mp4" }, artifacts: [video], durationMs: 2 },
+    ],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "return recording.start()" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "done", input: { answer: "recording" } }] },
+  ]);
+
+  const result = await runAgentTask({ task: "record", model, browser });
+  assert.deepEqual(result.recordings, ["/tmp/demo.mp4"]);
+  assert.equal(browser.calls.run[1].code, "return recording.status()");
+});
+
 test("runAgentTask announces each model turn and tool batch through onPhase", async () => {
   const browser = fakeBrowser({ runs: [{ ok: true, result: "HN", artifacts: [], durationMs: 9 }] });
   const model = scriptedModel([

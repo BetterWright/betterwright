@@ -877,13 +877,27 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   let answer = "";
   let proof = null;
   const recordings: string[] = [];
+  let pendingRecordingPath = "";
+  function rememberRecording(file) {
+    if (file && !recordings.includes(file)) recordings.push(file);
+  }
   function noteArtifacts(list) {
     for (const shot of list || []) {
       if (shot?.kind === "proof" && shot.path) proof = shot.path;
-      if (shot?.kind === "recording" && shot.path && !recordings.includes(shot.path)) {
-        recordings.push(shot.path);
-      }
+      if (shot?.kind === "recording" && shot.path) rememberRecording(shot.path);
     }
+  }
+  function noteRecordingStatus(value) {
+    if (!isRecord(value)) return;
+    const recPath = untrustedField(value, "path");
+    const recState = untrustedField(value, "state");
+    if (!isString(recPath) || !recPath) return;
+    if (recState === "recording" || recState === "stopping") pendingRecordingPath = recPath;
+    if (recState === "completed") rememberRecording(recPath);
+  }
+  function noteResult(result) {
+    noteArtifacts(result?.artifacts);
+    if (result?.ok) noteRecordingStatus(result.result);
   }
   let finished = false;
   let reason = "stopped";
@@ -1392,7 +1406,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
             deadline,
             stopSignal,
           );
-          noteArtifacts(result.artifacts);
+          noteResult(result);
           const signature = failureSignature(result);
           repeated =
             signature && signature === repeated.signature
@@ -1461,6 +1475,29 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     }
     if (finished && answer) {
       await postLiveChat({ text: answer, kind: "done" });
+    }
+    if (
+      pendingRecordingPath &&
+      !recordings.includes(pendingRecordingPath) &&
+      !stopSignal?.aborted
+    ) {
+      try {
+        const remainingSeconds = Math.max(0.001, (deadline - Date.now()) / 1000);
+        if (remainingSeconds > 0.001) {
+          noteResult(
+            await withinDeadline(
+              () => browser.run("return recording.status()", {
+                session,
+                timeout: Math.min(5, remainingSeconds),
+              }),
+              deadline,
+              stopSignal,
+            ),
+          );
+        }
+      } catch (error) {
+        if (isControlSignal(error)) throw error;
+      }
     }
   } catch (error) {
     if (error === AGENT_TIMEOUT) reason = "timeout";

@@ -1282,8 +1282,10 @@ async function cmdInteractive(flags) {
   process.stdin.on("keypress", (_str, key) => {
     if (!isEscapeKey(key) || !taskRunning || !taskAbort || taskAbort.signal.aborted) return;
     // Drop whatever was mid-typed at steer ▸ so Enter after stop cannot
-    // submit that fragment as the next task.
+    // submit that fragment as the next task. Ctrl-U kills before the cursor;
+    // Ctrl-K kills the suffix if the cursor was in the middle of the line.
     rl.write(null, { ctrl: true, name: "u" });
+    rl.write(null, { ctrl: true, name: "k" });
     taskAbort.abort();
     writeInteractive("  ! ", "stopping the task", dim);
   });
