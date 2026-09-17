@@ -283,6 +283,48 @@ test("successful browser observations omit empty optional fields", async () => {
   });
 });
 
+test("browser observations keep a default-size snapshot and drop only oversized results", async () => {
+  const typical = "- link \"Item\" [ref=e1]\n".repeat(700); // ~18K chars, under the 20K snapshot default
+  // 21K raw chars that JSON-escape to 25.5K: measured as the model reads it.
+  const escapeHeavy = 'say "hi" \\ ok '.repeat(1500);
+  // The worst a worker-admitted string can escape to: 24K quotes become 48,002.
+  const allQuotes = '"'.repeat(24_000);
+  const oversized = "x".repeat(50_000);
+  // 12K raw chars the worker would admit, but 72K as the model reads them.
+  const controlHeavy = "\u0001".repeat(12_000);
+  const browser = fakeBrowser({
+    runs: [
+      { ok: true, result: typical },
+      { ok: true, result: escapeHeavy },
+      { ok: true, result: allQuotes },
+      { ok: true, result: oversized },
+      { ok: true, result: controlHeavy },
+    ],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "snapshot()" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "browser", input: { code: "quoted" } }] },
+    { text: "", toolCalls: [{ id: "c3", name: "browser", input: { code: "quotes" } }] },
+    { text: "", toolCalls: [{ id: "c4", name: "browser", input: { code: "big" } }] },
+    { text: "", toolCalls: [{ id: "c5", name: "browser", input: { code: "control" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const result = await runAgentTask({ task: "read the page", model, browser });
+  const observations = result.transcript
+    .filter((message) => message.role === "tool" && message.results[0].name === "browser")
+    .map((message) => JSON.parse(message.results[0].content));
+  assert.equal(observations.length, 5);
+  assert.equal(observations[0].result, typical);
+  assert.ok(JSON.stringify(escapeHeavy).length > 24_000);
+  assert.equal(observations[1].result, escapeHeavy);
+  assert.equal(observations[2].result, allQuotes);
+  assert.equal(observations[3].result, "[truncated; inspect via a scoped snapshot]");
+  assert.equal(observations[4].result, "[truncated; inspect via a scoped snapshot]");
+  for (const message of result.transcript.filter((m) => m.role === "tool")) {
+    assert.ok(message.results[0].content.length < 60_000, String(message.results[0].content.length));
+  }
+});
+
 test("browser observations preserve attached action directories", async () => {
   for (const directory of [
     { webagents: { source: "untrusted", actions: [{ name: "search", method: "GET" }] } },
@@ -313,7 +355,7 @@ test("large browser observations keep complete directories and recovery metadata
     username: "user", label: null, expiresAt: "2027-01-01T00:00:00Z",
   };
   const browser = fakeBrowser({ runs: [{
-    ok: false, result: "x".repeat(20_000), error: "Submission needs recovery",
+    ok: false, result: "x".repeat(50_000), error: "Submission needs recovery",
     ui, pendingCredential,
   }] });
   const model = scriptedModel([
@@ -441,6 +483,41 @@ test("runAgentTask reports uncached input, cache usage, and full final context",
   // Wall-clock is reported as a non-negative number of milliseconds.
   assert.ok(isNumber(result.durationMs));
   assert.ok(result.durationMs >= 0);
+});
+
+test("runAgentTask splits wall-clock into model and browser time", async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const browser = fakeBrowser();
+  browser.run = async () => {
+    await sleep(30);
+    return { ok: true, result: "seen", artifacts: [], durationMs: 30 };
+  };
+  browser.fillCredential = async () => {
+    await sleep(30);
+    return { ok: true, result: "filled", artifacts: [], durationMs: 30 };
+  };
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "1" } }] },
+    { text: "", toolCalls: [{ id: "l1", name: "login", input: { submit: false } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const complete = model.complete;
+  model.complete = async (request) => {
+    await sleep(40);
+    return complete(request);
+  };
+
+  const result = await runAgentTask({ task: "time it", model, browser });
+
+  assert.equal(result.ok, true);
+  // Three model turns of 40ms, one browser run and one credential fill of
+  // 30ms each; timers may fire a hair early, so the bounds leave slack.
+  assert.ok(result.timing.modelMs >= 110, `modelMs ${result.timing.modelMs}`);
+  assert.ok(result.timing.toolMs >= 55, `toolMs ${result.timing.toolMs}`);
+  assert.ok(
+    result.timing.modelMs + result.timing.toolMs <= result.durationMs,
+    `split ${JSON.stringify(result.timing)} exceeds durationMs ${result.durationMs}`,
+  );
 });
 
 test("cache-aware usage formatting is shared by every CLI summary", () => {
@@ -1072,6 +1149,20 @@ test("repeated or exhausted receipt inspections stop without reopening actions",
     assert.match(result.answer, /No further actions were taken/);
     assert.ok(!result.transcript.some(turn => turn.role === "user" && turn.text?.startsWith("Harness continuation,")));
   }
+});
+
+test("browser time still in flight at interruption counts toward toolMs", async () => {
+  const controller = new AbortController();
+  const browser = fakeBrowser();
+  browser.run = () => new Promise(() => {});
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "hang" } }] },
+  ]);
+  setTimeout(() => controller.abort(), 60);
+  const result = await runAgentTask({ task: "wait", model, browser, signal: controller.signal });
+  assert.equal(result.reason, "interrupted");
+  assert.ok(result.timing.toolMs >= 50, String(result.timing.toolMs));
+  assert.ok(result.timing.toolMs <= result.durationMs, `${result.timing.toolMs} > ${result.durationMs}`);
 });
 
 test("receipt inspection honors cancellation and the shared task deadline", async () => {
@@ -2158,6 +2249,27 @@ function liveViewBrowser(overrides: LiveViewOverrides = {}) {
   };
   return browser;
 }
+
+test("tool timing stops with durationMs, before viewer teardown", async () => {
+  const controller = new AbortController();
+  const browser = liveViewBrowser();
+  browser.run = () => new Promise(() => {});
+  browser.stopLiveView = async () => {
+    browser.calls.stops += 1;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return { ok: true, running: false };
+  };
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "h1", name: "handoff", input: { reason: "Approve" } }] },
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "hang" } }] },
+  ]);
+  setTimeout(() => controller.abort(), 60);
+  const result = await runAgentTask({ task: "wait", model, browser, signal: controller.signal, onStep: () => {} });
+  assert.equal(result.reason, "interrupted");
+  assert.equal(browser.calls.stops, 1);
+  assert.ok(result.timing.toolMs > 0, String(result.timing.toolMs));
+  assert.ok(result.timing.toolMs <= result.durationMs, `${result.timing.toolMs} > ${result.durationMs}`);
+});
 
 test("the handoff tool pauses on waitForHandoff and resumes with the human note", async () => {
   const browser = liveViewBrowser();

@@ -834,11 +834,11 @@ test("role names and page handles reject objects at the call boundary", opts, as
     );
     assert.doesNotMatch(roleName.error, /\[object Object\]|InvalidSelector|timed out/i);
 
-    const pageHandle = await bw.run("await usePage(pages[0]);");
+    const pageHandle = await bw.run("await usePage({pageId: 'page-1'});");
     assert.equal(pageHandle.ok, false);
     assert.equal(
       pageHandle.error,
-      "usePage page handle must be a page ID string or numeric index, received object.",
+      "usePage page handle must be a page ID string, numeric index, or page object, received object.",
     );
     assert.doesNotMatch(pageHandle.error, /\[object Object\]|Unknown page/i);
 
@@ -846,7 +846,7 @@ test("role names and page handles reject objects at the call boundary", opts, as
     assert.equal(closeHandle.ok, false);
     assert.equal(
       closeHandle.error,
-      "closePage page handle must be a page ID string or numeric index, received object.",
+      "closePage page handle must be a page ID string, numeric index, or page object, received object.",
     );
   } finally {
     await bw.close();
@@ -2863,8 +2863,8 @@ test("a missing locator fails before the run deadline and preserves the page", o
       { timeout: 25_000 },
     );
     assert.equal(missed.ok, false);
-    assert.match(missed.error, /Timeout 10000ms exceeded/);
-    assert.ok(Date.now() - started < 20_000, `locator miss took ${Date.now() - started}ms`);
+    assert.match(missed.error, /Timeout 5000ms exceeded/);
+    assert.ok(Date.now() - started < 10_000, `locator miss took ${Date.now() - started}ms`);
 
     const recovered = await bw.run("return page.locator('#kept').textContent()");
     assert.equal(recovered.ok, true, recovered.error);
@@ -3506,6 +3506,228 @@ test("snapshot compresses wrappers and urls but keeps refs actionable", opts, as
     assert.ok(!result.result.plain.includes("/url"), result.result.plain);
     assert.match(result.result.plain, /text: First\. Second\./);
     assert.match(result.result.withUrls, /\/url: \/docs/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("usePage and closePage accept the page objects openPage and pages hand out", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<h1>first</h1>');
+      const second = await openPage();
+      await second.setContent('<h1>second</h1>');
+      const backToFirst = await usePage(pages[0]);
+      const firstTitle = await page.locator('h1').innerText();
+      const viaObject = await usePage(second);
+      const secondTitle = await page.locator('h1').innerText();
+      const sameHandle = viaObject === second;
+      const closed = await closePage(second);
+      return { firstTitle, secondTitle, sameHandle, closed, remaining: pages.length };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result, {
+      firstTitle: "first",
+      secondTitle: "second",
+      sameHandle: true,
+      closed: { closed: true, pageId: "page-2" },
+      remaining: 1,
+    });
+
+    const stale = await bw.run("const gone = await openPage(); await closePage(gone); await usePage(gone);");
+    assert.equal(stale.ok, false);
+    assert.match(stale.error, /^Unknown page page object page-\d+; available: page-1$/);
+    assert.doesNotMatch(stale.error, /\[object Object\]/);
+
+    // Only page facades count as page objects; a locator or the context is
+    // rejected at the boundary instead of reading as an already-closed page.
+    const locator = await bw.run("await closePage(page.locator('h1'));");
+    assert.equal(locator.ok, false);
+    assert.equal(
+      locator.error,
+      "closePage page handle must be a page ID string, numeric index, or page object, received object.",
+    );
+    const ctx = await bw.run("await usePage(context);");
+    assert.equal(ctx.ok, false);
+    assert.match(ctx.error, /^usePage page handle must be a page ID string, numeric index, or page object/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("snippet code can use URL and URLSearchParams", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      await page.setContent('<a id="rel" href="/item?id=7&x=1">item</a>');
+      const href = await page.locator('#rel').getAttribute('href');
+      const absolute = new URL(href, 'https://example.com/list/').href;
+      const id = new URL(absolute).searchParams.get('id');
+      const query = new URLSearchParams({ q: 'oled tv', size: '65' }).toString();
+      const edited = new URL('https://shop.example/search?q=tv&page=1#top');
+      edited.searchParams.set('page', '2');
+      edited.searchParams.append('sort', 'price');
+      edited.hash = '';
+      const retained = new URL('https://x.example/?a=1');
+      const params = retained.searchParams;
+      retained.search = '?b=2';
+      const afterSearch = [params.get('a'), params.get('b'), retained.searchParams === params];
+      retained.href = 'https://y.example/path?c=3';
+      params.append('d', '4');
+      const afterHref = [params.get('b'), params.get('c'), retained.href];
+      const invalid = URL.canParse('not a url');
+      let invalidMessage = '';
+      try { new URL('not a url'); } catch (error) { invalidMessage = error.message; }
+      // WHATWG conformance: iterable inits, live iterators, coercion, encoding.
+      const fromMap = new URLSearchParams(new Map([['page', 2], ['q', 'a b']])).toString();
+      const fromGenerator = new URLSearchParams((function* () { yield ['k', 'v']; yield new Set(['m', 'n']); })()).toString();
+      const fromParams = new URLSearchParams(new URLSearchParams('x=1&x=2')).getAll('x');
+      let badPair = '';
+      try { new URLSearchParams([['only-one']]); } catch (error) { badPair = error.name; }
+      const live = new URLSearchParams('a=1&b=2&c=3');
+      const seen = [];
+      for (const [key] of live) { seen.push(key); if (key === 'a') live.delete('b'); }
+      const liveKeys = [];
+      const keyIterator = live.keys();
+      liveKeys.push(keyIterator.next().value);
+      live.append('z', '9');
+      for (const key of keyIterator) liveKeys.push(key);
+      const dedupe = new URLSearchParams('t=1&u=2&t=3');
+      dedupe.set('t', 'x');
+      const coerced = new URLSearchParams();
+      coerced.append(1, 2);
+      coerced.append('sp ace', 'ü&=');
+      const sorted = new URLSearchParams('b=2&a=1&c=0'); sorted.sort();
+      const flags = [dedupe.has('t', 'x'), dedupe.has('t', '3'), dedupe.size, new URLSearchParams(null).size];
+      let fakeIterable = '';
+      try { new URLSearchParams({ a: 1, [Symbol.iterator]: 7 }); fakeIterable = 'no throw'; } catch (error) { fakeIterable = error.name; }
+      const surrogates = new URLSearchParams(new Map([['q', '\uD800']]));
+      surrogates.append('\uDC00x', 'y\u{1F600}');
+      const usv = [surrogates.get('q'), [...surrogates.keys()][1], surrogates.toString(), surrogates.has('q', '\uD800')];
+      return {
+        absolute, id, query,
+        fromMap, fromGenerator, fromParams, badPair, seen, liveKeys,
+        dedupe: dedupe.toString(), coerced: coerced.toString(), sorted: sorted.toString(), flags,
+        fakeIterable, usv,
+        edited: edited.href,
+        editedParams: [...edited.searchParams],
+        json: JSON.stringify({ edited }),
+        tag: Object.prototype.toString.call(edited),
+        afterSearch, afterHref,
+        invalid, invalidMessage,
+      };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result, {
+      absolute: "https://example.com/item?id=7&x=1",
+      id: "7",
+      query: "q=oled+tv&size=65",
+      edited: "https://shop.example/search?q=tv&page=2&sort=price",
+      editedParams: [["q", "tv"], ["page", "2"], ["sort", "price"]],
+      json: '{"edited":"https://shop.example/search?q=tv&page=2&sort=price"}',
+      tag: "[object URL]",
+      afterSearch: [null, "2", true],
+      afterHref: [null, "3", "https://y.example/path?c=3&d=4"],
+      invalid: false,
+      invalidMessage: "Invalid URL: not a url",
+      fromMap: "page=2&q=a+b",
+      fromGenerator: "k=v&m=n",
+      fromParams: ["1", "2"],
+      badPair: "TypeError",
+      seen: ["a", "c"],
+      liveKeys: ["a", "c", "z"],
+      dedupe: "t=x&u=2",
+      coerced: "1=2&sp+ace=%C3%BC%26%3D",
+      sorted: "a=1&b=2&c=0",
+      flags: [true, false, 2, 1], // null stringifies to a "null" key, as in Node
+      fakeIterable: "TypeError",
+      usv: ["\uFFFD", "\uFFFDx", "q=%EF%BF%BD&%EF%BF%BDx=y%F0%9F%98%80", true],
+    });
+
+    // The classes live in the snippet realm: their constructor chain is the
+    // realm's own Function, and that realm cannot compile strings.
+    const escapeAttempt = await bw.run(`
+      const realmFunction = (() => {}).constructor;
+      const chain = [URL, URLSearchParams, new URL('https://a.b/'), new URLSearchParams('a=1')]
+        .map((value) => value.constructor === realmFunction || value.constructor.constructor === realmFunction);
+      let compiled = 'not attempted';
+      try { compiled = URL.constructor('return typeof process')(); } catch (error) { compiled = error.constructor.name; }
+      return { chain, compiled };
+    `);
+    assert.equal(escapeAttempt.ok, true, escapeAttempt.error);
+    assert.deepEqual(escapeAttempt.result, { chain: [true, true, true, true], compiled: "EvalError" });
+  } finally {
+    await bw.close();
+  }
+});
+
+test("snapshots admit a typical page by default and cap maxChars at 50000", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      const rows = Array.from({length: 200}, (_, i) =>
+        \`<li><a href="/item/\${i}">Item number \${i} with some label text</a></li>\`).join("");
+      await page.setContent(\`<ul>\${rows}</ul>\`);
+      const full = await snapshot();
+      const capped = await snapshot({maxChars: 100000});
+      const refused = await snapshot({maxChars: 1000});
+      return { fullLength: full.length, fullTail: full.slice(-60), cappedLength: capped.length, refused };
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.ok(result.result.fullLength > 10_000 && result.result.fullLength <= 20_000, String(result.result.fullLength));
+    assert.match(result.result.fullTail, /Item number 199 with some label text/);
+    assert.equal(result.result.cappedLength, result.result.fullLength);
+    assert.match(result.result.refused, /over the 1000 limit\. Retry with .*\{maxChars\} up to 50000/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("a string result is measured before JSON escaping, so quote-heavy text near the limit arrives whole", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    // 14 chars per repeat, 3 of them escaped in JSON: 21,000 raw, 25,500 serialized.
+    const result = await bw.run(`return 'say "hi" \\\\ ok '.repeat(1500);`);
+    assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
+    assert.equal(result.result.truncated, undefined, JSON.stringify(result.result).slice(0, 200));
+    assert.equal(result.result.length, 21_000);
+    assert.ok(JSON.stringify(result.result).length > 24_000);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("a control-heavy string result keeps its console and events in the envelope", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    // 12,000 raw chars, 72,000 on the wire: each control character escapes to six.
+    const result = await bw.run(`console.log("kept-console-line"); return "\\u0001".repeat(12_000);`);
+    assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
+    assert.equal(result.result.length, 12_000);
+    assert.equal(result.envelopeTruncated, undefined);
+    assert.ok(result.console.some((entry) => entry.text.includes("kept-console-line")), JSON.stringify(result.console));
+  } finally {
+    await bw.close();
+  }
+});
+
+test("a default-size snapshot returned from run arrives whole with its diagnostics", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      const rows = Array.from({length: 200}, (_, i) =>
+        \`<li><a href="/item/\${i}">Item number \${i} with some label text</a></li>\`).join("");
+      await page.setContent(\`<ul>\${rows}</ul>\`);
+      console.log("kept-console-line");
+      return snapshot();
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.truncated, undefined, JSON.stringify(result.result).slice(0, 200));
+    assert.ok(result.result.length > 12_000, String(result.result.length));
+    assert.match(result.result, /Item number 199 with some label text/);
+    assert.equal(result.envelopeTruncated, undefined);
+    assert.ok(result.console.some((entry) => entry.text.includes("kept-console-line")), JSON.stringify(result.console));
   } finally {
     await bw.close();
   }

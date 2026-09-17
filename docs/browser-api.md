@@ -40,8 +40,8 @@ is indented by default; pass `--pretty` to retain indentation in a pipe or file.
 | `page` | The current page. Always points at the active page for this session. |
 | `pages` | Live array of open pages in this session. |
 | `openPage(url?, options?)` | Open a new page, optionally navigating. Returns the page. |
-| `usePage(idOrIndex)` | Make another page current; accepts a `pageId` or an index. |
-| `closePage(idOrIndex?)` | Close a page (the current one if omitted). |
+| `usePage(idOrIndexOrPage)` | Make another page current; accepts a `pageId`, an index, or a page object from `openPage`/`pages`. |
+| `closePage(idOrIndexOrPage?)` | Close a page (the current one if omitted); accepts the same handles as `usePage`. |
 | `context` | The Playwright `BrowserContext`, with mutating methods removed (see below). |
 
 Pages persist across `run()` calls within the same session, so an agent can
@@ -131,8 +131,8 @@ halves the size of a real page's tree without losing anything actionable.
 | `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
 | `depth` | — | Limit tree depth. |
 | `urls` | `false` | Keep `- /url:` property lines on links. |
-| `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns a diagnostic string with the actual size and scoping hints instead of a cut-off tree. It does not throw or make the run envelope fail. |
-| `timeout` | `10000` | Milliseconds. |
+| `maxChars` | `20000` | Size limit, capped at 50000. An over-limit snapshot returns a diagnostic string with the actual size and scoping hints instead of a cut-off tree. It does not throw or make the run envelope fail. |
+| `timeout` | `5000` | Milliseconds. |
 
 Interactive snapshots retain short text beside list/table controls, table column
 labels, and status/alert contents. This keeps prices, quantities, and outcomes
@@ -457,6 +457,14 @@ per-session and never leaves the worker.
 state.startedAt = Date.now();          // step 1
 return Date.now() - state.startedAt;   // a later step
 ```
+
+## URL
+
+`URL` and `URLSearchParams` are available to snippet code with the WHATWG
+API (`new URL(href, base)`, `url.searchParams.get()`, setters on every field
+except `origin`, `URL.canParse()`). They are implemented inside the snippet
+realm rather than handed over from the host, so their constructor chain never
+reaches the host's `Function`.
 
 ## Dialogs
 

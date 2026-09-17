@@ -188,17 +188,29 @@ const MAX_CONSOLE_MESSAGE_CHARS = 300;
 const MAX_PAGES_PER_SESSION = 32;
 const MAX_RESPONSE_PAGES = 32;
 const MAX_TRACKED_ARTIFACTS = 500;
-const MAX_RESULT_ENVELOPE_CHARS = 28_000;
+// Sized so a default-limit run result (below) fits with its console, events,
+// and page list without sendResult stripping the diagnostics. A string result
+// counts by its raw length here, as it does for the output limit.
+const MAX_RESULT_ENVELOPE_CHARS = 64_000;
 const QUESTION_PAGE_HOLD_MS = 24 * 60 * 60 * 1_000;
-const DEFAULT_OUTPUT_LIMIT = 12_000;
+// Must admit a default-size snapshot (DEFAULT_SNAPSHOT_MAX_CHARS), or
+// returning snapshot() spills it to a file and hands the model a preview with
+// the middle cut out. Keep in step with the client's outputLimit default and
+// the agent loop's OBSERVATION_LIMIT.
+const DEFAULT_OUTPUT_LIMIT = 24_000;
 /**
  * How long a single element interaction waits before giving up. Playwright's
  * own default is 30s, which is long enough that an agent burns a step budget
  * waiting on an element that is never going to appear; 10s is past the point
  * where a slow-but-real element resolves.
  */
-const DEFAULT_ACTION_TIMEOUT_MS = 10_000;
+const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000;
+// A real page's compressed tree is often 12-40K chars. Refusing at 10K sent the
+// model on a scoped re-read (one more round trip) for most first looks, so the
+// default admits a typical page and the ceiling covers a large one.
+const DEFAULT_SNAPSHOT_MAX_CHARS = 20_000;
+const MAX_SNAPSHOT_MAX_CHARS = 50_000;
 /**
  * Hard ceiling on graceful shutdown. If the browser or a page handler wedges,
  * the process still exits rather than lingering and holding the profile lock.
@@ -642,8 +654,19 @@ function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
+// The envelope ceiling exists to bound the diagnostics, not the result: the
+// result was already sized by the output limit, a string by its raw length.
+// Count it the same way here, or JSON escaping of the result alone (up to six
+// wire characters per control character) could evict the console and events
+// that explain it.
+function envelopeChars(message) {
+  const total = JSON.stringify(message).length;
+  if (!isString(message.result)) return total;
+  return total - (JSON.stringify(message.result).length - message.result.length);
+}
+
 function sendResult(message) {
-  if (JSON.stringify(message).length > MAX_RESULT_ENVELOPE_CHARS) {
+  if (envelopeChars(message) > MAX_RESULT_ENVELOPE_CHARS) {
     message.envelopeTruncated = true;
     message.console = (message.console || []).slice(-10);
     message.events = (message.events || []).slice(-10);
@@ -651,7 +674,7 @@ function sendResult(message) {
     message.artifacts = (message.artifacts || []).slice(-20);
     message.warnings = (message.warnings || []).slice(-10);
   }
-  if (JSON.stringify(message).length > MAX_RESULT_ENVELOPE_CHARS) {
+  if (envelopeChars(message) > MAX_RESULT_ENVELOPE_CHARS) {
     message.console = [];
     message.events = [];
     message.pages = (message.pages || []).slice(0, 4);
@@ -1650,8 +1673,11 @@ function adoptPage(page, sessionId) {
   pageToSession.set(page, session.id);
   // A missing semantic locator should fail while the snippet still has time to
   // inspect and recover. Otherwise Playwright's 30s default consumes the whole
-  // run deadline and the worker must tear down the timed-out realm. Navigation
-  // keeps its larger budget because a real network load is not a bad selector.
+  // run deadline and the worker must tear down the timed-out realm. Agent code
+  // misses locators far more often than pages are slow, and every miss costs
+  // the full budget, so the default matches Playwright MCP's 5s; a snippet that
+  // expects a slow transition passes its own `{timeout}`. Navigation keeps its
+  // larger budget because a real network load is not a bad selector.
   page.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT_MS);
   page.setDefaultNavigationTimeout(DEFAULT_NAVIGATION_TIMEOUT_MS);
   session.pages.set(id, page);
@@ -1847,7 +1873,7 @@ async function snapshotPage(page, options: any = {}) {
   }
   const limit = Math.max(
     1_000,
-    Math.min(Number(options?.maxChars || 10_000), 20_000),
+    Math.min(Number(options?.maxChars || DEFAULT_SNAPSHOT_MAX_CHARS), MAX_SNAPSHOT_MAX_CHARS),
   );
   if (text.length <= limit) {
     store.set(key, current);
@@ -1864,7 +1890,7 @@ async function snapshotPage(page, options: any = {}) {
       ? "a smaller {depth} or a deeper {ref}/{selector} to narrow this subtree"
       : "{ref} or {selector} to scope to one element, or {depth} to limit nesting",
   );
-  if (limit < 20_000) hints.push("{maxChars} up to 20000");
+  if (limit < MAX_SNAPSHOT_MAX_CHARS) hints.push(`{maxChars} up to ${MAX_SNAPSHOT_MAX_CHARS}`);
   return (
     `${header}\nSnapshot is ${text.length} chars, over the ${limit} limit. ` +
     `Retry with ${hints.join(", ")}.`
@@ -2830,10 +2856,28 @@ function validateMethodArguments(property, args) {
 }
 
 function assertPageHandle(value, helper) {
-  if (isString(value) || isNumber(value)) return;
+  if (isString(value) || isNumber(value) || objectKind(facadeToRaw.get(value)) === "Page") return;
   throw new TypeError(
-    `${helper} page handle must be a page ID string or numeric index, received ${argumentType(value)}.`,
+    `${helper} page handle must be a page ID string, numeric index, or page object, received ${argumentType(value)}.`,
   );
+}
+
+// Resolve a page handle — an id, an index, or the page object `openPage`/`pages`
+// hand out — to the session's `[id, page]` entry, or undefined when it is not
+// an open page of this session.
+function findPageEntry(entries, handle) {
+  if (isNumber(handle)) return entries[handle];
+  if (facadeToRaw.has(handle)) {
+    const raw = facadeToRaw.get(handle);
+    return entries.find(([, page]) => page === raw);
+  }
+  return entries.find(([id]) => id === String(handle));
+}
+
+function describePageHandle(handle) {
+  if (!facadeToRaw.has(handle)) return String(handle);
+  const id = pageIds.get(facadeToRaw.get(handle));
+  return id ? `page object ${id}` : "page object";
 }
 
 function validateMethodPaths(kind, property, args) {
@@ -3094,6 +3138,163 @@ function getRealmFactoryScript() {
     { filename: "browser-playwright-realm.js" },
   );
   return realmFactoryScript;
+}
+
+// WHATWG URL is not a JS intrinsic, so a fresh vm context lacks it, and the
+// host's `URL` cannot be handed over: its `constructor` is the host realm's
+// `Function`, which compiles code outside the context's restrictions. These
+// classes live in the snippet realm and only ever receive strings and arrays
+// of strings from the host, which `adopt` turns into realm values.
+const URL_FIELDS = ["href", "protocol", "username", "password", "host", "hostname", "port", "pathname", "search", "hash", "origin"];
+
+function urlParts(input, base, field, value) {
+  let url;
+  try {
+    url = new URL(input, base);
+  } catch {
+    throw new TypeError(`Invalid URL: ${input}`);
+  }
+  if (field) url[field] = value;
+  return URL_FIELDS.map((name) => url[name]);
+}
+
+let urlFactoryScript = null;
+
+function getUrlFactoryScript() {
+  if (urlFactoryScript) return urlFactoryScript;
+  urlFactoryScript = new vm.Script(
+    `(fields, urlParts, parseParams, serializeParams) => {
+    const pairsOf = new WeakMap();
+    const owners = new WeakMap();
+    // Writing the owner's search re-enters the field setter below; the flag
+    // stops it from re-parsing the pairs it was just serialized from.
+    let syncing = false;
+    const sync = params => {
+      const owner = owners.get(params);
+      if (!owner) return;
+      syncing = true;
+      try { owner.search = serializeParams(pairsOf.get(params)); } finally { syncing = false; }
+    };
+    // Names and values are WebIDL USVStrings: lone surrogates become U+FFFD.
+    const usv = value => String(value).toWellFormed();
+    // WHATWG init: a string, an iterable of [name, value] pairs (array, Map,
+    // generator, another URLSearchParams), or a record of name -> value.
+    const pairsFrom = init => {
+      if (init === undefined) return [];
+      if (init !== null && (typeof init === 'object' || typeof init === 'function')) {
+        const iterator = init[Symbol.iterator];
+        if (iterator !== undefined && iterator !== null) {
+          if (typeof iterator !== 'function') throw new TypeError('Query init is not iterable');
+          const pairs = [];
+          for (const pair of { [Symbol.iterator]: () => iterator.call(init) }) {
+            if (pair === null || pair === undefined || typeof pair[Symbol.iterator] !== 'function')
+              throw new TypeError('Each query pair must be an iterable [name, value] entry');
+            const entry = [...pair];
+            if (entry.length !== 2)
+              throw new TypeError('Each query pair must be an iterable [name, value] entry');
+            pairs.push([usv(entry[0]), usv(entry[1])]);
+          }
+          return pairs;
+        }
+        return Object.entries(init).map(([key, value]) => [usv(key), usv(value)]);
+      }
+      return parseParams(usv(init));
+    };
+    // The pair list is only ever mutated in place, so an iterator holding an
+    // index into it stays live across delete()/set() like the native one.
+    const replace = (params, pairs) => { const list = pairsOf.get(params); list.splice(0, list.length, ...pairs); };
+    function* iterate(params, pick) {
+      for (let i = 0; i < pairsOf.get(params).length; i += 1) yield pick(pairsOf.get(params)[i]);
+    }
+    class URLSearchParams {
+      constructor(init = '') { pairsOf.set(this, pairsFrom(init)); }
+      get size() { return pairsOf.get(this).length; }
+      append(key, value) { pairsOf.get(this).push([usv(key), usv(value)]); sync(this); }
+      delete(key, value) {
+        key = usv(key);
+        if (value !== undefined) value = usv(value);
+        const pairs = pairsOf.get(this);
+        for (let i = pairs.length - 1; i >= 0; i -= 1) {
+          if (pairs[i][0] === key && (value === undefined || pairs[i][1] === value)) pairs.splice(i, 1);
+        }
+        sync(this);
+      }
+      get(key) { key = usv(key); const hit = pairsOf.get(this).find(([k]) => k === key); return hit ? hit[1] : null; }
+      getAll(key) { key = usv(key); return pairsOf.get(this).filter(([k]) => k === key).map(([, v]) => v); }
+      has(key, value) { key = usv(key); return pairsOf.get(this).some(([k, v]) => k === key && (value === undefined || v === usv(value))); }
+      set(key, value) {
+        key = usv(key);
+        value = usv(value);
+        const pairs = pairsOf.get(this);
+        const index = pairs.findIndex(([k]) => k === key);
+        if (index < 0) pairs.push([key, value]);
+        else {
+          pairs[index] = [key, value];
+          for (let i = pairs.length - 1; i > index; i -= 1) if (pairs[i][0] === key) pairs.splice(i, 1);
+        }
+        sync(this);
+      }
+      sort() { pairsOf.get(this).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)); sync(this); }
+      forEach(callback, thisArg) { for (const [key, value] of this) callback.call(thisArg, value, key, this); }
+      keys() { return iterate(this, ([key]) => key); }
+      values() { return iterate(this, ([, value]) => value); }
+      entries() { return iterate(this, ([key, value]) => [key, value]); }
+      [Symbol.iterator]() { return this.entries(); }
+      toString() { return serializeParams(pairsOf.get(this)); }
+      get [Symbol.toStringTag]() { return 'URLSearchParams'; }
+    }
+    const partsOf = new WeakMap();
+    const paramsOf = new WeakMap();
+    const assign = (url, values) => partsOf.set(url, Object.fromEntries(fields.map((name, i) => [name, values[i]])));
+    class URL {
+      constructor(input, base) {
+        assign(this, urlParts(String(input), base === undefined ? undefined : String(base)));
+      }
+      static canParse(input, base) { try { new URL(input, base); return true; } catch { return false; } }
+      static parse(input, base) { try { return new URL(input, base); } catch { return null; } }
+      get searchParams() {
+        let params = paramsOf.get(this);
+        if (!params) {
+          params = new URLSearchParams(partsOf.get(this).search);
+          owners.set(params, this);
+          paramsOf.set(this, params);
+        }
+        return params;
+      }
+      toString() { return partsOf.get(this).href; }
+      toJSON() { return partsOf.get(this).href; }
+      get [Symbol.toStringTag]() { return 'URL'; }
+    }
+    for (const name of fields) {
+      Object.defineProperty(URL.prototype, name, {
+        configurable: true,
+        enumerable: true,
+        get() { return partsOf.get(this)[name]; },
+        set: name === 'origin' ? undefined : function (value) {
+          assign(this, urlParts(partsOf.get(this).href, undefined, name, String(value)));
+          // searchParams keeps its identity (WHATWG) and follows every
+          // mutation of the query, whether through search, href, or the
+          // params object itself.
+          const params = paramsOf.get(this);
+          if (params && !syncing) replace(params, parseParams(partsOf.get(this).search));
+        },
+      });
+    }
+    return { URL, URLSearchParams };
+  }`,
+    { filename: "browser-url-realm.js" },
+  );
+  return urlFactoryScript;
+}
+
+function createUrlGlobals(realm) {
+  const factory = getUrlFactoryScript().runInContext(realm.context);
+  return factory(
+    realm.adopt(URL_FIELDS),
+    realm.safeFunction(urlParts),
+    realm.safeFunction((init) => [...new URLSearchParams(init)]),
+    realm.safeFunction((pairs) => new URLSearchParams(pairs).toString()),
+  );
 }
 
 function createRealm(context, pageEvents) {
@@ -4775,7 +4976,7 @@ async function pageSiteRequest(page, url, options: any = {}) {
         body !== undefined && !["GET", "HEAD"].includes(method)
           ? body
           : undefined,
-      timeoutMs: DEFAULT_ACTION_TIMEOUT_MS * 3,
+      timeoutMs: DEFAULT_NAVIGATION_TIMEOUT_MS,
       limit: SITE_RESPONSE_LIMIT,
     });
     const responseCookies = cookiesFromSetCookie(response.setCookie, target);
@@ -5014,6 +5215,7 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.console = Object.freeze(consoleFacade);
   sandbox.context = wrap(browserContext, realm);
   sandbox.state = session.state;
+  Object.assign(sandbox, createUrlGlobals(realm));
   sandbox.pages = realm.makePages(getPages);
   sandbox.openPage = realm.safeFunction(async (url = null, options: any = {}) => {
     if (launchConfig.hostOwnedTarget) throw new Error("Open another tab through the host.");
@@ -5035,13 +5237,10 @@ function buildSandbox(session, consoleMessages, execution) {
     const entries = [...session.pages.entries()].filter(
       ([, page]) => !page.isClosed(),
     );
-    const entry =
-      isNumber(selector)
-        ? entries[selector]
-        : entries.find(([id]) => id === String(selector));
+    const entry = findPageEntry(entries, selector);
     if (!entry)
       throw new Error(
-        `Unknown page ${selector}; available: ${entries.map(([id]) => id).join(", ")}`,
+        `Unknown page ${describePageHandle(selector)}; available: ${entries.map(([id]) => id).join(", ")}`,
       );
     session.currentId = entry[0];
     notifyLiveViewPreferred();
@@ -5052,10 +5251,7 @@ function buildSandbox(session, consoleMessages, execution) {
     const target = selector === undefined ? session.currentId : selector;
     assertPageHandle(target, "closePage");
     const entries = [...session.pages.entries()];
-    const entry =
-      isNumber(target)
-        ? entries[target]
-        : entries.find(([id]) => id === String(target));
+    const entry = findPageEntry(entries, target);
     if (!entry) return { closed: false };
     await stopPageRecording(entry[1]);
     await entry[1].close();
@@ -8059,7 +8255,12 @@ async function execute(message) {
     await enforceArtifactQuota(session);
 
     let publicResult = summarized;
-    const serialized = JSON.stringify(publicResult);
+    // The limit is on what the model reads. A string result (a snapshot, page
+    // text) is read as-is, so measure it before JSON escaping: quotes and
+    // backslashes in labels must not push an accepted snapshot into a spill.
+    const serialized = isString(publicResult)
+      ? publicResult
+      : JSON.stringify(publicResult);
     const outputLimit = Number(
       message.config.outputLimit || DEFAULT_OUTPUT_LIMIT,
     );

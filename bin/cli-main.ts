@@ -1763,7 +1763,11 @@ async function cmdExec(flags) {
   process.stderr.write(
     `  done in ${result.steps} step${result.steps === 1 ? "" : "s"}, ` +
       `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"}, ` +
-      `${formatDuration(result.durationMs)}, ${formatAgentUsage(result.usage)}` +
+      `${formatDuration(result.durationMs)}` +
+      (result.timing
+        ? ` (model ${formatDuration(result.timing.modelMs)}, browser ${formatDuration(result.timing.toolMs)})`
+        : "") +
+      `, ${formatAgentUsage(result.usage)}` +
       (result.resumedMessages
         ? ` · resumed session "${result.session}" (${result.resumedMessages} prior messages)`
         : "") +
@@ -1779,6 +1783,7 @@ async function cmdExec(flags) {
         toolCalls: result.toolCalls,
         usage: result.usage,
         durationMs: result.durationMs,
+        timing: result.timing,
         proof: result.proof,
         recordings: result.recordings || [],
         session: result.session,

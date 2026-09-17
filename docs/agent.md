@@ -57,6 +57,7 @@ stdout:
     "context": 20000
   },
   "durationMs": 11400,
+  "timing": { "modelMs": 9100, "toolMs": 1900 },
   "proof": "/…/proof-….png",
   "recordings": []
 }
@@ -77,8 +78,11 @@ provider-reported count. It never derives writes from fresh input. `context` is
 the full prompt size at the **end** of the task — the last turn's provider input
 total, i.e. how much context the model was holding when it finished. `durationMs`
 is the task wall-clock (it excludes tearing down a browser the loop created for
-itself). `recordings` lists saved page-recording paths from this task, in the
-order they finished. The loop has no fixed step cap, but it does have a 30-minute wall-clock
+itself), and `timing` splits it into time spent waiting on model turns
+(`modelMs`) and inside browser calls (`toolMs`); the CLI prints the same split
+after the total. The remainder is loop overhead and human waits. `recordings`
+lists saved page-recording paths from this task, in the order they finished.
+The loop has no fixed step cap, but it does have a 30-minute wall-clock
 budget and a 1,000,000-character transcript bound so a stalled or repetitive
 provider cannot run forever or grow context without limit. Expiry aborts model
 requests, and BetterWright's worker timeout terminates in-flight browser work.

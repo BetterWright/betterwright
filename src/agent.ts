@@ -57,7 +57,16 @@ const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_DURATION_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
 const MAX_TIMER_MS = 2_147_483_647;
-const OBSERVATION_LIMIT = 12_000;
+// Matches the worker's default output limit (raw characters) so a default-size
+// snapshot reaches the model intact instead of being replaced by the
+// truncation notice. The model reads the observation as JSON text, so the cap
+// applies to the escaped form: quotes and backslashes, the only escaping
+// ordinary page text incurs, at most double it, and that is the headroom.
+// Control-heavy strings that expand further are what the cap is for. The +2
+// is the surrounding quotes, so a limit-sized string of nothing but quotes
+// still fits.
+const OBSERVATION_LIMIT = 24_000;
+const MAX_ESCAPED_OBSERVATION_CHARS = OBSERVATION_LIMIT * 2 + 2;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
 // A caller-requested stop (the session daemon's `interrupt` op, Esc in the
 // interactive console, a Ctrl-C that reached the daemon). Travels the same
@@ -192,7 +201,7 @@ export const MODEL_ENDPOINT_PRESETS = Object.freeze({
 // How the harness introduces its tools. `agentSystemPrompt()` speaks in terms of
 // `run()`; this preamble maps that onto the `browser` tool so the same operator
 // guidance applies unchanged.
-const HARNESS_PREAMBLE_HEAD = `Complete the user's task in the persistent, policy-guarded browser. Each \`browser\` call runs async Playwright JavaScript: trailing expressions return automatically; statement blocks need \`return\`. Globals: page, pages, context, state, openPage, usePage(idOrIndex), closePage(idOrIndex?), snapshot, screenshot, artifactPath, dialogs, credentials, captcha, human, overlays, controls, media, site, webagents, webmcp. Host cleanup is automatic; don't close pages merely to finish.
+const HARNESS_PREAMBLE_HEAD = `Complete the user's task in the persistent, policy-guarded browser. Each \`browser\` call runs async Playwright JavaScript: trailing expressions return automatically; statement blocks need \`return\`. Globals: page, pages, context, state, URL, URLSearchParams, openPage, usePage(idOrIndexOrPage), closePage(idOrIndexOrPage?), snapshot, screenshot, artifactPath, dialogs, credentials, captcha, human, overlays, controls, media, site, webagents, webmcp. Host cleanup is automatic; don't close pages merely to finish.
 
 Each call costs a model round-trip. Batch known work:
 - For unambiguous read-only tasks, batch navigation, scoped DOM extraction (main/infobox/lead), computation and proof in ONE call when possible. \`return {finalAnswer}\` only with every requested value and computation verified; otherwise return scoped evidence and continue. Compose answers from extracted values, not expectations or page dumps. Parallelize independent tabs with \`Promise.all([openPage(a), openPage(b)])\`; use known URL shortcuts instead of click-through exploration. Don't snapshot articles before trying scoped extraction.
@@ -387,7 +396,10 @@ function observationFromResult(result) {
   if (screenshots.length) summary.screenshots = screenshots;
   if (recordings.length) summary.recordings = recordings;
   if (result.durationMs != null) summary.duration_ms = result.durationMs;
-  if (summary.result !== undefined && JSON.stringify(summary.result).length > OBSERVATION_LIMIT) {
+  if (
+    summary.result !== undefined &&
+    JSON.stringify(summary.result).length > MAX_ESCAPED_OBSERVATION_CHARS
+  ) {
     summary.result = "[truncated; inspect via a scoped snapshot]";
   }
   return JSON.stringify(summary);
@@ -682,7 +694,7 @@ async function completeWithRetry(model, request, deadline, stopSignal) {
  *   task live while the agent works. When that call creates the viewer, its URL
  *   is emitted as `onStep({tool: "liveView", url})`; an already-running
  *   host-owned viewer is reused without re-announcing it.
- * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null), recordings: string[]}>}
+ * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, timing: {modelMs: number, toolMs: number}, transcript: object[], proof: (string|null), recordings: string[]}>}
  */
 export async function runAgentTask(options: RunAgentTaskOptions) {
   const task = String(options.task || "").trim();
@@ -897,6 +909,43 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   let contextTokens = 0;
   let toolCallCount = 0;
   let durationMs = 0;
+  // Where the wall-clock went: waiting on the model, and inside browser calls.
+  // The rest of `durationMs` is loop overhead and human waits (ask/handoff).
+  let modelMs = 0;
+  let toolMs = 0;
+  // Browser time as of the moment `durationMs` was taken, so a call still in
+  // flight at interruption is not also charged for the owned-browser teardown.
+  let toolMsAtEnd = 0;
+  async function timedComplete(request) {
+    const startedAt = Date.now();
+    try {
+      return await completeWithRetry(model, request, deadline, stopSignal);
+    } finally {
+      modelMs += Date.now() - startedAt;
+    }
+  }
+  // A browser call that loses the deadline or stop race keeps running (the
+  // browser gets no abort signal), so its time is still in flight when the
+  // result is built. browserMs() counts those calls up to now; the finally
+  // below only runs once they settle, after the result has left.
+  const inFlightBrowser = new Set<{ startedAt: number }>();
+  const browserMs = () => {
+    const now = Date.now();
+    let total = toolMs;
+    for (const call of inFlightBrowser) total += now - call.startedAt;
+    return total;
+  };
+  async function timedBrowser(operation) {
+    const call = { startedAt: Date.now() };
+    inFlightBrowser.add(call);
+    try {
+      return await operation();
+    } finally {
+      inFlightBrowser.delete(call);
+      toolMs += Date.now() - call.startedAt;
+    }
+  }
+  const timedRun = (code, options) => timedBrowser(() => browser.run(code, options));
   // The current run of identical browser failures, and whether it has gone on
   // long enough to end the task.
   let repeated = { signature: "", count: 0 };
@@ -929,7 +978,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     answer = "";
     finished = false;
     const fresh = await withinDeadline(
-      () => browser.run(
+      () => timedRun(
         `const ui = await controls.directory();
         const observed = {
           url: page.url(),
@@ -962,7 +1011,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
       reportStep({ step: steps, tool: "verification", note: "checking the checkout answer against fresh page evidence" });
       let response;
       try {
-        response = await completeWithRetry(model, {
+        response = await timedComplete({
           system: CHECKOUT_COMPLETION_PROMPT,
           messages: [{ role: "user", text: JSON.stringify({
             task,
@@ -975,7 +1024,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
             observations: observations.length ? observations : undefined,
           }) }],
           tools: [],
-        }, deadline, stopSignal);
+        });
       } catch (error) {
         if (isControlSignal(error) || !isTransientModelError(error)) throw error;
         noProgress = true;
@@ -1016,7 +1065,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
           (scope.ref && !/^(?:f\d+)*e\d+$/.test(scope.ref)) || (scope.ref && scope.selector)) break;
       inspected.add(key);
       const observation = await withinDeadline(
-        () => browser.run(`const observed = await snapshot(${JSON.stringify({ ...scope, maxChars: 6_000, timeout: 2_000 })}); ${proof ? 'await screenshot({kind: "proof"}); ' : ""}return observed;`, {
+        () => timedRun(`const observed = await snapshot(${JSON.stringify({ ...scope, maxChars: 6_000, timeout: 2_000 })}); ${proof ? 'await screenshot({kind: "proof"}); ' : ""}return observed;`, {
           session, timeout: Math.max(0.001, (deadline - Date.now()) / 1000),
         }),
         deadline, stopSignal,
@@ -1114,12 +1163,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
       onPhase({ phase: "reasoning", step: steps });
       let response;
       try {
-        response = await completeWithRetry(
-          model,
-          { system, messages: await withLatestCaptchaVision(messages), tools },
-          deadline,
-          stopSignal,
-        );
+        response = await timedComplete({ system, messages: await withLatestCaptchaVision(messages), tools });
       } catch (error) {
         if (isControlSignal(error) || !isTransientModelError(error)) throw error;
         // A transient provider failure that survived the bounded retries:
@@ -1186,10 +1230,10 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
           try {
             const remainingSeconds = Math.max(0.001, (deadline - Date.now()) / 1000);
             if (remainingSeconds <= 0.001) throw AGENT_TIMEOUT;
-            const result = await browser.fillCredential({
+            const result = await timedBrowser(() => browser.fillCredential({
               ...normalizeCredentialToolOptions(call.input, { session }),
               timeout: remainingSeconds,
-            });
+            }));
             results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
           } catch (error) {
             if (isControlSignal(error)) throw error;
@@ -1384,7 +1428,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
           // next call behind it.
           const result = await withinDeadline(
             () =>
-              browser.run(String(call.input?.code || ""), {
+              timedRun(String(call.input?.code || ""), {
                 session,
                 note: note || undefined,
                 timeout: remainingSeconds,
@@ -1474,6 +1518,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     // Measure task wall-clock before tearing down an owned browser, so the
     // reported time is the work, not the teardown.
     durationMs = Date.now() - startedAt;
+    toolMsAtEnd = browserMs();
     // Stop only a viewer this run started; a live view the host was already
     // running (e.g. `betterwright view`) is not ours to tear down.
     if (agentStartedLiveView && !ownsBrowser) {
@@ -1507,6 +1552,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     },
     // Task wall-clock in milliseconds (excludes owned-browser teardown).
     durationMs,
+    timing: { modelMs, toolMs: toolMsAtEnd },
     transcript: messages,
     proof,
     recordings,
