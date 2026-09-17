@@ -189,8 +189,8 @@ const MAX_PAGES_PER_SESSION = 32;
 const MAX_RESPONSE_PAGES = 32;
 const MAX_TRACKED_ARTIFACTS = 500;
 // Sized so a default-limit run result (below) fits with its console, events,
-// and page list even when JSON escaping doubles it (a string result is
-// measured before escaping), without sendResult stripping the diagnostics.
+// and page list without sendResult stripping the diagnostics. A string result
+// counts by its raw length here, as it does for the output limit.
 const MAX_RESULT_ENVELOPE_CHARS = 64_000;
 const QUESTION_PAGE_HOLD_MS = 24 * 60 * 60 * 1_000;
 // Must admit a default-size snapshot (DEFAULT_SNAPSHOT_MAX_CHARS), or
@@ -641,8 +641,19 @@ function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
+// The envelope ceiling exists to bound the diagnostics, not the result: the
+// result was already sized by the output limit, a string by its raw length.
+// Count it the same way here, or JSON escaping of the result alone (up to six
+// wire characters per control character) could evict the console and events
+// that explain it.
+function envelopeChars(message) {
+  const total = JSON.stringify(message).length;
+  if (!isString(message.result)) return total;
+  return total - (JSON.stringify(message.result).length - message.result.length);
+}
+
 function sendResult(message) {
-  if (JSON.stringify(message).length > MAX_RESULT_ENVELOPE_CHARS) {
+  if (envelopeChars(message) > MAX_RESULT_ENVELOPE_CHARS) {
     message.envelopeTruncated = true;
     message.console = (message.console || []).slice(-10);
     message.events = (message.events || []).slice(-10);
@@ -650,7 +661,7 @@ function sendResult(message) {
     message.artifacts = (message.artifacts || []).slice(-20);
     message.warnings = (message.warnings || []).slice(-10);
   }
-  if (JSON.stringify(message).length > MAX_RESULT_ENVELOPE_CHARS) {
+  if (envelopeChars(message) > MAX_RESULT_ENVELOPE_CHARS) {
     message.console = [];
     message.events = [];
     message.pages = (message.pages || []).slice(0, 4);

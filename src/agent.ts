@@ -369,8 +369,16 @@ function observationFromResult(result) {
   if (result.ui) summary.ui = result.ui;
   if (screenshots.length) summary.screenshots = screenshots;
   if (result.durationMs != null) summary.duration_ms = result.durationMs;
-  if (summary.result !== undefined && JSON.stringify(summary.result).length > OBSERVATION_LIMIT) {
-    summary.result = "[truncated; inspect via a scoped snapshot]";
+  // Measure a string result as the model reads it, before JSON escaping, the
+  // way the worker's output limit does; otherwise a quote-heavy snapshot the
+  // worker admitted would vanish here.
+  if (summary.result !== undefined) {
+    const resultChars = isString(summary.result)
+      ? summary.result.length
+      : JSON.stringify(summary.result).length;
+    if (resultChars > OBSERVATION_LIMIT) {
+      summary.result = "[truncated; inspect via a scoped snapshot]";
+    }
   }
   return JSON.stringify(summary);
 }

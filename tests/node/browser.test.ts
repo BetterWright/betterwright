@@ -3657,6 +3657,20 @@ test("a string result is measured before JSON escaping, so quote-heavy text near
   }
 });
 
+test("a control-heavy string result keeps its console and events in the envelope", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    // 12,000 raw chars, 72,000 on the wire: each control character escapes to six.
+    const result = await bw.run(`console.log("kept-console-line"); return "\\u0001".repeat(12_000);`);
+    assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
+    assert.equal(result.result.length, 12_000);
+    assert.equal(result.envelopeTruncated, undefined);
+    assert.ok(result.console.some((entry) => entry.text.includes("kept-console-line")), JSON.stringify(result.console));
+  } finally {
+    await bw.close();
+  }
+});
+
 test("a default-size snapshot returned from run arrives whole with its diagnostics", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {

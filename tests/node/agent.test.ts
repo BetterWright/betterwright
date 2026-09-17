@@ -219,22 +219,27 @@ test("successful browser observations omit empty optional fields", async () => {
 
 test("browser observations keep a default-size snapshot and drop only oversized results", async () => {
   const typical = "- link \"Item\" [ref=e1]\n".repeat(700); // ~18K chars, under the 20K snapshot default
+  // 21K raw chars that JSON-escape to 25.5K: measured as the model reads it.
+  const escapeHeavy = 'say "hi" \\ ok '.repeat(1500);
   const oversized = "x".repeat(30_000);
   const browser = fakeBrowser({
-    runs: [{ ok: true, result: typical }, { ok: true, result: oversized }],
+    runs: [{ ok: true, result: typical }, { ok: true, result: escapeHeavy }, { ok: true, result: oversized }],
   });
   const model = scriptedModel([
     { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "snapshot()" } }] },
-    { text: "", toolCalls: [{ id: "c2", name: "browser", input: { code: "big" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "browser", input: { code: "quoted" } }] },
+    { text: "", toolCalls: [{ id: "c3", name: "browser", input: { code: "big" } }] },
     { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
   ]);
   const result = await runAgentTask({ task: "read the page", model, browser });
   const observations = result.transcript
     .filter((message) => message.role === "tool" && message.results[0].name === "browser")
     .map((message) => JSON.parse(message.results[0].content));
-  assert.equal(observations.length, 2);
+  assert.equal(observations.length, 3);
   assert.equal(observations[0].result, typical);
-  assert.equal(observations[1].result, "[truncated; inspect via a scoped snapshot]");
+  assert.ok(JSON.stringify(escapeHeavy).length > 24_000);
+  assert.equal(observations[1].result, escapeHeavy);
+  assert.equal(observations[2].result, "[truncated; inspect via a scoped snapshot]");
 });
 
 test("browser observations preserve attached action directories", async () => {
