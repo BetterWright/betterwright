@@ -3600,10 +3600,16 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
       coerced.append('sp ace', 'ü&=');
       const sorted = new URLSearchParams('b=2&a=1&c=0'); sorted.sort();
       const flags = [dedupe.has('t', 'x'), dedupe.has('t', '3'), dedupe.size, new URLSearchParams(null).size];
+      let fakeIterable = '';
+      try { new URLSearchParams({ a: 1, [Symbol.iterator]: 7 }); fakeIterable = 'no throw'; } catch (error) { fakeIterable = error.name; }
+      const surrogates = new URLSearchParams(new Map([['q', '\uD800']]));
+      surrogates.append('\uDC00x', 'y\u{1F600}');
+      const usv = [surrogates.get('q'), [...surrogates.keys()][1], surrogates.toString(), surrogates.has('q', '\uD800')];
       return {
         absolute, id, query,
         fromMap, fromGenerator, fromParams, badPair, seen, liveKeys,
         dedupe: dedupe.toString(), coerced: coerced.toString(), sorted: sorted.toString(), flags,
+        fakeIterable, usv,
         edited: edited.href,
         editedParams: [...edited.searchParams],
         json: JSON.stringify({ edited }),
@@ -3635,6 +3641,8 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
       coerced: "1=2&sp+ace=%C3%BC%26%3D",
       sorted: "a=1&b=2&c=0",
       flags: [true, false, 2, 1], // null stringifies to a "null" key, as in Node
+      fakeIterable: "TypeError",
+      usv: ["\uFFFD", "\uFFFDx", "q=%EF%BF%BD&%EF%BF%BDx=y%F0%9F%98%80", true],
     });
 
     // The classes live in the snippet realm: their constructor chain is the

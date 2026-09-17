@@ -3175,26 +3175,30 @@ function getUrlFactoryScript() {
       syncing = true;
       try { owner.search = serializeParams(pairsOf.get(params)); } finally { syncing = false; }
     };
+    // Names and values are WebIDL USVStrings: lone surrogates become U+FFFD.
+    const usv = value => String(value).toWellFormed();
     // WHATWG init: a string, an iterable of [name, value] pairs (array, Map,
     // generator, another URLSearchParams), or a record of name -> value.
     const pairsFrom = init => {
       if (init === undefined) return [];
       if (init !== null && (typeof init === 'object' || typeof init === 'function')) {
-        if (typeof init[Symbol.iterator] === 'function') {
+        const iterator = init[Symbol.iterator];
+        if (iterator !== undefined && iterator !== null) {
+          if (typeof iterator !== 'function') throw new TypeError('Query init is not iterable');
           const pairs = [];
-          for (const pair of init) {
+          for (const pair of { [Symbol.iterator]: () => iterator.call(init) }) {
             if (pair === null || pair === undefined || typeof pair[Symbol.iterator] !== 'function')
               throw new TypeError('Each query pair must be an iterable [name, value] entry');
             const entry = [...pair];
             if (entry.length !== 2)
               throw new TypeError('Each query pair must be an iterable [name, value] entry');
-            pairs.push([String(entry[0]), String(entry[1])]);
+            pairs.push([usv(entry[0]), usv(entry[1])]);
           }
           return pairs;
         }
-        return Object.entries(init).map(([key, value]) => [key, String(value)]);
+        return Object.entries(init).map(([key, value]) => [usv(key), usv(value)]);
       }
-      return parseParams(String(init));
+      return parseParams(usv(init));
     };
     // The pair list is only ever mutated in place, so an iterator holding an
     // index into it stays live across delete()/set() like the native one.
@@ -3205,22 +3209,22 @@ function getUrlFactoryScript() {
     class URLSearchParams {
       constructor(init = '') { pairsOf.set(this, pairsFrom(init)); }
       get size() { return pairsOf.get(this).length; }
-      append(key, value) { pairsOf.get(this).push([String(key), String(value)]); sync(this); }
+      append(key, value) { pairsOf.get(this).push([usv(key), usv(value)]); sync(this); }
       delete(key, value) {
-        key = String(key);
-        if (value !== undefined) value = String(value);
+        key = usv(key);
+        if (value !== undefined) value = usv(value);
         const pairs = pairsOf.get(this);
         for (let i = pairs.length - 1; i >= 0; i -= 1) {
           if (pairs[i][0] === key && (value === undefined || pairs[i][1] === value)) pairs.splice(i, 1);
         }
         sync(this);
       }
-      get(key) { key = String(key); const hit = pairsOf.get(this).find(([k]) => k === key); return hit ? hit[1] : null; }
-      getAll(key) { key = String(key); return pairsOf.get(this).filter(([k]) => k === key).map(([, v]) => v); }
-      has(key, value) { key = String(key); return pairsOf.get(this).some(([k, v]) => k === key && (value === undefined || v === String(value))); }
+      get(key) { key = usv(key); const hit = pairsOf.get(this).find(([k]) => k === key); return hit ? hit[1] : null; }
+      getAll(key) { key = usv(key); return pairsOf.get(this).filter(([k]) => k === key).map(([, v]) => v); }
+      has(key, value) { key = usv(key); return pairsOf.get(this).some(([k, v]) => k === key && (value === undefined || v === usv(value))); }
       set(key, value) {
-        key = String(key);
-        value = String(value);
+        key = usv(key);
+        value = usv(value);
         const pairs = pairsOf.get(this);
         const index = pairs.findIndex(([k]) => k === key);
         if (index < 0) pairs.push([key, value]);
