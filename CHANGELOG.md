@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.8.5] - 2026-09-17
+
 ### Changed
 
 - The default action timeout for snippet code is 5 seconds (was 10), matching
@@ -1743,7 +1745,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.2...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.5...HEAD
+[2.8.5]: https://github.com/BetterWright/betterwright/compare/v2.8.2...v2.8.5
 [2.8.2]: https://github.com/BetterWright/betterwright/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/BetterWright/betterwright/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/BetterWright/betterwright/compare/v2.7.3...v2.8.0
