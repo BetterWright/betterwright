@@ -3579,8 +3579,31 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
       const invalid = URL.canParse('not a url');
       let invalidMessage = '';
       try { new URL('not a url'); } catch (error) { invalidMessage = error.message; }
+      // WHATWG conformance: iterable inits, live iterators, coercion, encoding.
+      const fromMap = new URLSearchParams(new Map([['page', 2], ['q', 'a b']])).toString();
+      const fromGenerator = new URLSearchParams((function* () { yield ['k', 'v']; yield new Set(['m', 'n']); })()).toString();
+      const fromParams = new URLSearchParams(new URLSearchParams('x=1&x=2')).getAll('x');
+      let badPair = '';
+      try { new URLSearchParams([['only-one']]); } catch (error) { badPair = error.name; }
+      const live = new URLSearchParams('a=1&b=2&c=3');
+      const seen = [];
+      for (const [key] of live) { seen.push(key); if (key === 'a') live.delete('b'); }
+      const liveKeys = [];
+      const keyIterator = live.keys();
+      liveKeys.push(keyIterator.next().value);
+      live.append('z', '9');
+      for (const key of keyIterator) liveKeys.push(key);
+      const dedupe = new URLSearchParams('t=1&u=2&t=3');
+      dedupe.set('t', 'x');
+      const coerced = new URLSearchParams();
+      coerced.append(1, 2);
+      coerced.append('sp ace', 'ü&=');
+      const sorted = new URLSearchParams('b=2&a=1&c=0'); sorted.sort();
+      const flags = [dedupe.has('t', 'x'), dedupe.has('t', '3'), dedupe.size, new URLSearchParams(null).size];
       return {
         absolute, id, query,
+        fromMap, fromGenerator, fromParams, badPair, seen, liveKeys,
+        dedupe: dedupe.toString(), coerced: coerced.toString(), sorted: sorted.toString(), flags,
         edited: edited.href,
         editedParams: [...edited.searchParams],
         json: JSON.stringify({ edited }),
@@ -3602,6 +3625,16 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
       afterHref: [null, "3", "https://y.example/path?c=3&d=4"],
       invalid: false,
       invalidMessage: "Invalid URL: not a url",
+      fromMap: "page=2&q=a+b",
+      fromGenerator: "k=v&m=n",
+      fromParams: ["1", "2"],
+      badPair: "TypeError",
+      seen: ["a", "c"],
+      liveKeys: ["a", "c", "z"],
+      dedupe: "t=x&u=2",
+      coerced: "1=2&sp+ace=%C3%BC%26%3D",
+      sorted: "a=1&b=2&c=0",
+      flags: [true, false, 2, 1], // null stringifies to a "null" key, as in Node
     });
 
     // The classes live in the snippet realm: their constructor chain is the

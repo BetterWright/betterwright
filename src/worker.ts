@@ -3175,20 +3175,44 @@ function getUrlFactoryScript() {
       syncing = true;
       try { owner.search = serializeParams(pairsOf.get(params)); } finally { syncing = false; }
     };
-    class URLSearchParams {
-      constructor(init = '') {
-        let pairs;
-        if (init instanceof URLSearchParams) pairs = pairsOf.get(init).map(pair => [...pair]);
-        else if (Array.isArray(init)) pairs = init.map(([key, value]) => [String(key), String(value)]);
-        else if (init && typeof init === 'object') pairs = Object.entries(init).map(([key, value]) => [key, String(value)]);
-        else pairs = parseParams(String(init));
-        pairsOf.set(this, pairs);
+    // WHATWG init: a string, an iterable of [name, value] pairs (array, Map,
+    // generator, another URLSearchParams), or a record of name -> value.
+    const pairsFrom = init => {
+      if (init === undefined) return [];
+      if (init !== null && (typeof init === 'object' || typeof init === 'function')) {
+        if (typeof init[Symbol.iterator] === 'function') {
+          const pairs = [];
+          for (const pair of init) {
+            if (pair === null || pair === undefined || typeof pair[Symbol.iterator] !== 'function')
+              throw new TypeError('Each query pair must be an iterable [name, value] entry');
+            const entry = [...pair];
+            if (entry.length !== 2)
+              throw new TypeError('Each query pair must be an iterable [name, value] entry');
+            pairs.push([String(entry[0]), String(entry[1])]);
+          }
+          return pairs;
+        }
+        return Object.entries(init).map(([key, value]) => [key, String(value)]);
       }
+      return parseParams(String(init));
+    };
+    // The pair list is only ever mutated in place, so an iterator holding an
+    // index into it stays live across delete()/set() like the native one.
+    const replace = (params, pairs) => { const list = pairsOf.get(params); list.splice(0, list.length, ...pairs); };
+    function* iterate(params, pick) {
+      for (let i = 0; i < pairsOf.get(params).length; i += 1) yield pick(pairsOf.get(params)[i]);
+    }
+    class URLSearchParams {
+      constructor(init = '') { pairsOf.set(this, pairsFrom(init)); }
       get size() { return pairsOf.get(this).length; }
       append(key, value) { pairsOf.get(this).push([String(key), String(value)]); sync(this); }
       delete(key, value) {
         key = String(key);
-        pairsOf.set(this, pairsOf.get(this).filter(([k, v]) => k !== key || (value !== undefined && v !== String(value))));
+        if (value !== undefined) value = String(value);
+        const pairs = pairsOf.get(this);
+        for (let i = pairs.length - 1; i >= 0; i -= 1) {
+          if (pairs[i][0] === key && (value === undefined || pairs[i][1] === value)) pairs.splice(i, 1);
+        }
         sync(this);
       }
       get(key) { key = String(key); const hit = pairsOf.get(this).find(([k]) => k === key); return hit ? hit[1] : null; }
@@ -3196,20 +3220,21 @@ function getUrlFactoryScript() {
       has(key, value) { key = String(key); return pairsOf.get(this).some(([k, v]) => k === key && (value === undefined || v === String(value))); }
       set(key, value) {
         key = String(key);
+        value = String(value);
         const pairs = pairsOf.get(this);
         const index = pairs.findIndex(([k]) => k === key);
-        if (index < 0) pairs.push([key, String(value)]);
+        if (index < 0) pairs.push([key, value]);
         else {
-          pairs[index] = [key, String(value)];
-          pairsOf.set(this, pairs.filter(([k], i) => i <= index || k !== key));
+          pairs[index] = [key, value];
+          for (let i = pairs.length - 1; i > index; i -= 1) if (pairs[i][0] === key) pairs.splice(i, 1);
         }
         sync(this);
       }
       sort() { pairsOf.get(this).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)); sync(this); }
-      forEach(callback, thisArg) { for (const [key, value] of pairsOf.get(this)) callback.call(thisArg, value, key, this); }
-      keys() { return pairsOf.get(this).map(([key]) => key)[Symbol.iterator](); }
-      values() { return pairsOf.get(this).map(([, value]) => value)[Symbol.iterator](); }
-      entries() { return pairsOf.get(this).map(pair => [...pair])[Symbol.iterator](); }
+      forEach(callback, thisArg) { for (const [key, value] of this) callback.call(thisArg, value, key, this); }
+      keys() { return iterate(this, ([key]) => key); }
+      values() { return iterate(this, ([, value]) => value); }
+      entries() { return iterate(this, ([key, value]) => [key, value]); }
       [Symbol.iterator]() { return this.entries(); }
       toString() { return serializeParams(pairsOf.get(this)); }
       get [Symbol.toStringTag]() { return 'URLSearchParams'; }
@@ -3247,7 +3272,7 @@ function getUrlFactoryScript() {
           // mutation of the query, whether through search, href, or the
           // params object itself.
           const params = paramsOf.get(this);
-          if (params && !syncing) pairsOf.set(params, parseParams(partsOf.get(this).search));
+          if (params && !syncing) replace(params, parseParams(partsOf.get(this).search));
         },
       });
     }
