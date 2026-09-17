@@ -4976,7 +4976,7 @@ async function pageSiteRequest(page, url, options: any = {}) {
         body !== undefined && !["GET", "HEAD"].includes(method)
           ? body
           : undefined,
-      timeoutMs: DEFAULT_ACTION_TIMEOUT_MS * 3,
+      timeoutMs: DEFAULT_NAVIGATION_TIMEOUT_MS,
       limit: SITE_RESPONSE_LIMIT,
     });
     const responseCookies = cookiesFromSetCookie(response.setCookie, target);
