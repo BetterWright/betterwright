@@ -37,6 +37,7 @@ import { importOptionalPeer } from "./optional-peer.js";
 import { piImageArtifacts, piImageContent } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
 import { matchSkillsForText, readSkill } from "./skills.js";
+import { systemOneApiKey } from "./system-one.js";
 import { agentBrowserToolParameters, agentLoginToolParameters } from "./tool-schemas.js";
 import {
   isBoolean,
@@ -284,6 +285,23 @@ const LIVE_VIEW_TOOL_PARAMETERS = {
   },
 };
 
+const RESOLVE_TOOL_DESCRIPTION = `Resolve one ambiguous on-page control with a fast typed decision model (System One / Jev) and click it, instead of spending a model turn on a snapshot. Use it when the next action is a single click among visible controls that share labels (several Message/Download/Add buttons, a cookie overlay vs the real target, a paginated list that may need Next). Describe the intent precisely, pass label words as query, and pass expect (text that proves success) so the loop stops. It never types passwords, signs in, or performs destructive actions. It returns ok/reason/steps; reason "unresolved" or "loop" means fall back to the browser tool.`;
+
+const RESOLVE_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {
+    intent: { type: "string", description: "What to click and what to avoid, in one or two sentences." },
+    query: {
+      type: "array",
+      items: { type: "string" },
+      description: "Label words to prefer during control discovery (e.g. [\"Download\", \"Next\"]).",
+    },
+    expect: { type: "string", description: "Text visible on success; stops the loop early." },
+    maxSteps: { type: "integer", description: "Observe/decide/act cycles, default 4, max 8." },
+  },
+  required: ["intent"],
+};
+
 // Parameter schemas are shared across the agent/MCP/Pi surfaces; the shared
 // module is the single source of truth (see src/tool-schemas.ts).
 const LOGIN_TOOL_PARAMETERS = agentLoginToolParameters();
@@ -334,11 +352,13 @@ function openaiUsage(usage) {
   };
 }
 
-function toolsForHarness({ withLogin, withAsk, withHandoff }) {
+function toolsForHarness({ withLogin, withAsk, withHandoff, withResolve = false }) {
   const tools: any[] = [
     { name: "browser", description: BROWSER_TOOL_DESCRIPTION, parameters: BROWSER_TOOL_PARAMETERS },
     { name: "done", description: DONE_TOOL_DESCRIPTION, parameters: DONE_TOOL_PARAMETERS },
   ];
+  if (withResolve)
+    tools.push({ name: "resolve", description: RESOLVE_TOOL_DESCRIPTION, parameters: RESOLVE_TOOL_PARAMETERS });
   if (withLogin)
     tools.push({ name: "login", description: LOGIN_TOOL_DESCRIPTION, parameters: LOGIN_TOOL_PARAMETERS });
   if (withAsk)
@@ -712,6 +732,10 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     browser = new BetterWright(ownedBrowserOptions);
   }
   const withLogin = Boolean(browser.vault);
+  // System One is opt-in: it sends page text to an external API, so the host
+  // must ask for it and hold the key. Without both, the tool is not offered.
+  const withResolve =
+    options.systemOne === true && isCallable(browser.followIntent) && Boolean(systemOneApiKey());
   // The handoff tool needs the live-view server (started on demand when the
   // model calls it) plus somewhere to put the URL in front of the user.
   const liveViewOption = options.liveView;
@@ -845,7 +869,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   ]
     .filter(Boolean)
     .join("\n\n");
-  const tools = toolsForHarness({ withLogin, withAsk, withHandoff });
+  const tools = toolsForHarness({ withLogin, withAsk, withHandoff, withResolve });
   // Seed from a prior transcript when continuing a session (the interactive
   // console passes the previous task's transcript), so a follow-up task can refer
   // back to earlier work; otherwise start fresh.
@@ -1159,6 +1183,49 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
         if (finished) {
           // Ignore any tool calls the model batched after `done`.
           results.push({ id: call.id, name: call.name, content: "Ignored — task already finished." });
+          continue;
+        }
+        if (call.name === "resolve") {
+          const intent = String(call.input?.intent ?? "").trim();
+          reportStep({ step: steps, tool: "resolve", note: intent.slice(0, 120) });
+          if (!withResolve) {
+            results.push({ id: call.id, name: call.name, content: "resolve is not available in this run." });
+            continue;
+          }
+          try {
+            const remainingSeconds = Math.max(5, Math.floor((deadline - Date.now()) / 1000));
+            const queryInput = call.input?.query;
+            const query = Array.isArray(queryInput)
+              ? queryInput.map(String).filter(Boolean).slice(0, 8)
+              : isString(queryInput) && queryInput.trim() ? [queryInput.trim()] : undefined;
+            const expect = isString(call.input?.expect) && call.input.expect.trim() ? call.input.expect.trim() : undefined;
+            const requestedSteps = Number(call.input?.maxSteps);
+            const maxSteps = Number.isSafeInteger(requestedSteps) && requestedSteps > 0 ? Math.min(requestedSteps, 8) : 4;
+            const outcome = await withinDeadline(
+              () => browser.followIntent({ intent, query, expect, maxSteps, session, timeout: Math.min(remainingSeconds, 60) }),
+              deadline,
+              stopSignal,
+            );
+            const summary = {
+              ok: outcome.ok,
+              reason: outcome.reason,
+              url: outcome.url,
+              title: outcome.title,
+              oracle: outcome.oracle,
+              error: outcome.error,
+              steps: outcome.steps.map((step) => ({
+                action: step.action,
+                reason: step.reason,
+                target: step.candidate?.name,
+                context: step.candidate?.context,
+                confidence: step.confidence,
+              })),
+            };
+            results.push({ id: call.id, name: call.name, content: JSON.stringify(summary) });
+          } catch (error) {
+            if (isControlSignal(error)) throw error;
+            results.push({ id: call.id, name: call.name, content: `resolve error: ${error?.message || error}` });
+          }
           continue;
         }
         if (call.name === "login") {

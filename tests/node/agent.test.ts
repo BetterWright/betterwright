@@ -100,6 +100,7 @@ interface FakeBrowser {
   liveViewPostChat?(options: { text?: string; kind?: string }): Promise<{ ok: boolean }>;
   liveViewDrainChat?(): Promise<{ ok: boolean; messages: Array<{ text: string }> }>;
   stopLiveView?(): Promise<{ ok: boolean; running: boolean }>;
+  followIntent?(options: { intent: string; session?: string }): Promise<{ ok: boolean; reason: string; intent: string; steps: unknown[] }>;
 }
 
 function fakeBrowser({ vault = null, runs = [], fills = [] }: FakeBrowserOptions = {}): FakeBrowser {
@@ -726,6 +727,48 @@ test("login failure exposes secret-free pending recovery to the model", async ()
   assert.equal(observation.error, "submit control disappeared");
   assert.deepEqual(observation.pendingCredential, pendingCredential);
   assert.equal(Object.hasOwn(observation.pendingCredential, "secret"), false);
+});
+
+test("resolve tool is offered only when System One is enabled and keyed", async () => {
+  const previous = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = "test-key";
+  try {
+    const resolveCalls: Array<{ intent: string; session?: string; query?: string[]; expect?: string; maxSteps?: number }> = [];
+    const browser = fakeBrowser();
+    browser.followIntent = async (options) => {
+      resolveCalls.push(options);
+      return { ok: true, reason: "completed", intent: options.intent, url: "http://x/", oracle: "Messaged finance", steps: [
+        { step: 1, url: "http://x/", oracle: "", action: "click", confidence: 0.97, candidate: { name: "Message", role: "button", context: "Finance" } },
+      ] };
+    };
+    const model = scriptedModel([
+      { text: "", toolCalls: [{ id: "r1", name: "resolve", input: { intent: "Message Finance Alex", query: ["Message"], expect: "Messaged finance", maxSteps: 99, session: "evil" } }] },
+      { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "sent" } }] },
+    ]);
+    await runAgentTask({ task: "message alex", model, browser, systemOne: true });
+    assert.ok(model.seen[0].tools.find((tool) => tool.name === "resolve"));
+    assert.equal(resolveCalls.length, 1);
+    assert.equal(resolveCalls[0].session, "default");
+    assert.equal(resolveCalls[0].maxSteps, 8);
+    assert.deepEqual(resolveCalls[0].query, ["Message"]);
+    const observation = JSON.parse(model.seen[1].messages.at(-1).results[0].content);
+    assert.equal(observation.ok, true);
+    assert.equal(observation.steps[0].target, "Message");
+
+    const offModel = scriptedModel([{ text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "x" } }] }]);
+    await runAgentTask({ task: "no resolve", model: offModel, browser: fakeBrowser() });
+    assert.equal(offModel.seen[0].tools.find((tool) => tool.name === "resolve"), undefined);
+
+    const unkeyedBrowser = fakeBrowser();
+    unkeyedBrowser.followIntent = async (options) => ({ ok: false, reason: "unresolved", intent: options.intent, steps: [] });
+    delete process.env.TYPESAFE_API_KEY;
+    const unkeyed = scriptedModel([{ text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "x" } }] }]);
+    await runAgentTask({ task: "no key", model: unkeyed, browser: unkeyedBrowser, systemOne: true });
+    assert.equal(unkeyed.seen[0].tools.find((tool) => tool.name === "resolve"), undefined);
+  } finally {
+    if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previous;
+  }
 });
 
 test("ask tool is offered only with an askUser handler and routes to it", async () => {

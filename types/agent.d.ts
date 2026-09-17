@@ -147,6 +147,12 @@ export interface RunAgentTaskOptions {
    * an already-running host viewer is reused without re-announcing it.
    */
   liveView?: boolean | Record<string, UntrustedValue>;
+  /**
+   * Offer the model a `resolve` tool backed by `BetterWright.followIntent()`
+   * (TypeSafe Jev). Off by default because it sends page text to an external
+   * API; also requires `BETTERWRIGHT_TYPESAFE_API_KEY` or `TYPESAFE_API_KEY`.
+   */
+  systemOne?: boolean;
 }
 
 export interface AgentResult {
