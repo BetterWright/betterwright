@@ -877,31 +877,13 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   let answer = "";
   let proof = null;
   const recordings: string[] = [];
-  let pendingRecordingPath = "";
-  function rememberRecording(file) {
-    if (file && !recordings.includes(file)) recordings.push(file);
-  }
   function noteArtifacts(list) {
     for (const shot of list || []) {
       if (shot?.kind === "proof" && shot.path) proof = shot.path;
-      if (shot?.kind === "recording" && shot.path) rememberRecording(shot.path);
+      if (shot?.kind === "recording" && shot.path && !recordings.includes(shot.path)) {
+        recordings.push(shot.path);
+      }
     }
-  }
-  function noteRecordingStatus(value) {
-    if (!isRecord(value)) return;
-    const recPath = untrustedField(value, "path");
-    const recState = untrustedField(value, "state");
-    const fps = untrustedField(value, "fps");
-    const capturedFrames = untrustedField(value, "capturedFrames");
-    if (!isString(recPath) || !recPath) return;
-    if (!Number.isInteger(fps) || !Number.isInteger(capturedFrames)) return;
-    if (recState !== "recording" && recState !== "stopping" && recState !== "completed") return;
-    if (recState === "recording" || recState === "stopping") pendingRecordingPath = recPath;
-    if (recState === "completed") rememberRecording(recPath);
-  }
-  function noteResult(result) {
-    noteArtifacts(result?.artifacts);
-    if (result?.ok) noteRecordingStatus(result.result);
   }
   let finished = false;
   let reason = "stopped";
@@ -1410,7 +1392,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
             deadline,
             stopSignal,
           );
-          noteResult(result);
+          noteArtifacts(result.artifacts);
           const signature = failureSignature(result);
           repeated =
             signature && signature === repeated.signature
@@ -1479,26 +1461,6 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     }
     if (finished && answer) {
       await postLiveChat({ text: answer, kind: "done" });
-    }
-    if (
-      pendingRecordingPath &&
-      !recordings.includes(pendingRecordingPath) &&
-      !stopSignal?.aborted
-    ) {
-      const remainingMs = deadline - Date.now();
-      if (remainingMs > 250) {
-        try {
-          noteResult(
-            await withinDeadline(
-              (signal) => browser.run("return recording.status()", { session, signal }),
-              deadline,
-              stopSignal,
-            ),
-          );
-        } catch {
-          /* A status probe must not change the task outcome. */
-        }
-      }
     }
   } catch (error) {
     if (error === AGENT_TIMEOUT) reason = "timeout";
