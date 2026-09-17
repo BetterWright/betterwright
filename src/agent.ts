@@ -61,9 +61,11 @@ const MAX_TIMER_MS = 2_147_483_647;
 // truncation notice. The model reads the observation as JSON text, so the cap
 // applies to the escaped form: quotes and backslashes, the only escaping
 // ordinary page text incurs, at most double it, and that is the headroom.
-// Control-heavy strings that expand further are what the cap is for.
+// Control-heavy strings that expand further are what the cap is for. The +2
+// is the surrounding quotes, so a limit-sized string of nothing but quotes
+// still fits.
 const OBSERVATION_LIMIT = 24_000;
-const MAX_ESCAPED_OBSERVATION_CHARS = OBSERVATION_LIMIT * 2;
+const MAX_ESCAPED_OBSERVATION_CHARS = OBSERVATION_LIMIT * 2 + 2;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
 // A caller-requested stop (the session daemon's `interrupt` op, a Ctrl-C that
 // reached the daemon). Travels the same path as the timeout symbol: thrown
