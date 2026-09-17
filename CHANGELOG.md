@@ -21,8 +21,9 @@ Releases before 1.1.3 predate this file; their notes live on the
   12-40K, so the old default refused most first looks and cost a model round
   trip for a scoped re-read.
 - The default run output limit is 24,000 characters (was 12,000), a string
-  result is measured before JSON escaping (by the worker, the result envelope,
-  and the agent loop's observation cap alike), and the envelope keeps its
+  result is measured before JSON escaping by the worker and the result
+  envelope (the agent loop caps the JSON text the model actually reads, with
+  headroom for ordinary quote escaping), and the envelope keeps its
   console and event diagnostics up to 64,000 (was 28,000), so a default-size
   snapshot returned from `run` reaches the caller whole instead of being
   spilled to `browser-output.json` with a preview.

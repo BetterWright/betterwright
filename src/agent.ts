@@ -56,9 +56,14 @@ const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_DURATION_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
 const MAX_TIMER_MS = 2_147_483_647;
-// Matches the worker's default output limit so a default-size snapshot reaches
-// the model intact instead of being replaced by the truncation notice.
+// Matches the worker's default output limit (raw characters) so a default-size
+// snapshot reaches the model intact instead of being replaced by the
+// truncation notice. The model reads the observation as JSON text, so the cap
+// applies to the escaped form: quotes and backslashes, the only escaping
+// ordinary page text incurs, at most double it, and that is the headroom.
+// Control-heavy strings that expand further are what the cap is for.
 const OBSERVATION_LIMIT = 24_000;
+const MAX_ESCAPED_OBSERVATION_CHARS = OBSERVATION_LIMIT * 2;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
 // A caller-requested stop (the session daemon's `interrupt` op, a Ctrl-C that
 // reached the daemon). Travels the same path as the timeout symbol: thrown
@@ -369,16 +374,11 @@ function observationFromResult(result) {
   if (result.ui) summary.ui = result.ui;
   if (screenshots.length) summary.screenshots = screenshots;
   if (result.durationMs != null) summary.duration_ms = result.durationMs;
-  // Measure a string result as the model reads it, before JSON escaping, the
-  // way the worker's output limit does; otherwise a quote-heavy snapshot the
-  // worker admitted would vanish here.
-  if (summary.result !== undefined) {
-    const resultChars = isString(summary.result)
-      ? summary.result.length
-      : JSON.stringify(summary.result).length;
-    if (resultChars > OBSERVATION_LIMIT) {
-      summary.result = "[truncated; inspect via a scoped snapshot]";
-    }
+  if (
+    summary.result !== undefined &&
+    JSON.stringify(summary.result).length > MAX_ESCAPED_OBSERVATION_CHARS
+  ) {
+    summary.result = "[truncated; inspect via a scoped snapshot]";
   }
   return JSON.stringify(summary);
 }
