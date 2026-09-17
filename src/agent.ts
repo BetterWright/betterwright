@@ -891,7 +891,11 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     if (!isRecord(value)) return;
     const recPath = untrustedField(value, "path");
     const recState = untrustedField(value, "state");
+    const fps = untrustedField(value, "fps");
+    const capturedFrames = untrustedField(value, "capturedFrames");
     if (!isString(recPath) || !recPath) return;
+    if (!Number.isInteger(fps) || !Number.isInteger(capturedFrames)) return;
+    if (recState !== "recording" && recState !== "stopping" && recState !== "completed") return;
     if (recState === "recording" || recState === "stopping") pendingRecordingPath = recPath;
     if (recState === "completed") rememberRecording(recPath);
   }
@@ -1481,22 +1485,18 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
       !recordings.includes(pendingRecordingPath) &&
       !stopSignal?.aborted
     ) {
-      try {
-        const remainingSeconds = Math.max(0.001, (deadline - Date.now()) / 1000);
-        if (remainingSeconds > 0.001) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs > 250) {
+        try {
           noteResult(
-            await withinDeadline(
-              () => browser.run("return recording.status()", {
-                session,
-                timeout: Math.min(5, remainingSeconds),
-              }),
-              deadline,
-              stopSignal,
-            ),
+            await browser.run("return recording.status()", {
+              session,
+              timeout: Math.min(5, remainingMs / 1000),
+            }),
           );
+        } catch {
+          /* A status probe must not change the task outcome. */
         }
-      } catch (error) {
-        if (isControlSignal(error)) throw error;
       }
     }
   } catch (error) {

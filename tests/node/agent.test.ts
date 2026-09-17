@@ -226,8 +226,8 @@ test("runAgentTask picks up a recording that finished between browser calls", as
   const video = { kind: "recording", path: "/tmp/demo.mp4", mimeType: "video/mp4" };
   const browser = fakeBrowser({
     runs: [
-      { ok: true, result: { state: "recording", path: "/tmp/demo.mp4" }, artifacts: [], durationMs: 3 },
-      { ok: true, result: { state: "completed", path: "/tmp/demo.mp4" }, artifacts: [video], durationMs: 2 },
+      { ok: true, result: { state: "recording", path: "/tmp/demo.mp4", fps: 60, capturedFrames: 1 }, artifacts: [], durationMs: 3 },
+      { ok: true, result: { state: "completed", path: "/tmp/demo.mp4", fps: 60, capturedFrames: 12 }, artifacts: [video], durationMs: 2 },
     ],
   });
   const model = scriptedModel([
@@ -238,6 +238,44 @@ test("runAgentTask picks up a recording that finished between browser calls", as
   const result = await runAgentTask({ task: "record", model, browser });
   assert.deepEqual(result.recordings, ["/tmp/demo.mp4"]);
   assert.equal(browser.calls.run[1].code, "return recording.status()");
+});
+
+test("runAgentTask does not treat unrelated completed paths as recordings", async () => {
+  const browser = fakeBrowser({
+    runs: [{ ok: true, result: { state: "completed", path: "/tmp/order.json" }, artifacts: [], durationMs: 3 }],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "return {state:'completed', path:'/tmp/order.json'}" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const result = await runAgentTask({ task: "read the confirmation", model, browser });
+  assert.deepEqual(result.recordings, []);
+  assert.equal(result.reason, "done");
+  assert.equal(browser.calls.run.length, 1);
+});
+
+test("a recording status probe cannot change a finished task's reason", async () => {
+  const browser = fakeBrowser({
+    runs: [{
+      ok: true,
+      result: { state: "recording", path: "/tmp/demo.mp4", fps: 60, capturedFrames: 1 },
+      artifacts: [],
+      durationMs: 3,
+    }],
+  });
+  const inner = browser.run.bind(browser);
+  browser.run = async (code, options) => {
+    if (String(code).includes("recording.status()")) throw new Error("probe failed");
+    return inner(code, options);
+  };
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "return recording.start()" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "done", input: { answer: "recording" } }] },
+  ]);
+  const result = await runAgentTask({ task: "record", model, browser });
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "done");
+  assert.deepEqual(result.recordings, []);
 });
 
 test("runAgentTask announces each model turn and tool batch through onPhase", async () => {
