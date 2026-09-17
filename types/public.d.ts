@@ -115,10 +115,26 @@ export type CookieSyncResult =
       skipped: number;
       source: { browser: string; profile?: string };
       target: string;
+      /**
+       * Host-owned targets (`hostTarget`) only: deduplicated cookie domains
+       * verified present in the leased tab after the sync. Lets the host scope
+       * what session access it just granted. Absent for other targets.
+       */
+      cookieImportDomains?: string[];
       warnings?: CookieSyncWarning[];
       profileMode?: "persistent" | "ephemeral";
     }
-  | { ok: false; error: string; cookieReaderCode?: string; cookiePermissionDenied?: boolean; cookieReaderStage?: string };
+  | {
+      ok: false;
+      error: string;
+      cookieReaderCode?: string;
+      cookiePermissionDenied?: boolean;
+      cookieReaderStage?: string;
+      /** Host takeover returns BW_ABORTED, or BW_ABORT_TEARDOWN_FAILED if draining failed. */
+      errorCode?: string;
+      /** False for an abort before dispatch; true when an in-flight import may have committed. */
+      effectMayHaveCommitted?: boolean;
+    };
 
 export interface CookieSourceBrowser {
   id: string;

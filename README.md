@@ -49,6 +49,31 @@ run `bun install -g betterwright@latest`, then `betterwright update` to refresh
 the managed browser. More setup options are in
 [Getting started](docs/getting-started.md).
 
+## Run the harness with local AI
+
+```bash
+betterwright --local
+betterwright exec "Open example.com and summarize the page"
+```
+
+Setup chooses a model, quant, and accelerated runtime for Apple Silicon or a
+supported NVIDIA, AMD, or Intel GPU. It verifies image input and tool calls
+before selecting the local model for the built-in harness. Hardware with 8 GiB
+or less memory is excluded. Compatible Qwen and Ornith models automatically use
+DFlash2 or MTP acceleration, with draft memory included in the budget.
+See [local AI setup](docs/local-ai.md) for hardware,
+driver requirements, model choices, and validation limits.
+
+Cerebras is also supported by the harness:
+
+```bash
+export CEREBRAS_API_KEY=…
+betterwright models cerebras
+betterwright exec "Open example.com and summarize the page" --model cerebras/qwen-3.8-27b
+```
+
+See [harness providers](docs/agent.md#cerebras) for model selection and limitations.
+
 ## Connect an existing agent
 
 ### CLI and skills

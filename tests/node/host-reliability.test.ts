@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -118,6 +119,380 @@ for (const failure of [false, true]) {
     assert.deepEqual(result.pendingCredential, recovery);
     assert.equal(browser._pending.size, 0);
     assert.equal(browser._pendingCredentialRecoveries.size, 0);
+  });
+}
+
+test("Cookie Sync preserves an existing host lease's RunResult callback contract", async () => {
+  const browser = new BetterWright({ vault: false, hostTarget: {
+    async connect() { return { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() {} }; },
+    async run(operation) {
+      const envelope = await operation();
+      assert.equal(envelope.ok, true);
+      assert.equal(envelope.result.synced, 0);
+      return envelope;
+    },
+  } });
+  browser._extractCookieSync = async () => ({ cookies: [], selected: 0, skipped: 0, source: { browser: "chrome" }, warnings: [] });
+  const synced = await browser.syncCookies({ source: { browser: "chrome" } });
+  assert.equal(synced.ok, true);
+  assert.equal(synced.synced, 0);
+  assert.deepEqual(synced.cookieImportDomains, []);
+  await browser.close();
+});
+
+for (const phase of ["already-aborted", "extraction", "empty-extraction", "failed-extraction", "preparation", "failed-preparation"]) {
+  test(`host Cookie Sync prevents import after takeover during ${phase}`, async () => {
+    const takeover = new AbortController();
+    let leased = false;
+    let extracts = 0;
+    let imports = 0;
+    let prepares = 0;
+    let closes = 0;
+    let cancel = false;
+    const browser = new BetterWright({ vault: false, hostTarget: {
+      async connect() { return { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() {} }; },
+      async run(operation) {
+        leased = true;
+        try { return await operation(takeover.signal); }
+        finally { leased = false; }
+      },
+    } });
+    const child = {};
+    browser._process = child;
+    browser.close = async options => {
+      assert.equal(options.child, child);
+      assert.equal(options.restart, true);
+      closes++;
+      browser._process = null;
+    };
+    browser._prepare = async () => {
+      prepares++;
+      if (cancel && phase.includes("preparation")) takeover.abort();
+      if (cancel && phase === "failed-preparation") throw new Error("synthetic preparation failure");
+      return browser._workerConfig();
+    };
+    browser._extractCookieSync = async () => {
+      assert.equal(leased, true);
+      extracts++;
+      await Promise.resolve();
+      if (cancel && phase.includes("extraction")) takeover.abort();
+      if (cancel && phase === "failed-extraction") throw new Error("synthetic reader failure");
+      return {
+        cookies: cancel && phase === "empty-extraction" ? [] : [{ name: "synthetic", value: "test", domain: "example.test", path: "/", secure: true, httpOnly: true }],
+        selected: 1, skipped: 0, source: { browser: "chrome" }, warnings: [],
+      };
+    };
+    browser._send = message => {
+      assert.equal(leased, true);
+      assert.equal(message.type, "cookie_sync");
+      imports++;
+      browser._pending.get(message.id).done({ ok: true, synced: 1 });
+    };
+    // Keep an already-used worker, the case the adapter's connect() check
+    // cannot protect. Cancellation must cover every later Cookie Sync too.
+    assert.equal((await browser.syncCookies({ source: { browser: "chrome" } })).ok, true);
+    cancel = true;
+    if (phase === "already-aborted") takeover.abort();
+    const result = await browser.syncCookies({ source: { browser: "chrome" } });
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "BW_ABORTED");
+    assert.equal(result.effectMayHaveCommitted, false);
+    assert.equal(imports, 1);
+    assert.equal(extracts, phase === "already-aborted" ? 1 : 2);
+    assert.equal(prepares, phase.includes("preparation") ? 2 : 1);
+    assert.equal(closes, 1);
+    assert.equal(browser._process, null);
+    assert.equal(browser._pending.size, 0);
+    assert.equal(leased, false);
+  });
+}
+
+test("host close preserves its first synchronous failure without invoking the callback again", async () => {
+  const browser = new BetterWright({ vault: false });
+  let closes = 0;
+  const connection = {
+    provider: { cdpUrl: "ws://127.0.0.1:1" },
+    close() { closes++; throw new Error("first host close failed"); },
+  };
+  const first = browser._closeHostConnection(connection);
+  const second = browser._closeHostConnection(connection);
+  assert.equal(first, second);
+  await assert.rejects(first, /first host close failed/);
+  await assert.rejects(browser._closeHostConnection(connection), /first host close failed/);
+  assert.equal(closes, 1);
+  await browser.close();
+});
+
+for (const closedBeforeAbort of [false, true]) for (const teardownFails of [false, true]) {
+  test(`Cookie Sync retains teardown outcome after worker exit, already closed=${closedBeforeAbort}, failure=${teardownFails}`, async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-cookie-worker-exit-"));
+    const takeover = new AbortController();
+    let releaseClose: () => void;
+    let closeStarted: () => void;
+    let releaseExtraction: () => void;
+    let extractionStarted: () => void;
+    const closeGate = new Promise<void>(resolve => { releaseClose = resolve; });
+    const closing = new Promise<void>(resolve => { closeStarted = resolve; });
+    const extractionGate = new Promise<void>(resolve => { releaseExtraction = resolve; });
+    const extracting = new Promise<void>(resolve => { extractionStarted = resolve; });
+    let closes = 0;
+    let settled = false;
+    const browser = new BetterWright({ home, vault: false, adBlock: false, hostTarget: {
+      async connect() {
+        return {
+          provider: { cdpUrl: "ws://127.0.0.1:1" },
+          async close() {
+            closes++;
+            closeStarted();
+            await closeGate;
+            if (teardownFails) throw new Error("synthetic exited-worker lease failure");
+          },
+        };
+      },
+      async run(operation) { return operation(takeover.signal); },
+    } });
+    try {
+      await browser._prepare();
+      const child = browser._process;
+      await browser._serviceRpc({ method: "host_connect", payload: { proxyUrl: "socks5://127.0.0.1:12345" } }, child);
+      browser._extractCookieSync = async () => {
+        extractionStarted();
+        await extractionGate;
+        return { cookies: [], selected: 0, skipped: 0, source: { browser: "chrome" }, warnings: [] };
+      };
+      const pending = browser.syncCookies({ source: { browser: "chrome" } }).then(result => { settled = true; return result; });
+      await extracting;
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+      await closing;
+      assert.equal(browser._process, null);
+      if (closedBeforeAbort) { releaseClose(); await browser._workerCloseBarrier; }
+      takeover.abort();
+      releaseExtraction();
+      if (!closedBeforeAbort) {
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(settled, false);
+        releaseClose();
+      }
+      const result = await pending;
+      assert.equal(result.errorCode, teardownFails ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED");
+      assert.equal(result.effectMayHaveCommitted, false);
+      const repeated = await browser.syncCookies({ source: { browser: "chrome" } });
+      assert.equal(repeated.errorCode, result.errorCode);
+      assert.equal(closes, 1);
+      if (teardownFails) {
+        await assert.rejects(browser._stopAbortedWorker(child), /teardown failed/);
+        await assert.rejects(browser._prepare(), /Previous host lease did not close/);
+        assert.equal(browser._process, null);
+      } else {
+        await browser._stopAbortedWorker(child);
+        await browser._prepare();
+        assert.notEqual(browser._process, child);
+      }
+    } finally {
+      releaseClose();
+      releaseExtraction();
+      await browser.close();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const teardownFails of [false, true]) {
+  test(`takeover preserves late attachment teardown after worker exit, failure=${teardownFails}`, async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-cookie-late-attachment-"));
+    const takeover = new AbortController();
+    let releaseConnect: () => void;
+    let connectStarted: () => void;
+    const gate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    const connecting = new Promise<void>(resolve => { connectStarted = resolve; });
+    let closes = 0;
+    const browser = new BetterWright({ home, vault: false, adBlock: false, hostTarget: {
+      async connect() {
+        connectStarted();
+        await gate;
+        return {
+          provider: { cdpUrl: "ws://127.0.0.1:1" },
+          async close() {
+            closes++;
+            if (teardownFails) throw new Error("synthetic late-attachment teardown failure");
+          },
+        };
+      },
+      async run(operation) { return operation(takeover.signal); },
+    } });
+    try {
+      browser._extractCookieSync = async () => ({
+        cookies: [{ name: "synthetic", value: "test", domain: "example.test", path: "/", secure: true, httpOnly: true }],
+        selected: 1, skipped: 0, source: { browser: "chrome" }, warnings: [],
+      });
+      const pending = browser.syncCookies({ source: { browser: "chrome" } });
+      await connecting;
+      const child = browser._process;
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+      assert.equal(browser._process, null);
+      takeover.abort();
+      releaseConnect();
+      const result = await pending;
+      assert.equal(result.errorCode, teardownFails ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED");
+      assert.equal(result.effectMayHaveCommitted, true);
+      assert.equal(closes, 1);
+    } finally {
+      releaseConnect();
+      await browser.close();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const unfinished of [false, true]) {
+  test(`takeover handles a rejected or unfinished attachment, unfinished=${unfinished}`, async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "bw-cookie-attachment-outcome-"));
+    const takeover = new AbortController();
+    let releaseConnect: () => void;
+    let connectStarted: () => void;
+    let closeFinished: () => void;
+    const gate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    const connecting = new Promise<void>(resolve => { connectStarted = resolve; });
+    const closed = new Promise<void>(resolve => { closeFinished = resolve; });
+    let closes = 0;
+    const browser = new BetterWright({ home, vault: false, adBlock: false, hostTarget: {
+      async connect() {
+        connectStarted();
+        await gate;
+        if (!unfinished) throw new Error("synthetic rejected attachment");
+        return { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() { closes++; closeFinished(); } };
+      },
+      async run(operation) { return operation(takeover.signal); },
+    } });
+    try {
+      browser._extractCookieSync = async () => ({
+        cookies: [{ name: "synthetic", value: "test", domain: "example.test", path: "/", secure: true, httpOnly: true }],
+        selected: 1, skipped: 0, source: { browser: "chrome" }, warnings: [],
+      });
+      const pending = browser.syncCookies({ source: { browser: "chrome" } });
+      await connecting;
+      const child = browser._process;
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+      takeover.abort();
+      if (!unfinished) releaseConnect();
+      const result = await pending;
+      assert.equal(result.errorCode, unfinished ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED");
+      assert.equal(result.effectMayHaveCommitted, true);
+      if (unfinished) {
+        releaseConnect();
+        await closed;
+        const repeated = await browser.syncCookies({ source: { browser: "chrome" } });
+        assert.equal(repeated.errorCode, "BW_ABORT_TEARDOWN_FAILED");
+      }
+      assert.equal(closes, unfinished ? 1 : 0);
+    } finally {
+      releaseConnect();
+      await browser.close();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const dispatched of [false, true]) for (const teardownFails of [false, true]) {
+  test(`Cookie Sync waits for its existing host lease, dispatched=${dispatched}, teardown failure=${teardownFails}`, async () => {
+    const takeover = new AbortController();
+    let release: () => void;
+    const drain = new Promise<void>(resolve => { release = resolve; });
+    let closes = 0;
+    let settled = false;
+    const browser = new BetterWright({ vault: false, hostTarget: {
+      async connect() {
+        return {
+          provider: { cdpUrl: "ws://127.0.0.1:1" },
+          async close() {
+            closes++;
+            await drain;
+            if (teardownFails) throw new Error("synthetic host teardown failure");
+          },
+        };
+      },
+      async run(operation) { return operation(takeover.signal); },
+    } });
+    const child = { exitCode: null, signalCode: null };
+    browser._process = child;
+    browser._send = () => {};
+    await browser._serviceRpc({ method: "host_connect", payload: { proxyUrl: "socks5://127.0.0.1:12345" } }, child);
+    browser._prepare = async () => browser._workerConfig();
+    browser._extractCookieSync = async () => {
+      assert.equal(dispatched, true, "extraction ran after takeover");
+      return { cookies: [{ name: "synthetic", value: "test", domain: "example.test", path: "/", secure: true, httpOnly: true }], source: { browser: "chrome" } };
+    };
+    browser.close = async () => { browser._process = null; };
+    browser._send = () => { takeover.abort(); };
+    if (!dispatched) takeover.abort();
+    const pending = browser.syncCookies({ source: { browser: "chrome" } }).then(result => { settled = true; return result; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(closes, 1);
+    assert.equal(settled, false);
+    release();
+    const result = await pending;
+    assert.equal(result.errorCode, teardownFails ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED");
+    assert.equal(result.effectMayHaveCommitted, dispatched);
+  });
+}
+
+for (const teardownFails of [false, true]) {
+  test(`host Cookie Sync drains cancellation during dispatch, teardown failure=${teardownFails}`, async () => {
+    const takeover = new AbortController();
+    let releaseDrain: () => void;
+    let dispatchStarted: () => void;
+    const drain = new Promise<void>(resolve => { releaseDrain = resolve; });
+    const dispatched = new Promise<void>(resolve => { dispatchStarted = resolve; });
+    let leased = false;
+    let settled = false;
+    let closing = false;
+    const browser = new BetterWright({ vault: false, hostTarget: {
+      async connect() { return { provider: { cdpUrl: "ws://127.0.0.1:1" }, async close() {} }; },
+      async run(operation) {
+        leased = true;
+        try { return await operation(takeover.signal); }
+        finally { leased = false; }
+      },
+    } });
+    const child = {};
+    browser._process = child;
+    browser._prepare = async () => browser._workerConfig();
+    browser._extractCookieSync = async () => ({
+      cookies: [{ name: "synthetic", value: "test", domain: "example.test", path: "/", secure: true, httpOnly: true }],
+      selected: 1, skipped: 0, source: { browser: "chrome" }, warnings: [],
+    });
+    browser._send = () => { dispatchStarted(); };
+    browser.close = async options => {
+      assert.equal(options.child, child);
+      assert.equal(options.restart, true);
+      closing = true;
+      await drain;
+      browser._resolvePendingForWorkerExit(child);
+      if (teardownFails) throw new Error("synthetic teardown failure");
+    };
+    const pending = browser.syncCookies({ source: { browser: "chrome" } }).then(result => { settled = true; return result; });
+    await dispatched;
+    takeover.abort();
+    await Promise.resolve();
+    assert.equal(closing, true);
+    assert.equal(settled, false);
+    assert.equal(leased, true);
+    // An in-flight worker success cannot turn a cancelled import into success.
+    const [id] = browser._pending.keys();
+    browser._pending.get(id).done({ ok: true, synced: 1 });
+    releaseDrain();
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, teardownFails ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED");
+    assert.equal(result.effectMayHaveCommitted, true);
+    assert.equal(leased, false);
+    assert.equal(browser._pending.size, 0);
   });
 }
 

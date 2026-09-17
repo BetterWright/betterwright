@@ -1,5 +1,10 @@
 # The built-in agent harness (`betterwright exec`)
 
+For automatic hardware detection, model/quant selection, and runtime installation,
+run `betterwright --local`. See [one-command local AI](local-ai.md). Once setup
+passes its image/tool-call check, the harness uses `local` by default unless you
+explicitly select another model or endpoint.
+
 This page covers the **standalone** shape: BetterWright supplies a
 browser-tuned agent loop, you plug a *model* into it, and you hand it a
 natural-language task. For how it compares to the integrated shape, see
@@ -53,7 +58,8 @@ stdout:
   },
   "durationMs": 11400,
   "timing": { "modelMs": 9100, "toolMs": 1900 },
-  "proof": "/…/proof-….png"
+  "proof": "/…/proof-….png",
+  "recordings": []
 }
 ```
 
@@ -74,7 +80,9 @@ total, i.e. how much context the model was holding when it finished. `durationMs
 is the task wall-clock (it excludes tearing down a browser the loop created for
 itself), and `timing` splits it into time spent waiting on model turns
 (`modelMs`) and inside browser calls (`toolMs`); the CLI prints the same split
-after the total. The remainder is loop overhead and human waits. The loop has no fixed step cap, but it does have a 30-minute wall-clock
+after the total. The remainder is loop overhead and human waits. `recordings`
+lists saved page-recording paths from this task, in the order they finished.
+The loop has no fixed step cap, but it does have a 30-minute wall-clock
 budget and a 1,000,000-character transcript bound so a stalled or repetitive
 provider cannot run forever or grow context without limit. Expiry aborts model
 requests, and BetterWright's worker timeout terminates in-flight browser work.
@@ -175,12 +183,15 @@ done · 2 steps · 2 tool calls · 2.1s · 1,889 in / 120 out · 3,072 cache rea
 ```
 
 Each step the agent takes streams as it happens, then the answer, the proof
-screenshot path, and the same cost summary `exec` prints. **The session carries
+screenshot path, any saved recording path, and a cost summary. **The session carries
 across tasks**: both the browser (you stay signed in, tabs stay open) *and* the
 conversation — a follow-up task remembers what earlier ones did and can refer back
-to them without repeating the work (it's fed the running transcript). `/new` clears
-both the memory and the browser to start fresh. The same `--model`, endpoint,
-`--effort`/`--reasoning`, `--session`, `--headed`, and network flags apply.
+to them without repeating the work (it's fed the running transcript). Steps, tool
+calls, duration, and token counts accumulate in the footer until `/new`; `context`
+is still the latest prompt size. Press Esc to stop the current task without
+leaving the console. `/new` clears the memory, the browser, and those totals.
+The same `--model`, endpoint, `--effort`/`--reasoning`, `--session`, `--headed`,
+and network flags apply.
 
 With `--live-view`, the console starts and prints one viewer before the first
 prompt. That viewer remains open across follow-up tasks. Commands that replace
@@ -189,10 +200,12 @@ print its new URL without restarting the console.
 
 While a task is running, type a plain-text message and press Enter to steer it.
 The message is queued safely and applied at the next model turn boundary, just
-like chat sent from the live viewer. Slash commands typed during a task wait
-until that task finishes, so `/new` cannot tear down a browser mid-step. The
-active prompt changes to `steer ▸`; progress output redraws that prompt without
-discarding partially typed guidance and wraps with aligned continuation lines.
+like chat sent from the live viewer. Press Esc to stop the current task; the
+transcript is kept so the next message can continue from there. Slash commands
+typed during a task wait until that task finishes, so `/new` cannot tear down a
+browser mid-step. The active prompt changes to `steer ▸`; progress output
+redraws that prompt without discarding partially typed guidance and wraps with
+aligned continuation lines.
 
 Because the transcript accumulates, a long session grows the context each task
 sends (largely served from cache — watch `cache read` in the summary); `/new` when
@@ -204,7 +217,7 @@ Meta-commands (a line starting with `/`):
 | --- | --- |
 | `/help` | list the commands |
 | `/endpoint <url>` | switch to a custom OpenAI-compatible base URL |
-| `/models [source]` | list available ids, optionally limited to `openrouter`, `ollama`, or `vllm` |
+| `/models [source]` | list available ids, optionally limited to `openrouter`, `cerebras`, `ollama`, or `vllm` |
 | `/model <id>` | switch model id; use `source/id` only to resolve a collision |
 | `/reasoning <level>` | change reasoning effort (`/effort` also works) |
 | `/headed` | show the browser window (`/headless` to hide it again) |
@@ -274,6 +287,7 @@ What bare-id discovery probes:
 | **Ollama** | Always (default `http://127.0.0.1:11434/v1`; short timeout if down) |
 | **vLLM** | Always (default `http://127.0.0.1:8000/v1`) |
 | **OpenRouter** | Only when `OPENROUTER_API_KEY` is set |
+| **Cerebras** | Only when `CEREBRAS_API_KEY` is set |
 | **Native Claude / Codex / Grok** | When the id's family prefix matches (`claude*`, `gpt*` / `o*`, `grok*`, …) |
 
 Listing is separate from selection:
@@ -282,6 +296,7 @@ Listing is separate from selection:
 betterwright models                 # native defaults + reachable endpoints
 betterwright models ollama          # only Ollama
 betterwright models openrouter      # only OpenRouter
+betterwright models cerebras        # public catalog also works without a key
 betterwright models --json          # machine-readable
 ```
 
@@ -326,6 +341,10 @@ OPENROUTER_API_KEY=… betterwright exec "inspect example.com" \
 OPENROUTER_API_KEY=… betterwright exec "inspect example.com" \
   --model openrouter/anthropic/claude-sonnet-5
 
+# Cerebras — Qwen supports images and tools; no extra SDK dependency
+CEREBRAS_API_KEY=… betterwright exec "inspect example.com" \
+  --model cerebras/qwen-3.8-27b
+
 # Any other OpenAI-compatible /v1 base URL
 BETTERWRIGHT_MODEL_API_KEY=… betterwright exec "inspect example.com" \
   --base-url https://models.example/v1 --model <model-id>
@@ -336,12 +355,13 @@ BETTERWRIGHT_MODEL_API_KEY=… betterwright exec "inspect example.com" \
 | Source | Default base URL | Key env var | Notes |
 | --- | --- | --- | --- |
 | OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` (required for runs) | Listing can work without a key; execution needs one |
+| Cerebras | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` (required for runs) | Public catalog without a key; keyed listing includes available account models |
 | Ollama | `http://127.0.0.1:11434/v1` | `OLLAMA_API_KEY` (optional) | No key for local defaults |
 | vLLM | `http://127.0.0.1:8000/v1` | `VLLM_API_KEY` (optional) | Start the server with tool-calling flags (below) |
 | Custom | from `--base-url` or `BETTERWRIGHT_MODEL_BASE_URL` | `BETTERWRIGHT_MODEL_API_KEY` (optional) | `--base-url` alone pins the source |
 
 Override a preset URL with `OPENROUTER_BASE_URL`, `OLLAMA_BASE_URL`, or
-`VLLM_BASE_URL`. Use `--api-key-env MY_KEY` when the key lives under another
+`VLLM_BASE_URL`, or `CEREBRAS_BASE_URL`. Use `--api-key-env MY_KEY` when the key lives under another
 name (CLI flags never accept raw key values). BetterWright refuses to send a
 key to a non-loopback `http://` URL unless `--allow-insecure-model-endpoint`
 is set; HTTPS and loopback HTTP are fine without it.
@@ -377,6 +397,30 @@ model will not work, even if chat completions succeed.
   `--tool-call-parser` required by the served model.
 - **OpenRouter / custom** — pick models known to support tools; partial
   OpenAI compatibility without tools is not enough.
+
+### Cerebras
+
+Use `CEREBRAS_API_KEY` and `--model cerebras/<id>` with Chat Completions.
+If Cerebras is the only configured backend, the default is
+`cerebras/qwen-3.8-27b`; `BETTERWRIGHT_CEREBRAS_MODEL` changes that default.
+Existing configured local/native backends keep their precedence, and an explicit
+`--model` or `BETTERWRIGHT_MODEL` still overrides the default. `betterwright doctor`
+reports Cerebras readiness. No additional SDK or OAuth sign-in is needed.
+
+`qwen-3.8-27b` accepts screenshots and tool calls. `gpt-oss-120b` supports tools
+but has no vision; the harness sends DOM observations and an explicit image
+omission notice for that model. Screenshot inputs use base64 PNG/JPEG data URIs,
+and tool replies remain contiguous before image observations are appended.
+Cerebras reasoning is retained separately in the transcript for subsequent
+turns, rather than being displayed as the final answer. Set `--effort none|low|medium|high`
+for Qwen; GPT OSS supports `low|medium|high`. `--protocol responses` is rejected
+for Cerebras, which uses the Chat Completions API.
+
+The public model catalog and request formats were checked against the
+[Cerebras compatibility documentation](https://inference-docs.cerebras.ai/resources/openai)
+and [reasoning documentation](https://inference-docs.cerebras.ai/capabilities/reasoning).
+Automated tests cover the provider's tool loop and message formats. Authenticated
+Cerebras inference was not tested for this release because no API key was supplied.
 
 ### Native Claude, Codex, and Grok
 
@@ -536,7 +580,7 @@ For a preset-compatible endpoint, prefer `endpointModel`:
 import { endpointModel, runAgentTask } from "betterwright/agent";
 
 const model = endpointModel({
-  source: "ollama",          // openrouter | ollama | vllm | custom
+  source: "ollama",          // openrouter | cerebras | ollama | vllm | custom
   model: "qwen3.8:27b",
   // baseURL: "http://127.0.0.1:11434/v1",  // optional override
 });

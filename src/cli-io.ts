@@ -134,14 +134,19 @@ function isLineHandler(value: UntrustedValue): value is (line: string) => boolea
   return isCallable(value);
 }
 
+export function isEscapeKey(key) {
+  return Boolean(key) && key.name === "escape" && !key.ctrl && !key.meta && !key.shift;
+}
+
 /**
  * Wrap a readline interface in a serial line reader.
  * @param {import("node:readline").Interface} rl
- * @returns {((promptStr?: string) => Promise<string|null>) & {
+ * @returns {((promptStr?: string, signal?: AbortSignal) => Promise<string|null>) & {
  *   capture: (handler: (line: string) => boolean|void) => () => void
  * }} resolves with the next line, or `null` once the interface has closed
  *   (Ctrl-D / end of input). When a prompt string is given and no line is
  *   already buffered, readline renders it so line editing stays correct.
+ *   An AbortSignal rejects the pending read without consuming a later line.
  *   `capture()` routes otherwise-unclaimed lines to a temporary handler; return
  *   `false` from that handler to keep a line queued for the next normal read.
  */
@@ -163,14 +168,30 @@ export function makeLineReader(rl) {
     while (waiters.length) waiters.shift()(null);
   });
 
-  const nextLine = (promptStr = "") => {
+  const nextLine = (promptStr = "", signal?: AbortSignal) => {
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason ?? new Error("aborted"));
+    }
     if (buffered.length) return Promise.resolve(buffered.shift());
     if (closed) return Promise.resolve(null);
     if (promptStr) {
       rl.setPrompt(promptStr);
       rl.prompt();
     }
-    return new Promise((resolve) => waiters.push(resolve));
+    return new Promise((resolve, reject) => {
+      const settle = (value) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(value);
+      };
+      const onAbort = () => {
+        const index = waiters.indexOf(settle);
+        if (index >= 0) waiters.splice(index, 1);
+        signal?.removeEventListener("abort", onAbort);
+        reject(signal.reason ?? new Error("aborted"));
+      };
+      waiters.push(settle);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
   };
   nextLine.capture = (handler) => {
     capture = isLineHandler(handler) ? handler : null;

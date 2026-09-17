@@ -14,7 +14,7 @@ export function configureElectronNetwork(): void {
 const leasedSessions = new WeakSet<object>();
 
 export function createElectronHostTarget(options: ElectronHostOptions): HostTarget {
-  const { contents, signal, expectAgentInput } = options;
+  const { contents, signal, expectAgentInput, cookieImport } = options;
   const uploadFiles = [...(options.uploadFiles ?? [])];
   if (uploadFiles.some(file => !isString(file) || !path.isAbsolute(file))) {
     throw new Error("Approved upload files must be absolute paths.");
@@ -38,7 +38,7 @@ export function createElectronHostTarget(options: ElectronHostOptions): HostTarg
       try {
         await session.setProxy({ proxyRules: proxyUrl, proxyBypassRules: "<-loopback>" });
         await session.closeAllConnections();
-        const connection = await openBetterwrightConnection(contents, undefined, uploadFiles, false, expectAgentInput);
+        const connection = await openBetterwrightConnection(contents, undefined, uploadFiles, cookieImport === true, expectAgentInput);
         let closing: Promise<void> | undefined;
         return {
           provider: connection.provider,

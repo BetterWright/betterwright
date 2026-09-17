@@ -149,10 +149,11 @@ Behavior differences to expect:
   and the adapter's `uploadFiles`.
 - `syncCookies` on a leased tab requires the host-target Cookie Sync fix
   ([#186](https://github.com/BetterWright/betterwright/pull/186), unreleased as
-  of 2.7.1). With it, pass `cookieImport: true` in the adapter options; the
+  of 2.8.0). With it, pass `cookieImport: true` in the adapter options; the
   call needs no `cloudConsent`, reports `target: "host"`, and returns
-  `cookieImportDomains` for scoping the granted session access. Without it the
-  adapter has no `cookieImport` option and the worker rejects the call with
+  `cookieImportDomains` for scoping the granted session access. The takeover
+  signal also cancels Cookie Sync; see [cancellation semantics](cookie-sync.md).
+  Without this fix the adapter has no `cookieImport` option and the worker rejects the call with
   `Cookie Sync to cdp:127.0.0.1:1 requires consent for that exact target.`
 - `browser.run(code, { automaticUI: false })` omits the automatic UI catalog
   on calls that do not need it; it defaults to on.

@@ -52,6 +52,25 @@ and the target identity. Cookie names and values are never returned. The
 `synced` count is verified against the target store rather than assumed from a
 successful CDP call.
 
+For host-owned targets (`hostTarget`, for example the Electron adapter),
+`syncCookies` needs no `cloudConsent` — the host already owns the tab — and the
+result adds `cookieImportDomains`: the deduplicated domains whose cookies were
+verified stored. A host should use it to scope the session access it just
+granted. The Electron adapter only permits the bounded whole-store reads and
+writes this requires when `createElectronHostTarget({ cookieImport: true })` is
+set; otherwise `Network.getAllCookies`/`Network.setCookies` stay forbidden on
+the leased tab.
+
+Cookie Sync runs inside the host's input lease and honors its takeover signal,
+including when the tab is already connected. Every cancellation stops the worker
+and awaits host-lease teardown. An abort before import returns
+`BW_ABORTED` with `effectMayHaveCommitted: false`. An abort after dispatch drains
+the worker before settling and sets `effectMayHaveCommitted: true`, because a
+cookie write may already have reached the browser. If draining fails, the code
+is `BW_ABORT_TEARDOWN_FAILED`; inspect the host store before retrying. Teardown
+failures survive worker exit and prevent this client from attaching again.
+Confirm the old host lease is released before creating a fresh client.
+
 On macOS, a permission-denied result requires Full Disk Access for the app
 running BetterWright. Restart that app after granting access, then retry.
 Profile-discovery failures are reported separately from an empty profile list.

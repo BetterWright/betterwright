@@ -436,3 +436,10 @@ Prompt guidance persuades a cooperative model; the network policy, site-matched
 vault lookup, worker-side fill, and output redaction are the runtime controls.
 The built-in vault is enabled by default; pass `vault: false` or a custom vault
 adapter when the host needs a different credential boundary.
+
+## Local models for BetterWright’s harness
+
+Run `betterwright --local` after browser setup to install a hardware-matched
+model and runtime. This configures only `betterwright` / `betterwright exec`;
+skills and MCP hosts retain their own model selection. See
+[local AI setup](docs/local-ai.md) for supported GPUs, quants, and lifecycle.

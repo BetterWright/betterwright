@@ -47,7 +47,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { adBlockFromFlags } from "../src/ad-block-config.js";
-import { formatAgentUsage } from "../src/agent-usage.js";
+import { accumulateAgentRun, emptyAgentRunTotals, formatAgentUsage } from "../src/agent-usage.js";
 import {
   configuredProviderChain,
   expandProviderChoice,
@@ -64,6 +64,7 @@ import { helpFor, MAIN_USAGE, MCP_REGISTER_COMMAND, wantsHelp } from "../src/cli
 import {
   createInteractiveBrowserLifecycle,
   formatHangingText,
+  isEscapeKey,
   makeLineReader,
   readExecTaskFromStdin,
 } from "../src/cli-io.js";
@@ -1013,8 +1014,8 @@ async function loadModelCatalog(
   // Blank means "no source requested" (list everything); any other value must
   // be a name agent.ts itself recognizes, so the accepted spellings and the
   // error wording cannot drift from `--model source/id` parsing.
-  const raw = String(options.source || "").trim();
-  const requested = raw ? endpointSourceName(raw) : "";
+  const raw = String(options.source || "").trim().toLowerCase();
+  const requested = raw === "local" ? "local" : raw ? endpointSourceName(raw) : "";
   const sources = requested
     ? [requested]
     : options.modelOptions?.baseURL
@@ -1023,6 +1024,10 @@ async function loadModelCatalog(
   const settled = await Promise.all(
     sources.map(async (source) => {
       try {
+        if (source === "local") {
+          const { hasReadyLocalInstallation } = await import("../src/local-ai-install.js");
+          return { source, models: hasReadyLocalInstallation() ? ["local"] : [], baseURL: undefined };
+        }
         const query: CliModelOptions & { source: string; signal?: AbortSignal } = {
           source,
           ...(source === "custom" ? options.modelOptions : {
@@ -1084,7 +1089,8 @@ Anything else is a task: BetterWright drives the browser to complete it,
 streams what it is doing, and asks you a question if it genuinely needs one.
 
 While a task is running, type a plain-text message and press Enter to steer
-the next model turn. Slash commands wait until the active task finishes.`;
+the next model turn. Press Esc to stop the current task; the session stays
+open. Slash commands wait until the active task finishes.`;
 
 const EXEC_USAGE = `Usage: betterwright exec "<task>" [options]
        printf '%s\\n' 'find options under $4000' | betterwright exec --stdin [options]
@@ -1165,13 +1171,16 @@ async function cmdInteractive(flags) {
     },
   });
   // The running transcript, so a follow-up task remembers earlier ones. `/new`
-  // clears it (and the browser) to start a clean session.
+  // clears it (and the browser) to start a clean session. Cost totals follow
+  // the same lifetime so the footer is the session, not the last message.
   let history = [];
+  let sessionRun = emptyAgentRunTotals();
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const nextLine = makeLineReader(rl);
   rl.on("SIGINT", () => rl.close());
   let taskRunning = false;
+  let taskAbort = null;
   // The steering prompt doubles as the working indicator: a spinner frame,
   // the current phase, and how long it has been in it animate in front of
   // "steer ▸", so a long model call never looks like a hang.
@@ -1267,8 +1276,19 @@ async function cmdInteractive(flags) {
     ),
   );
   console.log(dim("Type a task and press Enter. Follow-ups keep the session; /new starts fresh."));
-  console.log(dim("While it works, type a message and press Enter to steer its next turn."));
+  console.log(dim("While it works, type a message and press Enter to steer, or Esc to stop."));
   console.log(dim("/help for commands, /exit or Ctrl-D to quit.\n"));
+  readline.emitKeypressEvents(process.stdin, rl);
+  process.stdin.on("keypress", (_str, key) => {
+    if (!isEscapeKey(key) || !taskRunning || !taskAbort || taskAbort.signal.aborted) return;
+    // Drop whatever was mid-typed at steer ▸ so Enter after stop cannot
+    // submit that fragment as the next task. Ctrl-U kills before the cursor;
+    // Ctrl-K kills the suffix if the cursor was in the middle of the line.
+    rl.write(null, { ctrl: true, name: "u" });
+    rl.write(null, { ctrl: true, name: "k" });
+    taskAbort.abort();
+    writeInteractive("  ! ", "stopping the task", dim);
+  });
   // The console is the most inviting entry point, so it is the worst place to
   // discover only after typing a task that no model is reachable. Say so up
   // front; the user can still get in and fix it with /model or /endpoint.
@@ -1396,6 +1416,7 @@ async function cmdInteractive(flags) {
         if (cmd === "new" || cmd === "reset") {
           await browsers.replace();
           history = [];
+          sessionRun = emptyAgentRunTotals();
           console.log(dim("started a fresh session (browser and memory cleared)"));
           continue;
         }
@@ -1405,6 +1426,7 @@ async function cmdInteractive(flags) {
 
       let result;
       const steering = [];
+      taskAbort = new AbortController();
       beginTaskInput();
       const stopSteeringCapture = nextLine.capture((line) => {
         const message = String(line || "").trim();
@@ -1434,6 +1456,7 @@ async function cmdInteractive(flags) {
           session,
           history,
           drainSteering: () => steering.splice(0, steering.length),
+          signal: taskAbort.signal,
           liveView: liveViewCliOptions(process.argv),
           onPhase: (event) => {
             const label = phaseLabel(event);
@@ -1469,7 +1492,7 @@ async function cmdInteractive(flags) {
               dim,
             );
           },
-          askUser: async ({ question, options }) => {
+          askUser: async ({ question, options, signal }) => {
             writeInteractive("  ? ", question, bold);
             if (options?.length) {
               for (const [i, option] of options.entries())
@@ -1478,7 +1501,7 @@ async function cmdInteractive(flags) {
             promptHeld = true;
             let ans;
             try {
-              ans = await nextLine("  answer ▸ ");
+              ans = await nextLine("  answer ▸ ", signal);
             } finally {
               promptHeld = false;
             }
@@ -1494,10 +1517,12 @@ async function cmdInteractive(flags) {
       } finally {
         stopSteeringCapture();
         endTaskInput();
+        taskAbort = null;
       }
 
       // Carry the transcript forward so the next task remembers this one.
       history = result.transcript;
+      sessionRun = accumulateAgentRun(sessionRun, result);
 
       process.stdout.write("\n");
       writeInteractive(
@@ -1506,11 +1531,13 @@ async function cmdInteractive(flags) {
         result.answer ? bold : dim,
       );
       if (result.proof) writeInteractive("proof: ", result.proof, dim);
+      for (const file of result.recordings || [])
+        writeInteractive("recording: ", file, dim);
       writeInteractive(
         "",
-        `${result.ok ? "done" : `unfinished (${result.reason || "unknown"})`} · ${result.steps} step${result.steps === 1 ? "" : "s"} · ` +
-          `${result.toolCalls} tool call${result.toolCalls === 1 ? "" : "s"} · ${formatDuration(result.durationMs)} · ` +
-          formatAgentUsage(result.usage),
+        `${result.ok ? "done" : `unfinished (${result.reason || "unknown"})`} · ${sessionRun.steps} step${sessionRun.steps === 1 ? "" : "s"} · ` +
+          `${sessionRun.toolCalls} tool call${sessionRun.toolCalls === 1 ? "" : "s"} · ${formatDuration(sessionRun.durationMs)} · ` +
+          formatAgentUsage(sessionRun.usage),
         dim,
       );
       process.stdout.write("\n");
@@ -1758,6 +1785,7 @@ async function cmdExec(flags) {
         durationMs: result.durationMs,
         timing: result.timing,
         proof: result.proof,
+        recordings: result.recordings || [],
         session: result.session,
       },
       null,
@@ -2195,6 +2223,15 @@ export async function runCli() {
   const tokens = process.argv.slice(2);
   const flags = new Set(tokens.filter((token) => token.startsWith("--")));
   const first = tokens[0];
+  if (first === "__local-ai") {
+    const { serveLocalAI } = await import("../src/local-ai-service.js");
+    return serveLocalAI(tokens[1] || "");
+  }
+  if (first === "local" || first === "--local") {
+    if (wantsHelp(tokens)) { console.log(styler().help(helpFor("local"))); return 0; }
+    const { runLocalCommand } = await import("../src/local-ai-cli.js");
+    return runLocalCommand(tokens.slice(1));
+  }
   // A bad `--profile` should read as one clear line before anything launches,
   // not as a TypeError stack from inside a browser constructor. Help and
   // --version still answer, so `--help` never depends on valid flags.

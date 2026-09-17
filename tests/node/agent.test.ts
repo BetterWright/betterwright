@@ -18,7 +18,7 @@ import {
   resolveModelSelection,
   runAgentTask,
 } from "../../dist/src/agent.js";
-import { formatAgentUsage, uncachedInputTokens } from "../../dist/src/agent-usage.js";
+import { accumulateAgentRun, emptyAgentRunTotals, formatAgentUsage, uncachedInputTokens } from "../../dist/src/agent-usage.js";
 import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
 import { PI_BROWSER_PARAMETERS, PI_LOGIN_PARAMETERS } from "../../dist/src/pi-extension.js";
 import { browserToolProperties, loginToolProperties } from "../../dist/src/tool-schemas.js";
@@ -39,7 +39,7 @@ interface FakeEnvelope {
   ok: boolean;
   result?: string | Record<string, string | number>;
   error?: string;
-  artifacts?: Array<{ kind: string; path: string }>;
+  artifacts?: Array<{ kind: string; path: string; mimeType?: string }>;
   durationMs?: number;
   webagents?: { source: string; actions: Array<{ name: string; method: string }> };
   ui?: { controls: Array<{
@@ -168,6 +168,72 @@ test("runAgentTask drives browser then finishes on done", async () => {
   // The browser observation was fed back into the transcript.
   const toolTurn = result.transcript.find((m) => m.role === "tool");
   assert.match(toolTurn.results[0].content, /"result":"HN"/);
+});
+
+test("runAgentTask returns saved recording paths even when stop is not the snippet result", async () => {
+  const video = { kind: "recording", path: "/tmp/demo.mp4", mimeType: "video/mp4" };
+  const browser = fakeBrowser({
+    runs: [{ ok: true, artifacts: [video], durationMs: 9 }],
+  });
+  const model = scriptedModel([
+    { text: "stopping", toolCalls: [{ id: "c1", name: "browser", input: { code: "await recording.stop()", note: "stop" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "done", input: { answer: "Stopped and saved the page recording." } }] },
+  ]);
+
+  const result = await runAgentTask({ task: "stop recording", model, browser });
+
+  assert.equal(result.answer, "Stopped and saved the page recording.");
+  assert.deepEqual(result.recordings, ["/tmp/demo.mp4"]);
+  const toolTurn = result.transcript.find((m) => m.role === "tool");
+  assert.match(toolTurn.results[0].content, /"kind":"recording"/);
+  assert.match(toolTurn.results[0].content, /\/tmp\/demo\.mp4/);
+  assert.match(toolTurn.results[0].content, /"mimeType":"video\/mp4"/);
+});
+
+test("runAgentTask records each finished take once across restart", async () => {
+  const browser = fakeBrowser({
+    runs: [
+      { ok: true, result: { state: "recording" }, artifacts: [], durationMs: 3 },
+      {
+        ok: true,
+        result: { state: "recording" },
+        artifacts: [
+          { kind: "recording", path: "/tmp/first.mp4", mimeType: "video/mp4" },
+          { kind: "recording", path: "/tmp/first.mp4", mimeType: "video/mp4" },
+        ],
+        durationMs: 4,
+      },
+      {
+        ok: true,
+        result: { state: "completed", path: "/tmp/second.webm" },
+        artifacts: [{ kind: "recording", path: "/tmp/second.webm", mimeType: "video/webm" }],
+        durationMs: 5,
+      },
+    ],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "return recording.start()" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "browser", input: { code: "return recording.restart({name:'second.webm'})" } }] },
+    { text: "", toolCalls: [{ id: "c3", name: "browser", input: { code: "return recording.stop()" } }] },
+    { text: "", toolCalls: [{ id: "c4", name: "done", input: { answer: "two takes" } }] },
+  ]);
+
+  const result = await runAgentTask({ task: "record twice", model, browser });
+  assert.deepEqual(result.recordings, ["/tmp/first.mp4", "/tmp/second.webm"]);
+});
+
+test("runAgentTask does not treat unrelated completed paths as recordings", async () => {
+  const browser = fakeBrowser({
+    runs: [{ ok: true, result: { state: "completed", path: "/tmp/order.json" }, artifacts: [], durationMs: 3 }],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "return {state:'completed', path:'/tmp/order.json'}" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const result = await runAgentTask({ task: "read the confirmation", model, browser });
+  assert.deepEqual(result.recordings, []);
+  assert.equal(result.reason, "done");
+  assert.equal(browser.calls.run.length, 1);
 });
 
 test("runAgentTask announces each model turn and tool batch through onPhase", async () => {
@@ -480,6 +546,63 @@ test("cache-aware usage formatting is shared by every CLI summary", () => {
 test("uncached input cannot become negative when provider usage is inconsistent", () => {
   assert.equal(uncachedInputTokens(50, 60), 0);
   assert.equal(uncachedInputTokens(50, 30), 20);
+});
+
+test("interactive console cost totals accumulate across tasks", () => {
+  const first = accumulateAgentRun(emptyAgentRunTotals(), {
+    steps: 2,
+    toolCalls: 2,
+    durationMs: 12600,
+    usage: {
+      inputTokens: 42698,
+      outputTokens: 104,
+      cacheReadTokens: 40576,
+      cacheWriteTokens: 0,
+      context: 42548,
+    },
+  });
+  const second = accumulateAgentRun(first, {
+    steps: 1,
+    toolCalls: 1,
+    durationMs: 5500,
+    usage: {
+      inputTokens: 2427,
+      outputTokens: 51,
+      cacheReadTokens: 39296,
+      cacheWriteTokens: 0,
+      context: 41723,
+    },
+  });
+  assert.deepEqual(second, {
+    steps: 3,
+    toolCalls: 3,
+    durationMs: 18100,
+    usage: {
+      inputTokens: 45125,
+      outputTokens: 155,
+      cacheReadTokens: 79872,
+      cacheWriteTokens: 0,
+      context: 41723,
+    },
+  });
+  const third = accumulateAgentRun(second, {
+    steps: 1,
+    toolCalls: 0,
+    durationMs: 9500,
+    usage: {
+      inputTokens: 42692,
+      outputTokens: 178,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      context: 42692,
+    },
+  });
+  assert.equal(third.steps, 4);
+  assert.equal(third.toolCalls, 3);
+  assert.equal(third.usage.cacheReadTokens, 79872);
+  assert.equal(third.usage.context, 42692);
+  const missingUsage = accumulateAgentRun(third, { steps: 1, toolCalls: 0, durationMs: 10, usage: {} });
+  assert.equal(missingUsage.usage.context, 42692);
 });
 
 test("runAgentTask reports zeroed usage when the model omits a usage block", async () => {

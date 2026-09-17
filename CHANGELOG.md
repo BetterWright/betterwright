@@ -35,7 +35,73 @@ Releases before 1.1.3 predate this file; their notes live on the
   {modelMs, toolMs}` — how much of `durationMs` was spent waiting on the model
   versus inside browser calls — and the exec summary line prints the split.
 
+## [2.8.2] - 2026-09-17
+
+### Fixed
+
+- Stopping a page recording now keeps the saved file path in the agent
+  observation and on `runAgentTask`'s `recordings` result. The interactive
+  console prints each path after the answer, so a stop that does not return
+  `recording.stop()` still shows where the video was written.
+- Interactive console cost totals (steps, tool calls, duration, tokens, and
+  cache reads) accumulate across messages until `/new`. `context` remains the
+  latest prompt size.
+- Esc stops the current interactive-console task without quitting the session.
+
+## [2.8.1] - 2026-09-14
+
 ### Added
+
+- Compact Qwen3.8 27B options for `betterwright --local` with 64K context:
+  GSQ-RCO IQ3_S with vision and native MTP on compatible 24 GB GPUs, and
+  Escha W2 with restored vision, compact INT8 embeddings, native MTP, and FP8
+  KV cache on Linux NVIDIA Ampere or newer. GSQ is the 24 GB default; the
+  speed preference selects Escha where supported. Ornith 9B remains the
+  16 GB recommendation. See `docs/local-ai.md` for formats and testing limits.
+- `cookieImportDomains` on `CookieSyncResult` for host-owned targets: the
+  deduplicated cookie domains verified stored in the leased tab, restoring the
+  2.4.x field so hosts can scope the session access an import granted.
+- `ElectronHostOptions.cookieImport` opt-in, enabling the bounded cookie-store
+  reads and writes `syncCookies` needs on a leased Electron tab.
+
+### Fixed
+
+- Private runtime extraction works in rootless containers without attempting
+  to restore upstream archive ownership. The Escha installer pins CUDA Torch
+  wheels directly so their package index cannot shadow unrelated dependencies.
+- Compact Qwen local requests honor explicit reasoning effort and preserve
+  reasoning state across tool calls.
+- Escha installs a private NUMA library on fresh Linux systems and reserves
+  repair capacity for missing or broken native dependencies. Its measured live
+  footprint requires at least 23.75 GiB reported and free VRAM before downloads;
+  smaller nominal 24 GB cards select GSQ even for the speed preference.
+- `syncCookies` no longer demands a `cloudConsent` matching the placeholder
+  provider endpoint on host-owned targets; consent is only required for real
+  remote providers, and results report `target: "host"`.
+- Host-target `syncCookies` honors human takeover before extraction and import.
+  Every cancellation drains the worker and releases its host lease. Cancellation
+  after dispatch reports whether a cookie
+  write may already have committed.
+
+## [2.8.0] - 2026-09-13
+
+### Added
+
+- `betterwright --local`: hardware-aware model and quant selection, private
+  Metal/Vulkan/CUDA/ROCm inference runtimes, resumable checksum-verified downloads,
+  and image/tool-call validation before selecting the built-in harness default.
+  Automatically compares DFlash2 or native MTP with ordinary decoding where
+  compatible, retaining acceleration when it improves measured throughput.
+  Includes verified draft downloads, memory headroom, and private compiler tooling.
+  Includes `local plan`, `status`, `start`, and `stop`; skills and MCP hosts
+  retain their own model configuration. See `docs/local-ai.md` for supported
+  hardware and validation limits.
+
+- Cerebras support in the built-in harness through `cerebras/<model-id>`,
+  `CEREBRAS_API_KEY`, `CEREBRAS_BASE_URL`, public/account model listing, and
+  doctor/default-model discovery. Qwen 3.8 27B supports screenshot input and
+  tool calls; reasoning is preserved across turns. No additional SDK is needed.
+  See `docs/agent.md#cerebras` for usage and validation limits.
 
 - Ordered browser-provider fallback chains. The `provider` option accepts an
   array of candidates tried in order — a provider that is out of quota, down,
@@ -1677,7 +1743,10 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.7.3...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.2...HEAD
+[2.8.2]: https://github.com/BetterWright/betterwright/compare/v2.8.1...v2.8.2
+[2.8.1]: https://github.com/BetterWright/betterwright/compare/v2.8.0...v2.8.1
+[2.8.0]: https://github.com/BetterWright/betterwright/compare/v2.7.3...v2.8.0
 [2.7.3]: https://github.com/BetterWright/betterwright/compare/v2.7.1...v2.7.3
 [2.7.1]: https://github.com/BetterWright/betterwright/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/BetterWright/betterwright/compare/v2.6.0...v2.7.0

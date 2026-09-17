@@ -16,7 +16,7 @@ import type { HostConnection, HostTarget } from "../types/host.js";
 // The published declarations are hand-written (see AGENTS.md). Typing the
 // implementation against them turns a drift between the two into a compile
 // error instead of something only a consumer would notice.
-import type { BetterWrightOptions, LiveViewOptions } from "../types/public.js";
+import type { BetterWrightOptions, CookieSyncResult, LiveViewOptions } from "../types/public.js";
 import { resolveAdBlock } from "./ad-block-config.js";
 import {
   configuredProviderChain,
@@ -314,6 +314,11 @@ function stealthDriverAvailable() {
   }
 }
 
+interface HostConnectionAttempt {
+  pending: boolean;
+  connection?: HostConnection;
+}
+
 /** A persistent, policy-guarded Playwright browser. */
 export class BetterWright {
   #ownsVault = false;
@@ -328,6 +333,10 @@ export class BetterWright {
   declare hostTarget: HostTarget | undefined;
   declare hostUploadFiles: readonly string[];
   private readonly hostConnections = new WeakMap<object, HostConnection>();
+  private readonly hostConnectionClosures = new WeakMap<HostConnection, Promise<void>>();
+  private readonly workerHostCloseOutcomes = new WeakMap<object, Promise<void>>();
+  private lastWorkerForHostClose: object | null = null;
+  private readonly hostConnectionAttempts = new WeakMap<object, HostConnectionAttempt>();
   declare headless: boolean;
   declare searchMinIntervalMs: number;
   declare publicSearchPolicy: "block" | "allow";
@@ -658,6 +667,10 @@ export class BetterWright {
     // An exited worker can still have buffered stdio. Wait for its `close`
     // cleanup before a replacement is allowed to own the vault redaction set.
     await this._workerCloseBarrier;
+    if (this.lastWorkerForHostClose) {
+      try { await this.workerHostCloseOutcomes.get(this.lastWorkerForHostClose); }
+      catch { throw new BrowserError("Previous host lease did not close. Release it before creating a new BetterWright client."); }
+    }
     if (
       this._process &&
       this._process.exitCode === null &&
@@ -722,6 +735,17 @@ export class BetterWright {
     );
     this._workerClosePromises.set(child, workerClosePromise);
     this._workerCloseBarrier = workerClosePromise;
+    let resolveHostClose: () => void;
+    let rejectHostClose: (error: Error) => void;
+    const hostCloseOutcome = new Promise<void>((resolve, reject) => {
+      resolveHostClose = resolve;
+      rejectHostClose = reject;
+    });
+    // Unexpected exits may have no cancellation caller yet. Preserve the error
+    // for a later takeover without producing an unhandled rejection now.
+    hostCloseOutcome.catch(() => {});
+    this.workerHostCloseOutcomes.set(child, hostCloseOutcome);
+    this.lastWorkerForHostClose = child;
     let ready = false;
     let resolveReady;
     let rejectReady;
@@ -805,8 +829,20 @@ export class BetterWright {
           }
         } finally {
           clearTimeout(drainTimer);
-          await this.hostConnections.get(child)?.close().catch(() => {});
+          const attempt = this.hostConnectionAttempts.get(child);
+          const connection = this.hostConnections.get(child) ?? attempt?.connection;
+          try {
+            if (connection) {
+              await this._closeHostConnection(connection);
+              resolveHostClose();
+            } else if (attempt?.pending) {
+              rejectHostClose(new Error("Host attachment did not settle before worker shutdown."));
+            } else resolveHostClose();
+          } catch (error) {
+            rejectHostClose(error instanceof Error ? error : new Error("Host connection teardown failed."));
+          }
           this.hostConnections.delete(child);
+          this.hostConnectionAttempts.delete(child);
           await this._resetVaultRedactionForWorker(child);
           resolveWorkerClose();
           // Unexpected death (crash, OOM-kill) while a live view is up:
@@ -936,6 +972,15 @@ export class BetterWright {
     );
   }
 
+  _closeHostConnection(connection: HostConnection): Promise<void> {
+    let closing = this.hostConnectionClosures.get(connection);
+    if (!closing) {
+      closing = Promise.resolve().then(() => connection.close());
+      this.hostConnectionClosures.set(connection, closing);
+    }
+    return closing;
+  }
+
   async _serviceRpc(message, child = this._process) {
     const requestId = String(message.requestId || "");
     let response;
@@ -952,19 +997,26 @@ export class BetterWright {
         // run may reconnect, but only after the previous lease has drained.
         const previous = this.hostConnections.get(child);
         if (previous) {
-          await previous.close();
+          await this._closeHostConnection(previous);
           this.hostConnections.delete(child);
         }
         if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
           throw new Error("Host worker stopped during connection.");
         }
-        const connection = await this.hostTarget.connect({ proxyUrl });
-        if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
-          await connection.close();
-          throw new Error("Host worker stopped during connection.");
+        const attempt: HostConnectionAttempt = { pending: true };
+        this.hostConnectionAttempts.set(child, attempt);
+        try {
+          const connection = await this.hostTarget.connect({ proxyUrl });
+          attempt.connection = connection;
+          if (child.exitCode !== null || child.signalCode !== null || this._process !== child) {
+            await this._closeHostConnection(connection);
+            throw new Error("Host worker stopped during connection.");
+          }
+          this.hostConnections.set(child, connection);
+          result = connection.provider;
+        } finally {
+          attempt.pending = false;
         }
-        this.hostConnections.set(child, connection);
-        result = connection.provider;
       } else if (message.method === "guard") {
         const { url, ...details } = payload;
         // Copy rather than annotate: policy.check may return a shared or frozen
@@ -1223,7 +1275,16 @@ export class BetterWright {
    * context. Extraction and injection stay in trusted host code.
    */
   syncCookies(options: any = {}) {
-    return this._enqueueExclusive(() => this._syncCookiesNow(options));
+    return this._enqueueExclusive(async () => {
+      if (!this.hostTarget?.run) return this._syncCookiesNow(options);
+      const leased = await this.hostTarget.run(async signal => {
+        const synced = await this._syncCookiesNow(options, signal);
+        return synced.ok ? { ok: true, result: synced } : synced;
+      });
+      // SAFETY: the trusted host lease returns the Cookie Sync result supplied
+      // by this callback. Preserve its existing RunResult wrapper contract.
+      return leased.ok ? leased.result as CookieSyncResult : leased;
+    });
   }
 
   /** Owner control only; deliberately absent from the worker's snippet bindings. */
@@ -1242,7 +1303,8 @@ export class BetterWright {
     return this.vault.ownerLock();
   }
 
-  async _syncCookiesNow(options) {
+  async _syncCookiesNow(options, signal?: AbortSignal) {
+    if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
     if (this._closed) {
       return { ok: false, error: "This browser has been closed." };
     }
@@ -1250,7 +1312,7 @@ export class BetterWright {
     let consentTarget;
     try {
       normalized = normalizeCookieSyncOptions(options);
-      consentTarget = cookieSyncConsentTarget(this.provider);
+      consentTarget = this.hostTarget ? null : cookieSyncConsentTarget(this.provider);
       if (consentTarget && normalized.cloudConsent !== consentTarget) {
         return {
           ok: false,
@@ -1266,6 +1328,7 @@ export class BetterWright {
     try {
       extracted = await this._extractCookieSync(normalized);
     } catch (error) {
+      if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
       return {
         ok: false,
         error: "Cookie Sync could not read the selected local browser profile.",
@@ -1274,19 +1337,30 @@ export class BetterWright {
         cookieReaderStage: error?.cookieReaderStage,
       };
     }
+    // Extraction may have yielded while the human took control. Never prepare
+    // or import the selected cookies after that lease has been revoked.
+    if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
     if (!extracted.cookies.length) {
-      return {
+      const empty: Extract<CookieSyncResult, { ok: true }> = {
         ok: true,
         synced: 0,
         selected: extracted.selected,
         skipped: extracted.skipped,
         source: extracted.source,
-        target: consentTarget || "local",
+        target: consentTarget || (this.hostTarget ? "host" : "local"),
         warnings: extracted.warnings,
       };
+      if (this.hostTarget) empty.cookieImportDomains = [];
+      return empty;
     }
 
-    const config = await this._prepare();
+    let config;
+    try { config = await this._prepare(); }
+    catch (error) {
+      if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
+      throw error;
+    }
+    if (signal?.aborted) return this._cancelCookieSyncBeforeDispatch();
     const timeoutSeconds = Math.max(
       Math.ceil(normalized.timeoutMs / 1000),
       this.defaultTimeout,
@@ -1304,7 +1378,33 @@ export class BetterWright {
         cloudConsent: normalized.cloudConsent,
       },
       timeoutSeconds,
+      signal,
     );
+  }
+
+  async _stopAbortedWorker(child = this._process ?? this.lastWorkerForHostClose) {
+    const connection = child && this.hostConnections.get(child);
+    const hostCloseOutcome = child && this.workerHostCloseOutcomes.get(child);
+    // Revoke the host lease as well as stopping its worker. Observe the close
+    // promise directly: worker-exit cleanup deliberately suppresses its errors.
+    const stopped = await Promise.allSettled([
+      this.close({ child, restart: true }),
+      connection ? this._closeHostConnection(connection) : Promise.resolve(),
+      hostCloseOutcome ?? Promise.resolve(),
+    ]);
+    if (stopped.some(result => result.status === "rejected")) throw new Error("Browser operation teardown failed.");
+  }
+
+  async _cancelCookieSyncBeforeDispatch() {
+    let failed = false;
+    try { await this._stopAbortedWorker(); }
+    catch { failed = true; }
+    return {
+      ok: false,
+      error: failed ? "Browser operation aborted; teardown failed." : "Browser operation aborted.",
+      errorCode: failed ? "BW_ABORT_TEARDOWN_FAILED" : "BW_ABORTED",
+      effectMayHaveCommitted: false,
+    };
   }
 
   _extractCookieSync(options) {
@@ -1712,7 +1812,7 @@ export class BetterWright {
         aborting = true;
         this._pending.get(id).preserveRecovery = true;
         clearTimeout(timer);
-        void this.close({ child, restart: true }).then(() => {
+        void this._stopAbortedWorker(child).then(() => {
           finishAbort("Browser operation aborted.", "BW_ABORTED");
         }, () => {
           finishAbort("Browser operation aborted; teardown failed.", "BW_ABORT_TEARDOWN_FAILED");
