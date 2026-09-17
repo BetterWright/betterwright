@@ -60,6 +60,33 @@ The loop abstains rather than guessing when:
 Locator names that fail exact match are retried without a trailing arrow
 (`Next →` → `Next`) and, when present, via snapshot refs.
 
+## Agent harness
+
+`runAgentTask({ systemOne: true })` offers the model a `resolve` tool that
+hands one ambiguous click to `followIntent()`. It is off by default.
+
+## Measured
+
+On 2026-09-17, eight tasks (seven local fixtures with oracles, one live
+Wikipedia disambiguation) ran twice each with `glm-5.3-flash` over OpenRouter
+in three arms: the agent alone, the agent with `resolve` offered, and the
+agent told to use `resolve` for the click step.
+
+| Arm | Pass | Median | Mean | Mean turns | `resolve` calls |
+| --- | --- | --- | --- | --- | --- |
+| LLM only | 14/16 | 35.2s | 48.3s | 5.3 | 0 |
+| LLM + `resolve` offered | 15/16 | 31.3s | 43.6s | 4.9 | 0 |
+| LLM told to use `resolve` | 14/16 | 43.4s | 57.8s | 5.8 | 26 |
+
+The model never chose `resolve` on its own, so the middle arm is the same
+loop with run-order noise. When told to use it, every `resolve` call added a
+model turn and the loop's observe/act cycle on top of the click the model
+could already make with an exact locator. Both failures in every arm were the
+delayed-reveal wizard, which needs an expected-state read rather than a
+choice. There is no measured speedup from Jev in this harness; use
+`followIntent()` for duplicate-control disambiguation from host code, not as
+a general agent step.
+
 ## Discovery
 
 `controls.directory()` now lists controls inside an open `<dialog>` (or
