@@ -9,6 +9,17 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Fixed
+
+- Stopping a page recording now keeps the saved file path in the agent
+  observation and on `runAgentTask`'s `recordings` result. The interactive
+  console prints each path after the answer, so a stop that does not return
+  `recording.stop()` still shows where the video was written.
+- Interactive console cost totals (steps, tool calls, duration, tokens, and
+  cache reads) accumulate across messages until `/new`. `context` remains the
+  latest prompt size.
+- Esc stops the current interactive-console task without quitting the session.
+
 ## [2.8.1] - 2026-09-14
 
 ### Added

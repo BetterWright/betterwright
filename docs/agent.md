@@ -57,7 +57,8 @@ stdout:
     "context": 20000
   },
   "durationMs": 11400,
-  "proof": "/…/proof-….png"
+  "proof": "/…/proof-….png",
+  "recordings": []
 }
 ```
 
@@ -76,7 +77,8 @@ provider-reported count. It never derives writes from fresh input. `context` is
 the full prompt size at the **end** of the task — the last turn's provider input
 total, i.e. how much context the model was holding when it finished. `durationMs`
 is the task wall-clock (it excludes tearing down a browser the loop created for
-itself). The loop has no fixed step cap, but it does have a 30-minute wall-clock
+itself). `recordings` lists saved page-recording paths from this task, in the
+order they finished. The loop has no fixed step cap, but it does have a 30-minute wall-clock
 budget and a 1,000,000-character transcript bound so a stalled or repetitive
 provider cannot run forever or grow context without limit. Expiry aborts model
 requests, and BetterWright's worker timeout terminates in-flight browser work.
@@ -177,12 +179,15 @@ done · 2 steps · 2 tool calls · 2.1s · 1,889 in / 120 out · 3,072 cache rea
 ```
 
 Each step the agent takes streams as it happens, then the answer, the proof
-screenshot path, and the same cost summary `exec` prints. **The session carries
+screenshot path, any saved recording path, and a cost summary. **The session carries
 across tasks**: both the browser (you stay signed in, tabs stay open) *and* the
 conversation — a follow-up task remembers what earlier ones did and can refer back
-to them without repeating the work (it's fed the running transcript). `/new` clears
-both the memory and the browser to start fresh. The same `--model`, endpoint,
-`--effort`/`--reasoning`, `--session`, `--headed`, and network flags apply.
+to them without repeating the work (it's fed the running transcript). Steps, tool
+calls, duration, and token counts accumulate in the footer until `/new`; `context`
+is still the latest prompt size. Press Esc to stop the current task without
+leaving the console. `/new` clears the memory, the browser, and those totals.
+The same `--model`, endpoint, `--effort`/`--reasoning`, `--session`, `--headed`,
+and network flags apply.
 
 With `--live-view`, the console starts and prints one viewer before the first
 prompt. That viewer remains open across follow-up tasks. Commands that replace
@@ -191,10 +196,12 @@ print its new URL without restarting the console.
 
 While a task is running, type a plain-text message and press Enter to steer it.
 The message is queued safely and applied at the next model turn boundary, just
-like chat sent from the live viewer. Slash commands typed during a task wait
-until that task finishes, so `/new` cannot tear down a browser mid-step. The
-active prompt changes to `steer ▸`; progress output redraws that prompt without
-discarding partially typed guidance and wraps with aligned continuation lines.
+like chat sent from the live viewer. Press Esc to stop the current task; the
+transcript is kept so the next message can continue from there. Slash commands
+typed during a task wait until that task finishes, so `/new` cannot tear down a
+browser mid-step. The active prompt changes to `steer ▸`; progress output
+redraws that prompt without discarding partially typed guidance and wraps with
+aligned continuation lines.
 
 Because the transcript accumulates, a long session grows the context each task
 sends (largely served from cache — watch `cache read` in the summary); `/new` when

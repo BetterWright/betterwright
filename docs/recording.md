@@ -22,7 +22,7 @@ betterwright record status --session demo
 betterwright record stop --session demo
 ```
 
-Stop flushes the video and returns its path in the session artifact directory. Pass a filename such as `demo.mp4`, without a directory path. Use the same `--profile` and `--session` on each command.
+Stop flushes the video and returns its path in the session artifact directory. The interactive console prints that path after the answer. Pass a filename such as `demo.mp4`, without a directory path. Use the same `--profile` and `--session` on each command.
 
 To finish the current take and begin another, run:
 
