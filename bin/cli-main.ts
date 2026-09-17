@@ -1281,6 +1281,9 @@ async function cmdInteractive(flags) {
   readline.emitKeypressEvents(process.stdin, rl);
   process.stdin.on("keypress", (_str, key) => {
     if (!isEscapeKey(key) || !taskRunning || !taskAbort || taskAbort.signal.aborted) return;
+    // Drop whatever was mid-typed at steer ▸ so Enter after stop cannot
+    // submit that fragment as the next task.
+    rl.write(null, { ctrl: true, name: "u" });
     taskAbort.abort();
     writeInteractive("  ! ", "stopping the task", dim);
   });
