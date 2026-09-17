@@ -56,7 +56,9 @@ const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_DURATION_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
 const MAX_TIMER_MS = 2_147_483_647;
-const OBSERVATION_LIMIT = 12_000;
+// Matches the worker's default output limit so a default-size snapshot reaches
+// the model intact instead of being replaced by the truncation notice.
+const OBSERVATION_LIMIT = 24_000;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
 // A caller-requested stop (the session daemon's `interrupt` op, a Ctrl-C that
 // reached the daemon). Travels the same path as the timeout symbol: thrown
@@ -880,12 +882,25 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
       modelMs += Date.now() - startedAt;
     }
   }
+  // A browser call that loses the deadline or stop race keeps running (the
+  // browser gets no abort signal), so its time is still in flight when the
+  // result is built. browserMs() counts those calls up to now; the finally
+  // below only runs once they settle, after the result has left.
+  const inFlightBrowser = new Set<{ startedAt: number }>();
+  const browserMs = () => {
+    const now = Date.now();
+    let total = toolMs;
+    for (const call of inFlightBrowser) total += now - call.startedAt;
+    return total;
+  };
   async function timedBrowser(operation) {
-    const startedAt = Date.now();
+    const call = { startedAt: Date.now() };
+    inFlightBrowser.add(call);
     try {
       return await operation();
     } finally {
-      toolMs += Date.now() - startedAt;
+      inFlightBrowser.delete(call);
+      toolMs += Date.now() - call.startedAt;
     }
   }
   const timedRun = (code, options) => timedBrowser(() => browser.run(code, options));
@@ -1495,7 +1510,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     },
     // Task wall-clock in milliseconds (excludes owned-browser teardown).
     durationMs,
-    timing: { modelMs, toolMs },
+    timing: { modelMs, toolMs: browserMs() },
     transcript: messages,
     proof,
   };

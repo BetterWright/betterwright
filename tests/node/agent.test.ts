@@ -217,6 +217,26 @@ test("successful browser observations omit empty optional fields", async () => {
   });
 });
 
+test("browser observations keep a default-size snapshot and drop only oversized results", async () => {
+  const typical = "- link \"Item\" [ref=e1]\n".repeat(700); // ~18K chars, under the 20K snapshot default
+  const oversized = "x".repeat(30_000);
+  const browser = fakeBrowser({
+    runs: [{ ok: true, result: typical }, { ok: true, result: oversized }],
+  });
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "snapshot()" } }] },
+    { text: "", toolCalls: [{ id: "c2", name: "browser", input: { code: "big" } }] },
+    { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
+  ]);
+  const result = await runAgentTask({ task: "read the page", model, browser });
+  const observations = result.transcript
+    .filter((message) => message.role === "tool" && message.results[0].name === "browser")
+    .map((message) => JSON.parse(message.results[0].content));
+  assert.equal(observations.length, 2);
+  assert.equal(observations[0].result, typical);
+  assert.equal(observations[1].result, "[truncated; inspect via a scoped snapshot]");
+});
+
 test("browser observations preserve attached action directories", async () => {
   for (const directory of [
     { webagents: { source: "untrusted", actions: [{ name: "search", method: "GET" }] } },
@@ -247,7 +267,7 @@ test("large browser observations keep complete directories and recovery metadata
     username: "user", label: null, expiresAt: "2027-01-01T00:00:00Z",
   };
   const browser = fakeBrowser({ runs: [{
-    ok: false, result: "x".repeat(20_000), error: "Submission needs recovery",
+    ok: false, result: "x".repeat(30_000), error: "Submission needs recovery",
     ui, pendingCredential,
   }] });
   const model = scriptedModel([
@@ -984,6 +1004,20 @@ test("repeated or exhausted receipt inspections stop without reopening actions",
     assert.match(result.answer, /No further actions were taken/);
     assert.ok(!result.transcript.some(turn => turn.role === "user" && turn.text?.startsWith("Harness continuation,")));
   }
+});
+
+test("browser time still in flight at interruption counts toward toolMs", async () => {
+  const controller = new AbortController();
+  const browser = fakeBrowser();
+  browser.run = () => new Promise(() => {});
+  const model = scriptedModel([
+    { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "hang" } }] },
+  ]);
+  setTimeout(() => controller.abort(), 60);
+  const result = await runAgentTask({ task: "wait", model, browser, signal: controller.signal });
+  assert.equal(result.reason, "interrupted");
+  assert.ok(result.timing.toolMs >= 50, String(result.timing.toolMs));
+  assert.ok(result.timing.toolMs <= result.durationMs, `${result.timing.toolMs} > ${result.durationMs}`);
 });
 
 test("receipt inspection honors cancellation and the shared task deadline", async () => {

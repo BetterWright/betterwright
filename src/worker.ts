@@ -188,9 +188,15 @@ const MAX_CONSOLE_MESSAGE_CHARS = 300;
 const MAX_PAGES_PER_SESSION = 32;
 const MAX_RESPONSE_PAGES = 32;
 const MAX_TRACKED_ARTIFACTS = 500;
-const MAX_RESULT_ENVELOPE_CHARS = 28_000;
+// Sized so a default-limit run result (below) plus its console, events, and
+// page list fit without sendResult stripping the diagnostics.
+const MAX_RESULT_ENVELOPE_CHARS = 40_000;
 const QUESTION_PAGE_HOLD_MS = 24 * 60 * 60 * 1_000;
-const DEFAULT_OUTPUT_LIMIT = 12_000;
+// Must admit a default-size snapshot (DEFAULT_SNAPSHOT_MAX_CHARS) after JSON
+// escaping, or returning snapshot() spills it to a file and hands the model a
+// preview with the middle cut out. Keep in step with the client's outputLimit
+// default and the agent loop's OBSERVATION_LIMIT.
+const DEFAULT_OUTPUT_LIMIT = 24_000;
 /**
  * How long a single element interaction waits before giving up. Playwright's
  * own default is 30s, which is long enough that an agent burns a step budget
@@ -3135,9 +3141,14 @@ function getUrlFactoryScript() {
     `(fields, urlParts, parseParams, serializeParams) => {
     const pairsOf = new WeakMap();
     const owners = new WeakMap();
+    // Writing the owner's search re-enters the field setter below; the flag
+    // stops it from re-parsing the pairs it was just serialized from.
+    let syncing = false;
     const sync = params => {
       const owner = owners.get(params);
-      if (owner) owner.search = serializeParams(pairsOf.get(params));
+      if (!owner) return;
+      syncing = true;
+      try { owner.search = serializeParams(pairsOf.get(params)); } finally { syncing = false; }
     };
     class URLSearchParams {
       constructor(init = '') {
@@ -3207,9 +3218,11 @@ function getUrlFactoryScript() {
         get() { return partsOf.get(this)[name]; },
         set: name === 'origin' ? undefined : function (value) {
           assign(this, urlParts(partsOf.get(this).href, undefined, name, String(value)));
+          // searchParams keeps its identity (WHATWG) and follows every
+          // mutation of the query, whether through search, href, or the
+          // params object itself.
           const params = paramsOf.get(this);
-          if (params && owners.get(params) === this && name !== 'search') return;
-          paramsOf.delete(this);
+          if (params && !syncing) pairsOf.set(params, parseParams(partsOf.get(this).search));
         },
       });
     }

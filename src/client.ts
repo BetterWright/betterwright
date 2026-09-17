@@ -640,7 +640,7 @@ export class BetterWright {
       searchMinIntervalMs: this.searchMinIntervalMs,
       publicSearchPolicy: this.publicSearchPolicy,
       downloadPolicy: this.hostTarget ? "deny" : this.downloadPolicy,
-      outputLimit: 12_000,
+      outputLimit: 24_000, // keep in step with the worker's DEFAULT_OUTPUT_LIMIT
       maxArtifactBytes: 100 * 1024 * 1024,
       maxDownloadBytes: 50 * 1024 * 1024,
       pageIdleTimeoutMs: 1_800 * 1000,

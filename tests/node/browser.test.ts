@@ -3569,6 +3569,13 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
       edited.searchParams.set('page', '2');
       edited.searchParams.append('sort', 'price');
       edited.hash = '';
+      const retained = new URL('https://x.example/?a=1');
+      const params = retained.searchParams;
+      retained.search = '?b=2';
+      const afterSearch = [params.get('a'), params.get('b'), retained.searchParams === params];
+      retained.href = 'https://y.example/path?c=3';
+      params.append('d', '4');
+      const afterHref = [params.get('b'), params.get('c'), retained.href];
       const invalid = URL.canParse('not a url');
       let invalidMessage = '';
       try { new URL('not a url'); } catch (error) { invalidMessage = error.message; }
@@ -3578,6 +3585,7 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
         editedParams: [...edited.searchParams],
         json: JSON.stringify({ edited }),
         tag: Object.prototype.toString.call(edited),
+        afterSearch, afterHref,
         invalid, invalidMessage,
       };
     `);
@@ -3590,6 +3598,8 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
       editedParams: [["q", "tv"], ["page", "2"], ["sort", "price"]],
       json: '{"edited":"https://shop.example/search?q=tv&page=2&sort=price"}',
       tag: "[object URL]",
+      afterSearch: [null, "2", true],
+      afterHref: [null, "3", "https://y.example/path?c=3&d=4"],
       invalid: false,
       invalidMessage: "Invalid URL: not a url",
     });
@@ -3628,6 +3638,27 @@ test("snapshots admit a typical page by default and cap maxChars at 50000", opts
     assert.match(result.result.fullTail, /Item number 199 with some label text/);
     assert.equal(result.result.cappedLength, result.result.fullLength);
     assert.match(result.result.refused, /over the 1000 limit\. Retry with .*\{maxChars\} up to 50000/);
+  } finally {
+    await bw.close();
+  }
+});
+
+test("a default-size snapshot returned from run arrives whole with its diagnostics", opts, async () => {
+  const bw = new BetterWright({ home: tempHome(), headless: true });
+  try {
+    const result = await bw.run(`
+      const rows = Array.from({length: 200}, (_, i) =>
+        \`<li><a href="/item/\${i}">Item number \${i} with some label text</a></li>\`).join("");
+      await page.setContent(\`<ul>\${rows}</ul>\`);
+      console.log("kept-console-line");
+      return snapshot();
+    `);
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result.truncated, undefined, JSON.stringify(result.result).slice(0, 200));
+    assert.ok(result.result.length > 12_000, String(result.result.length));
+    assert.match(result.result, /Item number 199 with some label text/);
+    assert.equal(result.envelopeTruncated, undefined);
+    assert.ok(result.console.some((entry) => entry.text.includes("kept-console-line")), JSON.stringify(result.console));
   } finally {
     await bw.close();
   }
