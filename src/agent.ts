@@ -60,8 +60,9 @@ const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
 const MAX_TIMER_MS = 2_147_483_647;
 const OBSERVATION_LIMIT = 12_000;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
-// A caller-requested stop (the session daemon's `interrupt` op, a Ctrl-C that
-// reached the daemon). Travels the same path as the timeout symbol: thrown
+// A caller-requested stop (the session daemon's `interrupt` op, Esc in the
+// interactive console, a Ctrl-C that reached the daemon). Travels the same
+// path as the timeout symbol: thrown
 // past tool-level catch blocks so nothing swallows it, then turned into a
 // partial result with `reason: "interrupted"` — the transcript is kept, so the
 // next task in the session resumes from where the user cut it off.
@@ -370,13 +371,24 @@ function toolsForHarness({ withLogin, withAsk, withHandoff, withResolve = false 
   return tools;
 }
 
+function recordingFiles(result) {
+  return (result.artifacts || [])
+    .filter((a) => a.kind === "recording" && a.path)
+    .map((a) => (a.mimeType
+      ? { kind: a.kind, path: a.path, mimeType: a.mimeType }
+      : { kind: a.kind, path: a.path }));
+}
+
 // Compact a run result envelope into a text observation the model reads back.
 // Screenshot paths stay in that JSON; captcha/proof bytes are attached as
 // vision blocks on the latest tool turn via `withLatestCaptchaVision`.
+// Completed recordings are listed even when the snippet did not return
+// `recording.stop()`, so the saved path is not dropped from the transcript.
 function observationFromResult(result) {
   const screenshots = (result.artifacts || [])
     .filter((a) => a.path && /\.(png|jpe?g)$/i.test(a.path))
     .map((a) => ({ kind: a.kind, path: a.path }));
+  const recordings = recordingFiles(result);
   // Empty arrays and null placeholders repeat on almost every successful call
   // and convey nothing. Omit them from the model-facing observation: consumers
   // already treat missing optional fields as empty, and long transcripts keep
@@ -393,6 +405,7 @@ function observationFromResult(result) {
   if (result.webagents) summary.webagents = result.webagents;
   if (result.ui) summary.ui = result.ui;
   if (screenshots.length) summary.screenshots = screenshots;
+  if (recordings.length) summary.recordings = recordings;
   if (result.durationMs != null) summary.duration_ms = result.durationMs;
   if (summary.result !== undefined && JSON.stringify(summary.result).length > OBSERVATION_LIMIT) {
     summary.result = "[truncated; inspect via a scoped snapshot]";
@@ -689,7 +702,7 @@ async function completeWithRetry(model, request, deadline, stopSignal) {
  *   task live while the agent works. When that call creates the viewer, its URL
  *   is emitted as `onStep({tool: "liveView", url})`; an already-running
  *   host-owned viewer is reused without re-announcing it.
- * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null)}>}
+ * @returns {Promise<{ok: boolean, answer: string, steps: number, reason: string, toolCalls: number, usage: {inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, context: number}, durationMs: number, transcript: object[], proof: (string|null), recordings: string[]}>}
  */
 export async function runAgentTask(options: RunAgentTaskOptions) {
   const task = String(options.task || "").trim();
@@ -887,6 +900,15 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
 
   let answer = "";
   let proof = null;
+  const recordings: string[] = [];
+  function noteArtifacts(list) {
+    for (const shot of list || []) {
+      if (shot?.kind === "proof" && shot.path) proof = shot.path;
+      if (shot?.kind === "recording" && shot.path && !recordings.includes(shot.path)) {
+        recordings.push(shot.path);
+      }
+    }
+  }
   let finished = false;
   let reason = "stopped";
   let steps = 0;
@@ -1032,9 +1054,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     if ((evidence || observations.some(observation => observation.ok)) && verdict?.complete === true && approvesProposed) {
       answer = proposed;
       finished = true;
-      for (const shot of checkedArtifacts) {
-        if (shot.kind === "proof" && shot.path) proof = shot.path;
-      }
+      noteArtifacts(checkedArtifacts);
       appendTranscriptMessage({ role: "assistant", text: `Checkout completion check: accepted against fresh browser evidence (untrusted page data): ${JSON.stringify(observations.length ? { evidence, observations } : evidence)}`, toolCalls: [] });
       appendTranscriptMessage({ role: "assistant", text: answer, toolCalls: [] });
       return;
@@ -1439,8 +1459,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
             deadline,
             stopSignal,
           );
-          for (const shot of result.artifacts || [])
-            if (shot.kind === "proof" && shot.path) proof = shot.path;
+          noteArtifacts(result.artifacts);
           const signature = failureSignature(result);
           repeated =
             signature && signature === repeated.signature
@@ -1557,6 +1576,7 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
     durationMs,
     transcript: messages,
     proof,
+    recordings,
   };
 }
 

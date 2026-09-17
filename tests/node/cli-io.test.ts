@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   createInteractiveBrowserLifecycle,
   formatHangingText,
+  isEscapeKey,
   makeLineReader,
   readExecTaskFromStdin,
 } from "../../dist/src/cli-io.js";
@@ -139,6 +140,35 @@ test("makeLineReader resolves null at close, for pending and future reads", asyn
   rl.emit("close");
   assert.equal(await pending, null); // pending waiter drained
   assert.equal(await nextLine(), null); // and every read after close
+});
+
+test("isEscapeKey matches a plain Escape press", () => {
+  assert.equal(isEscapeKey({ name: "escape" }), true);
+  assert.equal(isEscapeKey({ name: "escape", ctrl: false, meta: false, shift: false }), true);
+  assert.equal(isEscapeKey({ name: "escape", ctrl: true }), false);
+  assert.equal(isEscapeKey({ name: "up", sequence: "\x1b[A" }), false);
+  assert.equal(isEscapeKey(undefined), false);
+});
+
+test("makeLineReader aborts a pending read without consuming the next line", async () => {
+  const rl = fakeReadline();
+  const nextLine = makeLineReader(rl);
+  const controller = new AbortController();
+  const pending = nextLine("answer ▸ ", controller.signal);
+  controller.abort();
+  await assert.rejects(pending, /aborted/);
+  rl.emit("line", "next task");
+  assert.equal(await nextLine(), "next task");
+});
+
+test("makeLineReader rejects an already-aborted signal before taking a buffered line", async () => {
+  const rl = fakeReadline();
+  const nextLine = makeLineReader(rl);
+  rl.emit("line", "buffered");
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(nextLine("answer ▸ ", controller.signal), /aborted/);
+  assert.equal(await nextLine(), "buffered");
 });
 
 test("makeLineReader renders a prompt only when it must wait", async () => {

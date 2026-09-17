@@ -205,6 +205,8 @@ export interface AgentResult {
   durationMs: number;
   transcript: AgentMessage[];
   proof: string | null;
+  /** Saved page recordings from this task, in the order they finished. */
+  recordings: string[];
 }
 
 export function runAgentTask(options: RunAgentTaskOptions): Promise<AgentResult>;

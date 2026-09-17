@@ -16,9 +16,22 @@ Releases before 1.1.3 predate this file; their notes live on the
   `BETTERWRIGHT_TYPESAFE_API_KEY` or `TYPESAFE_API_KEY`. It stops on login
   walls, repeated targets, low confidence, and `expect` matches, and never
   fills passwords. See `docs/system-one.md`.
+- `runAgentTask({ systemOne: true })` offers the model a `resolve` tool that
+  hands one ambiguous click to `followIntent()`. Off by default.
 - `controls.directory()` lists controls inside an open dialog before the page
   behind it, so cookie and login modals are visible to batches and
   `followIntent()`.
+
+### Fixed
+
+- Stopping a page recording now keeps the saved file path in the agent
+  observation and on `runAgentTask`'s `recordings` result. The interactive
+  console prints each path after the answer, so a stop that does not return
+  `recording.stop()` still shows where the video was written.
+- Interactive console cost totals (steps, tool calls, duration, tokens, and
+  cache reads) accumulate across messages until `/new`. `context` remains the
+  latest prompt size.
+- Esc stops the current interactive-console task without quitting the session.
 
 ## [2.8.1] - 2026-09-14
 

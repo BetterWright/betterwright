@@ -23,3 +23,37 @@ export function formatAgentUsage(usage: any = {}) {
   parts.push(`context ${n(usage.context)}`);
   return parts.join(" · ");
 }
+
+// Session totals for the interactive console. Steps, tool calls, duration, and
+// token counts add across tasks; `context` stays the latest prompt size.
+export function emptyAgentRunTotals() {
+  return {
+    steps: 0,
+    toolCalls: 0,
+    durationMs: 0,
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      context: 0,
+    },
+  };
+}
+
+export function accumulateAgentRun(total, result) {
+  const prior = total || emptyAgentRunTotals();
+  const usage = result?.usage || {};
+  return {
+    steps: (prior.steps || 0) + (result?.steps || 0),
+    toolCalls: (prior.toolCalls || 0) + (result?.toolCalls || 0),
+    durationMs: (prior.durationMs || 0) + (result?.durationMs || 0),
+    usage: {
+      inputTokens: tokenCount(prior.usage?.inputTokens) + tokenCount(usage.inputTokens),
+      outputTokens: tokenCount(prior.usage?.outputTokens) + tokenCount(usage.outputTokens),
+      cacheReadTokens: tokenCount(prior.usage?.cacheReadTokens) + tokenCount(usage.cacheReadTokens),
+      cacheWriteTokens: tokenCount(prior.usage?.cacheWriteTokens) + tokenCount(usage.cacheWriteTokens),
+      context: tokenCount(usage.context) || tokenCount(prior.usage?.context),
+    },
+  };
+}
