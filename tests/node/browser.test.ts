@@ -3539,6 +3539,18 @@ test("usePage and closePage accept the page objects openPage and pages hand out"
     assert.equal(stale.ok, false);
     assert.match(stale.error, /^Unknown page page object page-\d+; available: page-1$/);
     assert.doesNotMatch(stale.error, /\[object Object\]/);
+
+    // Only page facades count as page objects; a locator or the context is
+    // rejected at the boundary instead of reading as an already-closed page.
+    const locator = await bw.run("await closePage(page.locator('h1'));");
+    assert.equal(locator.ok, false);
+    assert.equal(
+      locator.error,
+      "closePage page handle must be a page ID string, numeric index, or page object, received object.",
+    );
+    const ctx = await bw.run("await usePage(context);");
+    assert.equal(ctx.ok, false);
+    assert.match(ctx.error, /^usePage page handle must be a page ID string, numeric index, or page object/);
   } finally {
     await bw.close();
   }
@@ -3553,14 +3565,47 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
       const absolute = new URL(href, 'https://example.com/list/').href;
       const id = new URL(absolute).searchParams.get('id');
       const query = new URLSearchParams({ q: 'oled tv', size: '65' }).toString();
-      return { absolute, id, query };
+      const edited = new URL('https://shop.example/search?q=tv&page=1#top');
+      edited.searchParams.set('page', '2');
+      edited.searchParams.append('sort', 'price');
+      edited.hash = '';
+      const invalid = URL.canParse('not a url');
+      let invalidMessage = '';
+      try { new URL('not a url'); } catch (error) { invalidMessage = error.message; }
+      return {
+        absolute, id, query,
+        edited: edited.href,
+        editedParams: [...edited.searchParams],
+        json: JSON.stringify({ edited }),
+        tag: Object.prototype.toString.call(edited),
+        invalid, invalidMessage,
+      };
     `);
     assert.equal(result.ok, true, result.error);
     assert.deepEqual(result.result, {
       absolute: "https://example.com/item?id=7&x=1",
       id: "7",
       query: "q=oled+tv&size=65",
+      edited: "https://shop.example/search?q=tv&page=2&sort=price",
+      editedParams: [["q", "tv"], ["page", "2"], ["sort", "price"]],
+      json: '{"edited":"https://shop.example/search?q=tv&page=2&sort=price"}',
+      tag: "[object URL]",
+      invalid: false,
+      invalidMessage: "Invalid URL: not a url",
     });
+
+    // The classes live in the snippet realm: their constructor chain is the
+    // realm's own Function, and that realm cannot compile strings.
+    const escapeAttempt = await bw.run(`
+      const realmFunction = (() => {}).constructor;
+      const chain = [URL, URLSearchParams, new URL('https://a.b/'), new URLSearchParams('a=1')]
+        .map((value) => value.constructor === realmFunction || value.constructor.constructor === realmFunction);
+      let compiled = 'not attempted';
+      try { compiled = URL.constructor('return typeof process')(); } catch (error) { compiled = error.constructor.name; }
+      return { chain, compiled };
+    `);
+    assert.equal(escapeAttempt.ok, true, escapeAttempt.error);
+    assert.deepEqual(escapeAttempt.result, { chain: [true, true, true, true], compiled: "EvalError" });
   } finally {
     await bw.close();
   }

@@ -2825,7 +2825,7 @@ function validateMethodArguments(property, args) {
 }
 
 function assertPageHandle(value, helper) {
-  if (isString(value) || isNumber(value) || facadeToRaw.has(value)) return;
+  if (isString(value) || isNumber(value) || objectKind(facadeToRaw.get(value)) === "Page") return;
   throw new TypeError(
     `${helper} page handle must be a page ID string, numeric index, or page object, received ${argumentType(value)}.`,
   );
@@ -3107,6 +3107,127 @@ function getRealmFactoryScript() {
     { filename: "browser-playwright-realm.js" },
   );
   return realmFactoryScript;
+}
+
+// WHATWG URL is not a JS intrinsic, so a fresh vm context lacks it, and the
+// host's `URL` cannot be handed over: its `constructor` is the host realm's
+// `Function`, which compiles code outside the context's restrictions. These
+// classes live in the snippet realm and only ever receive strings and arrays
+// of strings from the host, which `adopt` turns into realm values.
+const URL_FIELDS = ["href", "protocol", "username", "password", "host", "hostname", "port", "pathname", "search", "hash", "origin"];
+
+function urlParts(input, base, field, value) {
+  let url;
+  try {
+    url = new URL(input, base);
+  } catch {
+    throw new TypeError(`Invalid URL: ${input}`);
+  }
+  if (field) url[field] = value;
+  return URL_FIELDS.map((name) => url[name]);
+}
+
+let urlFactoryScript = null;
+
+function getUrlFactoryScript() {
+  if (urlFactoryScript) return urlFactoryScript;
+  urlFactoryScript = new vm.Script(
+    `(fields, urlParts, parseParams, serializeParams) => {
+    const pairsOf = new WeakMap();
+    const owners = new WeakMap();
+    const sync = params => {
+      const owner = owners.get(params);
+      if (owner) owner.search = serializeParams(pairsOf.get(params));
+    };
+    class URLSearchParams {
+      constructor(init = '') {
+        let pairs;
+        if (init instanceof URLSearchParams) pairs = pairsOf.get(init).map(pair => [...pair]);
+        else if (Array.isArray(init)) pairs = init.map(([key, value]) => [String(key), String(value)]);
+        else if (init && typeof init === 'object') pairs = Object.entries(init).map(([key, value]) => [key, String(value)]);
+        else pairs = parseParams(String(init));
+        pairsOf.set(this, pairs);
+      }
+      get size() { return pairsOf.get(this).length; }
+      append(key, value) { pairsOf.get(this).push([String(key), String(value)]); sync(this); }
+      delete(key, value) {
+        key = String(key);
+        pairsOf.set(this, pairsOf.get(this).filter(([k, v]) => k !== key || (value !== undefined && v !== String(value))));
+        sync(this);
+      }
+      get(key) { key = String(key); const hit = pairsOf.get(this).find(([k]) => k === key); return hit ? hit[1] : null; }
+      getAll(key) { key = String(key); return pairsOf.get(this).filter(([k]) => k === key).map(([, v]) => v); }
+      has(key, value) { key = String(key); return pairsOf.get(this).some(([k, v]) => k === key && (value === undefined || v === String(value))); }
+      set(key, value) {
+        key = String(key);
+        const pairs = pairsOf.get(this);
+        const index = pairs.findIndex(([k]) => k === key);
+        if (index < 0) pairs.push([key, String(value)]);
+        else {
+          pairs[index] = [key, String(value)];
+          pairsOf.set(this, pairs.filter(([k], i) => i <= index || k !== key));
+        }
+        sync(this);
+      }
+      sort() { pairsOf.get(this).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)); sync(this); }
+      forEach(callback, thisArg) { for (const [key, value] of pairsOf.get(this)) callback.call(thisArg, value, key, this); }
+      keys() { return pairsOf.get(this).map(([key]) => key)[Symbol.iterator](); }
+      values() { return pairsOf.get(this).map(([, value]) => value)[Symbol.iterator](); }
+      entries() { return pairsOf.get(this).map(pair => [...pair])[Symbol.iterator](); }
+      [Symbol.iterator]() { return this.entries(); }
+      toString() { return serializeParams(pairsOf.get(this)); }
+      get [Symbol.toStringTag]() { return 'URLSearchParams'; }
+    }
+    const partsOf = new WeakMap();
+    const paramsOf = new WeakMap();
+    const assign = (url, values) => partsOf.set(url, Object.fromEntries(fields.map((name, i) => [name, values[i]])));
+    class URL {
+      constructor(input, base) {
+        assign(this, urlParts(String(input), base === undefined ? undefined : String(base)));
+      }
+      static canParse(input, base) { try { new URL(input, base); return true; } catch { return false; } }
+      static parse(input, base) { try { return new URL(input, base); } catch { return null; } }
+      get searchParams() {
+        let params = paramsOf.get(this);
+        if (!params) {
+          params = new URLSearchParams(partsOf.get(this).search);
+          owners.set(params, this);
+          paramsOf.set(this, params);
+        }
+        return params;
+      }
+      toString() { return partsOf.get(this).href; }
+      toJSON() { return partsOf.get(this).href; }
+      get [Symbol.toStringTag]() { return 'URL'; }
+    }
+    for (const name of fields) {
+      Object.defineProperty(URL.prototype, name, {
+        configurable: true,
+        enumerable: true,
+        get() { return partsOf.get(this)[name]; },
+        set: name === 'origin' ? undefined : function (value) {
+          assign(this, urlParts(partsOf.get(this).href, undefined, name, String(value)));
+          const params = paramsOf.get(this);
+          if (params && owners.get(params) === this && name !== 'search') return;
+          paramsOf.delete(this);
+        },
+      });
+    }
+    return { URL, URLSearchParams };
+  }`,
+    { filename: "browser-url-realm.js" },
+  );
+  return urlFactoryScript;
+}
+
+function createUrlGlobals(realm) {
+  const factory = getUrlFactoryScript().runInContext(realm.context);
+  return factory(
+    realm.adopt(URL_FIELDS),
+    realm.safeFunction(urlParts),
+    realm.safeFunction((init) => [...new URLSearchParams(init)]),
+    realm.safeFunction((pairs) => new URLSearchParams(pairs).toString()),
+  );
 }
 
 function createRealm(context, pageEvents) {
@@ -5027,10 +5148,7 @@ function buildSandbox(session, consoleMessages, execution) {
   sandbox.console = Object.freeze(consoleFacade);
   sandbox.context = wrap(browserContext, realm);
   sandbox.state = session.state;
-  // WHATWG URL is not a JS intrinsic, so a fresh vm context lacks it; snippets
-  // that resolve hrefs or read query strings need it as much as `JSON`.
-  sandbox.URL = URL;
-  sandbox.URLSearchParams = URLSearchParams;
+  Object.assign(sandbox, createUrlGlobals(realm));
   sandbox.pages = realm.makePages(getPages);
   sandbox.openPage = realm.safeFunction(async (url = null, options: any = {}) => {
     if (launchConfig.hostOwnedTarget) throw new Error("Open another tab through the host.");

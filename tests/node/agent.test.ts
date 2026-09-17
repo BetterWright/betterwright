@@ -384,8 +384,13 @@ test("runAgentTask splits wall-clock into model and browser time", async () => {
     await sleep(30);
     return { ok: true, result: "seen", artifacts: [], durationMs: 30 };
   };
+  browser.fillCredential = async () => {
+    await sleep(30);
+    return { ok: true, result: "filled", artifacts: [], durationMs: 30 };
+  };
   const model = scriptedModel([
     { text: "", toolCalls: [{ id: "c1", name: "browser", input: { code: "1" } }] },
+    { text: "", toolCalls: [{ id: "l1", name: "login", input: { submit: false } }] },
     { text: "", toolCalls: [{ id: "d1", name: "done", input: { answer: "ok" } }] },
   ]);
   const complete = model.complete;
@@ -397,10 +402,10 @@ test("runAgentTask splits wall-clock into model and browser time", async () => {
   const result = await runAgentTask({ task: "time it", model, browser });
 
   assert.equal(result.ok, true);
-  // Two model turns of 40ms and one browser call of 30ms; timers may fire a
-  // hair early, so the bounds leave a few milliseconds of slack.
-  assert.ok(result.timing.modelMs >= 70, `modelMs ${result.timing.modelMs}`);
-  assert.ok(result.timing.toolMs >= 25, `toolMs ${result.timing.toolMs}`);
+  // Three model turns of 40ms, one browser run and one credential fill of
+  // 30ms each; timers may fire a hair early, so the bounds leave slack.
+  assert.ok(result.timing.modelMs >= 110, `modelMs ${result.timing.modelMs}`);
+  assert.ok(result.timing.toolMs >= 55, `toolMs ${result.timing.toolMs}`);
   assert.ok(
     result.timing.modelMs + result.timing.toolMs <= result.durationMs,
     `split ${JSON.stringify(result.timing)} exceeds durationMs ${result.durationMs}`,

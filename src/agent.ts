@@ -880,14 +880,15 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
       modelMs += Date.now() - startedAt;
     }
   }
-  async function timedRun(code, options) {
+  async function timedBrowser(operation) {
     const startedAt = Date.now();
     try {
-      return await browser.run(code, options);
+      return await operation();
     } finally {
       toolMs += Date.now() - startedAt;
     }
   }
+  const timedRun = (code, options) => timedBrowser(() => browser.run(code, options));
   // The current run of identical browser failures, and whether it has gone on
   // long enough to end the task.
   let repeated = { signature: "", count: 0 };
@@ -1172,10 +1173,10 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
           try {
             const remainingSeconds = Math.max(0.001, (deadline - Date.now()) / 1000);
             if (remainingSeconds <= 0.001) throw AGENT_TIMEOUT;
-            const result = await browser.fillCredential({
+            const result = await timedBrowser(() => browser.fillCredential({
               ...normalizeCredentialToolOptions(call.input, { session }),
               timeout: remainingSeconds,
-            });
+            }));
             results.push({ id: call.id, name: call.name, content: observationFromResult(result) });
           } catch (error) {
             if (isControlSignal(error)) throw error;

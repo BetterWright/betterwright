@@ -41,7 +41,7 @@ is indented by default; pass `--pretty` to retain indentation in a pipe or file.
 | `pages` | Live array of open pages in this session. |
 | `openPage(url?, options?)` | Open a new page, optionally navigating. Returns the page. |
 | `usePage(idOrIndexOrPage)` | Make another page current; accepts a `pageId`, an index, or a page object from `openPage`/`pages`. |
-| `closePage(idOrIndex?)` | Close a page (the current one if omitted). |
+| `closePage(idOrIndexOrPage?)` | Close a page (the current one if omitted); accepts the same handles as `usePage`. |
 | `context` | The Playwright `BrowserContext`, with mutating methods removed (see below). |
 
 Pages persist across `run()` calls within the same session, so an agent can
@@ -457,6 +457,14 @@ per-session and never leaves the worker.
 state.startedAt = Date.now();          // step 1
 return Date.now() - state.startedAt;   // a later step
 ```
+
+## URL
+
+`URL` and `URLSearchParams` are available to snippet code with the WHATWG
+API (`new URL(href, base)`, `url.searchParams.get()`, setters on every field
+except `origin`, `URL.canParse()`). They are implemented inside the snippet
+realm rather than handed over from the host, so their constructor chain never
+reaches the host's `Function`.
 
 ## Dialogs
 
