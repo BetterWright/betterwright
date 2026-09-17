@@ -1489,10 +1489,11 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
       if (remainingMs > 250) {
         try {
           noteResult(
-            await browser.run("return recording.status()", {
-              session,
-              timeout: Math.min(5, remainingMs / 1000),
-            }),
+            await withinDeadline(
+              (signal) => browser.run("return recording.status()", { session, signal }),
+              deadline,
+              stopSignal,
+            ),
           );
         } catch {
           /* A status probe must not change the task outcome. */
