@@ -57,15 +57,15 @@ const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_DURATION_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TRANSCRIPT_CHARS = 1_000_000;
 const MAX_TIMER_MS = 2_147_483_647;
-// Matches the worker's default output limit (raw characters) so a default-size
-// snapshot reaches the model intact instead of being replaced by the
+// Matches the worker's default output limit (raw characters) so a result the
+// worker admitted reaches the model intact instead of being replaced by the
 // truncation notice. The model reads the observation as JSON text, so the cap
 // applies to the escaped form: quotes and backslashes, the only escaping
 // ordinary page text incurs, at most double it, and that is the headroom.
 // Control-heavy strings that expand further are what the cap is for. The +2
 // is the surrounding quotes, so a limit-sized string of nothing but quotes
 // still fits.
-const OBSERVATION_LIMIT = 24_000;
+const OBSERVATION_LIMIT = 12_000;
 const MAX_ESCAPED_OBSERVATION_CHARS = OBSERVATION_LIMIT * 2 + 2;
 const AGENT_TIMEOUT = Symbol("agent-timeout");
 // A caller-requested stop (the session daemon's `interrupt` op, Esc in the

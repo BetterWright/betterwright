@@ -191,13 +191,15 @@ const MAX_TRACKED_ARTIFACTS = 500;
 // Sized so a default-limit run result (below) fits with its console, events,
 // and page list without sendResult stripping the diagnostics. A string result
 // counts by its raw length here, as it does for the output limit.
-const MAX_RESULT_ENVELOPE_CHARS = 64_000;
+const MAX_RESULT_ENVELOPE_CHARS = 28_000;
 const QUESTION_PAGE_HOLD_MS = 24 * 60 * 60 * 1_000;
 // Must admit a default-size snapshot (DEFAULT_SNAPSHOT_MAX_CHARS), or
 // returning snapshot() spills it to a file and hands the model a preview with
 // the middle cut out. Keep in step with the client's outputLimit default and
-// the agent loop's OBSERVATION_LIMIT.
-const DEFAULT_OUTPUT_LIMIT = 24_000;
+// the agent loop's OBSERVATION_LIMIT. This is a token budget: every result
+// the model reads is carried by each turn that follows, so raising it costs
+// the whole rest of the task, not one call.
+const DEFAULT_OUTPUT_LIMIT = 12_000;
 /**
  * How long a single element interaction waits before giving up. Playwright's
  * own default is 30s, which is long enough that an agent burns a step budget
@@ -206,11 +208,13 @@ const DEFAULT_OUTPUT_LIMIT = 24_000;
  */
 const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000;
-// A real page's compressed tree is often 12-40K chars. Refusing at 10K sent the
-// model on a scoped re-read (one more round trip) for most first looks, so the
-// default admits a typical page and the ceiling covers a large one.
-const DEFAULT_SNAPSHOT_MAX_CHARS = 20_000;
-const MAX_SNAPSHOT_MAX_CHARS = 50_000;
+// A real page's compressed tree is often 12-40K chars, so a first unscoped
+// snapshot is usually refused with scoping hints. That round trip is cheaper
+// than carrying a 20K+ tree in context for every later turn: doubling these
+// caps in 2.8.5 grew final context 11-43% on shopping tasks without saving
+// wall-clock. The ceiling is for a snippet that knows it needs a large tree.
+const DEFAULT_SNAPSHOT_MAX_CHARS = 10_000;
+const MAX_SNAPSHOT_MAX_CHARS = 20_000;
 /**
  * Hard ceiling on graceful shutdown. If the browser or a page handler wedges,
  * the process still exits rather than lingering and holding the profile lock.

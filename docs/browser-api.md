@@ -131,7 +131,7 @@ halves the size of a real page's tree without losing anything actionable.
 | `selector` | — | Scope the snapshot to a CSS selector, e.g. `{selector: '#main'}`. |
 | `depth` | — | Limit tree depth. |
 | `urls` | `false` | Keep `- /url:` property lines on links. |
-| `maxChars` | `20000` | Size limit, capped at 50000. An over-limit snapshot returns a diagnostic string with the actual size and scoping hints instead of a cut-off tree. It does not throw or make the run envelope fail. |
+| `maxChars` | `10000` | Size limit, capped at 20000. An over-limit snapshot returns a diagnostic string with the actual size and scoping hints instead of a cut-off tree. It does not throw or make the run envelope fail. |
 | `timeout` | `5000` | Milliseconds. |
 
 Interactive snapshots retain short text beside list/table controls, table column

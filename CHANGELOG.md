@@ -9,6 +9,20 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- Observation caps are back at their 2.8.2 sizes: `snapshot()` admits 10,000
+  characters by default (`maxChars` up to 20,000), the default run output
+  limit is 12,000, the agent loop drops observations over 12,000 (with the
+  same headroom for JSON escaping), and the result envelope keeps its
+  diagnostics up to 28,000. 2.8.5 doubled all of these so a large first
+  snapshot arrived whole, but every result the model reads is carried by each
+  turn that follows: in a head-to-head on shopping tasks the final context
+  grew 11-43% with no wall-clock gain. A refused snapshot's scoping hints
+  cost one round trip; a 20K tree costs every turn after it. The 5-second
+  action timeout, raw-length measurement of string results, and `timing`
+  split from 2.8.5 are unchanged.
+
 ## [2.8.5] - 2026-09-17
 
 ### Changed
