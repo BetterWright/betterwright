@@ -120,8 +120,8 @@ function isRenameCollision(error) {
   return ["EEXIST", "ENOTEMPTY"].includes(error?.code);
 }
 
-function isWindowsRenameDestinationError(error) {
-  return process.platform === "win32" && ["EACCES", "EPERM"].includes(error?.code);
+function isWindowsRenameDestinationError(error, platform: string = process.platform) {
+  return platform === "win32" && ["EACCES", "EPERM"].includes(error?.code);
 }
 
 async function pathExists(candidate) {
@@ -1219,13 +1219,21 @@ async function createLockCandidate(lockPath, token) {
   }
 }
 
-async function relocateWindowsLockCandidate(candidatePath) {
+async function relocateWindowsLockCandidate(candidatePath, renameFn = rename) {
   const relocated = `${candidatePath}.relocated`;
-  await rename(candidatePath, relocated);
+  await renameFn(candidatePath, relocated);
   return relocated;
 }
 
-async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
+async function acquireLock(
+  paths,
+  timeoutMs,
+  staleMs,
+  afterPublish = null,
+  io: { rename?: typeof rename; platform?: string } = {},
+) {
+  const renameFn = isCallable(io.rename) ? io.rename : rename;
+  const platform = isString(io.platform) ? io.platform : process.platform;
   const started = Date.now();
   while (true) {
     const token = randomUUID();
@@ -1237,7 +1245,7 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
       let relocatedWindowsCandidate = false;
       while (true) {
         try {
-          await rename(candidate.path, paths.lock);
+          await renameFn(candidate.path, paths.lock);
           published = true;
           if (candidate.leaseHandle === null) {
             // Windows: the lease handle could not be held across the publish
@@ -1253,7 +1261,7 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
           await afterPublish?.(paths.lock);
           break;
         } catch (error) {
-          if (isWindowsRenameDestinationError(error)) {
+          if (isWindowsRenameDestinationError(error, platform)) {
             const current = await readLockDirectory(paths.lock);
             if (current !== null) {
               windowsPublishContention = true;
@@ -1273,7 +1281,7 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
               // can move, the source and parent are writable, so the
               // original EPERM was dest contention.
               try {
-                candidate.path = await relocateWindowsLockCandidate(candidate.path);
+                candidate.path = await relocateWindowsLockCandidate(candidate.path, renameFn);
                 relocatedWindowsCandidate = true;
                 windowsPublishContention = true;
                 continue;
@@ -1450,6 +1458,8 @@ export class LocalCredentialVault {
   #beforeGeneratePersistForTest = null;
   #afterGeneratePersistForTest = null;
   #afterLockPublishForTest = null;
+  #renameForTest = null;
+  #lockPlatformForTest = null;
   declare dir: string;
   declare paths: {
     key: string;
@@ -1517,6 +1527,25 @@ export class LocalCredentialVault {
     if (isCallable(resolved._afterLockPublishForTest)) {
       this.#afterLockPublishForTest = resolved._afterLockPublishForTest;
     }
+    if (isCallable(resolved._renameForTest)) {
+      this.#renameForTest = resolved._renameForTest;
+    }
+    if (isString(resolved._lockPlatformForTest)) {
+      this.#lockPlatformForTest = resolved._lockPlatformForTest;
+    }
+  }
+
+  #acquireLock() {
+    return acquireLock(
+      this.paths,
+      this.lockTimeoutMs,
+      this.staleLockMs,
+      this.#afterLockPublishForTest,
+      {
+        rename: this.#renameForTest || rename,
+        platform: this.#lockPlatformForTest || process.platform,
+      },
+    );
   }
 
   #trackSecret(value) {
@@ -2099,12 +2128,7 @@ export class LocalCredentialVault {
     const target = normalizeHttpOrigin(origin);
     return serialize(this.dir, async () => {
       await ensurePrivateDirectory(this.dir);
-      const release = await acquireLock(
-        this.paths,
-        this.lockTimeoutMs,
-        this.staleLockMs,
-        this.#afterLockPublishForTest,
-      );
+      const release = await this.#acquireLock();
       let result;
       let failure = null;
       try {
@@ -2174,7 +2198,7 @@ export class LocalCredentialVault {
    */
   async #readSnapshot() {
     if (!(await pathExists(this.paths.data))) return null;
-    const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+    const release = await this.#acquireLock();
     try {
       const { key, snapshot } = await this.#load();
       key.fill(0);
@@ -2286,7 +2310,7 @@ export class LocalCredentialVault {
     const wanted = requiredString(String(id ?? ""), "Credential id", 256);
     return serialize(this.dir, async () => {
       await ensurePrivateDirectory(this.dir);
-      const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+      const release = await this.#acquireLock();
       try {
         await release.assertOwned();
         if (!(await pathExists(this.paths.data))) {
@@ -2425,7 +2449,7 @@ export class LocalCredentialVault {
   async #ownerTransaction<T>(operation: () => Promise<T>): Promise<T> {
     return serialize(this.dir, async () => {
       await ensurePrivateDirectory(this.dir);
-      const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+      const release = await this.#acquireLock();
       try {
         await release.assertOwned();
         return await operation();
