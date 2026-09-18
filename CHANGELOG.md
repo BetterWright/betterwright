@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.8.6] - 2026-09-18
+
 ### Changed
 
 - Observation caps are back at their 2.8.2 sizes: `snapshot()` admits 10,000
@@ -1759,7 +1761,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.5...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.6...HEAD
+[2.8.6]: https://github.com/BetterWright/betterwright/compare/v2.8.5...v2.8.6
 [2.8.5]: https://github.com/BetterWright/betterwright/compare/v2.8.2...v2.8.5
 [2.8.2]: https://github.com/BetterWright/betterwright/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/BetterWright/betterwright/compare/v2.8.0...v2.8.1
