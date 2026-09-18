@@ -1,7 +1,7 @@
 ---
 name: browser
 description: Drive a persistent, policy-guarded real web browser via the betterwright CLI. Use for any task that needs the live web — logging in, filling forms, booking, buying, or reading a page an API will not give you.
-generated_by: betterwright@2.8.6
+generated_by: betterwright@2.8.7
 ---
 
 # BetterWright browser
@@ -26,6 +26,7 @@ The user's request authorizes ordinary steps: sign-in, signup, forms, purchases.
 - Inspect only when structure is unknown or a locator failed: `snapshot({interactive:true})`, then full `snapshot()`; use `screenshot({annotate:true})` only for layout/pixels. Snapshots include frames and off-screen content. Never guess refs, URLs, or state.
 - Act on `[ref=eN]` with `page.locator('aria-ref=eN')`; scope with `snapshot({ref:'eN'})`. Refs change. Verify with URL/locator reads; `snapshot({diff:true})` for broader changes.
 - Actions auto-wait 5s (`{timeout}` for a known slow transition); reads don't: wait on the locator, no sleeps. If obscured, inspect the real hit target; change approach after two failures. Back off 30–60s on transient 5xx/timeouts/resets.
+- Autocomplete, combobox, and date-picker fields rewrite the DOM on input: end the batch at the first such fill and observe before continuing.
 - Prefer `human.click`, `human.type`, and `human.scroll`. Put a short `note` on each call.
 - Use `webagents.discover()`; one `webagents.batch(operations,{allowWrites:true})`. Else `webmcp.tools()`, then `result.ui` targets in `controls.batch(operations,{allowWrites:true})`; end with expected `read`/`readUrl`, or add `observe:true` and assess evidence. Snapshot only if absent. `allowAutosubmit:true` needs authorization.
 - Use host search; never automate Google/Bing search UI or invent deep URLs. Read returned skill packs and `credential-manager` before login/signup/checkout. Dismiss only nonessential overlays with `overlays.dismiss()`.
