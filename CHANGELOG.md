@@ -9,6 +9,13 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, a vault lock publish rename that returns EPERM or EACCES is
+  always treated as lock contention, even when the destination is already
+  gone. Simultaneous stale-lock recovery could otherwise fail a writer
+  with a raw filesystem error after one retry.
+
 ## [2.8.7] - 2026-09-18
 
 ### Changed

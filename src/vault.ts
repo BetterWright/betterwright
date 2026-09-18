@@ -1126,7 +1126,8 @@ function startLockHeartbeat(lockPath, token, handle, staleMs) {
 // rename can lose that race repeatedly but never for long. Retry briefly;
 // the pin vanishes as soon as the reader's descriptor closes. The lock's
 // publish rename deliberately does not come through here: EPERM there is
-// the collision signal that tells a contender the lock is already taken.
+// the collision signal that tells a contender the lock is already taken,
+// including when the winner has already released and the dest is gone.
 async function renameOutlastingReaders(from, to) {
   if (process.platform !== "win32") return rename(from, to);
   let delay = 5;
@@ -1223,7 +1224,6 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
   while (true) {
     const token = randomUUID();
     const candidate = await createLockCandidate(paths.lock, token);
-    let observedWindowsDestination = false;
     let published = false;
     try {
       let retriedWindowsReleaseRace = false;
@@ -1247,18 +1247,17 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
         } catch (error) {
           if (isWindowsRenameDestinationError(error)) {
             const current = await readLockDirectory(paths.lock);
-            if (current !== null) {
-              observedWindowsDestination = true;
-              throw error;
+            if (current !== null) throw error;
+            if (!retriedWindowsReleaseRace) {
+              // Windows reports an existing destination as EACCES/EPERM. The
+              // owner may release between that error and our observation, so
+              // retry this intact candidate once. If the dest is still gone,
+              // the outer loop treats the same error as contention instead
+              // of a hard access failure — 24-way stale-lock recovery can
+              // miss a dest that existed only long enough to reject rename.
+              retriedWindowsReleaseRace = true;
+              continue;
             }
-          }
-          if (isWindowsRenameDestinationError(error) && !retriedWindowsReleaseRace) {
-            // Windows reports an existing destination as EACCES/EPERM. The
-            // owner may release between that error and our observation, so
-            // retry this intact candidate once before treating it as a real
-            // access failure.
-            retriedWindowsReleaseRace = true;
-            continue;
           }
           throw error;
         }
@@ -1303,10 +1302,7 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
       await rm(candidate.path, { recursive: true, force: true }).catch(() => {});
       if (published) throw error;
       const contention =
-        isRenameCollision(error) ||
-        (isWindowsRenameDestinationError(error) &&
-          (observedWindowsDestination ||
-            (await readLockDirectory(paths.lock)) !== null));
+        isRenameCollision(error) || isWindowsRenameDestinationError(error);
       if (!contention) throw error;
     }
 
