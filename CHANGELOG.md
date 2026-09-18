@@ -9,6 +9,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- The agent prompt now tells the model to end a batch at the first autocomplete, combobox, or date-picker fill and observe before continuing. Those fields rewrite the DOM on input, so later actions in the same batch ran against a page the model had never seen. On Google Flights over three paired local runs this cut failed actions from 5-9 per run to 3-5 and wall-clock from 121-225s to 115-156s.
+
 ## [2.8.6] - 2026-09-18
 
 ### Changed

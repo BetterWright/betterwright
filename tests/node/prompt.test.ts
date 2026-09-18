@@ -8,7 +8,7 @@ test("default prompt is permissive", () => {
   const compact = prompt.replace(/\s+/g, " ");
   // Qwen 3.8 Max's winning prompt variant cut total task tokens by 23.1%.
   // Preserve that gain: critical behavior belongs below, not in explanation.
-  assert.ok(prompt.length < 4_200, `default prompt grew to ${prompt.length} characters`);
+  assert.ok(prompt.length < 4_340, `default prompt grew to ${prompt.length} characters`);
   assert.ok(compact.includes("discover missing tool names once"));
   assert.ok(compact.includes("Match requested response formats exactly"));
   assert.ok(compact.includes("`observe:true` and assess evidence"));
@@ -18,6 +18,7 @@ test("default prompt is permissive", () => {
   assert.ok(compact.includes("request authorizes ordinary steps"));
   assert.ok(compact.includes("Do not add confirmation or refuse them"));
   assert.ok(compact.includes("Plan then batch"));
+  assert.ok(compact.includes("end the batch at the first such fill and observe"));
   assert.ok(compact.includes("Host cleanup is automatic"));
   assert.ok(compact.includes("getByRole"));
   assert.ok(compact.includes("article/reference pages"));
@@ -78,7 +79,7 @@ test("confirm before purchase adds a clause", () => {
 
 test("verification and proof guidance stays within the existing prompt budget", () => {
   const prompt = agentSystemPrompt();
-  assert.ok(prompt.length <= 4_193, `default prompt grew to ${prompt.length} characters`);
+  assert.ok(prompt.length <= 4_335, `default prompt grew to ${prompt.length} characters`);
   assert.match(prompt, /reads don't: wait on the locator, no sleeps/);
   assert.match(prompt, /observed state, not invented text/);
   assert.match(prompt, /Scroll the verified result into view before `screenshot\(\{kind:'proof'\}\)` in the same call/);
