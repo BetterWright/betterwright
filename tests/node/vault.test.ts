@@ -1338,6 +1338,10 @@ test("a reader holding the data file open does not fail a concurrent save", asyn
 });
 
 test("simultaneous stale-lock recovery cannot unlink a fresh writer lock", async () => {
+  // 24 children race one stale lock. On Windows the publish rename reports
+  // EPERM for an existing dest (research/windows-fs-probe.mjs); the winner
+  // can release before a loser observes it. That must be contention, not a
+  // fatal EPERM — Cross-platform unit tests (windows-latest, 22) on 2.8.7.
   const context = await fixture();
   try {
     await saveLogin(
