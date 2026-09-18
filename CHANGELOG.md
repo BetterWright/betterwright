@@ -11,10 +11,12 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
-- On Windows, a vault lock publish rename that returns EPERM or EACCES is
-  always treated as lock contention, even when the destination is already
-  gone. Simultaneous stale-lock recovery could otherwise fail a writer
-  with a raw filesystem error after one retry.
+- On Windows, a vault lock publish rename that returns EPERM or EACCES
+  while the destination is already gone is treated as lock contention
+  only after the candidate can still rename to a unique sibling.
+  Simultaneous stale-lock recovery no longer fails a writer with a raw
+  filesystem error after one retry, and a lasting ACL denial still
+  surfaces as that access error instead of `VAULT_LOCK_TIMEOUT`.
 
 ## [2.8.7] - 2026-09-18
 

@@ -1219,14 +1219,22 @@ async function createLockCandidate(lockPath, token) {
   }
 }
 
+async function relocateWindowsLockCandidate(candidatePath) {
+  const relocated = `${candidatePath}.relocated`;
+  await rename(candidatePath, relocated);
+  return relocated;
+}
+
 async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
   const started = Date.now();
   while (true) {
     const token = randomUUID();
     const candidate = await createLockCandidate(paths.lock, token);
     let published = false;
+    let windowsPublishContention = false;
     try {
       let retriedWindowsReleaseRace = false;
+      let relocatedWindowsCandidate = false;
       while (true) {
         try {
           await rename(candidate.path, paths.lock);
@@ -1247,17 +1255,33 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
         } catch (error) {
           if (isWindowsRenameDestinationError(error)) {
             const current = await readLockDirectory(paths.lock);
-            if (current !== null) throw error;
+            if (current !== null) {
+              windowsPublishContention = true;
+              throw error;
+            }
             if (!retriedWindowsReleaseRace) {
               // Windows reports an existing destination as EACCES/EPERM. The
               // owner may release between that error and our observation, so
-              // retry this intact candidate once. If the dest is still gone,
-              // the outer loop treats the same error as contention instead
-              // of a hard access failure — 24-way stale-lock recovery can
-              // miss a dest that existed only long enough to reject rename.
+              // retry this intact candidate once.
               retriedWindowsReleaseRace = true;
               continue;
             }
+            if (!relocatedWindowsCandidate) {
+              // Dest is gone. A colliding dest that vanished, and a real
+              // ACL that forbids the publish rename, look the same. A
+              // unique sibling rename tells them apart: if this candidate
+              // can move, the source and parent are writable, so the
+              // original EPERM was dest contention.
+              try {
+                candidate.path = await relocateWindowsLockCandidate(candidate.path);
+                relocatedWindowsCandidate = true;
+                windowsPublishContention = true;
+                continue;
+              } catch {
+                throw error;
+              }
+            }
+            windowsPublishContention = true;
           }
           throw error;
         }
@@ -1301,8 +1325,7 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
       await candidate.leaseHandle?.close().catch(() => {});
       await rm(candidate.path, { recursive: true, force: true }).catch(() => {});
       if (published) throw error;
-      const contention =
-        isRenameCollision(error) || isWindowsRenameDestinationError(error);
+      const contention = isRenameCollision(error) || windowsPublishContention;
       if (!contention) throw error;
     }
 
