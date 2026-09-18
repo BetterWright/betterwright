@@ -284,11 +284,11 @@ test("successful browser observations omit empty optional fields", async () => {
 });
 
 test("browser observations keep a default-size snapshot and drop only oversized results", async () => {
-  const typical = "- link \"Item\" [ref=e1]\n".repeat(700); // ~18K chars, under the 20K snapshot default
-  // 21K raw chars that JSON-escape to 25.5K: measured as the model reads it.
-  const escapeHeavy = 'say "hi" \\ ok '.repeat(1500);
-  // The worst a worker-admitted string can escape to: 24K quotes become 48,002.
-  const allQuotes = '"'.repeat(24_000);
+  const typical = "- link \"Item\" [ref=e1]\n".repeat(350); // ~9K chars, under the 10K snapshot default
+  // 10.5K raw chars that JSON-escape to 12.75K: measured as the model reads it.
+  const escapeHeavy = 'say "hi" \\ ok '.repeat(750);
+  // The worst a worker-admitted string can escape to: 12K quotes become 24,002.
+  const allQuotes = '"'.repeat(12_000);
   const oversized = "x".repeat(50_000);
   // 12K raw chars the worker would admit, but 72K as the model reads them.
   const controlHeavy = "\u0001".repeat(12_000);
@@ -315,13 +315,13 @@ test("browser observations keep a default-size snapshot and drop only oversized 
     .map((message) => JSON.parse(message.results[0].content));
   assert.equal(observations.length, 5);
   assert.equal(observations[0].result, typical);
-  assert.ok(JSON.stringify(escapeHeavy).length > 24_000);
+  assert.ok(JSON.stringify(escapeHeavy).length > 12_000);
   assert.equal(observations[1].result, escapeHeavy);
   assert.equal(observations[2].result, allQuotes);
   assert.equal(observations[3].result, "[truncated; inspect via a scoped snapshot]");
   assert.equal(observations[4].result, "[truncated; inspect via a scoped snapshot]");
   for (const message of result.transcript.filter((m) => m.role === "tool")) {
-    assert.ok(message.results[0].content.length < 60_000, String(message.results[0].content.length));
+    assert.ok(message.results[0].content.length < 30_000, String(message.results[0].content.length));
   }
 });
 

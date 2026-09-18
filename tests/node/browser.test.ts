@@ -3662,11 +3662,11 @@ test("snippet code can use URL and URLSearchParams", opts, async () => {
   }
 });
 
-test("snapshots admit a typical page by default and cap maxChars at 50000", opts, async () => {
+test("snapshots admit a modest page by default and cap maxChars at 20000", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
     const result = await bw.run(`
-      const rows = Array.from({length: 200}, (_, i) =>
+      const rows = Array.from({length: 100}, (_, i) =>
         \`<li><a href="/item/\${i}">Item number \${i} with some label text</a></li>\`).join("");
       await page.setContent(\`<ul>\${rows}</ul>\`);
       const full = await snapshot();
@@ -3675,10 +3675,10 @@ test("snapshots admit a typical page by default and cap maxChars at 50000", opts
       return { fullLength: full.length, fullTail: full.slice(-60), cappedLength: capped.length, refused };
     `);
     assert.equal(result.ok, true, result.error);
-    assert.ok(result.result.fullLength > 10_000 && result.result.fullLength <= 20_000, String(result.result.fullLength));
-    assert.match(result.result.fullTail, /Item number 199 with some label text/);
+    assert.ok(result.result.fullLength > 5_000 && result.result.fullLength <= 10_000, String(result.result.fullLength));
+    assert.match(result.result.fullTail, /Item number 99 with some label text/);
     assert.equal(result.result.cappedLength, result.result.fullLength);
-    assert.match(result.result.refused, /over the 1000 limit\. Retry with .*\{maxChars\} up to 50000/);
+    assert.match(result.result.refused, /over the 1000 limit\. Retry with .*\{maxChars\} up to 20000/);
   } finally {
     await bw.close();
   }
@@ -3687,12 +3687,12 @@ test("snapshots admit a typical page by default and cap maxChars at 50000", opts
 test("a string result is measured before JSON escaping, so quote-heavy text near the limit arrives whole", opts, async () => {
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
-    // 14 chars per repeat, 3 of them escaped in JSON: 21,000 raw, 25,500 serialized.
-    const result = await bw.run(`return 'say "hi" \\\\ ok '.repeat(1500);`);
+    // 14 chars per repeat, 3 of them escaped in JSON: 10,500 raw, 12,750 serialized.
+    const result = await bw.run(`return 'say "hi" \\\\ ok '.repeat(750);`);
     assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
     assert.equal(result.result.truncated, undefined, JSON.stringify(result.result).slice(0, 200));
-    assert.equal(result.result.length, 21_000);
-    assert.ok(JSON.stringify(result.result).length > 24_000);
+    assert.equal(result.result.length, 10_500);
+    assert.ok(JSON.stringify(result.result).length > 12_000);
   } finally {
     await bw.close();
   }
@@ -3716,7 +3716,7 @@ test("a default-size snapshot returned from run arrives whole with its diagnosti
   const bw = new BetterWright({ home: tempHome(), headless: true });
   try {
     const result = await bw.run(`
-      const rows = Array.from({length: 200}, (_, i) =>
+      const rows = Array.from({length: 100}, (_, i) =>
         \`<li><a href="/item/\${i}">Item number \${i} with some label text</a></li>\`).join("");
       await page.setContent(\`<ul>\${rows}</ul>\`);
       console.log("kept-console-line");
@@ -3724,8 +3724,8 @@ test("a default-size snapshot returned from run arrives whole with its diagnosti
     `);
     assert.equal(result.ok, true, result.error);
     assert.equal(result.result.truncated, undefined, JSON.stringify(result.result).slice(0, 200));
-    assert.ok(result.result.length > 12_000, String(result.result.length));
-    assert.match(result.result, /Item number 199 with some label text/);
+    assert.ok(result.result.length > 5_000, String(result.result.length));
+    assert.match(result.result, /Item number 99 with some label text/);
     assert.equal(result.envelopeTruncated, undefined);
     assert.ok(result.console.some((entry) => entry.text.includes("kept-console-line")), JSON.stringify(result.console));
   } finally {
