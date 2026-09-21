@@ -309,15 +309,3 @@ export function staleAgentSkillReport({
   }
   return stale;
 }
-
-/** One-line operator tip, or null when nothing is stale. */
-export function staleAgentSkillTip(report = staleAgentSkillReport()) {
-  if (!report.length) return null;
-  const sample = report[0];
-  const from = sample.installed ? `v${sample.installed}` : "unknown version";
-  const n = report.length;
-  return (
-    `Agent skill is stale (${from} → v${sample.current}, ${n} file${n === 1 ? "" : "s"}). ` +
-    "Run: betterwright skill --install"
-  );
-}

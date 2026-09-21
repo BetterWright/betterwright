@@ -14,7 +14,6 @@ import {
   refreshInstalledAgentSkills,
   resolveSkillInstallPaths,
   staleAgentSkillReport,
-  staleAgentSkillTip,
   stampHostSkillMarkdown,
   wrapClaudeSkillMarkdown,
 } from "../../dist/src/skill-install.js";
@@ -258,9 +257,6 @@ test("staleAgentSkillReport detects version drift on both host skills", () => {
     assert.equal(report.length, 2);
     assert.ok(report.every((entry) => entry.installed === "1.0.0"));
     assert.ok(report.every((entry) => entry.current === "1.1.0"));
-    const tip = staleAgentSkillTip(report);
-    assert.match(tip, /stale/);
-    assert.match(tip, /skill --install/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
