@@ -1279,11 +1279,12 @@ async function acquireLock(
               // ACL that forbids the publish rename, look the same. A
               // unique sibling rename tells them apart: if this candidate
               // can move, the source and parent are writable, so the
-              // original EPERM was dest contention.
+              // original EPERM was dest contention. Contention is only
+              // recorded once a later publish error is classified as such,
+              // so an unrelated failure on the retry still surfaces as-is.
               try {
                 candidate.path = await relocateWindowsLockCandidate(candidate.path, renameFn);
                 relocatedWindowsCandidate = true;
-                windowsPublishContention = true;
                 continue;
               } catch {
                 throw error;

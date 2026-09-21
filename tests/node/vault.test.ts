@@ -1431,6 +1431,35 @@ test("a dest-less Windows publish EPERM that cannot relocate stays an access err
   }
 });
 
+test("an unrelated publish failure after the candidate relocates is not retried as contention", async () => {
+  let publishAttempts = 0;
+  const context = await fixture({
+    lockTimeoutMs: 200,
+    _lockPlatformForTest: "win32",
+    _renameForTest: async (from, to) => {
+      if (path.basename(to) === "vault.lock") {
+        publishAttempts += 1;
+        if (publishAttempts <= 2) {
+          throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+        }
+        throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+      }
+      return rename(from, to);
+    },
+  });
+  try {
+    const started = Date.now();
+    await assert.rejects(
+      context.vault.handleRequest("list", {}, EXAMPLE),
+      (error: any) => error?.code === "ENOSPC",
+    );
+    assert.equal(publishAttempts, 3, "the relocated candidate is published once, then the error surfaces");
+    assert.ok(Date.now() - started < 1_000, "must not wait for the lock timeout");
+  } finally {
+    await context.cleanup();
+  }
+});
+
 test("a replaced live lock is detected without deleting its replacement", async () => {
   let entered;
   let resume;
