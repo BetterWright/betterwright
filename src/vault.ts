@@ -120,8 +120,8 @@ function isRenameCollision(error) {
   return ["EEXIST", "ENOTEMPTY"].includes(error?.code);
 }
 
-function isWindowsRenameDestinationError(error) {
-  return process.platform === "win32" && ["EACCES", "EPERM"].includes(error?.code);
+function isWindowsRenameDestinationError(error, platform: string = process.platform) {
+  return platform === "win32" && ["EACCES", "EPERM"].includes(error?.code);
 }
 
 async function pathExists(candidate) {
@@ -1126,7 +1126,8 @@ function startLockHeartbeat(lockPath, token, handle, staleMs) {
 // rename can lose that race repeatedly but never for long. Retry briefly;
 // the pin vanishes as soon as the reader's descriptor closes. The lock's
 // publish rename deliberately does not come through here: EPERM there is
-// the collision signal that tells a contender the lock is already taken.
+// the collision signal that tells a contender the lock is already taken,
+// including when the winner has already released and the dest is gone.
 async function renameOutlastingReaders(from, to) {
   if (process.platform !== "win32") return rename(from, to);
   let delay = 5;
@@ -1218,18 +1219,33 @@ async function createLockCandidate(lockPath, token) {
   }
 }
 
-async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
+async function relocateWindowsLockCandidate(candidatePath, renameFn = rename) {
+  const relocated = `${candidatePath}.relocated`;
+  await renameFn(candidatePath, relocated);
+  return relocated;
+}
+
+async function acquireLock(
+  paths,
+  timeoutMs,
+  staleMs,
+  afterPublish = null,
+  io: { rename?: typeof rename; platform?: string } = {},
+) {
+  const renameFn = isCallable(io.rename) ? io.rename : rename;
+  const platform = isString(io.platform) ? io.platform : process.platform;
   const started = Date.now();
   while (true) {
     const token = randomUUID();
     const candidate = await createLockCandidate(paths.lock, token);
-    let observedWindowsDestination = false;
     let published = false;
+    let windowsPublishContention = false;
     try {
       let retriedWindowsReleaseRace = false;
+      let relocatedWindowsCandidate = false;
       while (true) {
         try {
-          await rename(candidate.path, paths.lock);
+          await renameFn(candidate.path, paths.lock);
           published = true;
           if (candidate.leaseHandle === null) {
             // Windows: the lease handle could not be held across the publish
@@ -1245,20 +1261,36 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
           await afterPublish?.(paths.lock);
           break;
         } catch (error) {
-          if (isWindowsRenameDestinationError(error)) {
+          if (isWindowsRenameDestinationError(error, platform)) {
             const current = await readLockDirectory(paths.lock);
             if (current !== null) {
-              observedWindowsDestination = true;
+              windowsPublishContention = true;
               throw error;
             }
-          }
-          if (isWindowsRenameDestinationError(error) && !retriedWindowsReleaseRace) {
-            // Windows reports an existing destination as EACCES/EPERM. The
-            // owner may release between that error and our observation, so
-            // retry this intact candidate once before treating it as a real
-            // access failure.
-            retriedWindowsReleaseRace = true;
-            continue;
+            if (!retriedWindowsReleaseRace) {
+              // Windows reports an existing destination as EACCES/EPERM. The
+              // owner may release between that error and our observation, so
+              // retry this intact candidate once.
+              retriedWindowsReleaseRace = true;
+              continue;
+            }
+            if (!relocatedWindowsCandidate) {
+              // Dest is gone. A colliding dest that vanished, and a real
+              // ACL that forbids the publish rename, look the same. A
+              // unique sibling rename tells them apart: if this candidate
+              // can move, the source and parent are writable, so the
+              // original EPERM was dest contention. Contention is only
+              // recorded once a later publish error is classified as such,
+              // so an unrelated failure on the retry still surfaces as-is.
+              try {
+                candidate.path = await relocateWindowsLockCandidate(candidate.path, renameFn);
+                relocatedWindowsCandidate = true;
+                continue;
+              } catch {
+                throw error;
+              }
+            }
+            windowsPublishContention = true;
           }
           throw error;
         }
@@ -1302,11 +1334,7 @@ async function acquireLock(paths, timeoutMs, staleMs, afterPublish = null) {
       await candidate.leaseHandle?.close().catch(() => {});
       await rm(candidate.path, { recursive: true, force: true }).catch(() => {});
       if (published) throw error;
-      const contention =
-        isRenameCollision(error) ||
-        (isWindowsRenameDestinationError(error) &&
-          (observedWindowsDestination ||
-            (await readLockDirectory(paths.lock)) !== null));
+      const contention = isRenameCollision(error) || windowsPublishContention;
       if (!contention) throw error;
     }
 
@@ -1431,6 +1459,8 @@ export class LocalCredentialVault {
   #beforeGeneratePersistForTest = null;
   #afterGeneratePersistForTest = null;
   #afterLockPublishForTest = null;
+  #renameForTest = null;
+  #lockPlatformForTest = null;
   declare dir: string;
   declare paths: {
     key: string;
@@ -1498,6 +1528,25 @@ export class LocalCredentialVault {
     if (isCallable(resolved._afterLockPublishForTest)) {
       this.#afterLockPublishForTest = resolved._afterLockPublishForTest;
     }
+    if (isCallable(resolved._renameForTest)) {
+      this.#renameForTest = resolved._renameForTest;
+    }
+    if (isString(resolved._lockPlatformForTest)) {
+      this.#lockPlatformForTest = resolved._lockPlatformForTest;
+    }
+  }
+
+  #acquireLock() {
+    return acquireLock(
+      this.paths,
+      this.lockTimeoutMs,
+      this.staleLockMs,
+      this.#afterLockPublishForTest,
+      {
+        rename: this.#renameForTest || rename,
+        platform: this.#lockPlatformForTest || process.platform,
+      },
+    );
   }
 
   #trackSecret(value) {
@@ -2099,12 +2148,7 @@ export class LocalCredentialVault {
     const target = normalizeHttpOrigin(origin);
     return serialize(this.dir, async () => {
       await ensurePrivateDirectory(this.dir);
-      const release = await acquireLock(
-        this.paths,
-        this.lockTimeoutMs,
-        this.staleLockMs,
-        this.#afterLockPublishForTest,
-      );
+      const release = await this.#acquireLock();
       let result;
       let failure = null;
       try {
@@ -2174,7 +2218,7 @@ export class LocalCredentialVault {
    */
   async #readSnapshot() {
     if (!(await pathExists(this.paths.data))) return null;
-    const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+    const release = await this.#acquireLock();
     try {
       const { key, snapshot } = await this.#load();
       key.fill(0);
@@ -2286,7 +2330,7 @@ export class LocalCredentialVault {
     const wanted = requiredString(String(id ?? ""), "Credential id", 256);
     return serialize(this.dir, async () => {
       await ensurePrivateDirectory(this.dir);
-      const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+      const release = await this.#acquireLock();
       try {
         await release.assertOwned();
         if (!(await pathExists(this.paths.data))) {
@@ -2425,7 +2469,7 @@ export class LocalCredentialVault {
   async #ownerTransaction<T>(operation: () => Promise<T>): Promise<T> {
     return serialize(this.dir, async () => {
       await ensurePrivateDirectory(this.dir);
-      const release = await acquireLock(this.paths, this.lockTimeoutMs, this.staleLockMs);
+      const release = await this.#acquireLock();
       try {
         await release.assertOwned();
         return await operation();

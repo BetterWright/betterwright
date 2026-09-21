@@ -1338,6 +1338,10 @@ test("a reader holding the data file open does not fail a concurrent save", asyn
 });
 
 test("simultaneous stale-lock recovery cannot unlink a fresh writer lock", async () => {
+  // 24 children race one stale lock. On Windows the publish rename reports
+  // EPERM for an existing dest (research/windows-fs-probe.mjs); the winner
+  // can release before a loser observes it. A sibling rename of the intact
+  // candidate distinguishes that vanished dest from a lasting ACL denial.
   const context = await fixture();
   try {
     await saveLogin(
@@ -1368,6 +1372,89 @@ test("simultaneous stale-lock recovery cannot unlink a fresh writer lock", async
     );
     assert.equal(listed.credentials.length, 25);
     assert.equal(new Set(listed.credentials.map((record) => record.username)).size, 25);
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("a dest-less Windows publish EPERM succeeds after the candidate relocates", async () => {
+  const events = [];
+  let publishAttempts = 0;
+  const context = await fixture({
+    _lockPlatformForTest: "win32",
+    _renameForTest: async (from, to) => {
+      if (path.basename(to) === "vault.lock") {
+        publishAttempts += 1;
+        events.push(`publish:${publishAttempts}:${path.basename(from)}`);
+        if (publishAttempts <= 2) {
+          throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+        }
+      } else {
+        events.push(`move:${path.basename(from)}->${path.basename(to)}`);
+      }
+      return rename(from, to);
+    },
+  });
+  try {
+    const listed = await context.vault.handleRequest("list", {}, EXAMPLE);
+    assert.deepEqual(listed.credentials, []);
+    assert.equal(publishAttempts, 3);
+    assert.match(events[0], /^publish:1:vault\.lock\.candidate\./);
+    assert.match(events[1], /^publish:2:vault\.lock\.candidate\./);
+    assert.match(events[2], /^move:vault\.lock\.candidate\..+\.relocated$/);
+    assert.match(events[3], /^publish:3:vault\.lock\.candidate\..+\.relocated$/);
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("a dest-less Windows publish EPERM that cannot relocate stays an access error", async () => {
+  const context = await fixture({
+    lockTimeoutMs: 200,
+    _lockPlatformForTest: "win32",
+    _renameForTest: async (from, to) => {
+      if (path.basename(to) === "vault.lock" || to.endsWith(".relocated")) {
+        throw Object.assign(new Error("operation not permitted"), { code: "EACCES" });
+      }
+      return rename(from, to);
+    },
+  });
+  try {
+    const started = Date.now();
+    await assert.rejects(
+      context.vault.handleRequest("list", {}, EXAMPLE),
+      (error: any) => error?.code === "EACCES",
+    );
+    assert.ok(Date.now() - started < 1_000, "must not wait for the lock timeout");
+  } finally {
+    await context.cleanup();
+  }
+});
+
+test("an unrelated publish failure after the candidate relocates is not retried as contention", async () => {
+  let publishAttempts = 0;
+  const context = await fixture({
+    lockTimeoutMs: 200,
+    _lockPlatformForTest: "win32",
+    _renameForTest: async (from, to) => {
+      if (path.basename(to) === "vault.lock") {
+        publishAttempts += 1;
+        if (publishAttempts <= 2) {
+          throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+        }
+        throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+      }
+      return rename(from, to);
+    },
+  });
+  try {
+    const started = Date.now();
+    await assert.rejects(
+      context.vault.handleRequest("list", {}, EXAMPLE),
+      (error: any) => error?.code === "ENOSPC",
+    );
+    assert.equal(publishAttempts, 3, "the relocated candidate is published once, then the error surfaces");
+    assert.ok(Date.now() - started < 1_000, "must not wait for the lock timeout");
   } finally {
     await context.cleanup();
   }
