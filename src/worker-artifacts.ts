@@ -543,11 +543,9 @@ export function createWorkerArtifacts<Session extends WorkerArtifactSession>(
   return {
     sessionRecordings,
     artifactDir,
-    configuredLimit,
     downloadByteLimit,
     pruneArtifactQuota,
     reserveArtifactQuota,
-    writeBoundedArtifact,
     makeArtifactPath,
     startSessionRecording,
     sessionRecordingStatus,
@@ -556,7 +554,6 @@ export function createWorkerArtifacts<Session extends WorkerArtifactSession>(
     sessionRecordingIsBusy,
     pageRecordingIsBusy,
     addScreenshotAnnotations,
-    removeAnnotationOverlay,
     removeScreenshotAnnotations,
     captureScreenshot,
   };

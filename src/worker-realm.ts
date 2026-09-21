@@ -19,6 +19,7 @@ import {
   isBoolean,
   isCallable,
   isNumber,
+  isObjectValue,
   isString,
   type UntrustedValue,
   untrustedField,
@@ -98,10 +99,6 @@ const BROWSER_SERIALIZED_CALLBACK_METHODS = new Set([
   "evaluateHandle",
   "waitForFunction",
 ]);
-
-function isObjectValue(value: UntrustedValue): value is UntrustedValue & object {
-  return typeof value === "object" && value !== null;
-}
 
 function isWrappableValue(value: UntrustedValue): value is UntrustedValue & object {
   return (typeof value === "object" || typeof value === "function") && value !== null;
@@ -1033,10 +1030,6 @@ export function createWorkerRealm(deps: WorkerRealmDependencies) {
     return facadeToRaw.get(value) || value;
   }
 
-  function hasFacade(value: UntrustedValue) {
-    return facadeToRaw.has(value);
-  }
-
   return {
     assertModelNavigationUrl,
     assertPageHandle,
@@ -1044,7 +1037,6 @@ export function createWorkerRealm(deps: WorkerRealmDependencies) {
     createUrlGlobals,
     describePageHandle,
     findPageEntry,
-    hasFacade,
     objectKind,
     summarize,
     summarizeSessionPages,

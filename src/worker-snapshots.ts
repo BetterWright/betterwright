@@ -142,8 +142,6 @@ export function createWorkerSnapshots(deps: WorkerSnapshotsDeps) {
   }
 
   return {
-    lastSnapshots,
-    redactPasswordValues,
     snapshotPage,
   };
 }

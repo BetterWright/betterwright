@@ -10,7 +10,7 @@ import { navigationOptions } from "./navigation-defaults.js";
 import { dismissObstructiveOverlays, inspectActionDirectory, inspectControls, inspectMedia } from "./page-inspect.js";
 import { siteTextExcerpts } from "./site-tools.js";
 import { executeUIBatch } from "./ui-batch.js";
-import { isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
+import { isObjectValue, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 import { prepareWebAgentsBatch, publicWebAgentsManifest } from "./webagents.js";
 import { invokeWebMCPTool, listWebMCPTools } from "./webmcp.js";
 import type { createWorkerArtifacts } from "./worker-artifacts.js";
@@ -39,10 +39,6 @@ interface ScreenshotArtifact {
   annotations?: number;
 }
 
-function isObjectValue(value: UntrustedValue): value is UntrustedValue & object {
-  return typeof value === "object" && value !== null;
-}
-
 function hostDelay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -50,6 +46,14 @@ function hostDelay(ms: number) {
 type ArtifactOperations = ReturnType<typeof createWorkerArtifacts<WorkerSession>>;
 type RealmOperations = ReturnType<typeof createWorkerRealm>;
 type CredentialOperations = ReturnType<typeof createCredentialFill>;
+
+// The per-execute record shared with credential tasks; the sandbox only reads
+// its page events, credential-fill.ts owns the task bookkeeping.
+interface SandboxExecution {
+  acceptingCredentialTasks: boolean;
+  credentialTasks: unknown[];
+  pageEvents: WorkerRealm["pageEvents"];
+}
 
 interface WorkerSandboxDeps extends
   Pick<RealmOperations, "createRealm" | "wrap" | "createUrlGlobals" | "assertPageHandle" | "findPageEntry" | "describePageHandle" | "assertModelNavigationUrl">,
@@ -456,7 +460,11 @@ export function createWorkerSandbox({
     });
   }
 
-  function buildSandbox(session: WorkerSession, consoleMessages: { level: string; text: string }[], execution: Parameters<CredentialOperations["buildCredentials"]>[2]) {
+  function buildSandbox(
+    session: WorkerSession,
+    consoleMessages: { level: string; text: string }[],
+    execution: SandboxExecution,
+  ) {
     const sandbox = Object.create(null);
     const context = vm.createContext(sandbox, {
       name: `betterwright-${session.id}`,

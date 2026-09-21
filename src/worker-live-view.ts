@@ -3,7 +3,7 @@ import type { BrowserContext, Page } from "playwright-core";
 import { createLiveViewServer } from "./live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.js";
 import type { UntrustedValue } from "./untrusted-value.js";
-import { untrustedField } from "./untrusted-value.js";
+import { isObjectValue, untrustedField } from "./untrusted-value.js";
 import type { WorkerSession } from "./worker-session.js";
 
 type LiveViewServer = ReturnType<typeof createLiveViewServer>;
@@ -39,10 +39,6 @@ interface WorkerLiveViewDeps {
   sendResult: (message: WorkerResult) => void;
   redactText: (value: UntrustedValue) => string;
   serverFactory?: typeof createLiveViewServer;
-}
-
-function isObjectValue(value: UntrustedValue): value is UntrustedValue & object {
-  return typeof value === "object" && value !== null;
 }
 
 function currentBrowserContext(getBrowserContext: () => BrowserContext | null) {

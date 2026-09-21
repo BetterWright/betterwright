@@ -243,7 +243,7 @@ test("facades unwrap for page handles and summaries redact without exposing inte
   pageIds.set(page, "page-known");
   const facade = operations.wrap(page, realm);
 
-  assert.equal(operations.hasFacade(facade), true);
+  assert.notEqual(facade, page);
   assert.equal(operations.unwrapTarget(facade), page);
   operations.assertPageHandle(facade, "usePage");
   assert.equal(operations.findPageEntry([["page-known", page]], facade)?.[0], "page-known");

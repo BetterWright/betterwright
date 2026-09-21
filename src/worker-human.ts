@@ -1,11 +1,7 @@
 // Trusted input helpers shared by credentials and the snippet API.
 import { captchaBounds } from "./captcha-runtime.js";
 import { movePointer, pointInside, pressPointer, typedTextLanded } from "./human.js";
-import { isBoolean, isCallable, isString, type UntrustedFunction, type UntrustedValue, untrustedField } from "./untrusted-value.js";
-
-function isObjectValue(value: UntrustedValue): value is UntrustedValue & object {
-  return typeof value === "object" && value !== null;
-}
+import { isBoolean, isCallable, isObjectValue, isString, type UntrustedFunction, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 interface HumanInputDeps {
   unwrap: (value: UntrustedValue) => UntrustedValue;

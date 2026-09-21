@@ -74,8 +74,8 @@ import {
 import {
   isCallable,
   isNumber,
+  isObjectValue,
   isString,
-  type UntrustedValue,
   untrustedField,
 } from "./untrusted-value.js";
 import { httpOrigin, installVaultCapture } from "./vault-capture.js";
@@ -128,11 +128,6 @@ const MAX_COOKIE_REDACTION_IDENTITIES = 100_000;
 const COOKIE_SYNC_UNPARTITIONED_TOTAL_LIMIT = 3_000;
 const COOKIE_SYNC_DOMAIN_LIMIT = 150;
 const COOKIE_SYNC_PARTITION_BYTES_LIMIT = 10_240;
-
-// Unlike isRecord, these worker payload checks also admit arrays.
-function isObjectValue(value: UntrustedValue): value is UntrustedValue & object {
-  return typeof value === "object" && value !== null;
-}
 
 let browserContext = null;
 let transportProxyPort = 0;
@@ -267,11 +262,8 @@ function quietSessionPages(session) {
     if (!browserContext || sessionIsExecuting(session.id)) return;
     void parkSession(session, {
       newCDPSession: (page) => browserContext.newCDPSession(page),
-      isBusy: (page) => {
-        const recording = sessionRecordings.get(session.id);
-        return vaultCapture?.isBusy(page) === true || recording?.state === "starting" ||
-          (recording?.state === "active" && recording.page === page);
-      },
+      isBusy: (page) =>
+        vaultCapture?.isBusy(page) === true || pageRecordingIsBusy(session.id, page),
     }).catch(() => {});
   }, PARK_IDLE_DELAY_MS);
   // A pending park must never be the reason the worker stays alive.
@@ -1687,6 +1679,8 @@ const {
   makeArtifactPath,
   stopSessionRecording,
   stopPageRecording,
+  sessionRecordingIsBusy,
+  pageRecordingIsBusy,
   captureScreenshot,
 } = artifacts;
 const { snapshotPage } = createWorkerSnapshots({
@@ -1698,7 +1692,7 @@ const realmOperations = createWorkerRealm({
   artifactsDir: () => launchConfig.artifactsDir,
   hostOwnedTarget: () => launchConfig.hostOwnedTarget,
   hostUploadFiles: () => launchConfig.hostUploadFiles,
-  publicSearchPolicy: () => launchConfig?.publicSearchPolicy,
+  publicSearchPolicy: () => launchConfig.publicSearchPolicy,
   useSetContentCompatibility: () => useSetContentCompatibility,
   stopPageRecording,
   redactText,
@@ -2834,7 +2828,7 @@ const idleReaper = setInterval(() => {
   const cutoff = Date.now() - Math.max(timeout, 600_000);
   for (const [sessionId, session] of sessions) {
     if (session.lastActivity >= cutoff || sessionIsExecuting(sessionId) ||
-        ["starting", "active"].includes(sessionRecordings.get(sessionId)?.state))
+        sessionRecordingIsBusy(sessionId))
       continue;
     if (
       session.awaitingAnswerSince &&

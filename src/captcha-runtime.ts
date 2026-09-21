@@ -56,6 +56,8 @@ interface CaptchaRuntimeDeps<Session> {
 }
 
 export const CAPTCHA_SCREENSHOT_TIMEOUT_MS = 8_000;
+// Local fixture widgets that render without a provider frame.
+const LOCAL_WIDGET_SELECTOR = "[data-bw-captcha], #bw-captcha, .bw-captcha";
 export const CAPTCHA_TILE_OVERLAY_ID = "__betterwright_captcha_tiles__";
 
 export function captchaBounds(value, label = "bounds") {
@@ -316,6 +318,14 @@ async function humanClickBox(page: Page, session: CaptchaSession, box, options: 
   return point;
 }
 
+// Verify and checkbox controls come from boundingBox() in viewport
+// coordinates, which may sit below the fold. Scroll them in first so the
+// trusted pointer lands on the control instead of empty space.
+async function humanClickControl(page: Page, session: CaptchaSession, box, options: any = {}) {
+  const visible = await captchaBoxInViewport(page, box);
+  return humanClickBox(page, session, visible, options);
+}
+
 async function pageScrollMetrics(page: Page) {
   return page.evaluate(() => ({
     x: window.scrollX,
@@ -368,13 +378,18 @@ async function challengeStillPresent(page: Page, provider) {
   if (Object.keys(metadata.tokens).length) return { present: false, metadata };
   const challenge = detectBotChallenge(metadata);
   // Generic widgets need not carry the interstitial text the detector matches.
-  // A visible local widget without a token is still unresolved after a click.
-  const localVisible = provider === "generic" && await page
-    .locator("[data-bw-captcha], #bw-captcha, .bw-captcha")
-    .first()
-    .isVisible()
-    .catch(() => false);
-  return { present: Boolean(challenge) || localVisible, metadata, challenge };
+  // Any visible challenge widget without a token is still unresolved after a
+  // click. Dormant provider frames are hidden, so filter on visibility rather
+  // than testing the first match.
+  const widgetVisible = provider === "generic"
+    ? await page
+      .locator(CHALLENGE_WIDGET_SELECTORS.join(", "))
+      .filter({ visible: true })
+      .count()
+      .then((count) => count > 0)
+      .catch(() => false)
+    : false;
+  return { present: Boolean(challenge) || widgetVisible, metadata, challenge };
 }
 
 /**
@@ -416,7 +431,7 @@ async function challengeWidgetBox(page: Page, provider) {
   if (best) return best;
   const scopes = [page, ...candidateFrames(page, provider)];
   for (const scope of scopes) {
-    const local = scope.locator("[data-bw-captcha], #bw-captcha, .bw-captcha").first();
+    const local = scope.locator(LOCAL_WIDGET_SELECTOR).first();
     const localBox = await elementBoxInPage(page, scope, local);
     if (localBox && localBox.width >= 80 && localBox.height >= 80) return localBox;
   }
@@ -600,7 +615,7 @@ export async function detectCaptchaOnPage(page: Page) {
   }
   // Local fixtures may expose data-bw-captcha without provider frames.
   const localWidget = await page
-    .locator("[data-bw-captcha], #bw-captcha, .bw-captcha")
+    .locator(LOCAL_WIDGET_SELECTOR)
     .count()
     .then((count) => count > 0)
     .catch(() => false);
@@ -722,8 +737,7 @@ export function createCaptchaRuntime<Session extends CaptchaSession>({
       return { ok: true, clicked, verified: false, reason: "verify_not_ready" };
     }
     await hostDelay(80 + Math.random() * 120);
-    const visibleVerify = await captchaBoxInViewport(page, verify.box);
-    await humanClickBox(page, session, visibleVerify, { leftBias: false });
+    await humanClickControl(page, session, verify.box, { leftBias: false });
     return { ok: true, clicked, verified: true, label: verify.label || null };
   }
 
@@ -967,7 +981,7 @@ export function createCaptchaRuntime<Session extends CaptchaSession>({
           }
           found = await findVerifyControl(page, scopes);
           if (!found) return { ok: false, reason: "checkbox_not_found" };
-          const verifyPoint = await humanClickBox(page, session, found.box, {
+          const verifyPoint = await humanClickControl(page, session, found.box, {
             leftBias: found.box.width > 80,
           });
           return {
@@ -977,7 +991,7 @@ export function createCaptchaRuntime<Session extends CaptchaSession>({
             selector: found.selector || null,
           };
         }
-        const point = await humanClickBox(page, session, found.box, {
+        const point = await humanClickControl(page, session, found.box, {
           leftBias: found.box.width > 80,
         });
         return { ok: true, point, target: "checkbox", selector: found.selector || null };
@@ -990,7 +1004,7 @@ export function createCaptchaRuntime<Session extends CaptchaSession>({
           (await findVerifyControl(page, [...frames, page])) ||
           (await findClickableInScopes(page, [...frames, page], CHECKBOX_SELECTORS));
         if (!found) return { ok: false, reason: "verify_control_not_found", soft: true };
-        const point = await humanClickBox(page, session, found.box, {
+        const point = await humanClickControl(page, session, found.box, {
           leftBias: false,
         });
         return { ok: true, point, target: "verify" };
@@ -1166,7 +1180,7 @@ export function createCaptchaRuntime<Session extends CaptchaSession>({
       // Local fixture widgets without provider frames.
       if (classification.stage === CAPTCHA_STAGES.NONE) {
         const local = await page
-          .locator("[data-bw-captcha], #bw-captcha, .bw-captcha")
+          .locator(LOCAL_WIDGET_SELECTOR)
           .first()
           .isVisible()
           .catch(() => false);
@@ -1189,7 +1203,7 @@ export function createCaptchaRuntime<Session extends CaptchaSession>({
           needsVision: false,
         };
         const kind = await page
-          .locator("[data-bw-captcha], #bw-captcha, .bw-captcha")
+          .locator(LOCAL_WIDGET_SELECTOR)
           .first()
           .getAttribute("data-bw-captcha")
           .catch(() => "");

@@ -22,9 +22,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
-- Image-grid CAPTCHA submission scrolls the Verify control into view before
-  clicking it. Visible generic CAPTCHA widgets without a response token no
-  longer report success after unsuccessful tile picks.
+- CAPTCHA Verify and checkbox controls are scrolled into view before the
+  trusted pointer clicks them, including image-grid submission. A visible
+  challenge widget without a response token no longer reports success after
+  unsuccessful tile picks.
 - `human.type(..., { clear: false })` positions the caret at the end before
   typing, rather than inserting at the point where the focus click landed.
 - History navigation waits for document readiness on back/forward-cache
