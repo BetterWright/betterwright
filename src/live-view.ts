@@ -43,13 +43,7 @@ const DEFAULT_MAX_DIMENSION = 1440;
 export function guessTailscaleHost(interfaces = os.networkInterfaces()) {
   for (const addrs of Object.values(interfaces)) {
     for (const entry of addrs || []) {
-      // SAFETY: Node before 18.4 reported the address family as the number 4,
-      // which the modern "IPv4" | "IPv6" declaration elides; the widening
-      // readmits the documented legacy value for the comparison.
-      const v4 =
-        (entry.family as string | number) === "IPv4" ||
-        (entry.family as string | number) === 4;
-      if (!v4 || entry.internal) continue;
+      if (entry.family !== "IPv4" || entry.internal) continue;
       const octets = String(entry.address).split(".").map(Number);
       if (octets.length === 4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) {
         return entry.address;
@@ -68,13 +62,7 @@ export function guessLanHost() {
   const others = [];
   for (const addrs of Object.values(os.networkInterfaces())) {
     for (const entry of addrs || []) {
-      // SAFETY: Node before 18.4 reported the address family as the number 4,
-      // which the modern "IPv4" | "IPv6" declaration elides; the widening
-      // readmits the documented legacy value for the comparison.
-      const v4 =
-        (entry.family as string | number) === "IPv4" ||
-        (entry.family as string | number) === 4;
-      if (!v4 || entry.internal) continue;
+      if (entry.family !== "IPv4" || entry.internal) continue;
       const ip = entry.address;
       if (
         ip.startsWith("169.254.") ||
