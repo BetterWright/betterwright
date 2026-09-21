@@ -16,7 +16,6 @@ import {
 } from "../../dist/src/chromium-fork.js";
 import {
   _extractZipForTest,
-  chromiumForkAssetForHost,
   installChromiumFork,
 } from "../../dist/src/chromium-fork-install.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
@@ -29,18 +28,6 @@ test("Chromium 153 release is pinned to verified public assets", () => {
   assert.equal(
     CHROMIUM_FORK_RELEASE_TAG,
     `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`,
-  );
-  assert.deepEqual(
-    chromiumForkAssetForHost({ platform: "darwin", arch: "arm64" }),
-    CHROMIUM_FORK_ASSETS["darwin-arm64"],
-  );
-  assert.deepEqual(
-    chromiumForkAssetForHost({ platform: "linux", arch: "x64" }),
-    CHROMIUM_FORK_ASSETS["linux-x64"],
-  );
-  assert.deepEqual(
-    chromiumForkAssetForHost({ platform: "win32", arch: "x64" }),
-    CHROMIUM_FORK_ASSETS["win32-x64"],
   );
   assert.deepEqual(CHROMIUM_FORK_ASSETS, {
     "darwin-arm64": {

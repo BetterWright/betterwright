@@ -33,14 +33,6 @@ function platformKey(platform = process.platform, arch = process.arch) {
   return `${platform}-${arch}`;
 }
 
-/** Asset metadata for this host, or null when no public fork is shipped. */
-export function chromiumForkAssetForHost({
-  platform = process.platform,
-  arch = process.arch,
-} = {}) {
-  return CHROMIUM_FORK_ASSETS[platformKey(platform, arch)] || null;
-}
-
 function releaseDownloadUrl(repo, tag, name) {
   return `https://github.com/${repo}/releases/download/${tag}/${name}`;
 }

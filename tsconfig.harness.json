@@ -37,9 +37,6 @@
   },
   "include": [
     "research/cdpfree-probe.ts",
-    "research/creepjs-probe.ts",
-    "research/headless-tells.ts",
-    "research/pixelscan-probe.ts",
     "research/stealth-report.ts",
     "research/warm-profile.ts",
     "research/verify-local-ai-catalog.ts",
