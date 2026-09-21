@@ -108,6 +108,50 @@ test("a hanging custom vault cannot hold request timeout or worker close open", 
   assert.equal(resets, 1, "closing an already retired generation must not reset twice");
 });
 
+test("snippet save/update carry the host's overwrite decision, never the snippet's", async (t) => {
+  for (const allowCredentialOverwrite of [false, true]) {
+    const home = tempHome();
+    const seen = [];
+    const vault = {
+      async handleRequest(action, payload) {
+        seen.push({ action, payload });
+        return {};
+      },
+    };
+    const browser = new BetterWright({ home, headless: true, vault, allowCredentialOverwrite });
+    t.after(async () => {
+      await browser.close().catch(() => {});
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+    await browser._start();
+    const child = browser._process;
+    const dispatched = browser._dispatch({ type: "test_noop" }, -4.9);
+    const executionId = [...browser._pending.entries()].find(
+      ([, pending]) => pending.child === child,
+    )?.[0];
+    for (const [action, payload] of [
+      ["save", { username: "alice", password: "x", replaceSecret: true }],
+      ["update", { id: "cred_1", password: "y", replaceSecret: true }],
+      ["list", { replaceSecret: true }],
+    ]) {
+      emitWorkerMessage(child, {
+        type: "rpc_request",
+        id: executionId,
+        requestId: `overwrite-${action}`,
+        method: "vault",
+        payload: { action, origin: "https://login.example.test", payload },
+      });
+    }
+    await within(dispatched, 2_000, "request timeout remained blocked");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(seen.length, 3);
+    assert.equal(seen[0].payload.replaceSecret, allowCredentialOverwrite);
+    assert.equal(seen[1].payload.replaceSecret, allowCredentialOverwrite);
+    assert.equal(seen[2].payload.replaceSecret, true, "only save/update are stamped");
+    await browser.close();
+  }
+});
+
 test("unexpected exit resets before replacement and old events cannot reset it", async (t) => {
   const home = tempHome();
   const resetStates = [];

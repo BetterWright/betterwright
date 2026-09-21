@@ -9,6 +9,33 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Security
+
+- Hostnames are normalized before every name-based policy comparison, so a
+  trailing dot (`localhost.`, `metadata.google.internal.`) no longer slips
+  past `blockHosts`, the cloud-metadata floor, or search-provider challenge
+  detection. Browsers connect to the dotted spelling unchanged.
+- `allowLoopback: false` (`--block-loopback`) now denies loopback on its own.
+  It was silently ignored unless `allowPrivateNetwork` was also refused.
+  Defaults are unchanged: loopback and private networks stay open.
+- Browser code can no longer replace a stored secret. Snippet-originated
+  `credentials.save()` onto an existing record and
+  `credentials.update({ password | fields | notes })` are refused with
+  `SECRET_OVERWRITE_DENIED` unless the host passes the new
+  `allowCredentialOverwrite: true` option. Creating records, editing
+  metadata, and rotation through `generateAndFill` + `commitGenerated` work
+  as before; host callers and login capture are unaffected. Custom vault
+  adapters receive `replaceSecret: false` on the payload. Hosts whose own
+  snippets save user-supplied passwords onto existing records must opt in.
+
+### Changed
+
+- SECURITY.md, README, and the credential and network-policy docs now state
+  the boundary precisely: redaction removes literal secret values from result
+  envelopes and does not chase transformed read-backs, and an upstream egress
+  proxy sits inside the trust boundary, so a loopback or LAN proxy host sees
+  the traffic the policy already allowed.
+
 ## [2.8.7] - 2026-09-18
 
 ### Changed

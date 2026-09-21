@@ -182,6 +182,16 @@ export interface BetterWrightOptions {
    * Defaults to true when a vault is active; forced off with `vault: false`.
    */
   credentialCapture?: boolean;
+  /**
+   * Let snippet code replace an existing record's stored secret through
+   * `credentials.save` (upsert onto a matching username or explicit `id`) or
+   * `credentials.update({ password })`. Default `false`: snippets can still
+   * create records, edit metadata, and rotate through the two-phase
+   * generate/commit flow. The built-in vault refuses with
+   * `SECRET_OVERWRITE_DENIED`; custom adapters receive `replaceSecret: false`
+   * on the save/update payload and should honor it.
+   */
+  allowCredentialOverwrite?: boolean;
   browser?: BrowserFlavor;
   /**
    * Non-managed browser, opt-in. Exactly one of:

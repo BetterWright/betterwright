@@ -75,6 +75,27 @@ test("loopback opt-in does not open the private network", () => {
   assert.ok(!allow(policy, "http://10.0.0.1/"));
 });
 
+test("blocking loopback alone denies loopback while private stays open", () => {
+  const policy = new NetworkPolicy({ allowLoopback: false });
+  assert.ok(!allow(policy, "http://127.0.0.1:3000/"));
+  assert.ok(!allow(policy, "http://localhost:3000/"));
+  assert.ok(!allow(policy, "http://[::1]:3000/"));
+  assert.ok(!allow(policy, "http://app.localhost:3000/"));
+  assert.ok(allow(policy, "http://10.0.0.1/"));
+  assert.ok(allow(policy, "http://nas.lan/"));
+});
+
+test("a trailing dot does not evade name-based rules", () => {
+  const blocked = new NetworkPolicy({ blockHosts: ["example.com"] });
+  assert.ok(!allow(blocked, "https://example.com./"));
+  assert.ok(!allow(blocked, "https://sub.example.com./"));
+  assert.ok(!allow(new NetworkPolicy({ blockHosts: ["example.com."] }), "https://example.com/"));
+  assert.ok(!allow(new NetworkPolicy(), "http://metadata.google.internal./"));
+  assert.ok(!allow(strict(), "http://router.lan./"));
+  assert.ok(!allow(strict(), "http://localhost./"));
+  assert.ok(allow(new NetworkPolicy({ allowPrivateNetwork: false, allowHosts: ["nas.lan"] }), "http://nas.lan./"));
+});
+
 test("block host beats defaults and matches subdomains", () => {
   const policy = new NetworkPolicy({ blockHosts: ["ads.example.com"] });
   assert.ok(!allow(policy, "https://ads.example.com/pixel"));

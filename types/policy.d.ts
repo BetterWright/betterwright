@@ -31,13 +31,14 @@ export type NetworkPolicyCustom = (
 export interface NetworkPolicyOptions {
   /**
    * Permit RFC 1918 ranges, link-local, and `*.internal`/`*.local`/`*.lan`
-   * hosts. Implies loopback. Default `true`; set `false` to restrict the
-   * browser to the public internet plus `allowHosts`.
+   * hosts. Loopback is governed by `allowLoopback` alone. Default `true`; set
+   * `false` to restrict the browser to the public internet plus `allowHosts`.
    */
   allowPrivateNetwork?: boolean;
   /**
    * Permit `127.0.0.1`/`localhost` for local dev servers. Does not open the
-   * wider private network. Default `true`.
+   * wider private network, and `false` denies loopback on its own. Default
+   * `true`.
    */
   allowLoopback?: boolean;
   /**

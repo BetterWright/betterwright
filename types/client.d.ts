@@ -54,6 +54,7 @@ export class BetterWright {
   /** The active vault, or null when constructed with `vault: false`. */
   vault: CredentialVault | null;
   credentialCapture: boolean;
+  allowCredentialOverwrite: boolean;
   browserFlavor: "chromium-fork";
   /** The configured provider, or null for the managed BetterChromium fork. */
   provider:

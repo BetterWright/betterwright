@@ -655,6 +655,60 @@
       "url": "https://example.com/?t=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
       "policy": {},
       "allowed": true
+    },
+    {
+      "name": "loopback blocked by allow_loopback alone",
+      "url": "http://127.0.0.1:8080/",
+      "policy": {
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "loopback address"
+    },
+    {
+      "name": "localhost blocked by allow_loopback alone",
+      "url": "http://localhost:5173/",
+      "policy": {
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "loopback address"
+    },
+    {
+      "name": "private still open when only loopback is blocked",
+      "url": "http://192.168.0.1/",
+      "policy": {
+        "allow_loopback": false
+      },
+      "allowed": true
+    },
+    {
+      "name": "trailing dot blocked host",
+      "url": "https://example.com./",
+      "policy": {
+        "block_hosts": [
+          "example.com"
+        ]
+      },
+      "allowed": false,
+      "reason_contains": "host blocked by policy"
+    },
+    {
+      "name": "trailing dot metadata hostname",
+      "url": "http://metadata.google.internal./",
+      "policy": {},
+      "allowed": false,
+      "reason_contains": "cloud metadata endpoint"
+    },
+    {
+      "name": "trailing dot private hostname in strict mode",
+      "url": "http://router.lan./",
+      "policy": {
+        "allow_private_network": false,
+        "allow_loopback": false
+      },
+      "allowed": false,
+      "reason_contains": "private or internal hostname"
     }
   ]
 }
