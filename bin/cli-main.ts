@@ -2091,7 +2091,7 @@ async function cmdView(flags) {
         startedHere = !view.alreadyRunning;
         // Nudge a blank tab so the canvas is not empty on first open.
         await browser.run(
-          "if (page.url() === 'about:blank') await page.goto('about:blank'); 'ready'",
+          "if (page.url() === 'about:blank' && await page.evaluate(() => !document.title && !document.body?.childNodes.length)) await page.goto('about:blank'); 'ready'",
         );
         printLiveViewBanner(view, { dim, bold, attached: true });
         await new Promise((resolve) => {
@@ -2131,7 +2131,7 @@ async function cmdView(flags) {
       console.error(view.error || "The live view failed to start.");
       return 1;
     }
-    await browser.run("if (page.url() === 'about:blank') await page.goto('about:blank'); 'ready'");
+    await browser.run("if (page.url() === 'about:blank' && await page.evaluate(() => !document.title && !document.body?.childNodes.length)) await page.goto('about:blank'); 'ready'");
     printLiveViewBanner(view, { dim, bold, attached: false });
     await new Promise((resolve) => {
       process.once("SIGINT", resolve);

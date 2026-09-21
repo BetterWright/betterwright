@@ -51,7 +51,7 @@ jobs:
     # Keep this display name stable because main branch protection requires it.
     name: Node tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -91,6 +91,16 @@ jobs:
         env:
           BETTERWRIGHT_REQUIRE_BROWSER: "1"
           BETTERWRIGHT_REQUIRE_RECORDING: "1"
+      - name: Test the built binary end to end
+        run: bun run test:e2e --binary bun --binary-arg "$PWD/dist/bin/betterwright.js" --require-all
+      - name: Upload binary E2E report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binary-e2e-report
+          path: .tmp/e2e-report.json
+          include-hidden-files: true
+          if-no-files-found: ignore
 
   cross-platform:
     # A NEW job, deliberately not a matrix over the two jobs above. Branch

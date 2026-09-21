@@ -106,6 +106,7 @@
     "check:build": "bun run build && bun scripts/check-build.ts",
     "test": "bun run build:harness && bun scripts/run-unit-tests.ts --all",
     "test:unit": "bun run build:harness && bun scripts/run-unit-tests.ts",
+    "test:e2e": "bun tests/e2e/run.ts",
     "test:types": "tsc --noEmit -p tests/types/tsconfig.json",
     "test:electron": "bun run build && electron tests/electron/reliability.mjs && electron tests/electron/detach-recovery.mjs && electron tests/electron/cookie-sync-takeover.mjs",
     "test:electron:packaged": "bun run build && bun tests/electron/package.mjs && electron .tmp/electron-e2e/app.asar && electron .tmp/electron-e2e/detach.asar && electron .tmp/electron-e2e/cookie-sync.asar",
