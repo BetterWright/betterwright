@@ -11,6 +11,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Changed
 
+- The browser worker delegates realm handling, live view, artifacts and
+  recording, snapshots, trusted input, site tools, and CAPTCHA operations to
+  import-safe modules with explicit dependencies. Launch, execution queues,
+  network guards, and shutdown ordering remain in the process entrypoint.
 - `bun run test:e2e` tests a supplied BetterWright executable or `betterwright`
   on PATH through isolated local fixtures, with per-case JSON reporting,
   explicit skips, and a strict CI mode. See `docs/binary-e2e.md` for coverage
@@ -18,6 +22,9 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
+- Image-grid CAPTCHA submission scrolls the Verify control into view before
+  clicking it. Visible generic CAPTCHA widgets without a response token no
+  longer report success after unsuccessful tile picks.
 - `human.type(..., { clear: false })` positions the caret at the end before
   typing, rather than inserting at the point where the focus click landed.
 - History navigation waits for document readiness on back/forward-cache
