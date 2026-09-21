@@ -78,10 +78,24 @@ test("E2E commands pass literal argv and stdin without a shell", async () => {
     });
     assert.deepEqual(value.args, ["a b", 'quote"value', "$(touch should-not-exist)", "雪"]);
     assert.equal(value.stdin, "line one\nline two\n");
-    assert.equal(value.cwd, root);
+    assert.equal(fs.realpathSync(value.cwd), fs.realpathSync(root));
     assert.equal(value.extra, "extra");
     assert.equal(value.home, path.join(root, "user"));
     assert.equal(fs.existsSync(path.join(root, "should-not-exist")), false);
+  } finally { await harness.dispose(); }
+});
+
+test("E2E working-directory isolation survives a symlinked temporary root", async () => {
+  const parent = makeTempDir("bw-e2e-symlink-");
+  const actual = path.join(parent, "actual");
+  const alias = path.join(parent, "alias");
+  fs.mkdirSync(actual);
+  fs.symlinkSync(actual, alias, process.platform === "win32" ? "junction" : "dir");
+  const harness = createContext(options(), alias);
+  try {
+    const value = await harness.context.json(["echo"]);
+    assert.equal(fs.realpathSync(value.cwd), fs.realpathSync(actual));
+    assert.equal(value.betterwrightHome, path.join(alias, "betterwright"));
   } finally { await harness.dispose(); }
 });
 
@@ -193,6 +207,7 @@ test("E2E executable reports an unavailable target as failure, not all-skipped s
   assert.equal(parsed.complete, true);
   assert.equal(parsed.outcome, "failed");
   assert.deepEqual(parsed.summary, { passed: 0, failed: 1, skipped: 1 });
-  assert.match(parsed.results[0].error, /ENOENT/);
+  assert.match(parsed.results[0].error, /ENOENT|Executable not found/i);
+  assert.match(parsed.results[0].error, /missing-betterwright/);
   assert.equal(parsed.results[1].reason, "Target binary preflight failed");
 });
