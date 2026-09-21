@@ -9,6 +9,8 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.8.8] - 2026-09-21
+
 ### Security
 
 - Hostnames are normalized before every name-based policy comparison, so a
@@ -1817,7 +1819,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.7...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.8...HEAD
+[2.8.8]: https://github.com/BetterWright/betterwright/compare/v2.8.7...v2.8.8
 [2.8.7]: https://github.com/BetterWright/betterwright/compare/v2.8.6...v2.8.7
 [2.8.6]: https://github.com/BetterWright/betterwright/compare/v2.8.5...v2.8.6
 [2.8.5]: https://github.com/BetterWright/betterwright/compare/v2.8.2...v2.8.5
