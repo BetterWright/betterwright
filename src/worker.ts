@@ -108,7 +108,7 @@ import {
 import { buildLaunchIdentityPlan, resolveGeoIdentity } from "./launch-identity.js";
 import { createLiveViewServer } from "./live-view.js";
 import { liveViewHtml, liveViewLoginHtml } from "./live-view-html.js";
-import { applyNavigationDefaults, navigationOptions } from "./navigation-defaults.js";
+import { applyNavigationDefaults, navigateHistory, navigationOptions } from "./navigation-defaults.js";
 import {
   createSnippetPageEvents,
   isSnippetPageEventMethod,
@@ -694,7 +694,7 @@ async function loadPlaywrightDriver() {
     const pathMod = await import("node:path");
     return import(pathToFileURL(pathMod.join(override, "lib", "index.js")).href);
   }
-  return import("playwright-core");
+  return stealthActive ? import("patchright-core") : import("playwright-core");
 }
 
 function fingerprintSeedForProfile(profileDir) {  const seedFile = path.join(profileDir, ".betterwright-fingerprint-seed");
@@ -2054,32 +2054,43 @@ async function clearTypedField(page, target) {
   }
 }
 
+async function moveTypedFieldCaretToEnd(page, target) {
+  if (target && isCallable(untrustedField(target, "evaluate"))) {
+    const positioned = await target.evaluate((element) => {
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement
+      ) {
+        if (
+          element instanceof HTMLInputElement &&
+          !["text", "search", "url", "tel", "password"].includes(element.type)
+        ) return false;
+        const end = element.value.length;
+        element.setSelectionRange(end, end);
+        return true;
+      }
+      if (!element.isContentEditable) return false;
+      const selection = element.ownerDocument.defaultView?.getSelection();
+      if (!selection) return false;
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    });
+    if (positioned) return;
+  }
+  await page.keyboard.press("End");
+}
+
 async function insertTypedText(page, target, text, before) {
   const value = String(text);
   if (!value) return;
   if (target && isCallable(untrustedField(target, "focus"))) {
     await target.focus().catch(() => {});
   }
-  if (target && isCallable(untrustedField(target, "evaluate"))) {
-    await target.evaluate((element) => {
-      if (
-        element instanceof HTMLInputElement ||
-        element instanceof HTMLTextAreaElement
-      ) {
-        const end = element.value.length;
-        element.setSelectionRange(end, end);
-        return;
-      }
-      if (!element.isContentEditable) return;
-      const selection = element.ownerDocument.defaultView?.getSelection();
-      if (!selection) return;
-      const range = element.ownerDocument.createRange();
-      range.selectNodeContents(element);
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    });
-  }
+  await moveTypedFieldCaretToEnd(page, target);
   await page.keyboard.insertText(value);
   const afterInsert = await readTypedFieldText(target);
   if (afterInsert != null && typedTextLanded(value, before, afterInsert)) return;
@@ -3339,6 +3350,8 @@ function wrap(value, realm) {
         let result;
         if (kind === "Page" && property === "close") {
           result = stopPageRecording(value).then(() => member.apply(value, prepared));
+        } else if (kind === "Page" && (property === "goBack" || property === "goForward")) {
+          result = navigateHistory(value, property, prepared[0], DEFAULT_NAVIGATION_TIMEOUT_MS);
         } else if (
           useSetContentCompatibility &&
           ["Page", "Frame"].includes(kind) &&
@@ -4152,6 +4165,7 @@ function buildSandbox(session, consoleMessages, execution) {
     const clickedTarget = await humanClickTarget(page, session, target, options);
     const clear = options?.clear !== false;
     if (clear) await clearTypedField(page, clickedTarget);
+    else await moveTypedFieldCaretToEnd(page, clickedTarget);
     const expected = String(text);
     const before = await readTypedFieldText(clickedTarget);
     await typeText(page.keyboard, expected, options);

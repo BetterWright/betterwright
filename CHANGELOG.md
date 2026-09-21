@@ -30,6 +30,10 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Changed
 
+- `bun run test:e2e` tests a supplied BetterWright executable or `betterwright`
+  on PATH through isolated local fixtures, with per-case JSON reporting,
+  explicit skips, and a strict CI mode. See `docs/binary-e2e.md` for coverage
+  and external-integration limits.
 - SECURITY.md, README, and the credential and network-policy docs now state
   the boundary precisely: redaction removes literal secret values from result
   envelopes and does not chase transformed read-backs, and an upstream egress
@@ -38,6 +42,16 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
+- `human.type(..., { clear: false })` positions the caret at the end before
+  typing, rather than inserting at the point where the focus click landed.
+- History navigation waits for document readiness on back/forward-cache
+  restores without waiting for lifecycle events that have already fired.
+- The MCP stdio server closes its browser when stdin ends, including when the
+  transport does not report EOF through its protocol close callback.
+- Starting a live view no longer clears content created with `page.setContent`
+  on an `about:blank` tab while warming up an otherwise empty page.
+- The stealth worker selects `patchright-core` directly, so Bun's handling of
+  Node loader hooks cannot silently leave the stock driver active.
 - On Windows, a vault lock publish rename that returns EPERM or EACCES
   while the destination is already gone is treated as lock contention
   only after the candidate can still rename to a unique sibling.

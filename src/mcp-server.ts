@@ -711,11 +711,24 @@ export async function runMcpServer(env = process.env, options: any = {}) {
   server.setRequestHandler(CallToolRequestSchema, handlers.callTool);
 
   const transport = new StdioServerTransport();
-  await server.connect(transport);
-  // Serve until the client disconnects (stdin closes), then release the
-  // browser. server.onclose is the SDK's protocol-level close callback.
-  await new Promise((resolve) => {
-    server.onclose = resolve;
+  let disconnect: () => void;
+  const disconnected = new Promise<void>((resolve) => {
+    disconnect = resolve;
   });
-  await browser.close();
+  server.onclose = disconnect;
+  process.stdin.once("end", disconnect);
+  process.stdin.once("close", disconnect);
+  try {
+    await server.connect(transport);
+    if (process.stdin.readableEnded || process.stdin.destroyed) disconnect();
+    await disconnected;
+  } finally {
+    process.stdin.off("end", disconnect);
+    process.stdin.off("close", disconnect);
+    try {
+      await server.close();
+    } finally {
+      await browser.close();
+    }
+  }
 }

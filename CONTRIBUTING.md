@@ -37,6 +37,11 @@ managed installation, or point them at a real artifact; `off` is no longer
 supported.
 The policy, vault, prompt, and challenge suites run anywhere.
 
+To test a shipped CLI as a black box, run `bun run test:e2e` for `betterwright`
+on PATH, or `bun run test:e2e /absolute/path/to/betterwright`. The
+[binary E2E guide](docs/binary-e2e.md) covers local-build targets, isolated
+fixtures, strict skip handling, reports, and the suite's coverage limits.
+
 One note on running the suite locally: **do not run the tests as root.**
 Several tests simulate an unwritable directory with `chmod`, which root
 bypasses; they detect this and skip, so a root run reports green while
