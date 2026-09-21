@@ -29,7 +29,6 @@
     "skipLibCheck": false
   },
   "files": [
-    "scripts/bench-runtime.ts",
     "scripts/build.ts",
     "scripts/check-build.ts",
     "scripts/check-package.ts",
