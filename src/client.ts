@@ -327,6 +327,7 @@ export class BetterWright {
   declare policy: NetworkPolicy;
   declare vault: any;
   declare credentialCapture: boolean;
+  declare allowCredentialOverwrite: boolean;
   declare browserFlavor: "chromium-fork";
   declare provider: any;
   declare providerChainNotes: string[];
@@ -393,6 +394,11 @@ export class BetterWright {
    * @param {object|false|null} [options.vault] custom vault with
    *   `handleRequest(action, payload, origin)`, or false/null to disable the
    *   built-in encrypted vault
+   * @param {boolean} [options.allowCredentialOverwrite=false] let snippet
+   *   code replace the stored secret of an existing record through
+   *   `credentials.save` (upsert) or `credentials.update({password})`. Off by
+   *   default: snippets can still create records, edit metadata, and rotate
+   *   through the two-phase generate/commit flow.
    * @param {boolean} [options.credentialCapture=true] capture accepted logins
    *   in the browser: logins the model types save silently; logins the user
    *   types manually prompt in headed sessions ("Save / Not now / Never for
@@ -518,6 +524,7 @@ export class BetterWright {
     this.credentialCapture = this.vault
       ? options.credentialCapture !== false
       : false;
+    this.allowCredentialOverwrite = options.allowCredentialOverwrite === true;
     assertNoLegacyBrowserOptions();
     const resolvedProvider = resolveProviderOption(options, this.home);
     this.provider = resolvedProvider.provider;
@@ -1044,6 +1051,12 @@ export class BetterWright {
           throw new Error("Host-owned browser credential access is metadata-only.");
         }
         const requestPayload = { ...(payload.payload || {}) };
+        // Snippet code cannot grant itself the right to replace a stored
+        // secret: the host's option decides, and it overrides whatever the
+        // snippet put in the payload.
+        if (action === "save" || action === "update") {
+          requestPayload.replaceSecret = this.allowCredentialOverwrite;
+        }
         if (
           action === "generate" &&
           this._pendingCredentialOrigins.size >= MAX_PENDING_CREDENTIAL_ORIGINS

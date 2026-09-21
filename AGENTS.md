@@ -49,10 +49,12 @@ because they are enforced by code, not convention.
   the explicit exception: their traffic is outside this guard, and launch
   warnings and documentation must preserve that limitation. See SECURITY.md
   and docs/browser-providers.md for the boundary.
-- **Secrets never enter the model sandbox.** The vault fills credentials via
-  trusted input without returning values to model code, and handled secrets
-  are redacted from every result envelope. Any new output channel must go
-  through redaction.
+- **The vault never returns secrets to model code.** Credentials are filled
+  via trusted input, and handled secrets are redacted from every result
+  envelope. Any new output channel must go through redaction. Redaction is a
+  literal-match net, not a confidentiality boundary: a filled value exists in
+  the page DOM, and page code can read and transform it (SECURITY.md). Do not
+  document it as stronger than that.
 - **Runtime dependencies are pinned exactly, in several places at once.**
   playwright-core and tldts are exact-pinned (tldts's Public
   Suffix List snapshot decides credential base-domain scope), patchright-core

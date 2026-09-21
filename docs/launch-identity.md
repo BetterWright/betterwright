@@ -71,6 +71,12 @@ const browser = new BetterWright({
 - Every connection is still policy-checked and DNS-validated locally.
 - The guard tunnels to the validated literal IP, preserving DNS-rebinding
   protection while the target observes the upstream IP.
+- Every policy-approved destination goes through the upstream, including
+  loopback and private addresses: `http://localhost` and `192.168.x.x` then
+  name the *proxy host's* loopback and LAN, not this machine's. Pair a remote
+  upstream with `allowLoopback: false` and `allowPrivateNetwork: false` (or
+  restrict those ranges on the proxy) unless reaching the proxy's network is
+  intended.
 - WebRTC is forced onto the proxied path.
 - `geoip: true` resolves locale/timezone through the upstream. Explicit
   `locale` and `timezone` values always win.

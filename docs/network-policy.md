@@ -58,11 +58,15 @@ new BetterWright({ policy });
 
 | Option | Effect |
 | --- | --- |
-| `allowLoopback` | Permit `127.0.0.1` / `localhost` (for local dev servers). Does **not** open the wider private network. Default `true`; set both this and `allowPrivateNetwork` to `false` to block loopback. |
-| `allowPrivateNetwork` | Permit RFC 1918, link-local, and `*.internal`/`*.local` hosts. Implies loopback. Default `true`; set `false` to block. |
+| `allowLoopback` | Permit `127.0.0.1` / `localhost` (for local dev servers). Does **not** open the wider private network. Default `true`; `false` blocks loopback on its own. |
+| `allowPrivateNetwork` | Permit RFC 1918, link-local, and `*.internal`/`*.local` hosts. Does **not** govern loopback. Default `true`; set `false` to block. |
 | `allowHosts` | Allow these hosts in the built-in decision, unless metadata or `blockHosts` denies them. An entry matches a host exactly or as a parent domain (`example.com` also matches `sub.example.com`); add `:port` to pin a port. A custom hook can override ordinary decisions. |
 | `blockHosts` | Block these hosts in the built-in decision, before allowlists. A custom hook may override this denial, but never the metadata floor. |
 | `custom` | A hook, `custom(url, details)`, returning a decision or `null`, evaluated last. |
+
+Hostnames are compared in their normalized form: lowercase, with one trailing
+dot removed, so `https://example.com./` is subject to the same `blockHosts`,
+metadata, and private-name rules as `https://example.com/`.
 
 `allowHosts` adds exceptions to the normal policy; it is not an exclusive site
 allowlist. Other public sites remain allowed. Restricting browsing to specific
@@ -92,6 +96,14 @@ new NetworkPolicy({ custom: onlyGetNavigations });
 
 An `allowed: true` returned from the hook still cannot reach a metadata endpoint
 — that floor is re-checked after the hook.
+
+## Upstream egress proxies
+
+With an [`upstreamProxy`](launch-identity.md#egress-proxy) configured, every
+approved connection — loopback and private addresses included — is tunneled
+through that proxy, so those addresses resolve on the proxy host's network.
+Harden the policy (`allowLoopback: false`, `allowPrivateNetwork: false`) when
+the proxy is remote and its network must stay out of reach.
 
 ## Decision caching
 

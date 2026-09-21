@@ -319,6 +319,47 @@ test("persists across instances and explicit saves upsert the newest matching lo
   }
 });
 
+test("replaceSecret:false refuses to replace a stored secret but still creates and edits metadata", async () => {
+  const context = await fixture();
+  try {
+    const first = await saveLogin(context.vault, "alice", "password-one");
+    const denied = (promise) =>
+      assert.rejects(
+        promise,
+        (error: any) =>
+          error instanceof LocalCredentialVaultError && error.code === "SECRET_OVERWRITE_DENIED",
+      );
+    await denied(saveLogin(context.vault, "alice", "password-two", EXAMPLE, { replaceSecret: false }));
+    await denied(saveLogin(context.vault, "other", "password-two", EXAMPLE, { id: first.id, replaceSecret: false }));
+    await denied(
+      context.vault.handleRequest("update", { id: first.id, password: "password-two", replaceSecret: false }, EXAMPLE),
+    );
+    await denied(
+      context.vault.handleRequest("update", { id: first.id, notes: "leaked", replaceSecret: false }, EXAMPLE),
+    );
+    const filled = await context.vault.handleRequest("fill", { id: first.id }, EXAMPLE);
+    assert.equal(filled.secret, "password-one");
+
+    const created = await saveLogin(context.vault, "bob", "bob-secret", EXAMPLE, { replaceSecret: false });
+    assert.notEqual(created.id, first.id);
+    const relabeled = await context.vault.handleRequest(
+      "update",
+      { id: first.id, label: "renamed", replaceSecret: false },
+      EXAMPLE,
+    );
+    assert.equal(relabeled.label, "renamed");
+
+    // The capture sensor's owner path and an explicit host opt-in still upsert.
+    const captured = await context.vault.ownerCapture({ username: "alice", password: "password-three" }, EXAMPLE);
+    assert.equal(captured.id, first.id);
+    const opted = await saveLogin(context.vault, "alice", "password-four", EXAMPLE, { replaceSecret: true });
+    assert.equal(opted.id, first.id);
+    assert.equal((await context.vault.handleRequest("fill", { id: first.id }, EXAMPLE)).secret, "password-four");
+  } finally {
+    await context.cleanup();
+  }
+});
+
 test("detects ciphertext tampering, oversized ciphertext, and a missing key", async () => {
   const context = await fixture();
   try {

@@ -125,6 +125,19 @@ export function parsedUrl(value: UntrustedValue): URL | null {
 }
 
 /**
+ * A trailing dot spells the same fully qualified name (`example.com.` is
+ * `example.com`), and browsers connect to it unchanged. Every hostname a
+ * name-based rule compares drops one so the spelling cannot slip past the
+ * rule. IPv6 literals never end in a dot, so the bracketed form is left alone.
+ */
+export function normalizeHostname(hostname: string): string {
+  const lower = String(hostname || "").toLowerCase();
+  return lower.length > 1 && lower.endsWith(".") && !lower.endsWith("]")
+    ? lower.slice(0, -1)
+    : lower;
+}
+
+/**
  * Whether `host` is `domain` or a subdomain of it. Compares labels rather than
  * substrings so `notgoogle.com` never matches `google.com`.
  */

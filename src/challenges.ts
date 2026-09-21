@@ -5,6 +5,7 @@ import {
   isNumber,
   isRecord,
   normalizedText,
+  normalizeHostname,
   parsedUrl,
   stringValue,
   untrustedField,
@@ -319,7 +320,7 @@ function frameUrlSuggestsChallenge(url) {
 export function isPublicSearchNavigation(url) {
   const parsed = parsedUrl(url);
   if (!parsed) return false;
-  const host = parsed.hostname.toLowerCase();
+  const host = normalizeHostname(parsed.hostname);
   const path = parsed.pathname.replace(/\/+$/, "") || "/";
   if (isGoogleHost(host)) return path === "/search";
   if (hostIs(host, "bing.com")) {

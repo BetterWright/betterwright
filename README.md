@@ -195,7 +195,7 @@ and sites you are permitted to automate. Browser configuration does not
 guarantee undetectability or CAPTCHA acceptance.
 
 **Network access is permissive by default.** Public, private, and loopback
-destinations are allowed. Set both `--block-private-network` and
+destinations are allowed. Set `--block-private-network` and/or
 `--block-loopback` on CLI runs to block private and local access. The
 non-disableable metadata floor applies to locally launched browsers and
 guarded Electron attachments. Ordinary remote CDP/provider browsers are

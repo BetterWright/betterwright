@@ -6,8 +6,9 @@ threat model and the controls that enforce it are documented in
 
 - **The network floor** is the real boundary for locally launched browsers and
   guarded Electron attachments and fails closed. Cloud metadata is always
-  blocked there; private networks and loopback are allowed by default. Set both
-  `allowPrivateNetwork: false` and `allowLoopback: false` to block those too.
+  blocked there; private networks and loopback are allowed by default. Set
+  `allowPrivateNetwork: false` and `allowLoopback: false` to block those too;
+  each flag is effective on its own.
   Ordinary remote CDP/provider browsers are outside the local transport guard:
   supported Playwright routing checks still apply, but the transport and
   DNS-rebinding guarantees do not. See [provider boundaries](docs/browser-providers.md#what-changes-with-a-remote-browser)

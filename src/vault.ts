@@ -1645,6 +1645,21 @@ export class LocalCredentialVault {
     return next;
   }
 
+  // Browser code may create records and edit metadata, but replacing a stored
+  // secret is a host decision: the client stamps `replaceSecret: false` on
+  // every snippet-originated save/update unless the host opted in with
+  // `allowCredentialOverwrite`. Direct host callers and the capture sensor,
+  // which never set the flag, keep their upsert behavior.
+  #assertSecretReplaceAllowed(payload) {
+    if (payload?.replaceSecret === false) {
+      throw vaultError(
+        "Replacing a stored secret from browser code is disabled. Rotate it with " +
+          "generateAndFill + commitGenerated, or enable allowCredentialOverwrite on the host.",
+        "SECRET_OVERWRITE_DENIED",
+      );
+    }
+  }
+
   async #list(snapshot, payload, target) {
     const category = payload?.category == null ? null : normalizeCategory(payload.category);
     const text = optionalString(payload?.text, "Credential search text", 1024, "")
@@ -1717,6 +1732,7 @@ export class LocalCredentialVault {
       );
     }
     if (record) {
+      this.#assertSecretReplaceAllowed(payload);
       const replacement = this.#updatedRecord(record, { ...payload, category }, now, {
         requirePassword: category === "login",
       });
@@ -1746,6 +1762,9 @@ export class LocalCredentialVault {
     const id = idFromPayload(payload);
     if (!id) throw vaultError("Credential update requires an id.", "BAD_INPUT");
     const record = this.#recordById(snapshot, id, target, { management: true });
+    if (payload?.password !== undefined || payload?.fields !== undefined || payload?.notes !== undefined) {
+      this.#assertSecretReplaceAllowed(payload);
+    }
     const now = new Date().toISOString();
     const replacement = this.#updatedRecord(record, payload, now);
     if (payload?.password !== undefined && scopeMatches(record, target)) {

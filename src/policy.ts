@@ -10,7 +10,7 @@ import net from "node:net";
 // Annotating the public methods with the published declaration types keeps the
 // hand-written `types/` surface (see AGENTS.md) checked against this file.
 import type { NetworkDecision, NetworkPolicyCustom } from "../types/policy.js";
-import { isCallable, type UntrustedValue } from "./untrusted-value.js";
+import { isCallable, normalizeHostname, type UntrustedValue } from "./untrusted-value.js";
 
 export const METADATA_HOSTNAMES = new Set([
   "metadata.google.internal",
@@ -178,7 +178,7 @@ function buildHostEntry(raw) {
       entryPort = Number(portText);
     }
   }
-  entryHost = entryHost.replace(/^\[|\]$/g, "");
+  entryHost = normalizeHostname(entryHost.replace(/^\[|\]$/g, ""));
   return { host: entryHost, suffix: `.${entryHost}`, port: entryPort };
 }
 
@@ -199,8 +199,10 @@ export class NetworkPolicy {
     // Private networks and loopback are reachable by default; agents commonly
     // drive local dev servers, routers, and intranet hosts. Pass
     // `allowPrivateNetwork: false` / `allowLoopback: false` for a hardened
-    // deployment. The cloud-metadata floor below is NOT governed by these and
-    // stays blocked regardless.
+    // deployment. The two are independent: `allowLoopback: false` denies
+    // loopback on its own, and `allowPrivateNetwork: false` leaves loopback
+    // open unless it is also refused. The cloud-metadata floor below is NOT
+    // governed by these and stays blocked regardless.
     this.allowPrivateNetwork = options.allowPrivateNetwork !== false;
     this.allowLoopback = options.allowLoopback !== false;
     this.allowHosts = options.allowHosts || [];
@@ -238,7 +240,7 @@ export class NetworkPolicy {
       return { allowed: false, reason: `unsupported browser URL scheme: ${scheme}` };
     }
 
-    const hostname = parsed.hostname.toLowerCase();
+    const hostname = normalizeHostname(parsed.hostname);
     if (!hostname) return { allowed: false, reason: "URL has no hostname" };
     const port = parsed.port ? Number(parsed.port) : null;
 
@@ -272,7 +274,7 @@ export class NetworkPolicy {
 
     const category = categorizeIp(hostname);
     if (category !== null) {
-      if (category === "loopback" && !(this.allowLoopback || this.allowPrivateNetwork))
+      if (category === "loopback" && !this.allowLoopback)
         return {
           allowed: false,
           reason: "loopback address (set allowLoopback for local dev)",
@@ -283,7 +285,7 @@ export class NetworkPolicy {
     }
 
     if (hostname === "localhost" || hostname.endsWith(".localhost")) {
-      if (this.allowLoopback || this.allowPrivateNetwork) return { allowed: true };
+      if (this.allowLoopback) return { allowed: true };
       return {
         allowed: false,
         reason: "loopback address (set allowLoopback for local dev)",

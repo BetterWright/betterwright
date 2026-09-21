@@ -131,7 +131,16 @@ for the current site after a complete process restart.
 
 Use `save` only from a trusted host-authored channel, for a user-supplied secret
 the application has confirmed the site accepted. Never let a model author or
-inspect this payload; agent-facing code should remain metadata-only:
+inspect this payload; agent-facing code should remain metadata-only.
+
+Browser code can create new records and edit metadata, but it cannot replace
+the stored secret of an existing record: a `save` that would upsert onto a
+matching username or explicit `id`, or an `update` carrying `password`,
+`fields`, or `notes`, fails with `SECRET_OVERWRITE_DENIED`. Rotation goes
+through `generateAndFill({ id })` + `commitGenerated`. A host that wants
+snippets to overwrite secrets — for example the host-authored save below when
+the username already has a record — opts in with
+`new BetterWright({ allowCredentialOverwrite: true })`:
 
 ```js
 async function rememberAcceptedCredential({ username, password }) {
@@ -384,7 +393,10 @@ every active secret rather than returning its input unchanged. Adapters that
 retain their own redaction material may implement `resetRedactionSecrets()`;
 BetterWright calls it only after the owning worker and all its pages close.
 For `save` and `update`, passwords, notes, and every nested string value under
-`fields` are registered with the worker redaction net before the adapter runs.
+`fields` are registered with the worker redaction net before the adapter runs,
+and the payload carries `replaceSecret: false` unless the host set
+`allowCredentialOverwrite`; an adapter should refuse to replace an existing
+record's secret when it is `false`.
 Credential promises started by sandbox code are joined to that browser
 execution even if the snippet forgets to await them, so recovery state cannot
 bleed into the next run.
