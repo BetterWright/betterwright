@@ -181,6 +181,50 @@ test(
   },
 );
 
+test("captcha.solve scrolls Verify into a short viewport before submitting picks", opts, async () => {
+  const server = await startFixtureServer();
+  try {
+    await withBrowser(async (bw) => {
+      const result = await bw.run(`
+        await page.setViewportSize({width:800,height:320});
+        await page.goto(${JSON.stringify(`${server.base}/grid`)}, {waitUntil:"domcontentloaded"});
+        // Keep the grid visible but force its separate submit control below the fold.
+        await page.locator('#verify').evaluate(button => button.style.marginTop = '400px');
+        const first = await captcha.solve({timeoutMs:15000,maxStages:1});
+        const picks = first.tiles.filter(tile => tile.label === 'traffic light').map(tile => tile.index);
+        const solved = await captcha.solve({tiles:picks,timeoutMs:15000,maxStages:1});
+        return {solved,token:await page.locator('[name="bw-captcha-response"]').inputValue()};
+      `);
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result.solved.cleared, true);
+      assert.match(result.result.token, /^bw_grid_token_/);
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test("captcha.solve does not report a visible generic grid cleared after wrong picks", opts, async () => {
+  const server = await startFixtureServer();
+  try {
+    await withBrowser(async (bw) => {
+      const result = await bw.run(`
+        await page.goto(${JSON.stringify(`${server.base}/grid`)}, {waitUntil:"domcontentloaded"});
+        await captcha.solve({timeoutMs:15000,maxStages:1});
+        const solved = await captcha.solve({tiles:[1],timeoutMs:15000,maxStages:1});
+        return {solved,token:await page.locator('[name="bw-captcha-response"]').inputValue(),visible:await page.locator('#bw-captcha').isVisible()};
+      `);
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result.visible, true);
+      assert.equal(result.result.token, "");
+      assert.equal(result.result.solved.status, "processing");
+      assert.notEqual(result.result.solved.cleared, true);
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test(
   "captcha.click activates an image-grid target in the native browser",
   opts,

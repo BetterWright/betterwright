@@ -35,6 +35,11 @@ export function isRecord(value: UntrustedValue): value is UntrustedValue & objec
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Unlike isRecord, this worker payload check also admits arrays. */
+export function isObjectValue(value: UntrustedValue): value is UntrustedValue & object {
+  return typeof value === "object" && value !== null;
+}
+
 /**
  * Read one property of an untrusted value with ordinary lookup semantics
  * (prototype chain included, so duck-typing probes see methods), yielding
