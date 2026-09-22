@@ -187,10 +187,10 @@ test("explicit target origin validation preserves both document checks", async (
 
 async function fixtureServer() {
   const pages = new Map();
-  const server = http.createServer((request, response) => {
+  const server = http.createServer(async (request, response) => {
     response.setHeader("content-type", "text/html; charset=utf-8");
     const route = pages.get(new URL(request.url, "http://fixture").pathname);
-    const body = isCallable(route) ? route(request, response) : route;
+    const body = isCallable(route) ? await route(request, response) : route;
     if (!response.writableEnded) response.end(body ?? "not found");
   });
   server.listen(0, "127.0.0.1");
@@ -922,13 +922,19 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
       <button type="submit">Create account</button>
     </form>`,
   );
+  frameServer.pages.set("/delayed-frame-login", async () => {
+    // Keep one form behind the parent's DOMContentLoaded event so the
+    // ambiguity assertion cannot accidentally exercise a partial frame tree.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return frameServer.pages.get("/frame-login-2");
+  });
   server.pages.set(
     "/iframe-host",
     `<!doctype html><main>Host shell</main><iframe id="login-frame" src="${frameServer.origin}/frame-login"></iframe>`,
   );
   server.pages.set(
     "/iframe-ambiguous",
-    `<!doctype html><iframe src="${frameServer.origin}/frame-login"></iframe><iframe src="${frameServer.origin}/frame-login-2"></iframe>`,
+    `<!doctype html><iframe src="${frameServer.origin}/frame-login"></iframe><iframe src="${frameServer.origin}/delayed-frame-login"></iframe>`,
   );
   server.pages.set(
     "/iframe-signup-host",
@@ -971,8 +977,10 @@ test("semantic credential detection and pending credential plumbing", opts, asyn
     vault,
   });
   const visit = async (pathname) => {
+    // Credential assertions need the child documents too; the runtime defaults
+    // to DOMContentLoaded, which does not wait for iframe navigation.
     const result = await bw.run(
-      `await page.goto(${JSON.stringify(`${server.origin}${pathname}`)}); return page.url();`,
+      `await page.goto(${JSON.stringify(`${server.origin}${pathname}`)}, { waitUntil: "load" }); return page.url();`,
     );
     assert.equal(result.ok, true, result.error);
   };

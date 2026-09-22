@@ -17,11 +17,9 @@
 // runtime installed.
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   createBrowserFromDaemonConfig,
@@ -56,10 +54,8 @@ import {
   saveTranscript,
   transcriptPath,
 } from "../../dist/src/session-store.js";
+import { runCli } from "./helpers/cli.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const CLI = path.join(ROOT, "dist", "bin", "betterwright.js");
 
 // ---------------------------------------------------------------------------
 // Name validation
@@ -746,20 +742,10 @@ test("profileFromEnv reads BETTERWRIGHT_PROFILE and validates it", () => {
   assert.throws(() => profileFromEnv({ BETTERWRIGHT_PROFILE: "../escape" }), TypeError);
 });
 
-function runCli(args, { env = {} } = {}) {
-  return spawnSync(process.execPath, [CLI, ...args], {
-    cwd: ROOT,
-    encoding: "utf8",
-    timeout: 30_000,
-    input: "",
-    env: { ...process.env, ...env },
-  });
-}
-
-test("an invalid --profile fails as one clear line, before anything launches", () => {
+test("an invalid --profile fails as one clear line, before anything launches", async () => {
   const home = makeTempDir("bw-profiles-home-");
   for (const bad of ["../escape", "a/b", "con", "x.betterwright-lock"]) {
-    const result = runCli(["run", "--profile", bad, "-c", "return 1"], {
+    const result = await runCli(["run", "--profile", bad, "-c", "return 1"], {
       env: { BETTERWRIGHT_HOME: home },
     });
     assert.equal(result.status, 1, `${bad}: exited ${result.status}`);
@@ -771,13 +757,13 @@ test("an invalid --profile fails as one clear line, before anything launches", (
   }
 });
 
-test("--help still answers even with an invalid --profile", () => {
-  const result = runCli(["run", "--help", "--profile", "../escape"]);
+test("--help still answers even with an invalid --profile", async () => {
+  const result = await runCli(["run", "--help", "--profile", "../escape"]);
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Usage: betterwright run/);
 });
 
-test("the CLI documents --profile where it applies", () => {
+test("the CLI documents --profile where it applies", async () => {
   const helpCases: Array<[string[], RegExp]> = [
     [["run", "--help"], /--profile <name>/],
     [["repl", "--help"], /profile/],
@@ -786,30 +772,30 @@ test("the CLI documents --profile where it applies", () => {
     [["view", "--help"], /--profile <name>/],
   ];
   for (const [args, pattern] of helpCases) {
-    const result = runCli(args);
+    const result = await runCli(args);
     assert.equal(result.status, 0, `${args[0]} --help exited ${result.status}`);
     assert.match(result.stdout, pattern, `${args[0]} --help omits --profile`);
   }
 });
 
-test("sessions and close report per profile when no daemon is running", () => {
+test("sessions and close report per profile when no daemon is running", async () => {
   const home = makeTempDir("bw-profiles-home-");
-  const sessions = runCli(["sessions"], { env: { BETTERWRIGHT_HOME: home } });
+  const sessions = await runCli(["sessions"], { env: { BETTERWRIGHT_HOME: home } });
   assert.equal(sessions.status, 0);
   assert.match(sessions.stdout, /No session daemon is running\./);
 
-  const close = runCli(["close", "--profile", "social"], { env: { BETTERWRIGHT_HOME: home } });
+  const close = await runCli(["close", "--profile", "social"], { env: { BETTERWRIGHT_HOME: home } });
   assert.equal(close.status, 0);
   assert.match(close.stdout, /No session daemon is running for profile "social"/);
   // Inspecting must never start a daemon, on any profile.
   assert.equal(fs.existsSync(path.join(home, "daemon-social.sock")), false);
 });
 
-test("--profile \"\" is an error, not a silent fall back to the default identity", () => {
+test("--profile \"\" is an error, not a silent fall back to the default identity", async () => {
   const home = makeTempDir("bw-profiles-home-");
   // A script passing `--profile "$IDENTITY"` with the variable unset must fail
   // rather than quietly act as the default profile.
-  const result = runCli(["run", "--profile", "", "-c", "return 1"], {
+  const result = await runCli(["run", "--profile", "", "-c", "return 1"], {
     env: { BETTERWRIGHT_HOME: home },
   });
   assert.equal(result.status, 1, result.stdout || result.stderr);
@@ -817,9 +803,9 @@ test("--profile \"\" is an error, not a silent fall back to the default identity
   assert.equal(fs.existsSync(path.join(home, "browser")), false);
 });
 
-test("mcp --check refuses a bad BETTERWRIGHT_PROFILE and confirms a good one", () => {
+test("mcp --check refuses a bad BETTERWRIGHT_PROFILE and confirms a good one", async () => {
   const home = makeTempDir("bw-profiles-home-");
-  const bad = runCli(["mcp", "--check"], {
+  const bad = await runCli(["mcp", "--check"], {
     env: { BETTERWRIGHT_HOME: home, BETTERWRIGHT_PROFILE: "../escape" },
   });
   assert.notEqual(bad.status, 0);
@@ -828,32 +814,32 @@ test("mcp --check refuses a bad BETTERWRIGHT_PROFILE and confirms a good one", (
   assert.match(bad.stderr, /BETTERWRIGHT_PROFILE/);
   assert.doesNotMatch(bad.stdout, /The MCP server can start/);
 
-  const good = runCli(["mcp", "--check"], {
+  const good = await runCli(["mcp", "--check"], {
     env: { BETTERWRIGHT_HOME: home, BETTERWRIGHT_PROFILE: "social" },
   });
   assert.match(good.stdout, /Profile "social"/);
 });
 
-test("BETTERWRIGHT_PROFILE selects the identity for the CLI too, and --profile wins", () => {
+test("BETTERWRIGHT_PROFILE selects the identity for the CLI too, and --profile wins", async () => {
   const home = makeTempDir("bw-profiles-home-");
   // `close` needs no browser and names the profile it looked for, so it is the
   // cheapest way to observe which identity the CLI resolved.
-  const fromEnv = runCli(["close"], {
+  const fromEnv = await runCli(["close"], {
     env: { BETTERWRIGHT_HOME: home, BETTERWRIGHT_PROFILE: "social" },
   });
   assert.match(fromEnv.stdout, /profile "social"/);
 
-  const flagWins = runCli(["close", "--profile", "review"], {
+  const flagWins = await runCli(["close", "--profile", "review"], {
     env: { BETTERWRIGHT_HOME: home, BETTERWRIGHT_PROFILE: "social" },
   });
   assert.match(flagWins.stdout, /profile "review"/);
 
-  const blankEnv = runCli(["close"], {
+  const blankEnv = await runCli(["close"], {
     env: { BETTERWRIGHT_HOME: home, BETTERWRIGHT_PROFILE: "  " },
   });
   assert.doesNotMatch(blankEnv.stdout, /profile/);
 
-  const badEnv = runCli(["close"], {
+  const badEnv = await runCli(["close"], {
     env: { BETTERWRIGHT_HOME: home, BETTERWRIGHT_PROFILE: "../escape" },
   });
   assert.equal(badEnv.status, 1);

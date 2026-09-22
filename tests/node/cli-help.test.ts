@@ -7,7 +7,6 @@
 // exit 0, and without side effects.
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,25 +14,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { COMMAND_SUMMARIES, helpFor, MAIN_USAGE, wantsHelp } from "../../dist/src/cli-help.js";
+import { runCli } from "./helpers/cli.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const cli = path.join(root, "dist", "bin", "betterwright.js");
-
-function runCli(args, { timeout = 20_000, env = {}, entrypoint = cli } = {}) {
-  return new Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>(resolve => {
-    const child = execFile(process.execPath, [entrypoint, ...args], {
-      cwd: root,
-      encoding: "utf8",
-      timeout,
-      killSignal: "SIGKILL",
-      env: { ...process.env, ...env },
-    }, (_error, stdout, stderr) => {
-      resolve({ status: child.exitCode, signal: child.signalCode, stdout, stderr });
-    });
-    // Close stdin so a command that reads it cannot wait for more input.
-    child.stdin?.end();
-  });
-}
 
 test("CLI test subprocesses close stdin and preserve nonzero exit output", async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "betterwright-cli-helper-"));
