@@ -9,6 +9,7 @@ import {
   endpointDiscoverySources,
   endpointSourceName,
 } from "../../dist/src/agent.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const cli = path.join(root, "dist", "bin", "betterwright.js");
@@ -18,7 +19,14 @@ const cli = path.join(root, "dist", "bin", "betterwright.js");
 // oven-sh/bun#37849), which is what failed Worker copies in sync on 2.5.2.
 function runCli(args, envOverrides = {}, timeout = 20_000) {
   return new Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((resolve) => {
-    const env = { ...process.env, ...envOverrides };
+    // These commands inspect configuration or fail before browser work. Keep
+    // them independent of saved user settings and persistent session daemons.
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      BETTERWRIGHT_HOME: makeTempDir("betterwright-model-cli-"),
+      BETTERWRIGHT_NO_DAEMON: "1",
+      ...envOverrides,
+    };
     for (const [name, value] of Object.entries(envOverrides)) {
       if (value === undefined) delete env[name];
     }

@@ -23,7 +23,12 @@ fs.writeFileSync(importGuard, String.raw`
 `);
 
 function runWithoutSetupModules(args: string[], model?: string) {
-  const env = { ...process.env };
+  // Failed model selection must not start a daemon or touch the user's profile.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    BETTERWRIGHT_HOME: makeTempDir("betterwright-startup-home-"),
+    BETTERWRIGHT_NO_DAEMON: "1",
+  };
   delete env.OPENROUTER_API_KEY;
   delete env.BETTERWRIGHT_MODEL_BASE_URL;
   delete env.BETTERWRIGHT_MODEL_API_KEY;
