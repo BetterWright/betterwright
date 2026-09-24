@@ -30,6 +30,7 @@ import {
 import { createCaptchaRuntime } from "./captcha-runtime.js";
 import { createChallengeScanner, markChallengesForWorkerRestart } from "./challenge-scan.js";
 import {
+  challengeMayBeRunning,
   isPublicSearchNavigation,
   PUBLIC_SEARCH_BLOCK_ADVICE,
 } from "./challenges.js";
@@ -275,7 +276,9 @@ function quietSessionPages(session) {
       // host-owned target never had Playwright's focus emulation to release.
       driverSession: localBrowserLaunch ? playwrightPageSession : null,
       isBusy: (page) =>
-        vaultCapture?.isBusy(page) === true || pageRecordingIsBusy(session.id, page),
+        vaultCapture?.isBusy(page) === true ||
+        pageRecordingIsBusy(session.id, page) ||
+        pageChallengeMayBeRunning(session, page),
     }).catch(() => {});
   }, PARK_IDLE_DELAY_MS);
   // A pending park must never be the reason the worker stays alive.
@@ -979,6 +982,27 @@ async function handleDialog(page, dialog) {
 // in challenges.ts, where the gate that reads this timestamp lives.
 const CHALLENGE_BLOCK_STATUSES = new Set([403, 429, 503]);
 const lastBlockedDocumentAt = new WeakMap();
+
+/**
+ * Whether parking must leave this page running because a bot challenge may be
+ * in progress on it (see challengeMayBeRunning). The session's open challenge
+ * set describes the page the last scan covered, which is the current one.
+ */
+function pageChallengeMayBeRunning(session, page) {
+  let frameUrls = [];
+  try {
+    frameUrls = page.frames().map((frame) => frame.url());
+  } catch {
+    // A page closing under the check has nothing left to park.
+  }
+  return challengeMayBeRunning({
+    openProviders:
+      session.currentId === pageId(page) ? session.openChallengeProviders : null,
+    blockedAt: lastBlockedDocumentAt.get(page) || 0,
+    now: Date.now(),
+    frameUrls,
+  });
+}
 
 function adoptPage(page, sessionId) {
   const session = sessionFor(sessionId);

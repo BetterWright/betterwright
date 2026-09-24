@@ -430,4 +430,40 @@ export function challengeScanNeeded(state: any = {}) {
   );
 }
 
+/**
+ * Whether a page may be running a bot challenge that parking must not freeze.
+ *
+ * Parking freezes idle pages between calls, and the page observes that as a
+ * background tab (hidden, frozen, then resumed). A challenge left running
+ * would stall mid-computation for the model's whole thinking time and see an
+ * unusual visibility pattern, so a page with any sign of one keeps running.
+ * This errs broad on purpose: a false positive only costs the idle CPU that
+ * parking would have saved.
+ *
+ *   - `openProviders` — the last completed scan still saw a challenge on this
+ *     page.
+ *   - `blockedAt` — the page's document just came back 403/429/503, the
+ *     interstitial window the scan gate also honors.
+ *   - `frameUrls` — any frame, the main one included, whose URL looks like a
+ *     challenge provider or a self-hosted challenge, including invisible
+ *     widgets embedded in ordinary pages.
+ *
+ * Pure: the caller supplies `now`.
+ */
+export function challengeMayBeRunning(state: any = {}) {
+  const input: any = isRecord(state) ? state : {};
+  const openProviders = input.openProviders;
+  const openCount = openProviders
+    ? (openProviders.size ?? openProviders.length ?? 0)
+    : 0;
+  if (openCount > 0) return true;
+
+  const blockedAt = isNumber(input.blockedAt) ? input.blockedAt : 0;
+  const now = isNumber(input.now) ? input.now : Date.now();
+  if (blockedAt > 0 && now - blockedAt <= CHALLENGE_BLOCK_WINDOW_MS) return true;
+
+  const frameUrls = Array.isArray(input.frameUrls) ? input.frameUrls : [];
+  return frameUrls.some((url) => frameUrlSuggestsChallenge(url));
+}
+
 export { PUBLIC_SEARCH_BLOCK_ADVICE, SEARCH_CHALLENGE_ADVICE };

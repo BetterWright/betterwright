@@ -34,6 +34,11 @@
 // the page observes the same blur, visibilitychange, freeze and resume events
 // as a tab the user switched away from and back to.
 //
+// NOT during a bot challenge. A challenge page or widget left mid-computation
+// would stall for the model's whole thinking time and see a hide/freeze cycle
+// that no desktop tab produces seconds after use, so the worker exempts any
+// page that may be running one (challengeMayBeRunning in src/challenges.ts).
+//
 // WHEN. Only between executions. `parkSession` runs when a session's last
 // in-flight execution unwinds and `unparkSession` runs before the next one
 // begins, so model code never observes a parked page: the window being
@@ -288,6 +293,8 @@ export async function parkSession(session, deps: any = {}) {
     // A page with credential work in flight keeps running. Parking disables
     // script for the whole renderer, isolated worlds included, and the vault
     // sensor lives in one — see the note on `isBusy` in src/vault-capture.ts.
+    // The worker also reports recording pages and pages that may be running
+    // a bot challenge as busy.
     if (deps.isBusy?.(page)) continue;
     results.push(parkPage(page, deps).catch(() => false));
   }

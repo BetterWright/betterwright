@@ -13,7 +13,11 @@ visible one, so a "parked" page kept running `requestAnimationFrame` at 60 FPS.
 Parking now releases focus emulation on Playwright's own session just before
 the freeze and restores it before the next call. A browser regression test
 checks that no animation frame runs while a page is parked, and that the page
-wakes focused and visible with its state intact.
+wakes focused and visible with its state intact. A page that may be running a
+bot challenge is never parked, so an interstitial or an embedded widget does not
+stall between calls or see a hide-and-freeze cycle. This includes a recent 403,
+429, or 503 document, a challenge still open from the last scan, or a frame from
+a challenge provider.
 
 While a page is parked, one full garbage collection runs if its JavaScript and
 Blink heaps grew by at least 4 MiB since the previous one. A frozen page runs no

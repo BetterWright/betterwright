@@ -32,7 +32,9 @@ Releases before 1.1.3 predate this file; their notes live on the
   rendering at the host refresh rate. Parking now releases that emulation on
   Playwright's own session while a page is frozen and restores it before the
   next call. Parked pages now receive the visibility, freeze, and resume
-  events of a background tab.
+  events of a background tab. Pages that may be running a bot challenge are
+  not parked: this includes a recent 403, 429, or 503 document, a challenge
+  still open from the last scan, or a frame from a challenge provider.
 - A caller's `--disable-features` is merged with BetterWright's managed list
   instead of replacing it, as `--enable-features` already was.
 - CAPTCHA Verify and checkbox controls are scrolled into view before the

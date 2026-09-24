@@ -634,6 +634,39 @@ test("parked pages freeze between calls and wake focused with their state", opts
   }
 });
 
+test("a page that may be running a bot challenge is not parked", opts, async () => {
+  // Interstitials such as Cloudflare's arrive as 403/503 documents and keep
+  // computing while the model thinks. Freezing one would stall it and show a
+  // hide/freeze cycle no desktop tab produces, so parking leaves it running.
+  const site = await listen((request, response) => {
+    response.writeHead(503, { "content-type": "text/html" });
+    response.end(`<title>Just a moment...</title><script>
+      window.events = []; window.frames = 0;
+      document.addEventListener('freeze', () => window.events.push('freeze'));
+      document.addEventListener('visibilitychange', () => window.events.push(document.visibilityState));
+      const frame = () => { window.frames += 1; requestAnimationFrame(frame); };
+      requestAnimationFrame(frame);
+    </script>`);
+  });
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false, parkBackgroundPages: true });
+  try {
+    const opened = await bw.run(`
+      await page.goto(${JSON.stringify(site.origin)});
+      return page.evaluate(() => window.frames);
+    `);
+    assert.equal(opened.ok, true, opened.error);
+    // Well past the 750 ms park delay, inside the 10 s interstitial window.
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    const later = await bw.run("return page.evaluate(() => ({ events: window.events.join(','), frames: window.frames }))");
+    assert.equal(later.ok, true, later.error);
+    assert.equal(later.result.events, "", "the challenge page was never hidden or frozen");
+    assert.ok(later.result.frames - opened.result > 30, "the challenge page kept running while idle");
+  } finally {
+    await bw.close();
+    await site.close();
+  }
+});
+
 test("recording preserves page state and animation between browser calls", recordingOpts, async () => {
   let reportProgress: () => void;
   const progress = new Promise<void>(resolve => { reportProgress = resolve; });

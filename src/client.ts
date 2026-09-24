@@ -487,7 +487,8 @@ export class BetterWright {
    *   life of the session; parking is what keeps an idle session near zero
    *   CPU. Never applies in headed mode or while a live view is streaming.
    *   Parked pages observe the same visibility, freeze, and resume events as a
-   *   background tab. Set `false`, or `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`,
+   *   background tab; pages that may be running a bot challenge are left
+   *   running. Set `false`, or `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`,
    *   to opt out.
    * @param {boolean} [options.adBlock=true] block ads and trackers using
    *   Ghostery filter lists, redirects, and cosmetics. Also settable with

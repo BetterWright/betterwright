@@ -196,7 +196,11 @@ mode or while a live view is streaming, and it only freezes browsers
 BetterWright launched: a remote provider's pages stay visible because the
 provider's own live view may be showing them. It waits 750 ms so an agent's
 back-to-back calls never pay for it, and it leaves pages with credential capture
-or an active recording running. A parked page observes the same `blur`,
+or an active recording running. Pages that may be running a bot challenge also
+stay running. These include a recent 403, 429, or 503 document, a challenge the
+last scan left open, or a frame from a challenge provider such as a Turnstile,
+reCAPTCHA, hCaptcha, or DataDome widget. A frozen challenge would stall and see
+a visibility pattern that real desktop tabs do not produce. A parked page observes the same `blur`,
 `visibilitychange`, `freeze`, and `resume` events as a real background tab, so
 applications that refresh data when a tab becomes visible again may do so at the
 start of a call. To opt out:

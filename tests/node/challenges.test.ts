@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { detectBotChallenge, isPublicSearchNavigation } from "../../dist/src/challenges.js";
+import {
+  CHALLENGE_BLOCK_WINDOW_MS,
+  challengeMayBeRunning,
+  detectBotChallenge,
+  isPublicSearchNavigation,
+} from "../../dist/src/challenges.js";
 
 test("detects Google unusual traffic on country search domains", () => {
   const challenge = detectBotChallenge({
@@ -304,4 +309,39 @@ test("classifies only top-level public search URLs for pacing", () => {
   assert.equal(isPublicSearchNavigation("https://www.bing.com/maps?q=test"), false);
   assert.equal(isPublicSearchNavigation("https://lite.duckduckgo.com/about"), false);
   assert.equal(isPublicSearchNavigation("not a URL"), false);
+});
+
+test("parking leaves a page running while a challenge may be in progress", () => {
+  const now = 1_000_000;
+  const quiet = { now, frameUrls: ["https://shop.example/", "https://ads.example/slot"] };
+  assert.equal(challengeMayBeRunning(quiet), false);
+  // The last scan still saw a challenge on this page.
+  assert.equal(challengeMayBeRunning({ ...quiet, openProviders: new Set(["turnstile"]) }), true);
+  assert.equal(challengeMayBeRunning({ ...quiet, openProviders: new Set() }), false);
+  // A blocked document may be an interstitial that has not rendered yet.
+  assert.equal(challengeMayBeRunning({ ...quiet, blockedAt: now - 2_000 }), true);
+  assert.equal(
+    challengeMayBeRunning({ ...quiet, blockedAt: now - CHALLENGE_BLOCK_WINDOW_MS - 1 }),
+    false,
+  );
+});
+
+test("parking leaves a page running when any frame belongs to a challenge provider", () => {
+  const withFrame = (url) => challengeMayBeRunning({ now: 0, frameUrls: ["https://shop.example/", url] });
+  // Embedded widgets, including invisible ones that watch behavior.
+  assert.equal(withFrame("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0"), true);
+  assert.equal(withFrame("https://www.google.com/recaptcha/api2/anchor?k=site"), true);
+  assert.equal(withFrame("https://newassets.hcaptcha.com/captcha/v1/abc/static/hcaptcha.html"), true);
+  assert.equal(withFrame("https://geo.captcha-delivery.com/captcha/?initialCid=x"), true);
+  assert.equal(withFrame("https://client-api.arkoselabs.com/fc/gc/"), true);
+  // Cloudflare's interstitial is the main document itself.
+  assert.equal(challengeMayBeRunning({ now: 0, frameUrls: ["https://shop.example/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"] }), true);
+  // Lookalikes do not count.
+  assert.equal(withFrame("https://challenges.cloudflare.com.evil.test/"), false);
+});
+
+test("the parking challenge check tolerates missing input", () => {
+  assert.equal(challengeMayBeRunning(), false);
+  assert.equal(challengeMayBeRunning(null), false);
+  assert.equal(challengeMayBeRunning({ frameUrls: "not-a-list" }), false);
 });
