@@ -1,0 +1,6 @@
+# Render and review outputs (regenerate with `npm run render` / `hyperframes snapshot`)
+renders/
+snapshots/
+.hyperframes/
+node_modules/
+*.wav

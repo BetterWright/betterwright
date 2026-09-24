@@ -1,0 +1,12 @@
+{
+  "name": "aside-browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "score": "node tools/make-score.mjs",
+    "dev": "npx --yes hyperframes@0.8.72 preview",
+    "check": "npx --yes hyperframes@0.8.72 check",
+    "render": "npx --yes hyperframes@0.8.72 render --quality delivery --fps 30 --output renders/aside-browser-promo.mp4",
+    "publish": "npx --yes hyperframes@0.8.72 publish"
+  }
+}

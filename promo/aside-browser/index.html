@@ -1,0 +1,1371 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Aside Browser — The AI browser for real work</title>
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Inter"; font-weight: 400; src: url("assets/fonts/inter-latin-400-normal.woff2") format("woff2"); }
+      @font-face { font-family: "Inter"; font-weight: 500; src: url("assets/fonts/inter-latin-500-normal.woff2") format("woff2"); }
+      @font-face { font-family: "Inter"; font-weight: 600; src: url("assets/fonts/inter-latin-600-normal.woff2") format("woff2"); }
+      @font-face { font-family: "Inter"; font-weight: 700; src: url("assets/fonts/inter-latin-700-normal.woff2") format("woff2"); }
+      @font-face { font-family: "JetBrains Mono"; font-weight: 400; src: url("assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+      @font-face { font-family: "JetBrains Mono"; font-weight: 500; src: url("assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); }
+      @font-face { font-family: "Instrument Serif"; font-style: normal; font-weight: 400; src: url("assets/fonts/instrument-serif-latin-400-normal.woff2") format("woff2"); }
+      @font-face { font-family: "Instrument Serif"; font-style: italic; font-weight: 400; src: url("assets/fonts/instrument-serif-latin-400-italic.woff2") format("woff2"); }
+
+      :root {
+        --ink: #1c1a21;
+        --ink-2: #3b3742;
+        --mute: #66626d;
+        --mute-2: #6c6874;
+        --hair: rgba(52, 30, 78, 0.09);
+        --lav: #7b5cf0;
+        --lav-deep: #5b3fd1;
+        --lav-soft: #efe9ff;
+        --green: #147c44;
+        --green-soft: #e3f6ea;
+        --red: #d4353b;
+        --red-soft: #fdeced;
+        --sentry: #362d59;
+        --sentry-btn: #6c5fc7;
+        --mono: "JetBrains Mono", ui-monospace, monospace;
+        --sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+        --serif: "Instrument Serif", Georgia, serif;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #e5e3fb; }
+      body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; }
+      svg.i { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; display: block; }
+      svg.b { width: 1em; height: 1em; flex: none; display: block; }
+
+      #root { position: relative; width: 100%; height: 100%; overflow: hidden; }
+
+      /* ---------- lavender glass backdrop ---------- */
+      #bg { position: absolute; inset: 0; overflow: hidden;
+        background:
+          radial-gradient(60% 55% at 50% -8%, #c592f1 0%, rgba(197, 146, 241, 0) 70%),
+          radial-gradient(40% 45% at 8% 0%, #f8d5cf 0%, rgba(248, 213, 207, 0) 72%),
+          radial-gradient(38% 42% at 94% 4%, #f1c8ec 0%, rgba(241, 200, 236, 0) 72%),
+          radial-gradient(55% 60% at 100% 70%, #d6dcfd 0%, rgba(214, 220, 253, 0) 75%),
+          radial-gradient(55% 60% at 0% 80%, #ebe2fb 0%, rgba(235, 226, 251, 0) 75%),
+          #e3e4fc; }
+      .orb { position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.75; }
+      #orb1 { width: 640px; height: 640px; left: -160px; top: 420px; background: #f3c7e4; }
+      #orb2 { width: 720px; height: 720px; left: 1340px; top: -260px; background: #c9b2f6; }
+      #orb3 { width: 560px; height: 560px; left: 760px; top: 760px; background: #cdd6fb; }
+      #grain { position: absolute; inset: 0; opacity: 0.22; mix-blend-mode: soft-light;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.45  0 0 0 0 0.6  0 0 0 0.9 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>"); }
+
+      /* ---------- camera ---------- */
+      #stage { position: absolute; inset: 0; perspective: 2200px; }
+      #cam-scale { position: absolute; inset: 0; transform-origin: 50% 50%; }
+      #cam-pan { position: absolute; inset: 0; }
+
+      /* ---------- Aside window ---------- */
+      #win { position: absolute; left: 140px; top: 50px; width: 1640px; height: 980px; border-radius: 24px; overflow: hidden;
+        background: linear-gradient(180deg, rgba(251, 242, 240, 0.92) 0%, rgba(249, 238, 244, 0.92) 55%, rgba(246, 236, 246, 0.92) 100%);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75) inset, 0 50px 120px rgba(104, 64, 170, 0.28), 0 12px 32px rgba(104, 64, 170, 0.14);
+        transform-origin: 50% 0%; }
+      #win-glass { position: absolute; inset: 0; background: radial-gradient(90% 60% at 0% 0%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 60%); }
+
+      /* sidebar — coordinates are the reference screenshot × 1.244 */
+      #side { position: absolute; left: 0; top: 0; width: 364px; height: 100%; }
+      .tl { position: absolute; top: 19px; width: 16px; height: 16px; border-radius: 50%; }
+      .side-abs { position: absolute; display: flex; align-items: center; }
+      .srow { position: absolute; left: 12px; width: 340px; height: 44px; display: flex; align-items: center; gap: 12px; padding-left: 12px; font-size: 18.5px; letter-spacing: -0.005em; }
+      .srow .ic { font-size: 21px; width: 22px; display: flex; justify-content: center; }
+      .srow.bm { font-weight: 500; color: var(--ink); }
+      .srow.tab { font-weight: 500; color: var(--mute); }
+      .srow .chev { position: absolute; right: 14px; font-size: 17px; color: var(--mute-2); }
+      .slabel { position: absolute; left: 24px; font-size: 17.5px; color: var(--mute-2); font-weight: 500; }
+      #sel { position: absolute; left: 9px; width: 344px; height: 44px; border-radius: 11px; background: #fffefe;
+        box-shadow: 0 1px 2px rgba(60, 30, 90, 0.08), 0 0 0 1px rgba(60, 30, 90, 0.04); }
+      #agent-group { position: absolute; left: 0; top: 522px; width: 364px; height: 0; overflow: hidden; }
+      .arow { position: absolute; left: 34px; width: 318px; height: 44px; display: flex; align-items: center; gap: 11px; padding-left: 12px; font-size: 18px; font-weight: 500; color: var(--ink-2); }
+      .arow .fav { width: 22px; height: 22px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+      .arow .live { position: absolute; right: 16px; width: 9px; height: 9px; border-radius: 50%; background: var(--lav); box-shadow: 0 0 0 4px rgba(123, 92, 240, 0.16); }
+      #below-group { position: absolute; left: 0; top: 0; width: 364px; height: 100%; }
+
+      /* main panel */
+      #main { position: absolute; left: 364px; top: 8px; right: 8px; bottom: 8px; border-radius: 16px; overflow: hidden;
+        background: linear-gradient(180deg, #f9f6fc 0%, #f4f0f6 60%, #f3eef5 100%);
+        box-shadow: 0 0 0 1px rgba(80, 50, 110, 0.06), 0 2px 10px rgba(80, 50, 110, 0.05); }
+      #topbar { position: absolute; left: 0; top: 0; right: 0; height: 56px; display: flex; align-items: center; color: var(--mute-2); }
+      #topbar .nav { position: absolute; top: 17px; font-size: 22px; }
+      #url { position: absolute; left: 164px; top: 0; height: 56px; display: flex; align-items: center; gap: 10px; font-size: 18.5px; color: var(--mute); }
+      #url-fav { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 17px; }
+      #url-text { color: var(--ink-2); }
+      #key { position: absolute; right: 18px; top: 16px; font-size: 23px; color: var(--ink-2); }
+      #key-glow { position: absolute; right: 7px; top: 5px; width: 46px; height: 46px; border-radius: 12px; background: var(--lav-soft); box-shadow: 0 0 0 1px rgba(123, 92, 240, 0.25); opacity: 0; }
+
+      /* new tab page */
+      #newtab { position: absolute; left: 0; top: 0; width: 1268px; height: 964px; }
+      #nt-logo { position: absolute; left: 596px; top: 193px; width: 77px; height: 77px; color: #cfccd4; }
+      #askbar { position: absolute; left: 197px; top: 314px; width: 882px; height: 62px; border-radius: 17px; background: #fefdfe;
+        box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.05), 0 6px 22px rgba(80, 50, 120, 0.08); overflow: hidden; }
+      #ask-ring { position: absolute; left: 197px; top: 314px; width: 882px; height: 62px; border-radius: 17px; box-shadow: 0 0 0 2px rgba(123, 92, 240, 0.55), 0 0 40px rgba(123, 92, 240, 0.35); opacity: 0; }
+      #ask-ph { position: absolute; left: 21px; top: 17px; font-size: 21.5px; color: #8f8b96; letter-spacing: -0.005em; }
+      #ask-text { position: absolute; left: 21px; top: 16px; width: 520px; font-size: 21.5px; line-height: 30px; color: var(--ink); letter-spacing: -0.005em; }
+      #ask-text span { opacity: 0; }
+      #caret { position: absolute; left: 0; top: 0; width: 2px; height: 26px; border-radius: 2px; background: var(--lav); opacity: 0; }
+      #ask-right { position: absolute; right: 12px; top: 10px; height: 42px; display: flex; align-items: center; gap: 10px; }
+      .kbd { font-size: 15px; font-weight: 500; color: #6d6973; background: #f1eff3; border-radius: 7px; padding: 5px 8px; }
+      .muted17 { font-size: 17.5px; color: #75717b; }
+      #seg { display: flex; align-items: center; padding: 4px; margin-left: 6px; border-radius: 12px; background: #f1eff2; height: 44px; }
+      #seg div { height: 36px; display: flex; align-items: center; padding: 0 12px; font-size: 19px; border-radius: 9px; }
+      #seg-search { color: #6d6973; }
+      #seg-ask { background: #fff; color: var(--ink); font-weight: 500; box-shadow: 0 1px 3px rgba(40, 20, 60, 0.12), 0 0 0 1px rgba(40, 20, 60, 0.05); }
+      #nt-below { position: absolute; left: 0; top: 0; width: 1268px; height: 964px; }
+      .opt { position: absolute; top: 390px; height: 30px; display: flex; align-items: center; gap: 7px; font-size: 17.5px; color: #6d6973; }
+      .opt svg.i { font-size: 19px; }
+      .opt .cd { font-size: 15px; color: #9a96a0; }
+      #recent-h { position: absolute; left: 112px; top: 484px; font-size: 21px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; }
+      .card { position: absolute; top: 538px; width: 345px; height: 460px; border-radius: 17px; background: #fefcfe;
+        box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.06), 0 4px 16px rgba(80, 50, 120, 0.06); overflow: hidden; }
+      .card .meta { position: absolute; left: 18px; right: 18px; top: 13px; display: flex; align-items: center; gap: 8px; font-size: 16.5px; color: var(--mute-2); }
+      .card .meta .dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: #1d9bf0; }
+      .card .ttl { position: absolute; left: 18px; right: 14px; top: 38px; font-size: 19.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; }
+      .card .body { position: absolute; left: 18px; right: 18px; top: 72px; font-size: 16.5px; line-height: 26px; color: var(--mute-2); }
+      .card .body.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+      .card .step { display: flex; align-items: center; gap: 10px; height: 26px; }
+      .card .step svg.i { font-size: 16px; }
+      .card .img { position: absolute; left: 12px; right: 12px; top: 152px; height: 300px; border-radius: 11px; overflow: hidden; }
+
+      /* task view */
+      #page-area { position: absolute; left: 0; top: 56px; width: 832px; height: 908px; overflow: hidden; }
+      .page { position: absolute; inset: 0; opacity: 0; background: #fff; overflow: hidden; }
+      #agent { position: absolute; left: 832px; top: 56px; width: 436px; height: 908px; opacity: 0;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(252, 249, 255, 0.82)); box-shadow: -1px 0 0 rgba(80, 50, 110, 0.08); }
+
+      /* agent panel */
+      #ag-head { position: absolute; left: 24px; right: 24px; top: 20px; display: flex; align-items: center; gap: 10px; }
+      #ag-mark { width: 30px; height: 30px; color: var(--lav); }
+      #ag-name { font-size: 18px; font-weight: 600; }
+      #ag-model { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 500; color: var(--ink-2); background: #fff; border-radius: 999px; padding: 6px 12px 6px 9px; box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.08); }
+      #ag-model .b { font-size: 16px; }
+      #ag-task { position: absolute; left: 24px; right: 24px; top: 72px; padding: 14px 16px; border-radius: 14px; background: var(--lav-soft); font-size: 17px; line-height: 25px; color: var(--ink); }
+      #ag-status { position: absolute; left: 24px; top: 190px; display: flex; align-items: center; gap: 9px; font-size: 16.5px; color: var(--mute); }
+      #ag-status .spin { width: 18px; height: 18px; }
+      #ag-done-ic { position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; background: var(--green); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; opacity: 0; }
+      #ag-steps { position: absolute; left: 24px; right: 20px; top: 232px; }
+      .st { position: absolute; left: 0; right: 0; height: 38px; display: flex; align-items: center; gap: 12px; font-size: 16.5px; color: var(--ink); opacity: 0; }
+      .st .slot { position: relative; width: 22px; height: 22px; flex: none; }
+      .st .slot > * { position: absolute; inset: 0; }
+      .st .ok { border-radius: 50%; background: var(--green-soft); color: var(--green); display: flex; align-items: center; justify-content: center; font-size: 13px; opacity: 0; }
+      .st .bad { border-radius: 50%; background: var(--red-soft); color: var(--red); display: flex; align-items: center; justify-content: center; font-size: 13px; opacity: 0; }
+      .st .txt { white-space: nowrap; }
+      .st .txt b { font-weight: 600; }
+      .st .note { position: absolute; left: 34px; top: 34px; font-size: 15px; color: var(--mute); font-style: italic; white-space: nowrap; opacity: 0; }
+      .spin { display: block; }
+      #ag-reply { position: absolute; left: 20px; right: 20px; bottom: 20px; height: 56px; border-radius: 14px; background: #fff; box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.08); display: flex; align-items: center; padding: 0 10px 0 18px; font-size: 17px; color: #6e6b74; }
+      #ag-reply .send { margin-left: auto; width: 36px; height: 36px; border-radius: 10px; background: #ece9f0; color: #8f8b96; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+      #ag-final { position: absolute; left: 24px; right: 24px; top: 716px; padding: 14px 16px; border-radius: 14px; background: #fff; box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.08); font-size: 16.5px; line-height: 24px; color: var(--ink-2); opacity: 0; }
+
+      /* agent cursor */
+      #cursor { position: absolute; left: 0; top: 0; width: 34px; height: 34px; opacity: 0; z-index: 50; }
+      #cursor svg { width: 34px; height: 34px; display: block; filter: drop-shadow(0 4px 10px rgba(60, 30, 120, 0.35)); }
+      #cursor-tag { position: absolute; left: 26px; top: 28px; padding: 3px 9px; border-radius: 999px; background: var(--lav); color: #fff; font-size: 14px; font-weight: 600; white-space: nowrap; }
+      #cursor-ring { position: absolute; left: -12px; top: -12px; width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--lav); opacity: 0; }
+
+      /* shared page bits */
+      .mono { font-family: var(--mono); }
+      .spawn-wrap { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+        background: radial-gradient(70% 60% at 50% 40%, #f6f1ff 0%, #fbf9fd 70%); }
+      .spawn-h { font-size: 17px; font-weight: 600; color: var(--mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+      .scard { width: 600px; height: 92px; border-radius: 18px; background: #fff; box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.07), 0 10px 30px rgba(90, 60, 150, 0.1); display: flex; align-items: center; gap: 18px; padding: 0 24px; opacity: 0; }
+      .scard .sfav { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+      .scard .sname { font-size: 22px; font-weight: 600; }
+      .scard .surl { font-size: 16.5px; color: var(--mute); margin-top: 3px; }
+      .scard .sbar { margin-left: auto; width: 150px; height: 8px; border-radius: 99px; background: #eeeaf3; overflow: hidden; }
+      .scard .sbar i { display: block; width: 100%; height: 100%; border-radius: 99px; background: var(--lav); transform-origin: 0 50%; transform: scaleX(0); }
+
+      /* sentry */
+      .sn-login { position: absolute; inset: 0; background: radial-gradient(80% 60% at 50% 0%, #4f2a6b 0%, #2a1a3c 60%, #1f1530 100%); }
+      .sn-card { position: absolute; left: 186px; top: 118px; width: 460px; border-radius: 16px; background: #fff; padding: 34px 36px 30px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35); }
+      .sn-brand { display: flex; align-items: center; gap: 10px; color: var(--sentry); font-size: 30px; }
+      .sn-brand span { font-size: 21px; font-weight: 700; letter-spacing: 0.18em; }
+      .sn-h { font-size: 27px; font-weight: 600; margin: 24px 0 20px; color: #2b2233; }
+      .sn-l { font-size: 15.5px; font-weight: 600; color: #3e3446; margin: 0 0 8px; }
+      .sn-in { position: relative; height: 48px; border-radius: 9px; border: 1.5px solid #dcd6e5; margin-bottom: 18px; display: flex; align-items: center; padding: 0 14px; font-size: 18px; color: #2b2233; }
+      .sn-in .fillbg { position: absolute; inset: -1.5px; border-radius: 9px; border: 2px solid var(--lav); background: rgba(123, 92, 240, 0.07); opacity: 0; }
+      .sn-in .val { position: relative; opacity: 0; }
+      .sn-btn { height: 50px; border-radius: 9px; background: var(--sentry-btn); color: #fff; font-size: 18px; font-weight: 600; display: flex; align-items: center; justify-content: center; margin-top: 6px; }
+      .sn-sso { text-align: center; font-size: 15.5px; color: #6b6275; margin-top: 16px; }
+      #vault-pop { position: absolute; left: 36px; top: 232px; width: 388px; border-radius: 14px; background: rgba(255, 255, 255, 0.96); box-shadow: 0 0 0 1px rgba(123, 92, 240, 0.25), 0 18px 40px rgba(60, 30, 120, 0.22); padding: 12px; opacity: 0; z-index: 5; }
+      #vault-pop .vh { display: flex; align-items: center; gap: 8px; font-size: 14.5px; font-weight: 600; color: var(--lav-deep); padding: 2px 4px 10px; }
+      #vault-pop .vh .d { margin-left: auto; font-weight: 500; color: var(--mute); }
+      #vault-pop .vr { display: flex; align-items: center; gap: 11px; padding: 10px; border-radius: 10px; background: var(--lav-soft); }
+      #vault-pop .av { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #b9a2ff, #7b5cf0); color: #fff; font-size: 15px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+      #vault-pop .vt { font-size: 16px; font-weight: 600; color: var(--ink); }
+      #vault-pop .vs { font-size: 14px; color: var(--mute); }
+      #vault-pop .fill { margin-left: auto; font-size: 14.5px; font-weight: 600; color: #fff; background: var(--lav); border-radius: 8px; padding: 6px 12px; }
+      #vault-badge { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 14px; font-size: 15px; font-weight: 500; color: var(--lav-deep); opacity: 0; }
+
+      .sn-app { position: absolute; inset: 0; background: #fbfafc; }
+      .sn-rail { position: absolute; left: 0; top: 0; bottom: 0; width: 66px; background: #2b2233; display: flex; flex-direction: column; align-items: center; padding-top: 18px; gap: 20px; color: #fff; }
+      .sn-rail .r { width: 26px; height: 26px; border-radius: 7px; background: rgba(255, 255, 255, 0.14); }
+      .sn-body { position: absolute; left: 66px; right: 0; top: 0; bottom: 0; padding: 30px 36px; }
+      .crumb { font-size: 15.5px; color: #6b6275; }
+      .sn-h1 { font-size: 30px; font-weight: 600; color: #2b2233; margin: 8px 0 22px; letter-spacing: -0.01em; }
+      .sn-sub { font-size: 17px; font-weight: 600; color: #3e3446; margin-bottom: 14px; }
+      .plat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+      .pt { position: relative; height: 104px; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1.5px #e3dde9; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 16.5px; font-weight: 500; color: #3e3446; }
+      .pt .pl { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700; color: #fff; }
+      .pt .sel-ring { position: absolute; inset: 0; border-radius: 12px; box-shadow: 0 0 0 2.5px var(--sentry-btn); background: rgba(108, 95, 199, 0.06); opacity: 0; }
+      .row2 { display: flex; gap: 14px; align-items: flex-end; margin-top: 24px; }
+      .row2 .fld { flex: 1; }
+      .row2 .in { height: 48px; border-radius: 9px; border: 1.5px solid #dcd6e5; background: #fff; display: flex; align-items: center; padding: 0 14px; font-size: 18px; }
+      .row2 .btn { height: 48px; padding: 0 20px; border-radius: 9px; background: var(--sentry-btn); color: #fff; font-size: 17px; font-weight: 600; display: flex; align-items: center; }
+      #dsn-card { position: absolute; left: 36px; right: 36px; top: 470px; border-radius: 16px; background: #fff; box-shadow: 0 0 0 1px #e3dde9, 0 20px 50px rgba(54, 45, 89, 0.14); padding: 24px 26px; opacity: 0; }
+      #dsn-card .ok { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 600; color: var(--green); }
+      #dsn-card h3 { font-size: 23px; font-weight: 600; color: #2b2233; margin: 12px 0 16px; }
+      .dsn { height: 54px; border-radius: 10px; background: #f7f5fa; box-shadow: 0 0 0 1px #e3dde9; display: flex; align-items: center; gap: 12px; padding: 0 14px; font-family: var(--mono); font-size: 16px; color: #3e3446; }
+      .dsn .ico { margin-left: auto; display: flex; gap: 12px; color: #857c8f; font-size: 19px; }
+      .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 15.5px; font-weight: 600; border-radius: 999px; padding: 7px 13px; }
+      .pill.lav { color: var(--lav-deep); background: var(--lav-soft); }
+      .pill.green { color: var(--green); background: var(--green-soft); }
+      .pill.red { color: var(--red); background: var(--red-soft); }
+      #dsn-pill { margin-top: 16px; opacity: 0; }
+
+      /* github */
+      .gh { position: absolute; inset: 0; background: #fff; }
+      .gh-top { height: 58px; background: #f6f8fa; border-bottom: 1px solid #d1d9e0; display: flex; align-items: center; gap: 12px; padding: 0 26px; font-size: 18px; color: #1f2328; }
+      .gh-top .b { font-size: 28px; }
+      .gh-top b { font-weight: 600; }
+      .gh-pr { padding: 22px 26px 0; }
+      .gh-pr h2 { font-size: 26px; font-weight: 500; color: #1f2328; letter-spacing: -0.01em; }
+      .gh-pr h2 span { color: #59636e; font-weight: 400; }
+      .gh-state { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 16px; color: #59636e; }
+      .gh-open { display: inline-flex; align-items: center; gap: 6px; background: #1f883d; color: #fff; border-radius: 999px; padding: 5px 12px; font-weight: 500; }
+      .gh-tabs { display: flex; gap: 26px; margin: 18px 0 0; padding: 0 26px; border-bottom: 1px solid #d1d9e0; font-size: 16.5px; color: #59636e; }
+      .gh-tabs div { padding: 10px 0 12px; }
+      .gh-tabs .on { color: #1f2328; font-weight: 600; box-shadow: inset 0 -2px 0 #fd8c73; }
+      .gh-files { padding: 16px 26px; }
+      .fbox { border: 1px solid #d1d9e0; border-radius: 10px; overflow: hidden; margin-bottom: 14px; }
+      .fhead { height: 44px; background: #f6f8fa; border-bottom: 1px solid #d1d9e0; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-family: var(--mono); font-size: 15px; color: #1f2328; }
+      .fhead .add { color: #1a7f37; font-weight: 500; }
+      .fhead .del { color: #cf222e; font-weight: 500; }
+      .cl { display: flex; height: 29px; align-items: center; font-family: var(--mono); font-size: 15.5px; color: #1f2328; white-space: pre; }
+      .cl .n { width: 46px; text-align: right; padding-right: 12px; color: #818b98; font-size: 14px; flex: none; }
+      .cl .s { width: 22px; flex: none; text-align: center; }
+      .cl.a { background: #dafbe1; }
+      .cl.a .n { background: #aceebb; color: #1f2328; }
+      .cl.d { background: #ffebe9; }
+      .cl.d .n { background: #ffcecb; color: #1f2328; }
+      .tk-k { color: #cf222e; }
+      .tk-s { color: #0a3069; }
+      .tk-f { color: #8250df; }
+      .tk-c { color: #59636e; }
+      .term { margin: 0 26px; border-radius: 12px; background: #17141d; padding: 16px 18px; font-family: var(--mono); font-size: 16px; line-height: 27px; color: #d9d4e3; opacity: 0; box-shadow: 0 16px 40px rgba(20, 10, 40, 0.25); }
+      .term .tl2 { opacity: 0; white-space: pre; }
+      .term .g { color: #5fd38d; }
+      .term .dim { color: #8b8497; }
+      .term .pr { color: #b9a2ff; }
+      #checks { margin: 14px 26px 0; opacity: 0; }
+
+      /* vercel */
+      .vc { position: absolute; inset: 0; background: #fff; color: #171717; }
+      .vc-top { height: 58px; border-bottom: 1px solid #ebebeb; display: flex; align-items: center; gap: 12px; padding: 0 26px; font-size: 17.5px; }
+      .vc-top .tri { font-size: 22px; color: #000; }
+      .vc-top .sl { color: #767676; font-size: 22px; }
+      .vc-tabs { height: 48px; border-bottom: 1px solid #ebebeb; display: flex; align-items: flex-end; gap: 24px; padding: 0 26px; font-size: 16px; color: #666; }
+      .vc-tabs div { padding-bottom: 12px; }
+      .vc-tabs .on { color: #171717; box-shadow: inset 0 -2px 0 #171717; }
+      .vc-body { padding: 28px 30px; }
+      .vc-h { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
+      .vc-p { font-size: 16px; color: #666; margin: 8px 0 22px; }
+      .envrow { height: 74px; border: 1px solid #ebebeb; border-radius: 10px; display: flex; align-items: center; gap: 16px; padding: 0 18px; margin-bottom: 12px; opacity: 0; background: #fff; }
+      .envrow .k { font-family: var(--mono); font-size: 16px; font-weight: 500; }
+      .envrow .v { font-family: var(--mono); font-size: 16px; color: #8f8f8f; letter-spacing: 0.08em; }
+      .envrow .tags { margin-left: auto; display: flex; gap: 8px; }
+      .tag { font-size: 14px; font-weight: 500; border-radius: 999px; padding: 4px 10px; background: #f2f2f2; color: #444; display: inline-flex; align-items: center; gap: 5px; }
+      .toast { position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-radius: 12px; background: #171717; color: #fff; font-size: 16.5px; font-weight: 500; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25); white-space: nowrap; }
+      #env-toast { opacity: 0; }
+      .dep { border: 1px solid #ebebeb; border-radius: 14px; padding: 22px; display: flex; gap: 22px; }
+      .dep .thumb { width: 250px; height: 150px; border-radius: 10px; overflow: hidden; background: linear-gradient(135deg, #f7f3ff, #ffe9f2); box-shadow: 0 0 0 1px #ebebeb; position: relative; }
+      .dep .kv { font-size: 14.5px; color: #666; margin-bottom: 4px; }
+      .dep .kv2 { font-size: 17px; font-weight: 500; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+      .sdot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+      .pbar { height: 6px; border-radius: 99px; background: #efefef; overflow: hidden; margin: 18px 0 16px; }
+      .pbar i { display: block; height: 100%; width: 100%; border-radius: 99px; background: linear-gradient(90deg, #7b5cf0, #b18cff); transform-origin: 0 50%; transform: scaleX(0); }
+      .logs { border-radius: 12px; background: #0f0f10; padding: 16px 18px; font-family: var(--mono); font-size: 15px; line-height: 27px; color: #c9c9c9; height: 220px; overflow: hidden; }
+      .logs .ll { opacity: 0; white-space: pre; }
+      .logs .g { color: #5fd38d; }
+      .logs .p { color: #b9a2ff; }
+      .deprow { height: 82px; border-bottom: 1px solid #ebebeb; display: flex; align-items: center; gap: 16px; padding: 0 6px; font-size: 16.5px; background: #fff; }
+      .deprow .msg { font-weight: 500; }
+      .deprow .sub { font-size: 14.5px; color: #666; margin-top: 3px; }
+      .deprow .st2 { width: 110px; display: flex; align-items: center; gap: 8px; font-weight: 500; position: relative; }
+      .deprow .right { margin-left: auto; display: flex; align-items: center; gap: 10px; color: #666; font-size: 15px; }
+
+      /* acme app */
+      .app { position: absolute; inset: 0; background: #fbfaf8; }
+      .app-nav { height: 64px; display: flex; align-items: center; padding: 0 32px; border-bottom: 1px solid #eee9e2; font-size: 17px; }
+      .app-nav b { font-family: var(--serif); font-size: 30px; font-weight: 400; letter-spacing: -0.01em; }
+      .app-nav .cart { margin-left: auto; color: #5a554e; }
+      .app-body { padding: 36px 32px; display: flex; gap: 26px; }
+      .items { flex: 1; }
+      .items h2 { font-size: 28px; font-weight: 600; margin-bottom: 20px; letter-spacing: -0.01em; }
+      .it { display: flex; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid #eee9e2; font-size: 17.5px; }
+      .it .ph { width: 64px; height: 64px; border-radius: 12px; }
+      .it .pr { margin-left: auto; font-weight: 500; }
+      .sum { width: 290px; border-radius: 16px; background: #fff; box-shadow: 0 0 0 1px #eee9e2; padding: 22px; font-size: 17px; align-self: flex-start; }
+      .sum .r { display: flex; justify-content: space-between; margin-bottom: 12px; color: #5a554e; }
+      .sum .tot { font-weight: 600; color: #1c1a21; font-size: 19px; border-top: 1px solid #eee9e2; padding-top: 14px; }
+      .sum .pay { margin-top: 18px; height: 52px; border-radius: 12px; background: #1c1a21; color: #fff; font-size: 18px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+      #err { position: absolute; left: 40px; right: 40px; top: 190px; border-radius: 16px; background: #fff; box-shadow: 0 0 0 1px #f3c9cb, 0 30px 70px rgba(160, 30, 40, 0.18); padding: 26px 28px; opacity: 0; }
+      #err .code { font-size: 15px; font-weight: 700; color: var(--red); letter-spacing: 0.06em; }
+      #err h3 { font-size: 26px; font-weight: 600; margin: 8px 0 14px; letter-spacing: -0.01em; }
+      #err .msg { font-family: var(--mono); font-size: 16px; color: #8a2126; background: var(--red-soft); border-radius: 10px; padding: 12px 14px; line-height: 25px; }
+      #err .req { font-family: var(--mono); font-size: 15px; color: var(--mute); margin-top: 12px; }
+      #err-tint { position: absolute; inset: 0; background: rgba(212, 53, 59, 0.07); opacity: 0; }
+
+      /* sentry issues */
+      .iss-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+      .chip { font-size: 15px; font-weight: 500; color: #3e3446; background: #fff; box-shadow: 0 0 0 1px #e3dde9; border-radius: 8px; padding: 7px 11px; display: inline-flex; align-items: center; gap: 7px; }
+      .search { height: 46px; border-radius: 10px; background: #fff; box-shadow: 0 0 0 1px #e3dde9; display: flex; align-items: center; gap: 10px; padding: 0 14px; font-family: var(--mono); font-size: 16px; color: #6b6275; margin-bottom: 14px; }
+      .ihead { display: flex; font-size: 13.5px; font-weight: 600; color: #80708f; letter-spacing: 0.06em; padding: 0 16px 8px; }
+      .ihead .c1 { flex: 1; }
+      .ihead .c2 { width: 80px; text-align: right; }
+      .issue { position: relative; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px #e3dde9; padding: 16px; display: flex; gap: 14px; opacity: 0; overflow: hidden; }
+      .issue .lvl { width: 5px; border-radius: 3px; background: var(--red); flex: none; }
+      .issue .t1 { font-size: 18px; font-weight: 600; color: #2b2233; }
+      .issue .t1 span { font-weight: 400; color: #6b6275; margin-left: 8px; font-size: 16px; }
+      .issue .t2 { font-size: 16px; color: #3e3446; margin: 5px 0 9px; }
+      .issue .t3 { display: flex; align-items: center; gap: 10px; font-size: 14.5px; color: #6b6275; }
+      .issue .new { color: #fff; background: #6c5fc7; border-radius: 6px; padding: 2px 8px; font-weight: 600; font-size: 13.5px; }
+      .issue .nums { display: flex; font-size: 20px; font-weight: 600; color: #2b2233; align-self: center; }
+      .issue .nums div { width: 80px; text-align: right; }
+      .issue .flash { position: absolute; inset: 0; background: rgba(212, 53, 59, 0.12); opacity: 0; }
+      .issue.old { opacity: 1; margin-top: 12px; }
+      .issue.old .lvl { background: #f5b000; }
+      #trace { margin-top: 16px; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px #e3dde9; overflow: hidden; opacity: 0; }
+      #trace .th { padding: 12px 16px; font-size: 15.5px; color: #3e3446; border-bottom: 1px solid #efeaf3; display: flex; align-items: center; gap: 8px; }
+      #trace .th b { font-family: var(--mono); font-weight: 500; }
+      .tr { display: flex; height: 30px; align-items: center; font-family: var(--mono); font-size: 15.5px; color: #3e3446; white-space: pre; }
+      .tr .n { width: 52px; text-align: right; padding-right: 14px; color: #9a8fa6; font-size: 14px; }
+      .tr.hot { background: var(--red-soft); color: #8a2126; }
+      .tr.hot .n { color: var(--red); font-weight: 600; }
+      #sn-toast { position: absolute; right: 22px; top: 22px; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 14px; background: #2b2233; color: #fff; font-size: 16px; box-shadow: 0 18px 40px rgba(30, 10, 50, 0.3); opacity: 0; }
+      #sn-toast .b { font-size: 24px; color: #fff; }
+      #sn-toast small { display: block; font-size: 14px; color: #c9bfd6; margin-top: 2px; }
+
+      /* success */
+      .succ { position: absolute; inset: 0; background: radial-gradient(70% 55% at 50% 30%, #ffffff 0%, #f7f3fd 55%, #efe9fb 100%); display: flex; flex-direction: column; align-items: center; padding-top: 150px; }
+      #chk { width: 132px; height: 132px; }
+      .succ h2 { font-size: 50px; font-weight: 600; letter-spacing: -0.025em; margin-top: 30px; opacity: 0; }
+      .succ .sc { display: flex; align-items: center; gap: 12px; font-size: 27px; font-weight: 500; color: var(--sentry); margin-top: 14px; opacity: 0; }
+      .succ .sc .b { font-size: 30px; }
+      .succ .sc .tick { width: 30px; height: 30px; border-radius: 50%; background: var(--green-soft); color: var(--green); font-size: 17px; display: flex; align-items: center; justify-content: center; }
+      .succ .stats { display: flex; gap: 12px; margin-top: 44px; }
+      .sstat { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.08), 0 8px 24px rgba(90, 60, 150, 0.08); font-size: 16.5px; font-weight: 500; color: var(--ink-2); opacity: 0; }
+      .sstat .dot { width: 9px; height: 9px; border-radius: 50%; background: #1fae5f; box-shadow: 0 0 0 4px rgba(31, 174, 95, 0.16); }
+      .health { margin-top: 36px; width: 560px; height: 120px; border-radius: 16px; background: rgba(255, 255, 255, 0.8); box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.08); padding: 16px 20px; opacity: 0; position: relative; }
+      .health .hl { font-size: 14.5px; font-weight: 600; color: var(--mute); display: flex; justify-content: space-between; }
+      .health .hl b { color: var(--green); }
+      .health svg { position: absolute; left: 20px; right: 20px; bottom: 16px; width: 520px; height: 56px; }
+
+      /* overlay scenes */
+      .ov { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+      #sub-card { width: 1060px; border-radius: 34px; padding: 60px 70px 54px; background: rgba(255, 255, 255, 0.58); backdrop-filter: blur(28px) saturate(1.3);
+        box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85) inset, 0 40px 120px rgba(96, 58, 170, 0.28); text-align: center; }
+      #sub-kick { font-size: 20px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--lav-deep); }
+      #sub-h { font-family: var(--serif); font-size: 92px; line-height: 1; letter-spacing: -0.01em; color: var(--ink); margin: 18px 0 16px; }
+      #sub-h em { font-style: italic; color: var(--lav-deep); }
+      #sub-p { font-size: 30px; color: var(--ink-2); letter-spacing: -0.01em; }
+      #sub-btns { display: flex; justify-content: center; gap: 22px; margin-top: 40px; }
+      .sbtn { position: relative; width: 420px; height: 86px; border-radius: 20px; background: #fff; box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.1), 0 12px 32px rgba(90, 60, 150, 0.12); display: flex; align-items: center; gap: 16px; padding: 0 22px; font-size: 24px; font-weight: 600; color: var(--ink); }
+      .sbtn .lg { width: 48px; height: 48px; border-radius: 13px; display: flex; align-items: center; justify-content: center; font-size: 30px; }
+      .sbtn .cn { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 18px; font-weight: 600; color: var(--green); background: var(--green-soft); border-radius: 999px; padding: 7px 13px; opacity: 0; }
+      #sub-foot { display: inline-flex; align-items: center; gap: 12px; margin-top: 34px; font-size: 25px; font-weight: 600; color: var(--ink); background: rgba(255, 255, 255, 0.8); border-radius: 999px; padding: 12px 24px; box-shadow: 0 0 0 1px rgba(60, 30, 90, 0.08); }
+      #sub-foot .z { color: var(--green); }
+
+      #end-wrap { display: flex; flex-direction: column; align-items: center; }
+      #end-mark { width: 136px; height: 136px; color: var(--ink); }
+      #end-word { font-size: 104px; font-weight: 600; letter-spacing: -0.045em; margin-top: 26px; color: var(--ink); line-height: 1; }
+      #end-tag { font-family: var(--serif); font-style: italic; font-size: 64px; color: var(--lav-deep); margin-top: 18px; line-height: 1.05; }
+      #end-sub { display: flex; align-items: center; gap: 14px; margin-top: 40px; font-size: 22px; font-weight: 500; color: var(--ink-2); }
+      #end-sub .lg { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 21px; }
+      #end-url { margin-top: 26px; font-size: 21px; font-weight: 600; letter-spacing: 0.04em; color: var(--mute); }
+      #veil { position: absolute; inset: 0; background: rgba(236, 230, 252, 0.5); opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute">
+      <defs>
+        <symbol id="aside" viewBox="0 0 64 64"><g fill="none" stroke="currentColor" stroke-width="5.2" stroke-linecap="round"><circle cx="32" cy="32" r="26" /><ellipse cx="32" cy="32" rx="11" ry="22" transform="rotate(45 32 32)" /></g><path fill="currentColor" d="M32 17.5c1.6 7.6 6.9 12.9 14.5 14.5-7.6 1.6-12.9 6.9-14.5 14.5-1.6-7.6-6.9-12.9-14.5-14.5 7.6-1.6 12.9-6.9 14.5-14.5Z" transform="rotate(45 32 32)" /></symbol>
+        <symbol id="sentry" viewBox="0 0 24 24"><path fill="currentColor" d="M13.91 2.505c-.873-1.448-2.972-1.448-3.844 0L6.904 7.92a15.478 15.478 0 0 1 8.53 12.811h-2.221A13.301 13.301 0 0 0 5.784 9.814l-2.926 5.06a7.65 7.65 0 0 1 4.435 5.848H2.194a.365.365 0 0 1-.298-.534l1.413-2.402a5.16 5.16 0 0 0-1.614-.913L.296 19.275a2.182 2.182 0 0 0 .812 2.999 2.24 2.24 0 0 0 1.086.288h6.983a9.322 9.322 0 0 0-3.845-8.318l1.11-1.922a11.47 11.47 0 0 1 4.95 10.24h5.915a17.242 17.242 0 0 0-7.885-15.28l2.244-3.845a.37.37 0 0 1 .504-.13c.255.14 9.75 16.708 9.928 16.9a.365.365 0 0 1-.327.543h-2.287c.029.612.029 1.223 0 1.831h2.297a2.206 2.206 0 0 0 1.922-3.31z" /></symbol>
+        <symbol id="github" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" /></symbol>
+        <symbol id="notion" viewBox="0 0 24 24"><path fill="currentColor" d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z" /></symbol>
+        <symbol id="discord" viewBox="0 0 24 24"><path fill="#5865F2" d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z" /></symbol>
+        <symbol id="claude" viewBox="0 0 24 24"><path fill="#D97757" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z" /></symbol>
+        <symbol id="facebook" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#0866FF" /><path fill="#fff" d="M13.6 24v-8.6h2.9l.45-3.4H13.6V9.9c0-.97.28-1.66 1.68-1.66h1.78V5.2a23 23 0 0 0-2.6-.13c-2.58 0-4.33 1.57-4.33 4.46V12H7.2v3.4h2.93V24z" /></symbol>
+        <symbol id="gmail" viewBox="0 0 24 24"><path fill="#4285F4" d="M1.6 20.5h3.8v-9.2L0 7.2v11.7c0 .9.7 1.6 1.6 1.6z" /><path fill="#34A853" d="M18.6 20.5h3.8c.9 0 1.6-.7 1.6-1.6V7.2l-5.4 4.1z" /><path fill="#FBBC04" d="M18.6 4.2v7.1L24 7.2V5c0-2-2.3-3.1-3.8-1.9z" /><path fill="#EA4335" d="M5.4 11.3V4.2L12 9.1l6.6-4.9v7.1L12 16.2z" /><path fill="#C5221F" d="M0 5v2.2l5.4 4.1V4.2L3.8 3C2.3 1.9 0 3 0 5z" /></symbol>
+        <symbol id="figma" viewBox="0 0 24 24"><path fill="#F24E1E" d="M8 0h4v8H8a4 4 0 0 1 0-8z" /><path fill="#FF7262" d="M12 0h4a4 4 0 0 1 0 8h-4z" /><path fill="#A259FF" d="M8 8h4v8H8a4 4 0 0 1 0-8z" /><circle fill="#1ABCFE" cx="16" cy="12" r="4" /><path fill="#0ACF83" d="M8 16h4v4a4 4 0 1 1-4-4z" /></symbol>
+        <symbol id="vercel" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5 23 21.5H1z" /></symbol>
+        <symbol id="nextjs" viewBox="0 0 24 24"><path fill="currentColor" d="M18.665 21.978C16.758 23.255 14.465 24 12 24 5.377 24 0 18.623 0 12S5.377 0 12 0s12 5.377 12 12c0 3.583-1.574 6.801-4.067 9.001L9.219 7.2H7.2v9.596h1.615V9.251l9.85 12.727Zm-3.332-8.533 1.6 2.061V7.2h-1.6v6.245Z" /></symbol>
+        <symbol id="codex" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#111" /><path d="m6.5 8 4 4-4 4M12.5 16.5h5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+      </defs>
+    </svg>
+
+    <div id="root" data-composition-id="main" data-start="0" data-duration="28" data-width="1920" data-height="1080">
+      <div id="bg">
+        <div class="orb" id="orb1"></div>
+        <div class="orb" id="orb2"></div>
+        <div class="orb" id="orb3"></div>
+        <div id="grain"></div>
+      </div>
+
+      <div id="stage">
+        <div id="cam-scale">
+          <div id="cam-pan">
+            <div id="win">
+              <div id="win-glass"></div>
+
+              <!-- ======= SIDEBAR ======= -->
+              <div id="side">
+                <div class="tl" style="left: 21px; background: #ff5f57"></div>
+                <div class="tl" style="left: 50px; background: #febc2e"></div>
+                <div class="tl" style="left: 79px; background: #28c840"></div>
+                <div class="side-abs" style="left: 322px; top: 16px; font-size: 22px; color: #6d6973"><svg class="i"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></svg></div>
+
+                <div class="side-abs" style="left: 18px; top: 60px; gap: 11px; font-size: 19px; font-weight: 500">
+                  <div style="width: 28px; height: 28px; border-radius: 50%; background: radial-gradient(circle at 45% 38%, #d8b79a 0 30%, #6a4a36 31% 60%, #2f3b2a 61%)"></div>
+                  <span>Personal</span><svg class="i" style="font-size: 16px; color: #75717b"><path d="m6 9 6 6 6-6" /></svg>
+                </div>
+                <div class="side-abs" style="left: 280px; top: 66px; font-size: 21px; color: #6d6973"><svg class="i"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg></div>
+                <div class="side-abs" style="left: 317px; top: 58px; width: 38px; height: 38px; border-radius: 11px; background: #fffefe; justify-content: center; font-size: 19px; color: #3b3742; box-shadow: 0 1px 3px rgba(60, 30, 90, 0.1), 0 0 0 1px rgba(60, 30, 90, 0.04)">
+                  <svg class="i"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" /></svg>
+                </div>
+
+                <div class="slabel" style="top: 107px">Bookmarks</div>
+                <div class="srow bm" style="top: 143px"><div class="ic" style="color: #6d6973"><svg class="i" style="fill: currentColor; stroke: none"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg></div>Product<svg class="i chev"><path d="m6 9 6 6 6-6" /></svg></div>
+                <div class="srow bm" style="top: 190px"><div class="ic"><svg class="b"><use href="#notion" /></svg></div>Notion</div>
+                <div class="srow bm" style="top: 237px"><div class="ic"><svg class="b"><use href="#figma" /></svg></div>Figma</div>
+                <div class="srow bm" style="top: 284px"><div class="ic"><svg class="b"><use href="#github" /></svg></div>GitHub</div>
+                <div style="position: absolute; left: 12px; right: 12px; top: 333px; height: 1px; background: rgba(60, 30, 90, 0.08)"></div>
+
+                <div class="slabel" style="top: 350px">Tabs</div>
+                <div class="srow tab" style="top: 384px"><div class="ic"><svg class="i"><path d="M5 12h14" /><path d="M12 5v14" /></svg></div>New Tab</div>
+                <div class="srow tab" style="top: 431px"><div class="ic"><svg class="i"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" /></svg></div>Chats<svg class="i chev"><path d="m6 9 6 6 6-6" /></svg></div>
+                <div class="srow tab" style="top: 478px"><div class="ic"><svg class="i"><path d="M21 11V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7" /><path d="M3 9h18" /><path d="M18 15v6" /><path d="M15 18h6" /></svg></div>Agent tabs <span id="agent-count" style="color: #6c6874; font-weight: 500"></span><svg class="i chev"><path d="m6 9 6 6 6-6" /></svg></div>
+
+                <div id="sel" style="top: 525px"></div>
+                <div id="agent-group">
+                  <div class="arow" id="ar-sentry" style="top: 3px"><div class="fav" style="background: var(--sentry); color: #fff"><svg class="b"><use href="#sentry" /></svg></div>Sentry<div class="live" id="live-sentry"></div></div>
+                  <div class="arow" id="ar-gh" style="top: 50px"><div class="fav" style="background: #1f2328; color: #fff"><svg class="b"><use href="#github" /></svg></div>acme/web<div class="live" id="live-gh"></div></div>
+                  <div class="arow" id="ar-vc" style="top: 97px"><div class="fav" style="background: #000; color: #fff; font-size: 12px"><svg class="b"><use href="#vercel" /></svg></div>Vercel<div class="live" id="live-vc"></div></div>
+                </div>
+
+                <div id="below-group">
+                  <div class="srow" id="task-row" style="top: 525px; color: var(--ink); font-weight: 500">
+                    <div class="ic" style="position: relative; color: #6d6973">
+                      <svg class="b" id="task-ic-aside"><use href="#aside" /></svg>
+                      <svg class="spin" id="task-spin" viewBox="0 0 24 24" style="position: absolute; width: 21px; height: 21px; left: 0; top: 0; opacity: 0"><circle cx="12" cy="12" r="9" fill="none" stroke="#e4dcfb" stroke-width="3" /><path d="M12 3a9 9 0 0 1 9 9" fill="none" stroke="#7b5cf0" stroke-width="3" stroke-linecap="round" /></svg>
+                      <div id="task-ok" style="position: absolute; left: 0; top: 0; width: 21px; height: 21px; border-radius: 50%; background: var(--green); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; opacity: 0"><svg class="i" style="stroke-width: 3.2"><path d="M20 6 9 17l-5-5" /></svg></div>
+                    </div>
+                    <span id="task-name">New Tab</span>
+                  </div>
+                  <div class="srow tab" id="row-gmail" style="top: 573px"><div class="ic"><svg class="b"><use href="#gmail" /></svg></div>Gmail</div>
+                  <div class="srow tab" id="row-fb" style="top: 620px"><div class="ic"><svg class="b"><use href="#facebook" /></svg></div>Facebook</div>
+                  <div class="srow tab" id="row-dc" style="top: 667px"><div class="ic"><svg class="b"><use href="#discord" /></svg></div>Discord (6)</div>
+                </div>
+              </div>
+
+              <!-- ======= MAIN PANEL ======= -->
+              <div id="main">
+                <div id="topbar">
+                  <div class="nav" style="left: 18px"><svg class="i"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></svg></div>
+                  <div class="nav" style="left: 61px"><svg class="i"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg></div>
+                  <div class="nav" style="left: 106px; font-size: 20px; top: 18px"><svg class="i"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></svg></div>
+                  <div id="url">
+                    <div id="url-fav"><svg class="i" id="url-search" style="color: #75717b"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg></div>
+                    <span id="url-text" style="color: var(--mute)">Search Google or type a URL</span>
+                  </div>
+                  <div id="key-glow"></div>
+                  <div id="key"><svg class="i"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /><circle cx="16.5" cy="7.5" r=".5" fill="currentColor" /></svg></div>
+                </div>
+
+                <!-- New Tab page (1:1 with the reference) -->
+                <div id="newtab">
+                  <svg id="nt-logo"><use href="#aside" /></svg>
+                  <div id="ask-ring"></div>
+                  <div id="askbar">
+                    <div id="ask-ph">Ask AI a task, @ for context</div>
+                    <div id="ask-text"></div>
+                    <div id="caret"></div>
+                    <div id="ask-right">
+                      <span class="kbd">Tab</span><span class="muted17">to switch</span>
+                      <div id="seg"><div id="seg-search">Search</div><div id="seg-ask">Ask AI</div></div>
+                    </div>
+                  </div>
+                  <div id="nt-below">
+                    <div class="opt" style="left: 212px"><svg class="i" style="font-size: 22px"><path d="M5 12h14" /><path d="M12 5v14" /></svg></div>
+                    <div class="opt" style="left: 252px"><svg class="i"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16" /></svg>Local<svg class="i cd"><path d="m6 9 6 6 6-6" /></svg></div>
+                    <div class="opt" style="left: 360px"><svg class="i"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><circle cx="12" cy="11" r="1.6" /></svg>Guard<svg class="i cd"><path d="m6 9 6 6 6-6" /></svg></div>
+                    <div class="opt" style="left: 905px">GPT-5.5<svg class="i cd"><path d="m6 9 6 6 6-6" /></svg></div>
+                    <div class="opt" style="left: 1005px">High<svg class="i cd"><path d="m6 9 6 6 6-6" /></svg></div>
+
+                    <div id="recent-h">Recent tasks</div>
+                    <div class="card" style="left: 97px">
+                      <div class="meta">Working for 3m 46s</div>
+                      <div class="ttl" style="color: #6c6874">Finding <span style="color: var(--ink)">website design</span> example</div>
+                      <div class="body">
+                        <div class="step"><svg class="i"><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" /><circle cx="12" cy="12" r="3" /></svg>Capturing a screenshot</div>
+                        <div class="step"><svg class="i"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></svg>Saving in artifacts folder</div>
+                        <div class="step"><svg class="i"><path d="M14 4.1 12 6" /><path d="m5.1 8-2.9-.8" /><path d="m6 12-1.9 2" /><path d="M7.2 2.2 8 5.1" /><path d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z" /></svg>Check about page</div>
+                      </div>
+                      <div class="img" style="background: #f7df3b">
+                        <div style="height: 22px; background: #f7df3b; border-bottom: 2px solid #1b1b1b; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; letter-spacing: 0.08em">LE ✿✿ PUZZ</div>
+                        <div style="display: flex; gap: 4px; padding: 4px 6px; border-bottom: 2px solid #1b1b1b">
+                          <div style="flex: 1; height: 9px; background: #1b1b1b; opacity: 0.8"></div><div style="flex: 1; height: 9px; background: #1b1b1b; opacity: 0.8"></div><div style="flex: 1; height: 9px; background: #1b1b1b; opacity: 0.8"></div><div style="flex: 1; height: 9px; background: #1b1b1b; opacity: 0.8"></div>
+                        </div>
+                        <div style="display: flex; gap: 8px; padding: 10px 8px">
+                          <div style="width: 58px; height: 180px; background: repeating-linear-gradient(135deg, #e94b3c 0 10px, #3a7bd5 10px 20px, #f7df3b 20px 30px, #2eb872 30px 40px)"></div>
+                          <div style="flex: 1; height: 180px; border-radius: 6px; background: radial-gradient(circle at 50% 38%, #e8b48f 0 18%, #3d2a22 19% 30%, #9ec1e8 31%)"></div>
+                          <div style="width: 58px; height: 180px; background: repeating-linear-gradient(45deg, #2eb872 0 10px, #e94b3c 10px 20px, #f7df3b 20px 30px, #7b5cf0 30px 40px)"></div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="card" style="left: 463px">
+                      <div class="meta">an hour ago<div class="dot"></div></div>
+                      <div class="ttl">San Francisco Largest Park</div>
+                      <div class="body clamp">The largest park in San Francisco is Golden Gate Park, spanning 1,017 acres of public green space. It is about 20% larger…</div>
+                      <div class="img" style="background: linear-gradient(180deg, #b9d3ea 0%, #d7e4ee 30%, #8fa77f 31%, #5f7f4f 100%)">
+                        <div style="position: absolute; left: 36%; top: 30%; width: 28%; height: 72%; background: linear-gradient(180deg, #3f7a3a, #2f6a2c); transform: perspective(300px) rotateX(38deg); border-radius: 4px"></div>
+                        <div style="position: absolute; left: 0; right: 0; top: 30%; bottom: 0; background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.18) 0 3px, transparent 3px 22px), repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.14) 0 3px, transparent 3px 18px)"></div>
+                      </div>
+                    </div>
+                    <div class="card" style="left: 829px">
+                      <div class="meta">an hour ago<span style="margin-left: auto; display: flex; align-items: center; gap: 6px"><svg class="i" style="font-size: 15px"><path d="m17 2 4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14" /><path d="m7 22-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" /></svg>Every 9am</span><div class="dot" style="margin-left: 8px"></div></div>
+                      <div class="ttl">Daily briefing</div>
+                      <div class="body clamp">Summary: You got 112 followers, 85 comments and 212 likes. Yesterday's trending topics: Charles Leclerc retires fr…</div>
+                      <div class="img" style="background: #f4f1f5">
+                        <div style="position: absolute; left: 14px; right: 26px; top: 12px; bottom: -10px; background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12); padding: 14px 16px">
+                          <div style="font-size: 7px; letter-spacing: 0.1em; color: #999">STARTUPS · RANKINGS</div>
+                          <div style="font-family: var(--serif); font-size: 19px; line-height: 21px; margin-top: 6px; color: #111">The Top Startups To Watch From Y Combinator Fall 2025 Batch</div>
+                          <div style="height: 5px; background: #eee; margin-top: 10px; width: 80%"></div>
+                          <div style="height: 5px; background: #eee; margin-top: 6px; width: 70%"></div>
+                          <div style="margin: 14px auto 0; width: 120px; height: 100px; border-radius: 8px; background: radial-gradient(circle at 50% 55%, #9fb7d6 0 30%, #e8eef6 31%)"></div>
+                        </div>
+                        <div style="position: absolute; right: 12px; top: 0; width: 40px; height: 40px; background: linear-gradient(225deg, #f4f1f5 50%, #e2dde6 50%)"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Task view -->
+                <div id="page-area">
+                  <!-- spin-up -->
+                  <div class="page" id="pg-spawn" style="background: transparent">
+                    <div class="spawn-wrap">
+                      <div class="spawn-h" id="spawn-h">Opening agent tabs</div>
+                      <div class="scard" id="sc-sentry"><div class="sfav" style="background: var(--sentry); color: #fff"><svg class="b"><use href="#sentry" /></svg></div><div><div class="sname">Sentry</div><div class="surl">sentry.io</div></div><div class="sbar"><i></i></div></div>
+                      <div class="scard" id="sc-gh"><div class="sfav" style="background: #1f2328; color: #fff"><svg class="b"><use href="#github" /></svg></div><div><div class="sname">acme/web</div><div class="surl">github.com · codebase</div></div><div class="sbar"><i></i></div></div>
+                      <div class="scard" id="sc-vc"><div class="sfav" style="background: #000; color: #fff; font-size: 22px"><svg class="b"><use href="#vercel" /></svg></div><div><div class="sname">Vercel</div><div class="surl">vercel.com · acme-web</div></div><div class="sbar"><i></i></div></div>
+                    </div>
+                  </div>
+
+                  <!-- Sentry sign in -->
+                  <div class="page" id="pg-login">
+                    <div class="sn-login">
+                      <div class="sn-card" id="sn-card">
+                        <div class="sn-brand"><svg class="b"><use href="#sentry" /></svg><span>SENTRY</span></div>
+                        <div class="sn-h">Sign in to continue</div>
+                        <div class="sn-l">Email</div>
+                        <div class="sn-in" id="in-email"><div class="fillbg"></div><span class="val">you@acme.dev</span></div>
+                        <div class="sn-l">Password</div>
+                        <div class="sn-in" id="in-pass"><div class="fillbg"></div><span class="val" style="letter-spacing: 0.18em">••••••••••••</span></div>
+                        <div class="sn-btn" id="sn-continue">Continue</div>
+                        <div id="vault-badge"><svg class="i"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>Filled securely from your Aside vault</div>
+                        <div class="sn-sso">Sign in with SSO</div>
+                        <div id="vault-pop" data-layout-allow-overlap>
+                          <div class="vh"><svg class="i"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /><circle cx="16.5" cy="7.5" r=".5" fill="currentColor" /></svg>Aside Vault<span class="d">sentry.io</span></div>
+                          <div class="vr"><div class="av">Y</div><div><div class="vt">you@acme.dev</div><div class="vs">Password · saved</div></div><div class="fill" id="vault-fill">Fill</div></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Sentry new project + DSN -->
+                  <div class="page" id="pg-proj">
+                    <div class="sn-app">
+                      <div class="sn-rail"><svg class="b" style="font-size: 30px"><use href="#sentry" /></svg><div class="r"></div><div class="r"></div><div class="r"></div><div class="r"></div></div>
+                      <div class="sn-body">
+                        <div class="crumb">acme / Projects / New</div>
+                        <div class="sn-h1">Create a new project</div>
+                        <div class="sn-sub">1. Choose your platform</div>
+                        <div class="plat">
+                          <div class="pt" id="pt-next"><div class="sel-ring" id="pt-ring"></div><div class="pl" style="background: #000; font-size: 26px"><svg class="b"><use href="#nextjs" /></svg></div>Next.js</div>
+                          <div class="pt"><div class="pl" style="background: #1c2c34; color: #61dafb">⚛</div>React</div>
+                          <div class="pt"><div class="pl" style="background: #3c873a">JS</div>Node.js</div>
+                          <div class="pt"><div class="pl" style="background: #3572a5">Py</div>Python</div>
+                          <div class="pt"><div class="pl" style="background: #00add8">Go</div>Go</div>
+                          <div class="pt"><div class="pl" style="background: #f05138">Sw</div>Swift</div>
+                        </div>
+                        <div class="row2">
+                          <div class="fld"><div class="sn-sub" style="margin-bottom: 8px">2. Name your project</div><div class="in"><span id="proj-name" class="mono" style="font-size: 17px"></span></div></div>
+                          <div class="btn" id="btn-create">Create Project</div>
+                        </div>
+                      </div>
+                      <div id="dsn-card">
+                        <div class="ok"><svg class="i" style="stroke-width: 3"><path d="M20 6 9 17l-5-5" /></svg>Project acme-web created</div>
+                        <h3>Configure Next.js SDK</h3>
+                        <div class="sn-l">DSN</div>
+                        <div class="dsn" id="dsn-field"><span>https://<span style="letter-spacing: 0.12em">••••••••••••</span>@o4507.ingest.sentry.io/4508</span><span class="ico"><svg class="i"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" /><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" /><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" /><path d="m2 2 20 20" /></svg><svg class="i"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg></span></div>
+                        <div class="pill lav" id="dsn-pill"><svg class="i"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>DSN captured securely · stored as a secret</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- GitHub: add Sentry -->
+                  <div class="page" id="pg-diff1">
+                    <div class="gh">
+                      <div class="gh-top"><svg class="b"><use href="#github" /></svg><span>acme</span><span style="color: #59636e">/</span><b>web</b></div>
+                      <div class="gh-pr">
+                        <h2>Add Sentry error monitoring <span>#42</span></h2>
+                        <div class="gh-state"><span class="gh-open"><svg class="i"><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><path d="M6 9v12" /></svg>Open</span>aside-agent wants to merge 1 commit into main</div>
+                      </div>
+                      <div class="gh-tabs"><div>Conversation</div><div>Commits 1</div><div>Checks</div><div class="on">Files changed 3</div></div>
+                      <div class="gh-files" id="diff1"></div>
+                    </div>
+                  </div>
+
+                  <!-- Vercel env -->
+                  <div class="page" id="pg-env">
+                    <div class="vc">
+                      <div class="vc-top"><svg class="b tri"><use href="#vercel" /></svg><span class="sl">/</span><span>acme</span><span class="sl">/</span><b style="font-weight: 600">acme-web</b></div>
+                      <div class="vc-tabs"><div>Overview</div><div>Deployments</div><div>Logs</div><div class="on">Settings</div></div>
+                      <div class="vc-body">
+                        <div class="vc-h">Environment Variables</div>
+                        <div class="vc-p">Stored encrypted. Values are hidden after they are saved.</div>
+                        <div class="envrow" id="env1"><svg class="i" style="font-size: 20px; color: #666"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg><div><div class="k">NEXT_PUBLIC_SENTRY_DSN</div><div class="v">••••••••••••••••</div></div><div class="tags"><span class="tag">Production</span><span class="tag">Preview</span></div></div>
+                        <div class="envrow" id="env2"><svg class="i" style="font-size: 20px; color: #666"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg><div><div class="k">SENTRY_AUTH_TOKEN</div><div class="v">••••••••••••••••</div></div><div class="tags"><span class="tag">Production</span><span class="tag">Sensitive</span></div></div>
+                        <div class="envrow" style="opacity: 1"><svg class="i" style="font-size: 20px; color: #666"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg><div><div class="k">DATABASE_URL</div><div class="v">••••••••••••••••</div></div><div class="tags"><span class="tag">Production</span></div></div>
+                      </div>
+                      <div class="toast" id="env-toast"><svg class="i" style="color: #5fd38d; stroke-width: 3"><path d="M20 6 9 17l-5-5" /></svg>Added 2 environment variables</div>
+                    </div>
+                  </div>
+
+                  <!-- Vercel deploy -->
+                  <div class="page" id="pg-deploy">
+                    <div class="vc">
+                      <div class="vc-top"><svg class="b tri"><use href="#vercel" /></svg><span class="sl">/</span><span>acme</span><span class="sl">/</span><b style="font-weight: 600">acme-web</b></div>
+                      <div class="vc-tabs"><div>Overview</div><div class="on">Deployments</div><div>Logs</div><div>Settings</div></div>
+                      <div class="vc-body">
+                        <div class="dep">
+                          <div class="thumb"><div style="position: absolute; left: 14px; top: 14px; font-family: var(--serif); font-size: 22px">Acme</div><div style="position: absolute; left: 14px; right: 14px; bottom: 16px; height: 70px; border-radius: 8px; background: linear-gradient(135deg, #d9c9ff, #ffd6e8)"></div></div>
+                          <div style="flex: 1">
+                            <div class="kv">Status</div>
+                            <div class="kv2" style="position: relative"><span id="dep-building" style="display: flex; align-items: center; gap: 8px"><span class="sdot" style="background: #f5a623"></span>Building</span><span id="dep-ready" style="position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 8px; opacity: 0"><span class="sdot" style="background: #1fae5f"></span>Ready<span class="tag" style="background: #e6f6ec; color: #126c3b">Production</span></span></div>
+                            <div class="kv">Domain</div>
+                            <div class="kv2">acme-web.vercel.app</div>
+                            <div class="kv">Source</div>
+                            <div class="kv2" style="font-size: 15.5px"><svg class="i"><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><path d="M6 9v12" /></svg>main · 4f2c1ab · Add Sentry error monitoring</div>
+                          </div>
+                        </div>
+                        <div class="pbar"><i id="dep-bar"></i></div>
+                        <div class="logs" id="logs"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- the app -->
+                  <div class="page" id="pg-app">
+                    <div class="app">
+                      <div class="app-nav"><b>Acme</b><span class="cart">Cart (2)</span></div>
+                      <div class="app-body">
+                        <div class="items">
+                          <h2>Checkout</h2>
+                          <div class="it"><div class="ph" style="background: linear-gradient(135deg, #e9dcc8, #cdb99c)"></div><div><div style="font-weight: 500">Linen tote</div><div style="color: #6b665e; font-size: 15px">Natural · 1</div></div><div class="pr">$28.00</div></div>
+                          <div class="it"><div class="ph" style="background: linear-gradient(135deg, #cfd9f5, #a8b8e6)"></div><div><div style="font-weight: 500">Ceramic mug</div><div style="color: #6b665e; font-size: 15px">Lavender · 1</div></div><div class="pr">$20.00</div></div>
+                        </div>
+                        <div class="sum">
+                          <div class="r"><span>Subtotal</span><span>$48.00</span></div>
+                          <div class="r"><span>Shipping</span><span>Free</span></div>
+                          <div class="r tot"><span>Total</span><span>$48.00</span></div>
+                          <div class="pay" id="pay">Pay $48.00</div>
+                        </div>
+                      </div>
+                      <div id="err-tint"></div>
+                      <div id="err" data-layout-allow-overlap>
+                        <div class="code">500 · INTERNAL SERVER ERROR</div>
+                        <h3>Application error: a server-side exception has occurred</h3>
+                        <div class="msg">TypeError: Cannot read properties of undefined (reading 'total')</div>
+                        <div class="req">POST /api/checkout · acme-web.vercel.app</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Sentry issue -->
+                  <div class="page" id="pg-issue">
+                    <div class="sn-app">
+                      <div class="sn-rail"><svg class="b" style="font-size: 30px"><use href="#sentry" /></svg><div class="r"></div><div class="r" style="background: rgba(255, 255, 255, 0.4)"></div><div class="r"></div><div class="r"></div></div>
+                      <div class="sn-body">
+                        <div class="sn-h1" style="margin: 0 0 14px">Issues</div>
+                        <div class="iss-bar"><span class="chip"><svg class="b" style="font-size: 15px"><use href="#nextjs" /></svg>acme-web</span><span class="chip">production</span><span class="chip">Last 24 hours</span></div>
+                        <div class="search"><svg class="i"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>is:unresolved</div>
+                        <div class="ihead"><div class="c1">ISSUE</div><div class="c2">EVENTS</div><div class="c2">USERS</div></div>
+                        <div class="issue" id="issue">
+                          <div class="flash" id="issue-flash"></div>
+                          <div class="lvl"></div>
+                          <div style="flex: 1">
+                            <div class="t1">TypeError<span>POST /api/checkout</span></div>
+                            <div class="t2">Cannot read properties of undefined (reading 'total')</div>
+                            <div class="t3"><span class="new">New</span><span class="mono" style="font-size: 14px">app/api/checkout/route.ts</span><span>· just now</span></div>
+                          </div>
+                          <div class="nums"><div>1</div><div>1</div></div>
+                        </div>
+                        <div id="trace">
+                          <div class="th"><svg class="i" style="color: var(--red)"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg><b>app/api/checkout/route.ts</b>in POST at line 18</div>
+                          <div style="padding: 8px 0">
+                            <div class="tr"><span class="n">16</span>export async function POST(req: Request) {</div>
+                            <div class="tr"><span class="n">17</span>  const cart = await getCart(req);</div>
+                            <div class="tr hot"><span class="n">18</span>  const total = cart.items.total;</div>
+                            <div class="tr"><span class="n">19</span>  return charge(total);</div>
+                            <div class="tr"><span class="n">20</span>}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div id="sn-toast"><svg class="b"><use href="#sentry" /></svg><div>New issue in acme-web<small>TypeError · production · 1 event</small></div></div>
+                    </div>
+                  </div>
+
+                  <!-- GitHub: fix + tests -->
+                  <div class="page" id="pg-diff2">
+                    <div class="gh">
+                      <div class="gh-top"><svg class="b"><use href="#github" /></svg><span>acme</span><span style="color: #59636e">/</span><b>web</b></div>
+                      <div class="gh-pr">
+                        <h2>Fix checkout crash on empty cart <span>#43</span></h2>
+                        <div class="gh-state"><span class="gh-open"><svg class="i"><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><path d="M6 9v12" /></svg>Open</span>Fixes Sentry ACME-WEB-1</div>
+                      </div>
+                      <div class="gh-tabs"><div>Conversation</div><div>Commits 1</div><div>Checks</div><div class="on">Files changed 1</div></div>
+                      <div class="gh-files" id="diff2"></div>
+                      <div class="term" id="term"></div>
+                      <div class="pill green" id="checks"><svg class="i" style="stroke-width: 3"><path d="M20 6 9 17l-5-5" /></svg>All checks have passed</div>
+                    </div>
+                  </div>
+
+                  <!-- Vercel redeploy -->
+                  <div class="page" id="pg-redeploy">
+                    <div class="vc">
+                      <div class="vc-top"><svg class="b tri"><use href="#vercel" /></svg><span class="sl">/</span><span>acme</span><span class="sl">/</span><b style="font-weight: 600">acme-web</b></div>
+                      <div class="vc-tabs"><div>Overview</div><div class="on">Deployments</div><div>Logs</div><div>Settings</div></div>
+                      <div class="vc-body">
+                        <div class="vc-h">Deployments</div>
+                        <div class="vc-p">Continuously generated from acme/web</div>
+                        <div style="border-top: 1px solid #ebebeb; position: relative; overflow: hidden; height: 250px">
+                          <div id="rd-list" style="position: absolute; left: 0; right: 0; top: 0">
+                            <div class="deprow" id="rd-new">
+                              <div class="st2"><span id="rd-b" style="display: flex; align-items: center; gap: 8px"><span class="sdot" style="background: #f5a623"></span>Building</span><span id="rd-r" style="position: absolute; left: 0; display: flex; align-items: center; gap: 8px; opacity: 0"><span class="sdot" style="background: #1fae5f"></span>Ready</span></div>
+                              <div><div class="msg">Fix checkout crash on empty cart</div><div class="sub">main · 9e1d7c2 · by aside-agent</div></div>
+                              <div class="right"><span class="tag" id="rd-cur" style="background: #e6f6ec; color: #126c3b; opacity: 0">Production · Current</span><span id="rd-time">12s</span></div>
+                            </div>
+                            <div class="deprow"><div class="st2"><span class="sdot" style="background: #1fae5f"></span>Ready</div><div><div class="msg">Add Sentry error monitoring</div><div class="sub">main · 4f2c1ab · by aside-agent</div></div><div class="right">41s</div></div>
+                            <div class="deprow"><div class="st2"><span class="sdot" style="background: #1fae5f"></span>Ready</div><div><div class="msg">Initial storefront</div><div class="sub">main · 1a0b3f9</div></div><div class="right">2d ago</div></div>
+                          </div>
+                        </div>
+                        <div class="pill lav" id="rd-resolved" style="margin-top: 22px; opacity: 0"><svg class="b" style="font-size: 17px"><use href="#sentry" /></svg>Sentry ACME-WEB-1 marked resolved in 9e1d7c2</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- success -->
+                  <div class="page" id="pg-success">
+                    <div class="succ">
+                      <svg id="chk" viewBox="0 0 132 132"><circle cx="66" cy="66" r="62" fill="#e3f6ea" id="chk-bg" /><circle cx="66" cy="66" r="56" fill="none" stroke="#1fae5f" stroke-width="6" stroke-linecap="round" id="chk-ring" transform="rotate(-90 66 66)" /><path d="M42 68 58 84 91 50" fill="none" stroke="#16874a" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" id="chk-path" /></svg>
+                      <h2 id="s-h">Production healthy</h2>
+                      <div class="sc" id="s-sentry"><svg class="b"><use href="#sentry" /></svg>Sentry connected<div class="tick"><svg class="i" style="stroke-width: 3.2"><path d="M20 6 9 17l-5-5" /></svg></div></div>
+                      <div class="stats">
+                        <div class="sstat" id="ss1"><span class="dot"></span>acme-web.vercel.app</div>
+                        <div class="sstat" id="ss2">1 issue fixed</div>
+                        <div class="sstat" id="ss3">24 / 24 tests passed</div>
+                      </div>
+                      <div class="health" id="health">
+                        <div class="hl"><span>Error rate · last 5 min</span><b>0.00%</b></div>
+                        <svg viewBox="0 0 520 56" preserveAspectRatio="none"><path id="hpath" d="M0 40 C 40 40 60 38 90 39 S 150 8 170 10 S 210 46 250 46 S 330 47 380 47 S 460 47 520 47" fill="none" stroke="#7b5cf0" stroke-width="3" stroke-linecap="round" /></svg>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- agent panel -->
+                <div id="agent">
+                  <div id="ag-head"><svg id="ag-mark"><use href="#aside" /></svg><div id="ag-name">Agent</div><div id="ag-model"><svg class="b"><use href="#claude" /></svg>Claude · your plan</div></div>
+                  <div id="ag-task">Set up Sentry, deploy my app, trigger a production error, then fix anything broken.</div>
+                  <div id="ag-status">
+                    <div style="position: relative; width: 18px; height: 18px"><svg class="spin" id="ag-spin" viewBox="0 0 24 24" style="width: 18px; height: 18px"><circle cx="12" cy="12" r="9" fill="none" stroke="#e4dcfb" stroke-width="3" /><path d="M12 3a9 9 0 0 1 9 9" fill="none" stroke="#7b5cf0" stroke-width="3" stroke-linecap="round" /></svg><div id="ag-done-ic"><svg class="i" style="stroke-width: 3.2"><path d="M20 6 9 17l-5-5" /></svg></div></div>
+                    <span id="ag-timer">Working for 0m 02s</span>
+                  </div>
+                  <div id="ag-steps"></div>
+                  <div id="ag-final">All set. Sentry is live, the checkout crash is fixed and production is healthy.</div>
+                  <div id="ag-reply">Reply to agent…<div class="send"><svg class="i"><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></svg></div></div>
+                </div>
+              </div>
+
+              <!-- agent cursor -->
+              <div id="cursor">
+                <div id="cursor-ring"></div>
+                <svg viewBox="0 0 24 24"><path d="M4 2.8 20.2 12.4 12.9 14.1 9.4 21 4 2.8Z" fill="#7b5cf0" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                <div id="cursor-tag">Aside</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="veil"></div>
+
+      <!-- Bring your own subscription -->
+      <div id="sub-scene" data-layout-allow-overlap class="clip ov" data-start="23.35" data-duration="2.85" data-track-index="2">
+        <div id="sub-card">
+          <div id="sub-kick">Bring your own AI</div>
+          <div id="sub-h">No extra <em>AI bill.</em></div>
+          <div id="sub-p">Sign in with the Claude or Codex subscription you already pay for.</div>
+          <div id="sub-btns">
+            <div class="sbtn" id="sb-claude"><div class="lg" style="background: #faf0ea"><svg class="b"><use href="#claude" /></svg></div>Claude<div class="cn" id="cn-claude"><svg class="i" style="stroke-width: 3"><path d="M20 6 9 17l-5-5" /></svg>Connected</div></div>
+            <div class="sbtn" id="sb-codex"><div class="lg"><svg class="b" style="font-size: 48px"><use href="#codex" /></svg></div>Codex<div class="cn" id="cn-codex"><svg class="i" style="stroke-width: 3"><path d="M20 6 9 17l-5-5" /></svg>Connected</div></div>
+          </div>
+          <div id="sub-foot"><span class="z">$0</span>extra for AI inside Aside</div>
+        </div>
+      </div>
+
+      <!-- End card -->
+      <div id="end-scene" data-layout-allow-overlap class="clip ov" data-start="25.95" data-duration="2.05" data-track-index="3">
+        <div id="end-wrap">
+          <svg id="end-mark"><use href="#aside" /></svg>
+          <div id="end-word">Aside Browser</div>
+          <div id="end-tag">The AI browser for real work.</div>
+          <div id="end-sub"><div class="lg" style="background: #fff"><svg class="b"><use href="#claude" /></svg></div><div class="lg"><svg class="b" style="font-size: 34px"><use href="#codex" /></svg></div>Works with your Claude or Codex subscription</div>
+        </div>
+      </div>
+
+      <audio id="score" src="assets/score.m4a" data-start="0" data-duration="28" data-track-index="5" data-volume="0.9"></audio>
+    </div>
+
+    <script>
+      // ---------------------------------------------------------------------------
+      // Shared schedule (mirrored in tools/make-score.mjs for the sound design)
+      // ---------------------------------------------------------------------------
+      const PROMPT = "Set up Sentry, deploy my app, trigger a production error, then fix anything broken.";
+      const TYPE_START = 0.7;
+      const TYPE_CPS = 36;
+      function typeTimes(text, start, cps) {
+        const out = [];
+        let t = start;
+        for (let i = 0; i < text.length; i++) {
+          out.push(t);
+          t += 1 / cps + (text[i] === "," ? 0.09 : 0);
+        }
+        return out;
+      }
+      const CHAR_T = typeTimes(PROMPT, TYPE_START, TYPE_CPS);
+      const TYPE_END = CHAR_T[CHAR_T.length - 1];
+      const SUBMIT = 3.22;
+
+      const STEPS = [
+        { t: 3.75, done: 6.25, html: "Opening <b>Sentry</b>, <b>acme/web</b> and <b>Vercel</b>" },
+        { t: 6.45, done: 7.75, html: "Signing in with Aside vault" },
+        { t: 7.85, done: 9.0, html: "Creating Sentry project <b>acme-web</b>" },
+        { t: 9.0, done: 9.55, html: "Capturing DSN as a secret" },
+        { t: 9.7, done: 11.0, html: "Adding <b>@sentry/nextjs</b> to acme/web" },
+        { t: 11.05, done: 12.0, html: "Setting Vercel env vars" },
+        { t: 12.05, done: 13.3, html: "Deploying to production" },
+        { t: 13.45, done: 14.35, html: "Triggering a test error" },
+        { t: 14.45, bad: 14.75, html: "Sentry caught <b>TypeError</b> in /api/checkout", note: "Root cause: cart.items is undefined", noteT: 15.9 },
+        { t: 16.95, done: 18.3, html: "Patching <b>route.ts</b>" },
+        { t: 18.4, done: 19.3, html: "Running tests", doneHtml: "Tests passed <b>24/24</b>" },
+        { t: 19.4, done: 20.45, html: "Redeploying to production" },
+      ];
+      const STEP_GAP = 38;
+
+      const DIFF1 = [
+        { file: "sentry.client.config.ts", stat: '<span class="add">+6</span>', lines: [
+          ["a", 1, '<span class="tk-k">import</span> * <span class="tk-k">as</span> Sentry <span class="tk-k">from</span> <span class="tk-s">"@sentry/nextjs"</span>;'],
+          ["a", 2, ""],
+          ["a", 3, 'Sentry.<span class="tk-f">init</span>({'],
+          ["a", 4, '  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,'],
+          ["a", 5, '  tracesSampleRate: 1.0,'],
+          ["a", 6, '});'],
+        ] },
+        { file: "next.config.mjs", stat: '<span class="del">−1</span> <span class="add">+3</span>', lines: [
+          ["c", 9, '<span class="tk-k">import</span> { withSentryConfig } <span class="tk-k">from</span> <span class="tk-s">"@sentry/nextjs"</span>;'],
+          ["d", 10, '<span class="tk-k">export default</span> nextConfig;'],
+          ["a", 10, '<span class="tk-k">export default</span> <span class="tk-f">withSentryConfig</span>(nextConfig, {'],
+          ["a", 11, '  org: <span class="tk-s">"acme"</span>, project: <span class="tk-s">"acme-web"</span>,'],
+          ["a", 12, '});'],
+        ] },
+      ];
+      const DIFF2 = [
+        { file: "app/api/checkout/route.ts", stat: '<span class="del">−1</span> <span class="add">+3</span>', lines: [
+          ["c", 16, '<span class="tk-k">export async function</span> <span class="tk-f">POST</span>(req: Request) {'],
+          ["c", 17, '  <span class="tk-k">const</span> cart = <span class="tk-k">await</span> <span class="tk-f">getCart</span>(req);'],
+          ["d", 18, '  <span class="tk-k">const</span> total = cart.items.total;'],
+          ["a", 18, '  <span class="tk-k">const</span> total = (cart?.items ?? []).<span class="tk-f">reduce</span>('],
+          ["a", 19, '    (sum, item) =&gt; sum + item.price * item.qty, 0'],
+          ["a", 20, '  );'],
+          ["c", 21, '  <span class="tk-k">return</span> <span class="tk-f">charge</span>(total);'],
+        ] },
+      ];
+      const LOGS = [
+        '<span class="p">▲</span> Cloning github.com/acme/web (main, 4f2c1ab)',
+        "Installing dependencies… done in 6.2s",
+        '<span class="p">▲</span> Next.js 15 · Creating an optimized production build',
+        '<span class="g">✓</span> Compiled successfully',
+        '<span class="p">[@sentry/nextjs]</span> Uploaded source maps · release 4f2c1ab',
+        '<span class="g">✓ Deployed to production</span> · acme-web.vercel.app',
+      ];
+      const TERM = [
+        '<span class="pr">~/acme/web</span> $ pnpm test',
+        ' <span class="g">✓</span> checkout.test.ts <span class="dim">(6)</span>',
+        ' <span class="g">✓</span> cart.test.ts <span class="dim">(9)</span>',
+        ' <span class="g">✓</span> sentry.test.ts <span class="dim">(3)</span>  api.test.ts <span class="dim">(6)</span>',
+        '<span class="g">Tests  24 passed</span> <span class="dim">(24) · 1.84s</span>',
+      ];
+
+      // ---------------------------------------------------------------------------
+      // Static DOM generation
+      // ---------------------------------------------------------------------------
+      const $ = (s) => document.querySelector(s);
+      const $$ = (s) => Array.from(document.querySelectorAll(s));
+
+      const askText = $("#ask-text");
+      for (const ch of PROMPT) {
+        const s = document.createElement("span");
+        s.textContent = ch;
+        askText.appendChild(s);
+      }
+
+      const steps = $("#ag-steps");
+      STEPS.forEach((st, i) => {
+        const row = document.createElement("div");
+        row.className = "st";
+        row.id = "st" + i;
+        row.style.top = i * STEP_GAP + (i > 8 ? 20 : 0) + "px";
+        row.innerHTML =
+          '<div class="slot"><svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#e4dcfb" stroke-width="3"/><path d="M12 3a9 9 0 0 1 9 9" fill="none" stroke="#7b5cf0" stroke-width="3" stroke-linecap="round"/></svg>' +
+          '<div class="ok"><svg class="i" style="stroke-width:3.2"><path d="M20 6 9 17l-5-5"/></svg></div>' +
+          '<div class="bad"><svg class="i" style="stroke-width:3"><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg></div></div>' +
+          '<div class="txt">' + st.html + "</div>" +
+          (st.note ? '<div class="note">' + st.note + "</div>" : "");
+        steps.appendChild(row);
+      });
+
+      function buildDiff(host, files, idPrefix) {
+        files.forEach((f, fi) => {
+          const box = document.createElement("div");
+          box.className = "fbox";
+          box.innerHTML = '<div class="fhead"><svg class="i" style="font-size:15px;color:#59636e"><path d="m6 9 6 6 6-6"/></svg>' + f.file + "&nbsp;&nbsp;" + f.stat + "</div>";
+          f.lines.forEach((ln, li) => {
+            const row = document.createElement("div");
+            row.className = "cl " + (ln[0] === "c" ? "" : ln[0]);
+            row.id = idPrefix + fi + "-" + li;
+            row.innerHTML = '<span class="n">' + ln[1] + '</span><span class="s">' + (ln[0] === "a" ? "+" : ln[0] === "d" ? "−" : " ") + "</span><span>" + ln[2] + "</span>";
+            box.appendChild(row);
+          });
+          host.appendChild(box);
+        });
+      }
+      buildDiff($("#diff1"), DIFF1, "d1-");
+      buildDiff($("#diff2"), DIFF2, "d2-");
+      $("#diff1").insertAdjacentHTML("beforeend", '<div class="fbox"><div class="fhead"><svg class="i" style="font-size:15px;color:#59636e;transform:rotate(-90deg)"><path d="m6 9 6 6 6-6"/></svg>package.json&nbsp;&nbsp;<span class="add">+1</span><span style="margin-left:auto;color:#59636e;font-family:var(--sans);font-size:14px">"@sentry/nextjs": "^9"</span></div></div>');
+      $("#logs").innerHTML = LOGS.map((l) => '<div class="ll">' + l + "</div>").join("");
+      $("#term").innerHTML = TERM.map((l) => '<div class="tl2">' + l + "</div>").join("");
+
+      // ---------------------------------------------------------------------------
+      // Timeline (built after fonts load so measured layout is final)
+      // ---------------------------------------------------------------------------
+      document.fonts.ready.then(() => {
+        const rootR = $("#root").getBoundingClientRect();
+        const K = rootR.width / 1920;
+        const winR = $("#win").getBoundingClientRect();
+        // world-space center of an element (camera at identity)
+        const W = (el) => {
+          const r = (typeof el === "string" ? $(el) : el).getBoundingClientRect();
+          return { x: (r.left - rootR.left + r.width / 2) / K, y: (r.top - rootR.top + r.height / 2) / K, w: r.width / K, h: r.height / K };
+        };
+        // window-local point for the cursor (tip lands at the element center + offset)
+        const L = (el, dx = 0, dy = 0) => {
+          const r = $(el).getBoundingClientRect();
+          return { x: (r.left - winR.left + r.width / 2) / K + dx, y: (r.top - winR.top + r.height / 2) / K + dy };
+        };
+
+        // caret positions after each typed character (container-local)
+        const spans = Array.from(askText.children);
+        const caretPos = spans.map((s) => ({ x: s.offsetLeft + s.offsetWidth + 21, y: s.offsetTop + 18 }));
+        const line2 = spans.findIndex((s) => s.offsetTop > spans[0].offsetTop);
+
+        const P = {
+          ask: W("#askbar"),
+          page: W("#page-area"),
+          email: W("#in-email"),
+          dsn: W("#dsn-card"),
+          diff1: W("#diff1"),
+          env: W("#env1"),
+          logs: W("#logs"),
+          pay: W("#pay"),
+          issue: W("#issue"),
+          trace: W("#trace"),
+          diff2: W("#diff2"),
+          rd: W("#rd-list"),
+          succ: W("#chk"),
+        };
+        const C = {
+          cont: L("#sn-continue"),
+          fill: L("#vault-fill"),
+          next: L("#pt-next"),
+          create: L("#btn-create"),
+          pay: L("#pay"),
+        };
+
+        // Deliberate layering: modals and glass cards sit over live page text.
+        $$("#vault-pop div, .sn-l, #err div, #err h3, .it div, #pay, #sub-card div, #end-wrap div, .succ h2, .succ .sc, .sstat, .health .hl span, .health .hl b, .st .txt").forEach((el) => el.setAttribute("data-layout-allow-overlap", ""));
+
+        const tl = gsap.timeline({ paused: true });
+        const E = "power3.out";
+        const IO = "power3.inOut";
+
+        // ------------------------------ camera ------------------------------
+        const cam = (t, x, y, s, d = 0.9, ease = IO) => {
+          tl.to("#cam-pan", { x: 960 - x, y: 540 - y, duration: d, ease }, t);
+          tl.to("#cam-scale", { scale: s, duration: d, ease }, t);
+        };
+        const WORK = { x: 1100, y: 560 };
+        tl.fromTo("#cam-pan", { x: 960 - P.ask.x, y: 540 - (P.ask.y + 14) }, { x: 960 - P.ask.x, y: 540 - (P.ask.y + 14), duration: 0.01 }, 0);
+        tl.fromTo("#cam-scale", { scale: 1.9 }, { scale: 1.62, duration: 1.3, ease: E }, 0);
+        tl.to("#cam-scale", { scale: 1.68, duration: TYPE_END - 1.3, ease: "none" }, 1.3);
+        cam(SUBMIT + 0.12, 960, 540, 1.0, 1.0);
+        cam(6.15, WORK.x, WORK.y, 1.3);
+        cam(6.95, P.email.x + 40, P.email.y + 40, 1.75, 0.8);
+        cam(7.9, P.page.x + 20, P.page.y - 60, 1.4, 0.8);
+        cam(8.9, P.dsn.x + 40, P.dsn.y, 1.7, 0.7);
+        cam(9.6, P.diff1.x + 60, P.diff1.y - 30, 1.45, 0.8);
+        cam(11.0, P.env.x + 80, P.env.y + 40, 1.45, 0.7);
+        cam(12.0, P.logs.x + 70, P.logs.y - 60, 1.45, 0.7);
+        cam(13.4, P.pay.x - 170, P.pay.y + 60, 1.45, 0.7);
+        cam(14.4, P.issue.x + 60, P.issue.y + 40, 1.6, 0.8);
+        cam(15.35, P.trace.x + 60, P.trace.y - 40, 1.6, 0.7);
+        cam(16.9, P.diff2.x + 60, P.diff2.y + 20, 1.55, 0.8);
+        cam(18.35, P.diff2.x + 60, P.diff2.y + 170, 1.45, 0.7);
+        cam(19.4, WORK.x, WORK.y, 1.3, 0.8);
+        cam(20.5, P.succ.x + 150, P.succ.y + 170, 1.45, 0.8);
+        cam(21.9, 960, 540, 1.0, 1.3);
+        // recede behind the glass card, then the end card
+        tl.to("#cam-scale", { scale: 0.9, duration: 1.2, ease: IO }, 23.25);
+        tl.fromTo("#stage", { filter: "blur(0px)" }, { filter: "blur(9px)", duration: 0.9, ease: IO }, 23.3);
+        tl.fromTo("#veil", { opacity: 0 }, { opacity: 1, duration: 0.9, ease: IO }, 23.3);
+        tl.to("#cam-scale", { scale: 0.84, duration: 2.2, ease: "power2.out" }, 25.8);
+        tl.to("#stage", { filter: "blur(18px)", duration: 0.8, ease: IO }, 25.85);
+        tl.to("#veil", { backgroundColor: "rgba(236, 231, 252, 0.8)", duration: 0.8, ease: IO }, 25.85);
+
+        // ------------------------------ ambient ------------------------------
+        tl.fromTo("#orb1", { x: 0, y: 0 }, { x: 140, y: -90, duration: 28, ease: "sine.inOut" }, 0);
+        tl.fromTo("#orb2", { x: 0, y: 0 }, { x: -160, y: 110, duration: 28, ease: "sine.inOut" }, 0);
+        tl.fromTo("#orb3", { x: 0, y: 0 }, { x: -120, y: -70, duration: 28, ease: "sine.inOut" }, 0);
+
+        // ------------------------------ 0 · window + ask ------------------------------
+        tl.fromTo("#win", { rotationX: 14, y: 70, opacity: 0 }, { rotationX: 0, y: 0, opacity: 1, duration: 1.3, ease: E }, 0);
+        tl.fromTo("#caret", { opacity: 0 }, { opacity: 1, duration: 0.01 }, 0.3);
+        tl.to("#caret", { opacity: 0.15, duration: 0.18, repeat: 1, yoyo: true, ease: "none" }, 0.32);
+        tl.to("#ask-ph", { opacity: 0, duration: 0.01 }, CHAR_T[0]);
+        tl.fromTo("#ask-ring", { opacity: 0 }, { opacity: 0.55, duration: 0.5, ease: E }, 0.45);
+        if (line2 > 0) {
+          tl.to(["#askbar", "#ask-ring"], { height: 92, duration: 0.22, ease: E }, CHAR_T[line2]);
+          tl.to("#nt-below", { y: 30, duration: 0.22, ease: E }, CHAR_T[line2]);
+        }
+        tl.to("#caret", { opacity: 0.15, duration: 0.14, repeat: 1, yoyo: true, ease: "none" }, TYPE_END + 0.05);
+        // submit
+        tl.to("#seg-ask", { scale: 0.92, duration: 0.08, ease: "power2.out" }, SUBMIT - 0.06);
+        tl.to("#seg-ask", { scale: 1, backgroundColor: "#7b5cf0", color: "#ffffff", duration: 0.25, ease: E }, SUBMIT + 0.02);
+        tl.to("#ask-ring", { opacity: 1, duration: 0.15 }, SUBMIT);
+        tl.to("#caret", { opacity: 0, duration: 0.05 }, SUBMIT);
+        tl.to("#newtab", { opacity: 0, y: -40, filter: "blur(6px)", duration: 0.55, ease: "power2.in" }, SUBMIT + 0.25);
+        tl.fromTo("#agent", { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 0.7, ease: E }, SUBMIT + 0.45);
+        tl.fromTo("#pg-spawn", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: E }, SUBMIT + 0.5);
+
+        // sidebar: task row becomes the running task
+        tl.to("#task-ic-aside", { opacity: 0, duration: 0.2 }, SUBMIT + 0.2);
+        tl.fromTo("#task-spin", { opacity: 0 }, { opacity: 1, duration: 0.2 }, SUBMIT + 0.2);
+        tl.fromTo("#task-spin", { rotation: 0 }, { rotation: 360 * 22, duration: 20.55 - SUBMIT, ease: "none", transformOrigin: "50% 50%", immediateRender: false }, SUBMIT + 0.2);
+        tl.to("#task-spin", { opacity: 0, duration: 0.2 }, 20.55);
+        tl.fromTo("#task-ok", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: E }, 20.6);
+
+        // ------------------------------ 1 · spin up tabs ------------------------------
+        const SPAWN = [3.9, 4.5, 5.1];
+        ["#ar-sentry", "#ar-gh", "#ar-vc"].forEach((id, i) => {
+          const t = SPAWN[i];
+          tl.to("#agent-group", { height: 47 * (i + 1) + 4, duration: 0.45, ease: E }, t);
+          tl.to("#below-group", { y: 47 * (i + 1), duration: 0.45, ease: E }, t);
+          tl.to("#sel", { y: 47 * (i + 1), duration: 0.45, ease: E }, t);
+          tl.fromTo(id, { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.45, ease: E }, t + 0.05);
+          const card = ["#sc-sentry", "#sc-gh", "#sc-vc"][i];
+          tl.fromTo(card, { opacity: 0, y: 26, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: E }, t);
+          tl.fromTo(card + " .sbar i", { scaleX: 0 }, { scaleX: 1, duration: 1.1, ease: "power2.inOut" }, t + 0.15);
+        });
+        ["#live-sentry", "#live-gh", "#live-vc"].forEach((id, i) => tl.fromTo(id, { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.3, ease: E }, SPAWN[i] + 0.4));
+
+        // selected-tab pill travels with the agent's focus
+        const SEL = { task: [141, 0, 344], sentry: [0, 21, 323], gh: [47, 21, 323], vc: [94, 21, 323] };
+        const selTo = (t, key) => {
+          const [y, x, w] = SEL[key];
+          tl.to("#sel", { y, x, width: w, duration: 0.45, ease: IO }, t);
+        };
+        selTo(6.2, "sentry");
+        selTo(9.6, "gh");
+        selTo(11.0, "vc");
+        selTo(14.4, "sentry");
+        selTo(16.9, "gh");
+        selTo(19.4, "vc");
+        selTo(20.55, "task");
+        ["#live-sentry", "#live-gh", "#live-vc"].forEach((id) => tl.to(id, { opacity: 0, scale: 0, duration: 0.3 }, 20.55));
+
+        // ------------------------------ page switching ------------------------------
+        const PAGES = [
+          ["#pg-spawn", SUBMIT + 0.5],
+          ["#pg-login", 6.2],
+          ["#pg-proj", 7.85],
+          ["#pg-diff1", 9.6],
+          ["#pg-env", 11.0],
+          ["#pg-deploy", 12.0],
+          ["#pg-app", 13.4],
+          ["#pg-issue", 14.4],
+          ["#pg-diff2", 16.9],
+          ["#pg-redeploy", 19.4],
+          ["#pg-success", 20.5],
+        ];
+        PAGES.forEach(([id, t], i) => {
+          if (i > 0) tl.fromTo(id, { opacity: 0, scale: 0.985 }, { opacity: 1, scale: 1, duration: 0.4, ease: E }, t);
+          const next = PAGES[i + 1];
+          if (next) tl.to(id, { opacity: 0, duration: 0.3, ease: "power1.in" }, next[1] + 0.12);
+        });
+        tl.to("#sc-sentry", { scale: 1.06, opacity: 0, duration: 0.4, ease: "power2.in" }, 6.0);
+
+        // ------------------------------ 2 · Sentry sign-in (vault autofill) ------------------------------
+        tl.fromTo("#key-glow", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: E }, 6.55);
+        tl.to("#key", { color: "#5b3fd1", duration: 0.3 }, 6.55);
+        tl.fromTo("#vault-pop", { opacity: 0, y: -10 }, { opacity: 1, y: 0, duration: 0.4, ease: E }, 6.7);
+        tl.fromTo("#cursor", { opacity: 0, x: C.fill.x + 140, y: C.fill.y + 120 }, { opacity: 1, x: C.fill.x + 140, y: C.fill.y + 120, duration: 0.08 }, 6.75);
+        tl.to("#cursor", { x: C.fill.x, y: C.fill.y, duration: 0.45, ease: IO }, 6.85);
+        const click = (t) => {
+          tl.to("#cursor svg", { scale: 0.82, duration: 0.07, ease: "power2.out", transformOrigin: "20% 10%" }, t);
+          tl.to("#cursor svg", { scale: 1, duration: 0.2, ease: E }, t + 0.08);
+          tl.fromTo("#cursor-ring", { opacity: 0.9, scale: 0.3 }, { opacity: 0, scale: 1.8, duration: 0.45, ease: "power2.out", immediateRender: false }, t + 0.02);
+        };
+        click(7.3);
+        tl.to("#vault-fill", { scale: 0.92, duration: 0.07, yoyo: true, repeat: 1 }, 7.3);
+        tl.to("#vault-pop", { opacity: 0, y: -6, duration: 0.25, ease: "power2.in" }, 7.42);
+        ["#in-email", "#in-pass"].forEach((id, i) => {
+          tl.fromTo(id + " .fillbg", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: E }, 7.42 + i * 0.08);
+          tl.fromTo(id + " .val", { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.3, ease: E }, 7.42 + i * 0.08);
+        });
+        tl.fromTo("#vault-badge", { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.35, ease: E }, 7.55);
+        tl.to("#cursor", { x: C.cont.x + 30, y: C.cont.y + 4, duration: 0.3, ease: IO }, 7.45);
+        click(7.72);
+        tl.to("#sn-continue", { scale: 0.97, duration: 0.07, yoyo: true, repeat: 1 }, 7.72);
+        tl.to("#key-glow", { opacity: 0, duration: 0.4 }, 8.0);
+        tl.to("#key", { color: "#3b3742", duration: 0.4 }, 8.0);
+
+        // ------------------------------ 3 · Sentry project + DSN ------------------------------
+        tl.to("#cursor", { x: C.next.x + 10, y: C.next.y + 6, duration: 0.35, ease: IO }, 7.9);
+        click(8.25);
+        tl.fromTo("#pt-ring", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: E }, 8.28);
+        tl.to("#cursor", { x: C.create.x + 10, y: C.create.y + 6, duration: 0.35, ease: IO }, 8.45);
+        click(8.82);
+        tl.to("#btn-create", { scale: 0.96, duration: 0.07, yoyo: true, repeat: 1 }, 8.82);
+        tl.to("#cursor", { opacity: 0, duration: 0.25 }, 9.0);
+        tl.fromTo("#dsn-card", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 8.95);
+        tl.fromTo("#dsn-field", { boxShadow: "0 0 0 1px #e3dde9" }, { boxShadow: "0 0 0 2px #7b5cf0", duration: 0.3 }, 9.2);
+        tl.fromTo("#dsn-pill", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.35, ease: E }, 9.25);
+
+        // ------------------------------ 4 · codebase diff ------------------------------
+        const diffRows = (prefix, files, t0, dt) => {
+          let k = 0;
+          files.forEach((f, fi) => f.lines.forEach((ln, li) => {
+            const id = "#" + prefix + fi + "-" + li;
+            if (ln[0] === "c") return;
+            tl.fromTo(id, { opacity: 0, x: -10 }, { opacity: 1, x: 0, duration: 0.3, ease: E }, t0 + k * dt);
+            k++;
+          }));
+        };
+        diffRows("d1-", DIFF1, 9.95, 0.1);
+
+        // ------------------------------ 5 · env vars ------------------------------
+        tl.fromTo("#env1", { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.4, ease: E }, 11.25);
+        tl.fromTo("#env2", { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.4, ease: E }, 11.45);
+        tl.fromTo("#env-toast", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.35, ease: E }, 11.6);
+
+        // ------------------------------ 6 · deploy ------------------------------
+        tl.fromTo("#dep-bar", { scaleX: 0 }, { scaleX: 1, duration: 1.1, ease: "power1.inOut" }, 12.1);
+        $$("#logs .ll").forEach((el, i) => tl.fromTo(el, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.2, ease: E }, 12.15 + i * 0.19));
+        tl.to("#dep-building", { opacity: 0, duration: 0.15 }, 13.2);
+        tl.fromTo("#dep-ready", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.3, ease: E }, 13.22);
+
+        // ------------------------------ 7 · trigger the error ------------------------------
+        tl.fromTo("#cursor", { opacity: 0, x: C.pay.x - 160, y: C.pay.y + 140 }, { opacity: 1, x: C.pay.x - 160, y: C.pay.y + 140, duration: 0.04, immediateRender: false }, 13.45);
+        tl.to("#cursor", { x: C.pay.x, y: C.pay.y, duration: 0.3, ease: IO }, 13.5);
+        click(13.82);
+        tl.to("#pay", { scale: 0.96, duration: 0.07, yoyo: true, repeat: 1 }, 13.82);
+        tl.to("#cursor", { opacity: 0, duration: 0.2 }, 14.1);
+        tl.fromTo("#err-tint", { opacity: 0 }, { opacity: 1, duration: 0.2 }, 13.98);
+        tl.fromTo("#err", { opacity: 0, y: 24, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.35, ease: E }, 13.98);
+        tl.fromTo("#page-area", { x: 0 }, { x: 5, duration: 0.05, repeat: 5, yoyo: true, ease: "none" }, 14.0);
+
+        // ------------------------------ 8 · Sentry catches it ------------------------------
+        tl.fromTo("#issue", { opacity: 0, y: -18 }, { opacity: 1, y: 0, duration: 0.45, ease: E }, 14.6);
+        tl.fromTo("#issue-flash", { opacity: 0 }, { opacity: 1, duration: 0.2 }, 14.65);
+        tl.to("#issue-flash", { opacity: 0, duration: 0.9, ease: "power2.out" }, 14.9);
+        tl.fromTo("#sn-toast", { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.4, ease: E }, 14.75);
+        tl.to("#sn-toast", { opacity: 0, x: 20, duration: 0.3 }, 15.25);
+        tl.fromTo("#trace", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, ease: E }, 15.3);
+
+        // ------------------------------ 9 · fix, test ------------------------------
+        diffRows("d2-", DIFF2, 17.3, 0.2);
+        tl.fromTo("#term", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.35, ease: E }, 18.35);
+        $$("#term .tl2").forEach((el, i) => tl.fromTo(el, { opacity: 0 }, { opacity: 1, duration: 0.12 }, 18.45 + i * 0.2));
+        tl.fromTo("#checks", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: E }, 19.2);
+
+        // ------------------------------ 10 · redeploy ------------------------------
+        tl.fromTo("#rd-list", { y: -82 }, { y: 0, duration: 0.5, ease: E }, 19.5);
+        tl.to("#rd-b", { opacity: 0, duration: 0.15 }, 20.1);
+        tl.fromTo("#rd-r", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 20.12);
+        tl.fromTo("#rd-cur", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.3, ease: E }, 20.15);
+        tl.fromTo("#rd-resolved", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.35, ease: E }, 20.2);
+
+        // ------------------------------ 11 · success ------------------------------
+        const RING = 2 * Math.PI * 56;
+        tl.fromTo("#chk-bg", { scale: 0.6, opacity: 0, transformOrigin: "50% 50%" }, { scale: 1, opacity: 1, duration: 0.5, ease: E }, 20.7);
+        tl.fromTo("#chk-ring", { strokeDasharray: RING, strokeDashoffset: RING }, { strokeDashoffset: 0, duration: 0.7, ease: "power2.inOut" }, 20.7);
+        tl.fromTo("#chk-path", { strokeDasharray: 80, strokeDashoffset: 80 }, { strokeDashoffset: 0, duration: 0.45, ease: "power2.out" }, 21.05);
+        tl.fromTo("#s-h", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 21.1);
+        tl.fromTo("#s-sentry", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 21.4);
+        ["#ss1", "#ss2", "#ss3"].forEach((id, i) => tl.fromTo(id, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: E }, 21.75 + i * 0.12));
+        tl.fromTo("#health", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: E }, 22.15);
+        tl.fromTo("#hpath", { strokeDasharray: 700, strokeDashoffset: 700 }, { strokeDashoffset: 0, duration: 0.9, ease: "power2.inOut" }, 22.2);
+        tl.fromTo("#ag-final", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: E }, 20.8);
+
+        // ------------------------------ agent panel steps ------------------------------
+        STEPS.forEach((st, i) => {
+          const row = "#st" + i;
+          tl.fromTo(row, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: E }, st.t);
+          const end = st.done || st.bad;
+          tl.fromTo(row + " .spin", { rotation: 0 }, { rotation: 360 * Math.max(1, Math.round((end - st.t) * 1.6)), duration: end - st.t, ease: "none", transformOrigin: "50% 50%" }, st.t);
+          tl.to(row + " .spin", { opacity: 0, duration: 0.12 }, end);
+          tl.fromTo(row + (st.bad ? " .bad" : " .ok"), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.3, ease: E }, end);
+          if (!st.bad) tl.to(row + " .txt", { color: "#66626d", duration: 0.3 }, end);
+          else tl.to(row + " .txt", { color: "#b3262c", duration: 0.2 }, end);
+          if (st.note) tl.fromTo(row + " .note", { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.35, ease: E }, st.noteT);
+        });
+        tl.fromTo("#ag-spin", { rotation: 0 }, { rotation: 360 * 27, duration: 20.55 - (SUBMIT + 0.45), ease: "none", transformOrigin: "50% 50%" }, SUBMIT + 0.45);
+        tl.to("#ag-spin", { opacity: 0, duration: 0.15 }, 20.55);
+        tl.fromTo("#ag-done-ic", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.35, ease: E }, 20.58);
+
+        // ------------------------------ 12 · bring your own AI ------------------------------
+        tl.fromTo("#sub-card", { opacity: 0, y: 60, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.8, ease: E }, 23.4);
+        tl.fromTo("#sub-kick", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 23.55);
+        tl.fromTo("#sub-h", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 23.65);
+        tl.fromTo("#sub-p", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.55, ease: E }, 23.85);
+        tl.fromTo("#sb-claude", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 24.05);
+        tl.fromTo("#sb-codex", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 24.17);
+        tl.fromTo("#cn-claude", { opacity: 0, x: -10 }, { opacity: 1, x: 0, duration: 0.35, ease: E }, 24.6);
+        tl.fromTo("#cn-codex", { opacity: 0, x: -10 }, { opacity: 1, x: 0, duration: 0.35, ease: E }, 24.95);
+        tl.fromTo("#sub-foot", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: E }, 25.1);
+        tl.to("#sub-card", { opacity: 0, y: -30, scale: 0.98, duration: 0.45, ease: "power2.in" }, 25.72);
+
+        // ------------------------------ 13 · end card ------------------------------
+        tl.fromTo("#end-mark", { opacity: 0, scale: 0.7, rotation: -30 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.8, ease: E }, 26.0);
+        tl.fromTo("#end-word", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 26.2);
+        tl.fromTo("#end-tag", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: E }, 26.45);
+        tl.fromTo("#end-sub", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: E }, 26.75);
+
+        // ------------------------------ discrete state (seek-safe driver) ------------------------------
+        const URLS = [
+          [0, null],
+          [SUBMIT + 0.3, ["aside", "Opening 3 tabs"]],
+          [6.2, ["sentry", "sentry.io/auth/login"]],
+          [7.85, ["sentry", "acme.sentry.io/projects/new"]],
+          [9.6, ["gh", "github.com/acme/web/pull/42/files"]],
+          [11.0, ["vc", "vercel.com/acme/acme-web/settings/environment-variables"]],
+          [12.0, ["vc", "vercel.com/acme/acme-web/deployments"]],
+          [13.4, ["vc", "acme-web.vercel.app/checkout"]],
+          [14.4, ["sentry", "acme.sentry.io/issues/?project=acme-web"]],
+          [16.9, ["gh", "github.com/acme/web/pull/43/files"]],
+          [19.4, ["vc", "vercel.com/acme/acme-web/deployments"]],
+          [20.5, ["aside", "Task complete"]],
+        ];
+        const FAV = {
+          aside: '<svg class="b" style="color:#7b5cf0"><use href="#aside"/></svg>',
+          sentry: '<svg class="b" style="color:#362d59"><use href="#sentry"/></svg>',
+          gh: '<svg class="b" style="color:#1f2328"><use href="#github"/></svg>',
+          vc: '<svg class="b" style="color:#000;font-size:13px"><use href="#vercel"/></svg>',
+        };
+        const urlFav = $("#url-fav");
+        const urlText = $("#url-text");
+        const urlSearch = urlFav.innerHTML;
+        const count = $("#agent-count");
+        const timer = $("#ag-timer");
+        const taskName = $("#task-name");
+        const caret = $("#caret");
+        const proj = $("#proj-name");
+        const rdTime = $("#rd-time");
+        const last = {};
+        const put = (key, el, prop, val) => {
+          if (last[key] === val) return;
+          last[key] = val;
+          if (prop === "html") el.innerHTML = val;
+          else if (prop === "text") el.textContent = val;
+          else el.style[prop] = val;
+        };
+        function state(t) {
+          // typing
+          let n = 0;
+          while (n < CHAR_T.length && CHAR_T[n] <= t) n++;
+          if (last.n !== n) {
+            const prev = last.n || 0;
+            for (let i = Math.min(prev, n); i < Math.max(prev, n); i++) spans[i].style.opacity = i < n ? "1" : "0";
+            last.n = n;
+          }
+          const cp = n === 0 ? { x: 21, y: 18 } : caretPos[n - 1];
+          put("cx", caret, "left", cp.x + "px");
+          put("cy", caret, "top", cp.y + "px");
+          // url bar
+          let u = URLS[0];
+          for (const e of URLS) if (e[0] <= t) u = e;
+          const uk = u[1] ? u[1].join("|") : "none";
+          if (last.url !== uk) {
+            last.url = uk;
+            if (u[1]) {
+              urlFav.innerHTML = FAV[u[1][0]];
+              urlText.textContent = u[1][1];
+              urlText.style.color = "#3b3742";
+            } else {
+              urlFav.innerHTML = urlSearch;
+              urlText.textContent = "Search Google or type a URL";
+              urlText.style.color = "#66626d";
+            }
+          }
+          // agent tab count + task row
+          const c = SPAWN.filter((s) => s <= t).length;
+          put("count", count, "text", c ? String(c) : "");
+          put("task", taskName, "text", t >= SUBMIT + 0.2 ? "Set up Sentry, deploy my app…" : "New Tab");
+          // working timer (agent time runs ~7.6× wall time)
+          const secs = t < 20.55 ? Math.max(2, Math.floor(2 + (t - SUBMIT) * 7.6)) : Math.floor(2 + (20.55 - SUBMIT) * 7.6);
+          const mmss = Math.floor(secs / 60) + "m " + String(secs % 60).padStart(2, "0") + "s";
+          put("timer", timer, "text", t < 20.55 ? "Working for " + mmss : "Done in " + mmss);
+          // project name typing
+          const pn = "acme-web";
+          const k = Math.max(0, Math.min(pn.length, Math.floor((t - 8.35) * 28)));
+          put("proj", proj, "text", pn.slice(0, k));
+          // redeploy timer
+          put("rd", rdTime, "text", t < 20.12 ? Math.max(1, Math.floor((t - 19.5) * 16)) + "s" : "38s");
+        }
+        const driver = { v: 0 };
+        tl.fromTo(driver, { v: 0 }, { v: 28, duration: 28, ease: "none", onUpdate: () => state(driver.v) }, 0);
+        state(0);
+
+        window.__timelines["main"] = tl;
+      });
+    </script>
+  </body>
+</html>
