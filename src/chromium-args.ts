@@ -18,10 +18,11 @@
 //      debugging), which profile is opened, and what identity is presented.
 //   2. A switch that merely collides with one already in the managed list, or
 //      is common compatibility boilerplate that would break the selected
-//      backend, is dropped and reported back. The one composable exception is
-//      --enable-features: its comma-separated feature names are merged so a
-//      BetterWright-required feature does not erase a caller's independent
-//      Chromium features.
+//      backend, is dropped and reported back. The composable exceptions are
+//      --enable-features and --disable-features: their comma-separated feature
+//      names are merged so a BetterWright-required feature (or a background
+//      feature it switches off) does not erase a caller's independent Chromium
+//      features, or vice versa.
 //
 // Everything else is appended last and takes effect.
 
@@ -89,7 +90,10 @@ function switchValue(arg) {
   return equals === -1 ? null : arg.slice(equals + 1);
 }
 
-function mergeEnabledFeatures(current, incoming) {
+// Feature-list switches whose values combine instead of colliding.
+const FEATURE_LIST_SWITCHES = new Set(["--enable-features", "--disable-features"]);
+
+function mergeFeatureList(flag, current, incoming) {
   const incomingValue = switchValue(incoming);
   if (incomingValue === null) return null;
   const features = [];
@@ -99,7 +103,7 @@ function mergeEnabledFeatures(current, incoming) {
       if (name && !features.includes(name)) features.push(name);
     }
   }
-  return `--enable-features=${features.join(",")}`;
+  return `${flag}=${features.join(",")}`;
 }
 
 function reservedReason(name) {
@@ -239,8 +243,8 @@ export function resolveChromiumArgs(option, env = process.env) {
 
 /**
  * Append caller switches to the managed list, dropping any that collide.
- * Comma-separated `--enable-features` values are combined instead because
- * multiple independent browser capabilities can safely coexist.
+ * Comma-separated `--enable-features` and `--disable-features` values are
+ * combined instead because independent feature choices can safely coexist.
  *
  * A collision is dropped rather than appended because Chromium resolves
  * duplicates last-wins: appending would override the managed value, which is
@@ -256,9 +260,9 @@ export function mergeChromiumArgs(managedArgs, extraArgs) {
   const taken = new Set(managedArgs.map(switchName));
   for (const arg of extraArgs) {
     const name = switchName(arg);
-    if (name === "--enable-features" && taken.has(name)) {
+    if (FEATURE_LIST_SWITCHES.has(name) && taken.has(name)) {
       const index = args.findIndex((candidate) => switchName(candidate) === name);
-      const merged = mergeEnabledFeatures(args[index], arg);
+      const merged = mergeFeatureList(name, args[index], arg);
       if (merged !== null) {
         args[index] = merged;
         continue;

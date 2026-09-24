@@ -6,6 +6,7 @@ import {
   parkingEnabled,
   parkPage,
   parkSession,
+  playwrightPageSession,
   unparkPage,
   unparkSession,
 } from "../../dist/src/page-park.js";
@@ -27,6 +28,9 @@ function fakePage({ closed = false }: any = {}) {
       send: async (method, params) => {
         sent.push(params === undefined ? method : { method, ...params });
         if (page.failOn === method) throw new Error(`refused ${method}`);
+        if (method === "Runtime.getHeapUsage") {
+          return { totalSize: page.heap?.shift() ?? 0, embedderHeapUsedSize: 0 };
+        }
         return {};
       },
     };
@@ -36,7 +40,20 @@ function fakePage({ closed = false }: any = {}) {
 
 const deps = (page) => ({ newCDPSession: () => page.newCDPSession() });
 
-test("parking freezes the native page lifecycle and stops animation timelines", async () => {
+/** Playwright's main-frame session stand-in, recording into the page's log. */
+function fakeDriverSession(page) {
+  return {
+    send: async (method, params) => {
+      page.sent.push({ driver: true, method, ...params });
+      if (page.failDriverOn === method) throw new Error(`refused ${method}`);
+      return {};
+    },
+  };
+}
+
+const MIB = 1024 * 1024;
+
+test("parking freezes the native page lifecycle, stops animation timelines, and collects garbage", async () => {
   const page = fakePage();
   assert.equal(await parkPage(page, deps(page)), true);
   assert.equal(isParked(page), true);
@@ -44,14 +61,95 @@ test("parking freezes the native page lifecycle and stops animation timelines", 
     "Animation.enable",
     { method: "Animation.setPlaybackRate", playbackRate: 0 },
     { method: "Page.setWebLifecycleState", state: "frozen" },
+    "Runtime.getHeapUsage",
+    "HeapProfiler.collectGarbage",
+    "Runtime.getHeapUsage",
   ]);
 });
 
-test("parking never purges V8 memory — the call crashes the pinned fork", async () => {
+test("parking never uses the Memory domain — its forced purge crashed the pinned fork", async () => {
   const page = fakePage();
   await parkPage(page, deps(page));
   const methods = page.sent.map((entry) => (isString(entry) ? entry : entry.method));
   assert.ok(!methods.some((method) => String(method).startsWith("Memory.")));
+});
+
+test("parking releases Playwright's focus emulation before freezing and restores it on wake", async () => {
+  // Focus emulation holds a visible capture that makes Chromium ignore the
+  // freeze, and only the session that enabled it can release it.
+  const page = fakePage();
+  const driver = fakeDriverSession(page);
+  const driverSession = (target) => (target === page ? driver : null);
+  assert.equal(await parkPage(page, { ...deps(page), driverSession }), true);
+  const parked = page.sent.filter((entry) => !isString(entry) && entry.method !== "Animation.setPlaybackRate");
+  assert.deepEqual(parked.slice(0, 2), [
+    { driver: true, method: "Emulation.setFocusEmulationEnabled", enabled: false },
+    { method: "Page.setWebLifecycleState", state: "frozen" },
+  ]);
+
+  page.sent.length = 0;
+  assert.equal(await unparkPage(page), true);
+  assert.deepEqual(page.sent, [
+    { method: "Page.setWebLifecycleState", state: "active" },
+    { driver: true, method: "Emulation.setFocusEmulationEnabled", enabled: true },
+    { method: "Animation.setPlaybackRate", playbackRate: 1 },
+  ]);
+});
+
+test("a park that fails after releasing focus still restores it on wake", async () => {
+  const page = fakePage();
+  const driver = fakeDriverSession(page);
+  page.failOn = "Page.setWebLifecycleState";
+  assert.equal(await parkPage(page, { ...deps(page), driverSession: () => driver }), false);
+  assert.equal(isParked(page), false);
+  page.failOn = null;
+  page.sent.length = 0;
+  assert.equal(await unparkPage(page), true);
+  assert.ok(page.sent.some((entry) =>
+    entry.driver && entry.method === "Emulation.setFocusEmulationEnabled" && entry.enabled === true
+  ));
+});
+
+test("a parked page is collected again only after its heap grows", async () => {
+  const page = fakePage();
+  const collections = () =>
+    page.sent.filter((entry) => entry === "HeapProfiler.collectGarbage").length;
+  // First park: 40 MiB before, 10 MiB after collection.
+  page.heap = [40 * MIB, 10 * MIB];
+  await parkPage(page, deps(page));
+  assert.equal(collections(), 1);
+  await unparkPage(page);
+  // A turn that barely allocated: 12 MiB is under the growth threshold.
+  page.heap = [12 * MIB];
+  await parkPage(page, deps(page));
+  assert.equal(collections(), 1);
+  await unparkPage(page);
+  // A navigation's worth of garbage is collected.
+  page.heap = [30 * MIB, 11 * MIB];
+  await parkPage(page, deps(page));
+  assert.equal(collections(), 2);
+});
+
+test("a failed collection leaves the page parked and still parkable", async () => {
+  const page = fakePage();
+  page.failOn = "HeapProfiler.collectGarbage";
+  assert.equal(await parkPage(page, deps(page)), true);
+  assert.equal(isParked(page), true);
+  await unparkPage(page);
+  assert.equal(await parkPage(page, deps(page)), true);
+});
+
+test("Playwright's page session is found through the in-process driver, or not at all", () => {
+  const client = { send: async () => ({}) };
+  const page: any = {};
+  page._connection = {
+    toImpl: (target) => (target === page ? { delegate: { _mainFrameSession: { _client: client } } } : undefined),
+  };
+  assert.equal(playwrightPageSession(page), client);
+  // A driver without these internals degrades to best-effort parking.
+  assert.equal(playwrightPageSession({}), null);
+  assert.equal(playwrightPageSession({ _connection: { toImpl: () => { throw new Error("gone"); } } }), null);
+  assert.equal(playwrightPageSession(null), null);
 });
 
 test("unparking activates the lifecycle before restoring playback", async () => {

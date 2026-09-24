@@ -11,6 +11,11 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Changed
 
+- Lower BetterChromium CPU and memory use. Idle parked pages no longer burn
+  CPU, and a parked page whose heap grew is garbage-collected so its freed
+  memory returns to the operating system. The managed browser also stops
+  keeping two omnibox popup WebUI renderers resident. See
+  `docs/runtime-performance.md` for measurements.
 - The browser worker delegates realm handling, live view, artifacts and
   recording, snapshots, trusted input, site tools, and CAPTCHA operations to
   import-safe modules with explicit dependencies. Launch, execution queues,
@@ -22,6 +27,14 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ### Fixed
 
+- Page parking stops idle pages again. Playwright's focus emulation kept every
+  page visible, so Chromium silently ignored the freeze and parked pages kept
+  rendering at the host refresh rate. Parking now releases that emulation on
+  Playwright's own session while a page is frozen and restores it before the
+  next call. Parked pages now receive the visibility, freeze, and resume
+  events of a background tab.
+- A caller's `--disable-features` is merged with BetterWright's managed list
+  instead of replacing it, as `--enable-features` already was.
 - CAPTCHA Verify and checkbox controls are scrolled into view before the
   trusted pointer clicks them, including image-grid submission. A visible
   challenge widget without a response token no longer reports success after

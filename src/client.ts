@@ -478,15 +478,17 @@ export class BetterWright {
    *   dropped (with a warning on the next result) so BetterWright's value
    *   always wins.
    * @param {boolean} [options.parkBackgroundPages=true] quiet each session's
-   *   pages between executions — page script is disabled and animation
-   *   timelines are paused while the model is thinking, and restored before the
-   *   next call runs. A headless target never becomes hidden, so without this
-   *   every open page renders at the host refresh rate for the life of the
-   *   session; parking is what keeps an idle session near zero CPU. Never
-   *   applies in headed mode or while a live view is streaming. The one
-   *   behavior change: a page animated by a `requestAnimationFrame` chain does
-   *   not resume that chain after being parked (CSS/Web Animations do). Set
-   *   `false`, or `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`, to opt out.
+   *   pages between executions — pages are frozen through Chromium's native
+   *   lifecycle, with animation timelines paused, while the model is thinking,
+   *   and a page whose heap grew is garbage-collected. They are resumed,
+   *   focused, and visible again before the next call runs, with timers and
+   *   animation frames intact. A headless target never becomes hidden, so
+   *   without this every open page renders at the host refresh rate for the
+   *   life of the session; parking is what keeps an idle session near zero
+   *   CPU. Never applies in headed mode or while a live view is streaming.
+   *   Parked pages observe the same visibility, freeze, and resume events as a
+   *   background tab. Set `false`, or `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0`,
+   *   to opt out.
    * @param {boolean} [options.adBlock=true] block ads and trackers using
    *   Ghostery filter lists, redirects, and cosmetics. Also settable with
    *   BETTERWRIGHT_AD_BLOCK=1. Explicit false overrides the environment.

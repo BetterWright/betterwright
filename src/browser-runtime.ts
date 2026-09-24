@@ -119,6 +119,13 @@ export function managedForkArgs(fingerprintSeed, { softwareGpu = false, platform
     // not retain an unused ~120 MiB process for a workload that already has a
     // warm persistent browser.
     "--renderer-process-limit=2",
+    // Chromium 153 keeps two omnibox popup WebUI renderers
+    // (chrome://omnibox-popup.top-chrome/, classic and AI mode) resident in
+    // every browser, headless included, so the address-bar dropdown opens
+    // instantly. Nothing BetterWright drives ever opens the address bar, and
+    // the pair cost ~35 MiB PSS for the browser's lifetime. These are browser
+    // UI features, not web-platform ones: no page can observe them.
+    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
     // GPU-less Linux needs an explicit WebGL fallback. Keep SwiftShader
     // scoped to WebGL instead of making it the general OpenGL ES driver.
     ...(softwareGpu

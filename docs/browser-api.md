@@ -58,7 +58,9 @@ Explicit `waitUntil` and `timeout` options are preserved; use
 
 By default, idle headless pages are parked after a short delay between calls:
 their timers, animation frames, and animation timelines pause, then resume
-before the next execution. Pass `parkBackgroundPages: false` to the client
+before the next execution. A parked page receives the same visibility, freeze,
+and resume events as a background tab, and a page whose heap grew is
+garbage-collected while parked. Pass `parkBackgroundPages: false` to the client
 or set `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0` when the application must keep
 progressing in the background. Headed sessions, sessions with a live view,
 and actively recording pages are not parked. Worker restarts discard the

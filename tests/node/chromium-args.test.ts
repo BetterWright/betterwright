@@ -201,6 +201,20 @@ test("caller feature flags compose with BetterWright's required browser features
   assert.deepEqual(ignored, []);
 });
 
+test("caller disabled features compose with the features BetterWright switches off", () => {
+  // Chromium keeps only the last --disable-features, so a caller's list must
+  // be merged into the managed one rather than dropped or appended.
+  const managed = managedForkArgs("seed-3");
+  const { args, ignored } = mergeChromiumArgs(managed, [
+    "--disable-features=Translate,WebUIOmniboxPopup",
+  ]);
+  const disabled = args.filter((arg) => arg.startsWith("--disable-features="));
+  assert.deepEqual(disabled, [
+    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup,Translate",
+  ]);
+  assert.deepEqual(ignored, []);
+});
+
 test("software rasterizer boilerplate is dropped with a warning instead of failing launch", () => {
   const extra = normalizeChromiumArgs(["--disable-software-rasterizer"]);
   assert.deepEqual(extra, ["--disable-software-rasterizer"]);

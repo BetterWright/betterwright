@@ -51,7 +51,9 @@ restart requirements.
 
 Idle headless pages are parked after a short delay between calls by default.
 Timers, animation frames, and animation timelines pause while parked and resume
-before the next execution. Set `parkBackgroundPages: false` or
+before the next execution. Pages see the visibility, freeze, and resume events a
+background tab would, and a page whose heap grew is garbage-collected while
+parked. Set `parkBackgroundPages: false` or
 `BETTERWRIGHT_PARK_BACKGROUND_PAGES=0` if the application must keep progressing
 between calls. Headed sessions, sessions with a live view, and actively recording
 pages are not parked.

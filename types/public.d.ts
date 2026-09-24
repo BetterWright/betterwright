@@ -294,8 +294,10 @@ export interface BetterWrightOptions {
    * stays `"visible"` for the life of the page — so every open page keeps its
    * frame loop running at the host refresh rate whether or not anything is
    * driving it. After a short idle delay, parking freezes the native page
-   * lifecycle and pauses animation timelines. Pending timers and animation-frame
-   * registrations are preserved and resume before the next execution.
+   * lifecycle and pauses animation timelines, and garbage-collects a page whose
+   * heap grew since it was last parked. Pending timers and animation-frame
+   * registrations are preserved and resume before the next execution. Pages
+   * observe the same visibility, freeze, and resume events as a background tab.
    *
    * Never applies in headed mode or while a live view is running; active
    * recording pages are also exempt. Set false when an application must keep

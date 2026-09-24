@@ -117,11 +117,15 @@ test("managed fork args pin WebRTC to the proxy and the profile seed", () => {
   assert.ok(args.includes("--webrtc-ip-handling-policy=disable_non_proxied_udp"));
   assert.ok(args.includes("--fingerprint=12345"));
   assert.ok(args.includes("--renderer-process-limit=2"));
+  // The omnibox popup WebUI renderers stay resident otherwise; see the note in
+  // src/browser-runtime.ts.
+  assert.ok(args.includes("--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup"));
   // A null/empty seed withholds the --fingerprint switch entirely, which is how
   // the fingerprintNoise:false path turns the fork's farbling off.
   assert.deepEqual(managedForkArgs("", { platform: "darwin" }), [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--renderer-process-limit=2",
+    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
     "--use-gl=angle",
     "--use-angle=gl",
   ]);
@@ -131,6 +135,7 @@ test("GPU-less Linux binds the SwiftShader WebGL fallback", () => {
   assert.deepEqual(managedForkArgs("seed", { softwareGpu: true }), [
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--renderer-process-limit=2",
+    "--disable-features=WebUIOmniboxPopup,WebUIOmniboxAimPopup",
     "--use-gl=angle",
     "--use-angle=swiftshader-webgl",
     "--enable-unsafe-swiftshader",

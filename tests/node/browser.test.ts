@@ -575,6 +575,65 @@ test("page summaries reflect changed and empty titles without snippet listeners"
   }
 });
 
+test("parked pages freeze between calls and wake focused with their state", opts, async () => {
+  // Playwright's focus emulation keeps every page visible, and Chromium
+  // ignores a freeze on a visible page. This guards the release/restore that
+  // makes parking actually stop page work (src/page-park.ts).
+  const fixture = `<input id="draft"><script>
+    window.events = []; window.frozen = false; window.frames = 0; window.framesWhileFrozen = 0;
+    document.addEventListener('freeze', () => { window.frozen = true; window.events.push('freeze'); });
+    document.addEventListener('resume', () => { window.frozen = false; window.events.push('resume'); });
+    const frame = () => { window.frames += 1; if (window.frozen) window.framesWhileFrozen += 1; requestAnimationFrame(frame); };
+    requestAnimationFrame(frame);
+  </script>`;
+  const bw = new BetterWright({ home: tempHome(), headless: true, vault: false, parkBackgroundPages: true });
+  try {
+    const opened = await bw.run(`
+      await page.setContent(${JSON.stringify(fixture)});
+      await page.locator('#draft').fill('unsent draft');
+      const other = await openPage();
+      await other.setContent(${JSON.stringify(fixture)});
+      return pages.length;
+    `);
+    assert.equal(opened.ok, true, opened.error);
+    assert.equal(opened.result, 2);
+
+    const read = `return Promise.all(pages.map((p) => p.evaluate(() => ({
+      events: window.events.join(','),
+      framesWhileFrozen: window.framesWhileFrozen,
+      visibility: document.visibilityState,
+      focused: document.hasFocus(),
+      draft: document.querySelector('#draft').value,
+    }))));`;
+    // Parking waits for the session to go idle; each read wakes it again.
+    let states: any[] = [];
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      const woken = await bw.run(read);
+      assert.equal(woken.ok, true, woken.error);
+      states = woken.result;
+      if (states.every((state) => state.events.includes("freeze"))) break;
+    }
+    for (const state of states) {
+      assert.match(state.events, /freeze,resume/, "each page was frozen and resumed");
+      assert.equal(state.framesWhileFrozen, 0, "no animation frame ran while parked");
+      assert.equal(state.visibility, "visible");
+      assert.equal(state.focused, true);
+    }
+    assert.equal(states[0].draft, "unsent draft");
+
+    const resumed = await bw.run(`
+      const before = await pages[0].evaluate(() => window.frames);
+      await pages[0].waitForTimeout(300);
+      return (await pages[0].evaluate(() => window.frames)) - before;
+    `);
+    assert.equal(resumed.ok, true, resumed.error);
+    assert.ok(resumed.result > 0, "animation frames resume after waking");
+  } finally {
+    await bw.close();
+  }
+});
+
 test("recording preserves page state and animation between browser calls", recordingOpts, async () => {
   let reportProgress: () => void;
   const progress = new Promise<void>(resolve => { reportProgress = resolve; });

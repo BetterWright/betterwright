@@ -64,7 +64,12 @@ import { createGuardUrl } from "./guard-url.js";
 import { buildLaunchIdentityPlan, resolveGeoIdentity } from "./launch-identity.js";
 import { createSnippetPageEvents } from "./page-events.js";
 import { inspectActionEvidence } from "./page-inspect.js";
-import { parkingEnabled, parkSession, unparkSession } from "./page-park.js";
+import {
+  parkingEnabled,
+  parkSession,
+  playwrightPageSession,
+  unparkSession,
+} from "./page-park.js";
 import {
   acquireProfileLock,
   PROFILE_LOCK_HEARTBEAT_MS,
@@ -173,6 +178,9 @@ let useSetContentCompatibility = false;
 // Remote-CDP provider state: the provider's stop call, if it has one, so a
 // close can release the metered session.
 let endRemoteSession = null;
+// Whether the current context is a browser this worker launched, rather than
+// a remote CDP endpoint or host-owned target (see quietSessionPages).
+let localBrowserLaunch = false;
 // Launch warnings attached to every result envelope (provider notices, the
 // profile-compat isolation note).
 let providerWarnings = [];
@@ -262,6 +270,10 @@ function quietSessionPages(session) {
     if (!browserContext || sessionIsExecuting(session.id)) return;
     void parkSession(session, {
       newCDPSession: (page) => browserContext.newCDPSession(page),
+      // Only a locally launched browser really freezes: a remote provider's
+      // session may be watched through the provider's own live view, and a
+      // host-owned target never had Playwright's focus emulation to release.
+      driverSession: localBrowserLaunch ? playwrightPageSession : null,
       isBusy: (page) =>
         vaultCapture?.isBusy(page) === true || pageRecordingIsBusy(session.id, page),
     }).catch(() => {});
@@ -1509,6 +1521,7 @@ async function ensureBrowser(config, { requirePersistentProfile = false } = {}) 
         // Publish the context for shutdown while setup is pending; other
         // launches still wait on launchPromise before using it.
         browserContext = attemptContext;
+        localBrowserLaunch = !remoteCdp;
         await installContextGuard(attemptContext);
         await installDownloadGuard(attemptContext);
         await refreshCookieSecrets(attemptContext);
