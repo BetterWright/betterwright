@@ -1,0 +1,2253 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Aside Browser — Sentry to Production</title>
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "Inter";
+        src: url("assets/fonts/Inter-Variable.woff2") format("woff2");
+        font-weight: 400 700;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: "Instrument Serif";
+        src: url("assets/fonts/InstrumentSerif-Regular.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: "Instrument Serif";
+        src: url("assets/fonts/InstrumentSerif-Italic.woff2") format("woff2");
+        font-weight: 400;
+        font-style: italic;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("assets/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+        font-weight: 400 700;
+        font-style: normal;
+      }
+
+      :root {
+        --bg: #f1ecfb;
+        --ink: #221b38;
+        --ink-2: #4f4670;
+        --ink-3: #6a6187;
+        --line: rgba(98, 76, 170, 0.14);
+        --accent: #7454ec;
+        --accent-deep: #5a3bd6;
+        --accent-soft: #e9e2ff;
+        --good: #0e6e4d;
+        --good-soft: #dcf3e8;
+        --bad: #c23760;
+        --bad-soft: #fde6ee;
+        --sentry: #362d59;
+        --glass: rgba(255, 255, 255, 0.64);
+        --glass-strong: rgba(255, 255, 255, 0.84);
+        --edge: rgba(255, 255, 255, 0.95);
+        --shadow: 0 40px 90px rgba(76, 48, 160, 0.2), 0 8px 24px rgba(76, 48, 160, 0.1);
+        --card-shadow: 0 18px 40px rgba(76, 48, 160, 0.12), 0 2px 6px rgba(76, 48, 160, 0.06);
+        --sans: "Inter", system-ui, sans-serif;
+        --serif: "Instrument Serif", serif;
+        --mono: "JetBrains Mono", monospace;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        font-family: var(--sans);
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ---------- background: soft lavender aurora ---------- */
+      .bg {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      .blob {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(90px);
+      }
+      .blob.peach {
+        width: 900px;
+        height: 700px;
+        left: -260px;
+        top: -300px;
+        background: rgba(255, 196, 176, 0.75);
+      }
+      .blob.lilac {
+        width: 1200px;
+        height: 620px;
+        left: 420px;
+        top: -380px;
+        background: rgba(196, 160, 255, 0.85);
+      }
+      .blob.rose {
+        width: 760px;
+        height: 760px;
+        right: -300px;
+        top: 80px;
+        background: rgba(246, 190, 232, 0.6);
+      }
+      .blob.sky {
+        width: 1000px;
+        height: 700px;
+        left: -200px;
+        bottom: -420px;
+        background: rgba(190, 204, 255, 0.7);
+      }
+      .ghost {
+        position: absolute;
+        right: -40px;
+        bottom: -120px;
+        font-family: var(--serif);
+        font-style: italic;
+        font-size: 520px;
+        line-height: 1;
+        letter-spacing: -0.04em;
+        color: rgba(116, 84, 236, 0.07);
+        white-space: nowrap;
+      }
+      .grain {
+        position: absolute;
+        inset: 0;
+        opacity: 0.1;
+        mix-blend-mode: multiply;
+        background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      }
+
+      /* ---------- camera + browser window ---------- */
+      #world {
+        position: absolute;
+        inset: 0;
+        transform-origin: 960px 540px;
+      }
+      #shake {
+        position: absolute;
+        inset: 0;
+      }
+      #win {
+        position: absolute;
+        left: 160px;
+        top: 52px;
+        width: 1600px;
+        height: 820px;
+        border-radius: 30px;
+        overflow: hidden;
+        background: linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(250, 247, 255, 0.58));
+        border: 2px solid var(--edge);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(28px) saturate(1.2);
+      }
+
+      /* sidebar */
+      #side {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 300px;
+        height: 100%;
+        background: rgba(248, 245, 255, 0.5);
+        border-right: 2px solid var(--line);
+      }
+      .lights {
+        position: absolute;
+        left: 26px;
+        top: 26px;
+        display: flex;
+        gap: 10px;
+      }
+      .lights i {
+        display: block;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+      }
+      .side-toggle {
+        position: absolute;
+        right: 24px;
+        top: 20px;
+        width: 28px;
+        height: 28px;
+      }
+      .row {
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 14px;
+        font-size: 21px;
+        font-weight: 500;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+      .row .grow {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .row.child {
+        left: 30px;
+      }
+      .label {
+        position: absolute;
+        left: 26px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--ink-3);
+        letter-spacing: 0.01em;
+      }
+      .fav {
+        flex: 0 0 26px;
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        font-size: 15px;
+        font-weight: 700;
+        color: #fff;
+      }
+      .avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #f7b8a4, #9d7cf6);
+        flex: 0 0 30px;
+      }
+      .badge {
+        min-width: 30px;
+        height: 26px;
+        padding: 0 8px;
+        border-radius: 13px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 16px;
+        font-weight: 700;
+        display: grid;
+        place-items: center;
+      }
+      #sel {
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        height: 48px;
+        border-radius: 13px;
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: 0 4px 14px rgba(76, 48, 160, 0.12);
+        border: 1.5px solid rgba(255, 255, 255, 1);
+      }
+
+      /* main + top bar */
+      #main {
+        position: absolute;
+        left: 300px;
+        top: 0;
+        width: 1300px;
+        height: 100%;
+      }
+      #topbar {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        padding: 0 28px;
+        border-bottom: 2px solid var(--line);
+      }
+      #topbar svg {
+        flex: 0 0 auto;
+      }
+      .url {
+        flex: 1;
+        height: 42px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 16px;
+        border-radius: 12px;
+        font-size: 20px;
+        color: var(--ink);
+      }
+      .url.empty #urlText {
+        color: var(--ink-3);
+      }
+      .lock-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--good);
+      }
+      #vaultKey {
+        position: relative;
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+      }
+      #vaultGlow {
+        position: absolute;
+        inset: 0;
+        border-radius: 12px;
+        background: var(--accent-soft);
+        box-shadow: 0 0 0 3px rgba(116, 84, 236, 0.35), 0 0 30px rgba(116, 84, 236, 0.45);
+        opacity: 0;
+      }
+      #content {
+        position: absolute;
+        left: 0;
+        top: 64px;
+        width: 1300px;
+        height: 756px;
+      }
+      .pane {
+        position: absolute;
+        inset: 0;
+      }
+      .pi {
+        position: absolute;
+        inset: 0;
+      }
+
+      /* generic cards */
+      .card {
+        position: absolute;
+        border-radius: 22px;
+        background: var(--glass-strong);
+        border: 2px solid var(--edge);
+        box-shadow: var(--card-shadow);
+        overflow: hidden;
+      }
+      .card-h {
+        height: 60px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 22px;
+        font-size: 20px;
+        font-weight: 600;
+        border-bottom: 2px solid var(--line);
+      }
+      .card-h .sub {
+        margin-left: auto;
+        font-size: 17px;
+        font-weight: 500;
+        color: var(--ink-3);
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+        padding: 0 14px;
+        border-radius: 16px;
+        font-size: 17px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .pill.good {
+        background: var(--good-soft);
+        color: var(--good);
+      }
+      .pill.bad {
+        background: var(--bad-soft);
+        color: var(--bad);
+      }
+      .pill.soft {
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+      }
+      .mono {
+        font-family: var(--mono);
+      }
+
+      /* ---------- P1: new tab ---------- */
+      .mark {
+        position: absolute;
+        left: 612px;
+        top: 130px;
+        width: 76px;
+        height: 76px;
+      }
+      #bar {
+        position: absolute;
+        left: 170px;
+        top: 250px;
+        width: 960px;
+        height: 118px;
+        border-radius: 22px;
+        background: var(--glass-strong);
+        border: 2px solid var(--edge);
+        box-shadow: 0 20px 50px rgba(76, 48, 160, 0.16);
+      }
+      #prompt {
+        position: absolute;
+        left: 28px;
+        top: 24px;
+        width: 590px;
+        font-size: 25px;
+        line-height: 36px;
+        color: var(--ink);
+      }
+      #prompt.placeholder #typed {
+        color: var(--ink-3);
+      }
+      #caret {
+        display: inline-block;
+        width: 3px;
+        height: 30px;
+        margin-left: 2px;
+        vertical-align: -6px;
+        background: var(--accent);
+        border-radius: 2px;
+      }
+      .switch {
+        position: absolute;
+        right: 14px;
+        top: 32px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 19px;
+        color: var(--ink-2);
+      }
+      .kbd {
+        padding: 4px 10px;
+        border-radius: 8px;
+        background: rgba(116, 84, 236, 0.08);
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--ink-2);
+      }
+      .seg {
+        display: flex;
+        padding: 4px;
+        border-radius: 14px;
+        background: rgba(116, 84, 236, 0.08);
+      }
+      .seg span {
+        padding: 9px 16px;
+        border-radius: 11px;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      #askBtn {
+        display: block;
+        background: #fff;
+        color: var(--accent-deep);
+        box-shadow: 0 3px 10px rgba(76, 48, 160, 0.16);
+      }
+      .chips {
+        position: absolute;
+        left: 184px;
+        right: 184px;
+        top: 392px;
+        display: flex;
+        align-items: center;
+        gap: 26px;
+        font-size: 19px;
+        font-weight: 500;
+        color: var(--ink-2);
+      }
+      .chips .push {
+        margin-left: auto;
+      }
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .recent-l {
+        position: absolute;
+        left: 184px;
+        top: 468px;
+        font-size: 22px;
+        font-weight: 600;
+      }
+      .rcard {
+        position: absolute;
+        top: 514px;
+        width: 300px;
+        height: 230px;
+        padding: 20px 22px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.6);
+        border: 2px solid var(--edge);
+      }
+      .rcard .meta {
+        font-size: 16px;
+        color: var(--ink-3);
+      }
+      .rcard .t {
+        margin-top: 8px;
+        font-size: 21px;
+        font-weight: 600;
+      }
+      .rcard .d {
+        margin-top: 8px;
+        font-size: 17px;
+        line-height: 25px;
+        color: var(--ink-2);
+      }
+      .rcard .thumb {
+        position: absolute;
+        left: 22px;
+        right: 22px;
+        bottom: 0;
+        height: 70px;
+        border-radius: 12px 12px 0 0;
+      }
+      .ripple {
+        position: absolute;
+        width: 90px;
+        height: 90px;
+        margin: -45px 0 0 -45px;
+        border-radius: 50%;
+        border: 3px solid var(--accent);
+        opacity: 0;
+      }
+
+      /* ---------- P2: plan + tabs ---------- */
+      .bubble {
+        position: absolute;
+        left: 150px;
+        top: 44px;
+        width: 520px;
+        padding: 18px 22px;
+        border-radius: 22px 22px 6px 22px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 21px;
+        line-height: 31px;
+        box-shadow: 0 14px 34px rgba(116, 84, 236, 0.3);
+      }
+      .agent {
+        position: absolute;
+        left: 56px;
+        top: 250px;
+        width: 614px;
+      }
+      .agent-h {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 21px;
+        font-weight: 600;
+      }
+      .agent-h .mini-mark {
+        width: 34px;
+        height: 34px;
+      }
+      .steps {
+        margin-top: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .step {
+        height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 21px;
+        color: var(--ink-2);
+      }
+      .step .ck {
+        position: relative;
+        flex: 0 0 26px;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 2.5px solid rgba(116, 84, 236, 0.35);
+      }
+      .step .ck .fill {
+        position: absolute;
+        inset: -2.5px;
+        border-radius: 50%;
+        background: var(--accent);
+        display: grid;
+        place-items: center;
+      }
+      .tcard {
+        position: absolute;
+        left: 716px;
+        width: 530px;
+        height: 196px;
+      }
+      .tcard .card-h {
+        height: 56px;
+        font-size: 19px;
+      }
+      .loadbar {
+        position: absolute;
+        left: 0;
+        top: 54px;
+        width: 100%;
+        height: 4px;
+        background: var(--accent);
+        transform-origin: 0 50%;
+      }
+      .skel {
+        position: absolute;
+        border-radius: 8px;
+        background: rgba(98, 76, 170, 0.1);
+      }
+
+      /* ---------- P3: sentry ---------- */
+      .s-head {
+        height: 70px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 0 26px;
+        background: var(--sentry);
+        color: #fff;
+        font-size: 23px;
+        font-weight: 700;
+      }
+      .form {
+        padding: 26px 30px;
+      }
+      .form h3 {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .fl {
+        margin-top: 20px;
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--ink-2);
+      }
+      .field {
+        position: relative;
+        margin-top: 8px;
+        height: 54px;
+        border-radius: 12px;
+        border: 2px solid rgba(98, 76, 170, 0.2);
+        background: #fff;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        font-size: 21px;
+        overflow: hidden;
+      }
+      .field .fillglow {
+        position: absolute;
+        inset: 0;
+        background: var(--accent-soft);
+        opacity: 0;
+      }
+      .field .val {
+        position: relative;
+      }
+      .vault-chip {
+        margin-top: 16px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        height: 40px;
+        padding: 0 16px;
+        border-radius: 20px;
+        background: var(--accent-soft);
+        color: var(--accent-deep);
+        font-size: 17px;
+        font-weight: 600;
+      }
+      .btn {
+        margin-top: 22px;
+        height: 56px;
+        border-radius: 14px;
+        background: var(--sentry);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-size: 21px;
+        font-weight: 600;
+      }
+      .plat {
+        display: flex;
+        gap: 14px;
+        margin-top: 16px;
+      }
+      .plat div {
+        flex: 1;
+        height: 84px;
+        border-radius: 14px;
+        border: 2px solid rgba(98, 76, 170, 0.18);
+        background: #fff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        font-size: 19px;
+        font-weight: 600;
+      }
+      .plat div.on {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 4px rgba(116, 84, 236, 0.15);
+      }
+      .dsn-row {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin: 18px 24px 0;
+        height: 60px;
+        padding: 0 18px;
+        border-radius: 14px;
+        background: #fff;
+        border: 2px solid rgba(98, 76, 170, 0.16);
+        font-family: var(--mono);
+        font-size: 19px;
+        overflow: hidden;
+      }
+      .scan {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 160px;
+        background: linear-gradient(90deg, rgba(116, 84, 236, 0), rgba(116, 84, 236, 0.25), rgba(116, 84, 236, 0));
+      }
+
+      /* ---------- code panels ---------- */
+      .code {
+        padding: 14px 0;
+        font-family: var(--mono);
+        font-size: 19px;
+        line-height: 34px;
+        background: #fcfbff;
+      }
+      .fname {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 44px;
+        padding: 0 22px;
+        font-family: var(--sans);
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--ink-2);
+      }
+      .fname .n {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-size: 16px;
+      }
+      .ln {
+        display: flex;
+        white-space: pre;
+        padding-right: 16px;
+      }
+      .ln .g {
+        flex: 0 0 56px;
+        text-align: right;
+        padding-right: 14px;
+        color: #5f5780;
+      }
+      .ln .s {
+        flex: 0 0 26px;
+        color: #5f5780;
+      }
+      .ln.add {
+        background: #e2f5ea;
+      }
+      .ln.add .s {
+        color: var(--good);
+      }
+      .ln.del {
+        background: #fde3ea;
+      }
+      .ln.del .s {
+        color: #a3284f;
+      }
+      .k {
+        color: #7a3fd1;
+      }
+      .str {
+        color: #0f7a55;
+      }
+      .fn {
+        color: #2f5fd0;
+      }
+      .cm {
+        color: #7c7595;
+      }
+
+      .bar-track {
+        position: relative;
+        height: 12px;
+        border-radius: 6px;
+        background: rgba(98, 76, 170, 0.12);
+        overflow: hidden;
+      }
+      .bar-fill {
+        position: absolute;
+        inset: 0;
+        border-radius: 6px;
+        background: linear-gradient(90deg, #9b7cff, var(--accent));
+        transform-origin: 0 50%;
+      }
+      .drow {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 44px;
+        font-size: 19px;
+        color: var(--ink-2);
+      }
+      .dot-ok {
+        position: relative;
+        flex: 0 0 24px;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border: 2.5px solid rgba(98, 76, 170, 0.25);
+      }
+      .dot-ok .fill {
+        position: absolute;
+        inset: -2.5px;
+        border-radius: 50%;
+        background: var(--good);
+        display: grid;
+        place-items: center;
+      }
+      .envrow {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 58px;
+        padding: 0 22px;
+        border-bottom: 2px solid var(--line);
+        font-size: 18px;
+      }
+      .envrow .key {
+        font-family: var(--mono);
+        font-weight: 600;
+        flex: 1;
+      }
+      .envrow .v {
+        font-family: var(--mono);
+        color: var(--ink-3);
+        letter-spacing: 0.06em;
+      }
+
+      /* ---------- P5: app + error ---------- */
+      .shop {
+        padding: 28px 34px;
+      }
+      .shop .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: var(--serif);
+        font-size: 34px;
+      }
+      .item {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        height: 92px;
+        border-bottom: 2px solid var(--line);
+        font-size: 22px;
+      }
+      .item .img {
+        width: 64px;
+        height: 64px;
+        border-radius: 14px;
+      }
+      .item .p {
+        margin-left: auto;
+        font-weight: 600;
+      }
+      .total {
+        display: flex;
+        margin-top: 22px;
+        font-size: 24px;
+        font-weight: 700;
+      }
+      .total span:last-child {
+        margin-left: auto;
+      }
+      .pay {
+        margin-top: 24px;
+        height: 64px;
+        border-radius: 16px;
+        background: var(--ink);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-size: 22px;
+        font-weight: 600;
+      }
+      .err {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 96px;
+        bottom: 0;
+        padding: 70px 44px 0;
+        background: #fff3f6;
+        border-top: 2px solid rgba(194, 55, 96, 0.2);
+      }
+      .err h4 {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 32px;
+        font-weight: 700;
+        color: var(--bad);
+      }
+      .err p {
+        margin-top: 18px;
+        font-family: var(--mono);
+        font-size: 19px;
+        line-height: 30px;
+        color: var(--ink);
+      }
+      .issue-t {
+        padding: 22px 26px 0;
+        font-size: 30px;
+        font-weight: 700;
+      }
+      .issue-m {
+        padding: 8px 26px 0;
+        font-size: 20px;
+        line-height: 29px;
+        color: var(--ink-2);
+      }
+      .issue-loc {
+        margin: 16px 26px 0;
+        padding: 12px 16px;
+        border-radius: 12px;
+        background: #fcfbff;
+        border: 2px solid var(--line);
+        font-family: var(--mono);
+        font-size: 18px;
+        line-height: 28px;
+      }
+      .issue-loc .hl {
+        display: block;
+        margin: 0 -16px;
+        padding: 0 16px;
+        background: var(--bad-soft);
+      }
+      .tags {
+        display: flex;
+        gap: 10px;
+        padding: 16px 26px 0;
+      }
+      .ring {
+        position: absolute;
+        inset: -2px;
+        border-radius: 22px;
+        border: 3px solid var(--bad);
+        opacity: 0;
+      }
+      #flash {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at 50% 50%, rgba(255, 150, 180, 0.2), rgba(214, 69, 106, 0.35));
+        opacity: 0;
+      }
+
+      /* ---------- P6: tests ---------- */
+      .term {
+        padding: 18px 24px;
+        font-family: var(--mono);
+        font-size: 19px;
+        line-height: 32px;
+        color: var(--ink-2);
+      }
+      .term .ok {
+        color: var(--good);
+        font-weight: 700;
+      }
+      .big-count {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 6px 24px 0;
+      }
+      .big-count b {
+        font-family: var(--serif);
+        font-size: 76px;
+        line-height: 1;
+        font-weight: 400;
+        color: var(--good);
+      }
+      .big-count span {
+        font-size: 21px;
+        font-weight: 600;
+        color: var(--ink-2);
+      }
+
+      /* ---------- P7: success ---------- */
+      .success {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-top: 92px;
+      }
+      .success .check {
+        width: 150px;
+        height: 150px;
+      }
+      .success h2 {
+        margin-top: 26px;
+        font-family: var(--serif);
+        font-weight: 400;
+        font-size: 104px;
+        line-height: 1;
+        letter-spacing: -0.02em;
+      }
+      .success h2 em {
+        color: var(--good);
+      }
+      .srow {
+        margin-top: 42px;
+        display: flex;
+        gap: 18px;
+      }
+      .scard {
+        width: 330px;
+        padding: 22px 24px;
+        border-radius: 20px;
+        background: var(--glass-strong);
+        border: 2px solid var(--edge);
+        box-shadow: var(--card-shadow);
+      }
+      .scard .h {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .scard .h i {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--good);
+        box-shadow: 0 0 0 5px rgba(19, 128, 90, 0.15);
+      }
+      .scard .d {
+        margin-top: 8px;
+        font-size: 18px;
+        color: var(--ink-2);
+      }
+
+      /* ---------- agent HUD + cursor ---------- */
+      #hud {
+        position: absolute;
+        left: 690px;
+        top: 834px;
+        width: 580px;
+        height: 76px;
+        border-radius: 38px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 0 26px 0 16px;
+        background: rgba(255, 255, 255, 0.9);
+        border: 2px solid var(--edge);
+        box-shadow: 0 20px 50px rgba(76, 48, 160, 0.22);
+      }
+      #hudIcon {
+        position: relative;
+        flex: 0 0 46px;
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        background: var(--accent-soft);
+      }
+      #spin {
+        position: absolute;
+        inset: 7px;
+        width: 32px;
+        height: 32px;
+      }
+      #hudDone {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: var(--good);
+        display: grid;
+        place-items: center;
+        opacity: 0;
+      }
+      .hud-l1 {
+        font-family: var(--mono);
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        color: var(--accent-deep);
+      }
+      .hud-l2 {
+        margin-top: 3px;
+        font-size: 20px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      #cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 34px;
+        height: 40px;
+        opacity: 0;
+      }
+      #cursor .tag {
+        position: absolute;
+        left: 26px;
+        top: 30px;
+        padding: 4px 10px;
+        border-radius: 9px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      /* ---------- captions ---------- */
+      .cap {
+        position: absolute;
+        left: 160px;
+        top: 944px;
+        width: 1600px;
+        height: 100px;
+      }
+      .cap .ci {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        gap: 28px;
+      }
+      .cap .idx {
+        font-family: var(--mono);
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        color: var(--accent-deep);
+      }
+      .cap .rule {
+        width: 56px;
+        height: 3px;
+        border-radius: 2px;
+        background: var(--accent);
+      }
+      .cap .txt {
+        font-family: var(--serif);
+        font-size: 56px;
+        line-height: 1;
+        letter-spacing: -0.015em;
+        white-space: nowrap;
+      }
+      .cap .txt em {
+        color: var(--accent-deep);
+      }
+
+      /* ---------- end cards ---------- */
+      .end {
+        position: absolute;
+        inset: 0;
+      }
+      .end .ei {
+        position: absolute;
+        inset: 0;
+      }
+      .byo-h {
+        position: absolute;
+        left: 160px;
+        top: 250px;
+        width: 860px;
+        font-family: var(--serif);
+        font-size: 118px;
+        line-height: 1.02;
+        letter-spacing: -0.025em;
+      }
+      .byo-h em {
+        color: var(--accent-deep);
+      }
+      .byo-s {
+        position: absolute;
+        left: 164px;
+        top: 540px;
+        width: 760px;
+        font-size: 32px;
+        line-height: 46px;
+        color: var(--ink-2);
+      }
+      .byo-s b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .signin {
+        position: absolute;
+        left: 1110px;
+        top: 220px;
+        width: 650px;
+        padding: 40px 42px 36px;
+        border-radius: 32px;
+        background: rgba(255, 255, 255, 0.7);
+        border: 2px solid var(--edge);
+        box-shadow: var(--shadow);
+      }
+      .signin .top {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 26px;
+        font-weight: 600;
+      }
+      .signin .top svg {
+        width: 44px;
+        height: 44px;
+      }
+      .sbtn {
+        margin-top: 22px;
+        height: 92px;
+        border-radius: 20px;
+        background: #fff;
+        border: 2px solid rgba(98, 76, 170, 0.16);
+        box-shadow: 0 8px 20px rgba(76, 48, 160, 0.08);
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 0 24px;
+      }
+      .sbtn .lg {
+        width: 50px;
+        height: 50px;
+        border-radius: 14px;
+        display: grid;
+        place-items: center;
+      }
+      .sbtn .t1 {
+        font-size: 25px;
+        font-weight: 600;
+      }
+      .sbtn .t2 {
+        margin-top: 2px;
+        font-size: 18px;
+        color: var(--ink-3);
+      }
+      .sbtn .ok {
+        margin-left: auto;
+      }
+      .zero {
+        margin-top: 30px;
+        padding-top: 26px;
+        border-top: 2px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+      .zero b {
+        font-family: var(--serif);
+        font-weight: 400;
+        font-size: 96px;
+        line-height: 0.9;
+        color: var(--accent-deep);
+      }
+      .zero span {
+        font-size: 24px;
+        line-height: 34px;
+        color: var(--ink-2);
+      }
+      .zero span strong {
+        color: var(--ink);
+      }
+      .lockup {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      .lockup .halo {
+        position: absolute;
+        left: 560px;
+        top: 240px;
+        width: 800px;
+        height: 600px;
+        border-radius: 50%;
+        background: rgba(170, 140, 255, 0.45);
+        filter: blur(110px);
+      }
+      .lockup .lmark {
+        position: relative;
+        width: 132px;
+        height: 132px;
+      }
+      .lockup h1 {
+        position: relative;
+        margin-top: 34px;
+        font-family: var(--serif);
+        font-weight: 400;
+        font-size: 168px;
+        line-height: 1;
+        letter-spacing: -0.03em;
+      }
+      .lockup h1 em {
+        color: var(--accent-deep);
+      }
+      .lockup p {
+        position: relative;
+        margin-top: 26px;
+        font-size: 40px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        color: var(--ink-2);
+      }
+      .lockup .foot {
+        position: relative;
+        margin-top: 46px;
+        display: flex;
+        gap: 14px;
+      }
+      .lockup .foot .pill {
+        height: 44px;
+        padding: 0 20px;
+        border-radius: 22px;
+        font-size: 20px;
+        background: rgba(255, 255, 255, 0.75);
+        border: 2px solid var(--edge);
+        color: var(--ink-2);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="28"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- ============ BACKGROUND ============ -->
+      <div class="bg" data-layout-ignore>
+        <div class="blob peach" id="bPeach"></div>
+        <div class="blob lilac" id="bLilac"></div>
+        <div class="blob rose" id="bRose"></div>
+        <div class="blob sky" id="bSky"></div>
+        <div class="ghost" id="ghost">aside</div>
+        <div class="grain"></div>
+      </div>
+
+      <!-- ============ CAMERA / WORLD ============ -->
+      <div id="world">
+        <div id="shake">
+          <div id="win">
+            <!-- ---------- sidebar ---------- -->
+            <div id="side">
+              <div class="lights"><i style="background: #ff6159"></i><i style="background: #ffbd2e"></i><i style="background: #28c941"></i></div>
+              <svg class="side-toggle" viewBox="0 0 28 28" fill="none" stroke="#6a6187" stroke-width="2"><rect x="3" y="5" width="22" height="18" rx="4" /><path d="M11 5v18" /></svg>
+              <div class="row" style="top: 70px"><span class="avatar"></span><span class="grow">Personal</span>
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="#4f4670" stroke-width="2.2"><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L22 22" /></svg>
+              </div>
+              <div class="label" style="top: 142px">Bookmarks</div>
+              <div class="row" style="top: 172px"><span class="fav" style="background: #fff; color: #111; border: 2px solid #222; font-family: var(--serif); font-size: 18px">N</span><span class="grow">Notion</span></div>
+              <div class="row" style="top: 222px"><span class="fav" style="background: linear-gradient(135deg, #c93a12, #7a35d6)">F</span><span class="grow">Figma</span></div>
+              <div class="row" style="top: 272px"><span class="fav" style="background: #1f2328">G</span><span class="grow">GitHub</span></div>
+              <div class="label" style="top: 344px">Tabs</div>
+              <div id="sel" style="top: 374px"></div>
+              <div class="row" style="top: 374px">
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="#7454ec" stroke-width="2.2"><circle cx="13" cy="13" r="10" /><path d="M8 16c3-1 6-4 8-8M10 9.5c2 .5 5 3 6 6.5" /></svg>
+                <span class="grow" id="taskTitle">New Tab</span>
+              </div>
+              <div class="row" style="top: 424px">
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="#4f4670" stroke-width="2.2"><path d="M5 7h12a3 3 0 013 3v6a3 3 0 01-3 3h-6l-5 3v-3a3 3 0 01-1-2v-7a3 3 0 010-3z" /></svg>
+                <span class="grow">Chats</span>
+              </div>
+              <div class="row" style="top: 474px">
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="#4f4670" stroke-width="2.2"><rect x="4" y="6" width="18" height="15" rx="4" /><path d="M9 3v4M17 3v4M9 13h.01M17 13h.01" stroke-linecap="round" /></svg>
+                <span class="grow">Agent tabs</span><span class="badge" id="tabCount">0</span>
+              </div>
+              <div class="row child" id="t1" style="top: 524px"><span class="fav" style="background: var(--sentry)">S</span><span class="grow">Sentry</span></div>
+              <div class="row child" id="t2" style="top: 574px"><span class="fav" style="background: #1f2328">G</span><span class="grow">acme/my-app</span></div>
+              <div class="row child" id="t3" style="top: 624px"><span class="fav" style="background: #111"><svg width="14" height="12" viewBox="0 0 14 12"><path d="M7 0l7 12H0z" fill="#fff" /></svg></span><span class="grow">Vercel</span></div>
+              <div class="row child" id="t4" style="top: 674px"><span class="fav" style="background: var(--good)"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="1.8"><circle cx="7" cy="7" r="5.5" /><path d="M1.5 7h11M7 1.5c2 2 2 9 0 11M7 1.5c-2 2-2 9 0 11" /></svg></span><span class="grow">my-app.vercel.app</span></div>
+            </div>
+
+            <!-- ---------- main ---------- -->
+            <div id="main">
+              <div id="topbar">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6a6187" stroke-width="2.4" stroke-linecap="round"><path d="M15 5l-7 7 7 7" /></svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6a6187" stroke-width="2.4" stroke-linecap="round"><path d="M9 5l7 7-7 7" /></svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6a6187" stroke-width="2.4" stroke-linecap="round"><path d="M19 12a7 7 0 11-2-5" /><path d="M19 4v4h-4" /></svg>
+                <div class="url empty" id="url">
+                  <svg id="urlSearch" width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#6a6187" stroke-width="2.2"><circle cx="9.5" cy="9.5" r="6" /><path d="M14 14l5 5" /></svg>
+                  <span id="urlText">Search Google or type a URL</span>
+                </div>
+                <div id="vaultKey">
+                  <div id="vaultGlow"></div>
+                  <svg style="position: relative" width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="#221b38" stroke-width="2.2" stroke-linecap="round"><circle cx="17" cy="9" r="5" /><path d="M13.5 12.5L4 22M7 19l3 3M9.5 16.5l2.5 2.5" /></svg>
+                </div>
+              </div>
+
+              <div id="content">
+                <!-- ===== P1 · New tab / prompt ===== -->
+                <section class="pane clip" id="p1" data-start="0" data-duration="4.9" data-track-index="1">
+                  <div class="pi">
+                    <svg class="mark" viewBox="0 0 76 76" fill="none" stroke="#b9acd8" stroke-width="3.5" stroke-linecap="round">
+                      <circle cx="38" cy="38" r="33" />
+                      <path d="M20 50c10-3 22-14 30-28" />
+                      <path d="M26 24c8 1 20 10 24 26" />
+                    </svg>
+                    <div id="bar">
+                      <div id="prompt" class="placeholder"><span id="typed">Ask AI a task, @ for context</span><span id="caret"></span></div>
+                      <div class="switch">
+                        <span class="kbd">Tab</span><span>to switch</span>
+                        <div class="seg"><span>Search</span><span id="askBtn">Ask AI</span></div>
+                      </div>
+                    </div>
+                    <div class="chips">
+                      <span class="chip" style="font-size: 26px; font-weight: 400">+</span>
+                      <span class="chip"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#4f4670" stroke-width="2"><rect x="3" y="4" width="16" height="11" rx="2" /><path d="M1 18h20" /></svg>Local</span>
+                      <span class="chip"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#4f4670" stroke-width="2"><path d="M11 2l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V5z" /></svg>Guard</span>
+                      <span class="chip push"><svg width="20" height="20" viewBox="0 0 20 20"><g stroke="#d97757" stroke-width="2.4" stroke-linecap="round"><path d="M10 2v16M2 10h16M4.3 4.3l11.4 11.4M15.7 4.3L4.3 15.7" /></g></svg>Claude · your plan</span>
+                      <span class="chip">High</span>
+                    </div>
+                    <div class="recent-l">Recent tasks</div>
+                    <div class="rcard" style="left: 170px">
+                      <div class="meta">yesterday</div>
+                      <div class="t">Weekly competitor digest</div>
+                      <div class="d">Summarized 14 changelogs and 3 pricing changes.</div>
+                      <div class="thumb" style="background: linear-gradient(135deg, #ffd9c9, #f3c6ea)"></div>
+                    </div>
+                    <div class="rcard" style="left: 500px">
+                      <div class="meta">an hour ago</div>
+                      <div class="t">Reconcile Stripe payouts</div>
+                      <div class="d">Matched 212 payouts; flagged 2 for review.</div>
+                      <div class="thumb" style="background: linear-gradient(135deg, #d8ccff, #c6d6ff)"></div>
+                    </div>
+                    <div class="rcard" style="left: 830px">
+                      <div class="meta">Every 9am</div>
+                      <div class="t">Daily briefing</div>
+                      <div class="d">Inbox, calendar and open PRs in one page.</div>
+                      <div class="thumb" style="background: linear-gradient(135deg, #cfe9ff, #e1d4ff)"></div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- ===== P2 · Plan + tabs spin up ===== -->
+                <section class="pane clip" id="p2" data-start="4.3" data-duration="3.6" data-track-index="2">
+                  <div class="pi">
+                    <div class="bubble" id="bubble">Set up Sentry, deploy my app, trigger a production error, then fix anything broken.</div>
+                    <div class="agent" id="agent">
+                      <div class="agent-h">
+                        <svg class="mini-mark" viewBox="0 0 76 76" fill="none" stroke="#7454ec" stroke-width="5" stroke-linecap="round"><circle cx="38" cy="38" r="33" /><path d="M20 50c10-3 22-14 30-28" /><path d="M26 24c8 1 20 10 24 26" /></svg>
+                        Plan · 6 steps
+                      </div>
+                      <div class="steps">
+                        <div class="step"><span class="ck"><span class="fill" id="ck1"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5l3 3 6-7" /></svg></span></span>Open Sentry, the codebase and Vercel</div>
+                        <div class="step"><span class="ck"></span>Create a Sentry project and pull the DSN</div>
+                        <div class="step"><span class="ck"></span>Install @sentry/nextjs and wire config</div>
+                        <div class="step"><span class="ck"></span>Set env vars and deploy to production</div>
+                        <div class="step"><span class="ck"></span>Trigger a test error in production</div>
+                        <div class="step"><span class="ck"></span>Fix, test and redeploy</div>
+                      </div>
+                    </div>
+
+                    <div class="tcard card" id="tc1" style="top: 44px">
+                      <div class="card-h"><span class="fav" style="background: var(--sentry)">S</span>sentry.io<span class="sub">Sign in</span></div>
+                      <div class="loadbar" id="lb1"></div>
+                      <div class="skel" style="left: 22px; top: 80px; width: 220px; height: 22px; background: rgba(54, 45, 89, 0.18)"></div>
+                      <div class="skel" style="left: 22px; top: 116px; width: 480px; height: 16px"></div>
+                      <div class="skel" style="left: 22px; top: 144px; width: 380px; height: 16px"></div>
+                    </div>
+                    <div class="tcard card" id="tc2" style="top: 256px">
+                      <div class="card-h"><span class="fav" style="background: #1f2328">G</span>github.com/acme/my-app<span class="sub">main</span></div>
+                      <div class="loadbar" id="lb2"></div>
+                      <div class="skel" style="left: 22px; top: 80px; width: 150px; height: 16px"></div>
+                      <div class="skel" style="left: 22px; top: 108px; width: 190px; height: 16px"></div>
+                      <div class="skel" style="left: 22px; top: 136px; width: 120px; height: 16px"></div>
+                      <div class="skel" style="left: 250px; top: 80px; width: 250px; height: 72px; background: rgba(98, 76, 170, 0.07)"></div>
+                    </div>
+                    <div class="tcard card" id="tc3" style="top: 468px">
+                      <div class="card-h"><span class="fav" style="background: #111"><svg width="14" height="12" viewBox="0 0 14 12"><path d="M7 0l7 12H0z" fill="#fff" /></svg></span>vercel.com/acme/my-app<span class="sub">Production</span></div>
+                      <div class="loadbar" id="lb3"></div>
+                      <div class="skel" style="left: 22px; top: 82px; width: 300px; height: 20px"></div>
+                      <div class="skel" style="left: 22px; top: 118px; width: 480px; height: 38px; background: rgba(98, 76, 170, 0.07)"></div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- ===== P3 · Secure autofill + Sentry project ===== -->
+                <section class="pane clip" id="p3" data-start="7.4" data-duration="3.8" data-track-index="3">
+                  <div class="pi">
+                    <div class="card" id="login" style="left: 56px; top: 44px; width: 500px; height: 590px">
+                      <div class="s-head">
+                        <svg width="30" height="30" viewBox="0 0 30 30" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="M4 25h6a11 11 0 00-5-9M15 5L4 25M15 5l11 20h-5a17 17 0 00-9-14" /></svg>
+                        Sentry
+                      </div>
+                      <div class="form">
+                        <h3>Sign in</h3>
+                        <div class="fl">Email</div>
+                        <div class="field"><div class="fillglow" id="fg1"></div><span class="val" id="email"></span></div>
+                        <div class="fl">Password</div>
+                        <div class="field"><div class="fillglow" id="fg2"></div><span class="val mono" id="pw" style="letter-spacing: 0.12em"></span></div>
+                        <div class="vault-chip" id="vchip">
+                          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#5a3bd6" stroke-width="2.2"><rect x="4" y="9" width="12" height="9" rx="2.5" /><path d="M6.5 9V6.5a3.5 3.5 0 017 0V9" /></svg>
+                          Filled from Aside Vault · hidden from the AI
+                        </div>
+                        <div class="btn" id="signBtn">Continue</div>
+                      </div>
+                    </div>
+
+                    <div class="card" id="proj" style="left: 600px; top: 44px; width: 646px; height: 350px">
+                      <div class="card-h" id="projH">
+                        <span class="fav" style="background: var(--sentry)">S</span>
+                        <span id="projTitle">Create project</span>
+                        <span class="sub">acme</span>
+                      </div>
+                      <div style="padding: 4px 24px 0">
+                        <div class="plat">
+                          <div class="on">
+                            <svg width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="13" fill="#111" /><path d="M11 10v10M11 10l9 11M19 10v6" stroke="#fff" stroke-width="2.2" fill="none" /></svg>Next.js
+                          </div>
+                          <div><svg width="30" height="30" viewBox="0 0 30 30" fill="none" stroke="#2f8fd6" stroke-width="1.8"><ellipse cx="15" cy="15" rx="12" ry="4.8" /><ellipse cx="15" cy="15" rx="12" ry="4.8" transform="rotate(60 15 15)" /><ellipse cx="15" cy="15" rx="12" ry="4.8" transform="rotate(120 15 15)" /></svg>React</div>
+                          <div><svg width="30" height="30" viewBox="0 0 30 30" fill="none" stroke="#3c873a" stroke-width="2.2"><path d="M15 3l11 6v12l-11 6-11-6V9z" /></svg>Node</div>
+                        </div>
+                        <div class="fl" style="margin-top: 16px">Project name</div>
+                        <div class="field" style="height: 50px"><span class="val mono" id="pname"></span></div>
+                        <div class="btn" id="createBtn" style="margin-top: 16px; height: 52px; background: var(--accent)">Create project</div>
+                      </div>
+                    </div>
+
+                    <div class="card" id="dsn" style="left: 600px; top: 414px; width: 646px; height: 220px">
+                      <div class="card-h">
+                        <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="#5a3bd6" stroke-width="2.2"><rect x="4" y="9" width="12" height="9" rx="2.5" /><path d="M6.5 9V6.5a3.5 3.5 0 017 0V9" /></svg>
+                        Client key (DSN)
+                        <span class="sub">my-app</span>
+                      </div>
+                      <div class="dsn-row" id="dsnRow">
+                        <span>https://</span><span id="dsnVal" style="color: var(--ink-3)"></span>
+                        <div class="scan" id="scan"></div>
+                      </div>
+                      <div style="display: flex; gap: 10px; padding: 16px 24px 0">
+                        <span class="pill soft" id="dsnPill1">→ Vault · SENTRY_DSN</span>
+                        <span class="pill good" id="dsnPill2">Redacted from the AI</span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- ===== P4 · Code diff, env vars, deploy ===== -->
+                <section class="pane clip" id="p4" data-start="10.7" data-duration="4.1" data-track-index="4">
+                  <div class="pi">
+                    <div class="card" style="left: 44px; top: 36px; width: 676px; height: 606px">
+                      <div class="fname" style="border-bottom: 2px solid var(--line)">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#4f4670" stroke-width="2"><path d="M5 2h7l4 4v12H5z" /><path d="M12 2v4h4" /></svg>
+                        sentry.client.config.ts<span class="n" style="color: var(--good)">+6</span>
+                      </div>
+                      <div class="code" id="diffA">
+                        <div class="ln add"><span class="g">1</span><span class="s">+</span><span><span class="k">import</span> * <span class="k">as</span> Sentry <span class="k">from</span> <span class="str">"@sentry/nextjs"</span>;</span></div>
+                        <div class="ln add"><span class="g">2</span><span class="s">+</span><span> </span></div>
+                        <div class="ln add"><span class="g">3</span><span class="s">+</span><span>Sentry.<span class="fn">init</span>({</span></div>
+                        <div class="ln add"><span class="g">4</span><span class="s">+</span><span>  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,</span></div>
+                        <div class="ln add"><span class="g">5</span><span class="s">+</span><span>  tracesSampleRate: <span class="fn">1.0</span>,</span></div>
+                        <div class="ln add"><span class="g">6</span><span class="s">+</span><span>});</span></div>
+                      </div>
+                      <div class="fname" style="border-top: 2px solid var(--line); border-bottom: 2px solid var(--line)">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#4f4670" stroke-width="2"><path d="M5 2h7l4 4v12H5z" /><path d="M12 2v4h4" /></svg>
+                        next.config.ts<span class="n"><span style="color: var(--good)">+2</span> <span style="color: var(--bad)">−1</span></span>
+                      </div>
+                      <div class="code" id="diffB">
+                        <div class="ln"><span class="g">7</span><span class="s"> </span><span><span class="k">import</span> { withSentryConfig } <span class="k">from</span> <span class="str">"@sentry/nextjs"</span>;</span></div>
+                        <div class="ln del"><span class="g">8</span><span class="s">−</span><span><span class="k">export default</span> nextConfig;</span></div>
+                        <div class="ln add"><span class="g">8</span><span class="s">+</span><span><span class="k">export default</span> <span class="fn">withSentryConfig</span>(nextConfig, {</span></div>
+                        <div class="ln add"><span class="g">9</span><span class="s">+</span><span>  org: <span class="str">"acme"</span>, project: <span class="str">"my-app"</span> });</span></div>
+                      </div>
+                    </div>
+
+                    <div class="card" id="env" style="left: 744px; top: 36px; width: 512px; height: 250px">
+                      <div class="card-h"><span class="fav" style="background: #111"><svg width="14" height="12" viewBox="0 0 14 12"><path d="M7 0l7 12H0z" fill="#fff" /></svg></span>Environment variables<span class="sub">Production</span></div>
+                      <div class="envrow" id="e1"><span class="key">SENTRY_DSN</span><span class="v">••••••••</span><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#13805a" stroke-width="2.2"><rect x="4" y="9" width="12" height="9" rx="2.5" /><path d="M6.5 9V6.5a3.5 3.5 0 017 0V9" /></svg></div>
+                      <div class="envrow" id="e2"><span class="key">NEXT_PUBLIC_SENTRY_DSN</span><span class="v">••••••••</span><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#13805a" stroke-width="2.2"><rect x="4" y="9" width="12" height="9" rx="2.5" /><path d="M6.5 9V6.5a3.5 3.5 0 017 0V9" /></svg></div>
+                      <div class="envrow" id="e3" style="border-bottom: 0"><span class="key">SENTRY_AUTH_TOKEN</span><span class="v">••••••••</span><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#13805a" stroke-width="2.2"><rect x="4" y="9" width="12" height="9" rx="2.5" /><path d="M6.5 9V6.5a3.5 3.5 0 017 0V9" /></svg></div>
+                    </div>
+
+                    <div class="card" id="deploy" style="left: 744px; top: 306px; width: 512px; height: 336px">
+                      <div class="card-h"><span class="fav" style="background: #111"><svg width="14" height="12" viewBox="0 0 14 12"><path d="M7 0l7 12H0z" fill="#fff" /></svg></span>Deploy · my-app<span class="sub"><span class="pill soft" id="depPill">Building</span></span></div>
+                      <div style="padding: 20px 24px 0">
+                        <div style="display: flex; font-size: 18px; color: var(--ink-2); margin-bottom: 10px"><span>Production</span><span class="mono" style="margin-left: auto" id="depPct">0%</span></div>
+                        <div class="bar-track"><div class="bar-fill" id="depFill"></div></div>
+                        <div style="margin-top: 16px">
+                          <div class="drow"><span class="dot-ok"><span class="fill" id="d1"><svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"><path d="M2.5 7.5l3 3 6-7" /></svg></span></span>Install dependencies</div>
+                          <div class="drow"><span class="dot-ok"><span class="fill" id="d2"><svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"><path d="M2.5 7.5l3 3 6-7" /></svg></span></span>Build and upload source maps</div>
+                          <div class="drow"><span class="dot-ok"><span class="fill" id="d3"><svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"><path d="M2.5 7.5l3 3 6-7" /></svg></span></span>Assign my-app.vercel.app</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- ===== P5 · Production error, Sentry catches it ===== -->
+                <section class="pane clip" id="p5" data-start="14.3" data-duration="3.8" data-track-index="5">
+                  <div class="pi">
+                    <div class="card" id="shop" style="left: 44px; top: 36px; width: 600px; height: 606px">
+                      <div class="shop">
+                        <div class="brand">
+                          <svg width="34" height="34" viewBox="0 0 34 34"><circle cx="17" cy="17" r="15" fill="#e9e2ff" /><circle cx="17" cy="17" r="7" fill="#7454ec" /></svg>
+                          Acme Store
+                          <span style="margin-left: auto; font-family: var(--sans); font-size: 18px; color: var(--ink-3)">Checkout</span>
+                        </div>
+                        <div style="margin-top: 18px; border-top: 2px solid var(--line)">
+                          <div class="item"><span class="img" style="background: linear-gradient(135deg, #e7dcff, #c9b6ff)"></span>Lavender candle<span class="p">$38.00</span></div>
+                          <div class="item"><span class="img" style="background: linear-gradient(135deg, #ffe1d6, #f5c3b3)"></span>Linen throw<span class="p">$110.00</span></div>
+                        </div>
+                        <div class="total"><span>Total</span><span>$148.00</span></div>
+                        <div class="pay" id="payBtn">Pay $148.00</div>
+                      </div>
+                      <div class="err" id="err">
+                        <h4>
+                          <svg width="34" height="34" viewBox="0 0 34 34" fill="none" stroke="#c23760" stroke-width="3" stroke-linecap="round"><path d="M17 4L31 29H3z" stroke-linejoin="round" /><path d="M17 13v7M17 24.5v.5" /></svg>
+                          Application error
+                        </h4>
+                        <p>TypeError: Cannot read properties of undefined (reading 'price')</p>
+                        <p style="color: var(--ink-3); margin-top: 10px">at getTotal (app/checkout/total.ts:42)</p>
+                      </div>
+                    </div>
+
+                    <div class="card" id="issue" style="left: 676px; top: 36px; width: 580px; height: 470px">
+                      <div class="s-head" style="height: 64px; font-size: 20px">
+                        <svg width="26" height="26" viewBox="0 0 30 30" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="M4 25h6a11 11 0 00-5-9M15 5L4 25M15 5l11 20h-5a17 17 0 00-9-14" /></svg>
+                        Sentry · New issue
+                        <span class="pill bad" style="margin-left: auto; background: #ffd6e2">Unhandled</span>
+                      </div>
+                      <div class="issue-t">TypeError</div>
+                      <div class="issue-m">Cannot read properties of undefined (reading 'price')</div>
+                      <div class="issue-loc">
+                        <span style="color: var(--ink-3)">41</span>  export function getTotal({ items }) {<br />
+                        <span class="hl"><span style="color: var(--bad)">42</span>    return sum(items, i =&gt; i.product.price)</span>
+                      </div>
+                      <div class="tags">
+                        <span class="pill bad">production</span>
+                        <span class="pill soft">/checkout</span>
+                        <span class="pill soft">1 event · just now</span>
+                      </div>
+                      <div class="ring" id="ring"></div>
+                    </div>
+
+                    <div class="card" id="crumbs" style="left: 676px; top: 526px; width: 580px; height: 116px; padding: 18px 24px">
+                      <div style="font-size: 16px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.06em">BREADCRUMBS</div>
+                      <div class="mono" style="margin-top: 10px; font-size: 18px; color: var(--ink-2)">click #pay → POST /api/cart → <span style="color: var(--bad)">TypeError</span></div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- ===== P6 · Fix + tests + redeploy ===== -->
+                <section class="pane clip" id="p6" data-start="17.7" data-duration="3.9" data-track-index="6">
+                  <div class="pi">
+                    <div class="card" style="left: 44px; top: 36px; width: 676px; height: 606px">
+                      <div class="fname" style="border-bottom: 2px solid var(--line)">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#4f4670" stroke-width="2"><path d="M5 2h7l4 4v12H5z" /><path d="M12 2v4h4" /></svg>
+                        app/checkout/total.ts<span class="n"><span style="color: var(--good)">+1</span> <span style="color: var(--bad)">−1</span></span>
+                      </div>
+                      <div class="code" id="diffC">
+                        <div class="ln"><span class="g">41</span><span class="s"> </span><span><span class="k">export function</span> <span class="fn">getTotal</span>({ items }: Cart) {</span></div>
+                        <div class="ln del"><span class="g">42</span><span class="s">−</span><span>  <span class="k">return</span> <span class="fn">sum</span>(items, i =&gt; i.product.price);</span></div>
+                        <div class="ln add"><span class="g">42</span><span class="s">+</span><span>  <span class="k">return</span> <span class="fn">sum</span>(items, i =&gt; i.product?.price ?? <span class="fn">0</span>);</span></div>
+                        <div class="ln"><span class="g">43</span><span class="s"> </span><span>}</span></div>
+                      </div>
+                      <div class="fname" style="border-top: 2px solid var(--line); border-bottom: 2px solid var(--line)">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#4f4670" stroke-width="2"><path d="M5 2h7l4 4v12H5z" /><path d="M12 2v4h4" /></svg>
+                        app/checkout/total.test.ts<span class="n" style="color: var(--good)">+5</span>
+                      </div>
+                      <div class="code" id="diffD">
+                        <div class="ln add"><span class="g">18</span><span class="s">+</span><span><span class="fn">it</span>(<span class="str">"skips removed products"</span>, () =&gt; {</span></div>
+                        <div class="ln add"><span class="g">19</span><span class="s">+</span><span>  <span class="k">const</span> cart = <span class="fn">cartWith</span>({ product: <span class="k">undefined</span> });</span></div>
+                        <div class="ln add"><span class="g">20</span><span class="s">+</span><span>  <span class="fn">expect</span>(<span class="fn">getTotal</span>(cart)).<span class="fn">toBe</span>(<span class="fn">0</span>);</span></div>
+                        <div class="ln add"><span class="g">21</span><span class="s">+</span><span>});</span></div>
+                      </div>
+                    </div>
+
+                    <div class="card" id="tests" style="left: 744px; top: 36px; width: 512px; height: 300px">
+                      <div class="card-h">
+                        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#4f4670" stroke-width="2.2" stroke-linecap="round"><path d="M4 6l5 5-5 5M11 17h7" /></svg>
+                        Terminal<span class="sub mono">my-app</span>
+                      </div>
+                      <div class="term">
+                        <div>$ bun test</div>
+                        <div id="tl1"><span class="ok">✓</span> cart/total.test.ts</div>
+                        <div id="tl2"><span class="ok">✓</span> checkout/pay.test.ts</div>
+                      </div>
+                      <div class="big-count" id="bigCount"><b id="passN">0</b><span>passed · <span style="color: var(--ink-3)">0 failed</span></span></div>
+                    </div>
+
+                    <div class="card" id="redeploy" style="left: 744px; top: 356px; width: 512px; height: 286px">
+                      <div class="card-h"><span class="fav" style="background: #111"><svg width="14" height="12" viewBox="0 0 14 12"><path d="M7 0l7 12H0z" fill="#fff" /></svg></span>Redeploy · my-app<span class="sub"><span class="pill soft" id="rdPill">Building</span></span></div>
+                      <div style="padding: 22px 24px 0">
+                        <div class="bar-track"><div class="bar-fill" id="rdFill"></div></div>
+                        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 22px">
+                          <span class="pill good" id="rdOk1" style="align-self: flex-start">✓ my-app.vercel.app is live</span>
+                          <span class="pill soft" id="rdOk2" style="align-self: flex-start">Sentry issue resolved in this release</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <!-- ===== P7 · Success ===== -->
+                <section class="pane clip" id="p7" data-start="21.1" data-duration="3.3" data-track-index="7">
+                  <div class="pi">
+                    <div class="success">
+                      <svg class="check" viewBox="0 0 150 150" fill="none">
+                        <circle cx="75" cy="75" r="68" fill="#dcf3e8" />
+                        <circle id="ckRing" cx="75" cy="75" r="68" stroke="#13805a" stroke-width="5" transform="rotate(-90 75 75)" />
+                        <path id="ckTick" d="M44 77l21 21 42-46" stroke="#13805a" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                      <h2 id="okH">Production <em>healthy.</em></h2>
+                      <div class="srow">
+                        <div class="scard" id="s1"><div class="h"><i></i>Sentry connected</div><div class="d">0 unresolved issues</div></div>
+                        <div class="scard" id="s2"><div class="h"><i></i>Deploy ready</div><div class="d">my-app.vercel.app</div></div>
+                        <div class="scard" id="s3"><div class="h"><i></i>24 / 24 tests</div><div class="d">Fix shipped in PR #2</div></div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <!-- agent cursor lives in window coordinates -->
+            <div id="cursor">
+              <svg width="34" height="40" viewBox="0 0 34 40"><path d="M3 2l26 16-12 3-6 13z" fill="#7454ec" stroke="#fff" stroke-width="3" stroke-linejoin="round" /></svg>
+              <span class="tag">Aside</span>
+            </div>
+            <div class="ripple" id="rp1"></div>
+            <div class="ripple" id="rp2"></div>
+            <div class="ripple" id="rp3" style="border-color: #c23760"></div>
+          </div>
+
+          <!-- agent status HUD straddles the window's bottom edge -->
+          <div id="hud">
+            <div id="hudIcon">
+              <svg id="spin" viewBox="0 0 32 32" fill="none" stroke="#7454ec" stroke-width="4" stroke-linecap="round"><path d="M16 3a13 13 0 0113 13" /></svg>
+              <div id="hudDone"><svg width="22" height="22" viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5l3 3 6-7" /></svg></div>
+            </div>
+            <div>
+              <div class="hud-l1" id="hudTime">WORKING · 0m 00s</div>
+              <div class="hud-l2" id="hudStep">Opening Sentry, GitHub and Vercel</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="flash" data-layout-ignore></div>
+
+      <!-- ============ CAPTIONS ============ -->
+      <div class="cap clip" data-start="4.5" data-duration="3.2" data-track-index="10">
+        <div class="ci" id="c2"><span class="idx">02</span><span class="rule"></span><span class="txt">It opens the tabs <em>it needs.</em></span></div>
+      </div>
+      <div class="cap clip" data-start="7.5" data-duration="3.3" data-track-index="10">
+        <div class="ci" id="c3"><span class="idx">03</span><span class="rule"></span><span class="txt">Signs in from your vault. <em>Secrets never reach the model.</em></span></div>
+      </div>
+      <div class="cap clip" data-start="10.6" data-duration="3.8" data-track-index="10">
+        <div class="ci" id="c4"><span class="idx">04</span><span class="rule"></span><span class="txt">Writes the code. Sets the env. <em>Ships it.</em></span></div>
+      </div>
+      <div class="cap clip" data-start="14.2" data-duration="3.6" data-track-index="10">
+        <div class="ci" id="c5"><span class="idx">05</span><span class="rule"></span><span class="txt">Production breaks. <em>Sentry catches it.</em></span></div>
+      </div>
+      <div class="cap clip" data-start="17.6" data-duration="3.6" data-track-index="10">
+        <div class="ci" id="c6"><span class="idx">06</span><span class="rule"></span><span class="txt">It fixes the bug — <em>and proves it.</em></span></div>
+      </div>
+      <div class="cap clip" data-start="21.0" data-duration="2.6" data-track-index="10">
+        <div class="ci" id="c7"><span class="idx">07</span><span class="rule"></span><span class="txt">One prompt. <em>Nothing left broken.</em></span></div>
+      </div>
+
+      <!-- ============ END CARDS ============ -->
+      <section class="end clip" id="e1" data-start="23.5" data-duration="2.8" data-track-index="11">
+        <div class="ei" id="e1i">
+          <div class="byo-h" id="byoH">Bring the AI <em>you already pay for.</em></div>
+          <div class="byo-s" id="byoS">Sign in with your <b>Claude</b> or <b>Codex</b> subscription. Aside runs on it — <b>no extra AI bill.</b></div>
+          <div class="signin" id="signin">
+            <div class="top">
+              <svg viewBox="0 0 76 76" fill="none" stroke="#7454ec" stroke-width="5" stroke-linecap="round"><circle cx="38" cy="38" r="33" /><path d="M20 50c10-3 22-14 30-28" /><path d="M26 24c8 1 20 10 24 26" /></svg>
+              Sign in to Aside
+            </div>
+            <div class="sbtn" id="sb1">
+              <span class="lg" style="background: #fbeee8"><svg width="30" height="30" viewBox="0 0 20 20"><g stroke="#d97757" stroke-width="2.4" stroke-linecap="round"><path d="M10 2v16M2 10h16M4.3 4.3l11.4 11.4M15.7 4.3L4.3 15.7" /></g></svg></span>
+              <div><div class="t1">Continue with Claude</div><div class="t2">Pro or Max plan</div></div>
+              <span class="pill good ok" id="ok1">Connected</span>
+            </div>
+            <div class="sbtn" id="sb2">
+              <span class="lg" style="background: #1c1a24"><svg width="30" height="30" viewBox="0 0 30 30" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10l6 5-6 5M15 21h8" /></svg></span>
+              <div><div class="t1">Continue with Codex</div><div class="t2">ChatGPT plan</div></div>
+              <span class="pill good ok" id="ok2">Connected</span>
+            </div>
+            <div class="zero" id="zero"><b>$0</b><span><strong>extra for AI.</strong><br />Your plan, your limits.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="end clip" id="e2" data-start="25.9" data-duration="2.1" data-track-index="12">
+        <div class="ei" id="e2i">
+          <div class="lockup">
+            <div class="halo" id="halo"></div>
+            <svg class="lmark" id="lmark" viewBox="0 0 76 76" fill="none" stroke="#7454ec" stroke-width="4" stroke-linecap="round">
+              <circle id="lmC" cx="38" cy="38" r="33" />
+              <path id="lmA" d="M20 50c10-3 22-14 30-28" />
+              <path id="lmB" d="M26 24c8 1 20 10 24 26" />
+            </svg>
+            <h1 id="lockH">Aside <em>Browser</em></h1>
+            <p id="lockP">The AI browser for real work.</p>
+            <div class="foot" id="lockF">
+              <span class="pill">Works with your Claude or Codex plan</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        const DUR = 28;
+        const WIN_X = 160;
+        const WIN_Y = 52;
+        const $ = (s) => document.querySelector(s);
+
+        // Offset of an element inside #win, in untransformed layout pixels.
+        // Measured once at setup; never at tween time.
+        function inWin(el) {
+          let x = 0;
+          let y = 0;
+          let n = el;
+          const win = $("#win");
+          while (n && n !== win) {
+            x += n.offsetLeft;
+            y += n.offsetTop;
+            n = n.offsetParent;
+          }
+          return { x: x + el.offsetWidth / 2, y: y + el.offsetHeight / 2 };
+        }
+
+        function build() {
+          const tl = gsap.timeline({ paused: true });
+
+          // ---------- discrete text tracks, all driven from one clock ----------
+          const tracks = [];
+          function track(el, seq, onText) {
+            tracks.push({ el, seq, onText, last: null });
+          }
+          function at(seq, t) {
+            let v = seq[0].text;
+            for (let i = seq.length - 1; i >= 0; i--) {
+              if (t >= seq[i].t) {
+                v = seq[i].text;
+                break;
+              }
+            }
+            return v;
+          }
+
+          const PROMPT = "Set up Sentry, deploy my app, trigger a production error, then fix anything broken.";
+          const TYPE_START = 1.25;
+          const TYPE_END = 3.3;
+
+          track($("#urlText"), [
+            { t: 0, text: "" },
+            { t: 4.3, text: "aside://task/set-up-sentry" },
+            { t: 7.45, text: "sentry.io/auth/login" },
+            { t: 8.95, text: "sentry.io/organizations/acme/projects/new" },
+            { t: 10.75, text: "github.com/acme/my-app/compare/add-sentry" },
+            { t: 12.3, text: "vercel.com/acme/my-app/deployments" },
+            { t: 14.35, text: "my-app.vercel.app/checkout" },
+            { t: 15.5, text: "acme.sentry.io/issues/4510" },
+            { t: 17.75, text: "github.com/acme/my-app/pull/2" },
+            { t: 19.9, text: "vercel.com/acme/my-app/deployments" },
+            { t: 21.15, text: "aside://task/set-up-sentry" },
+          ], (el, v) => {
+            $("#url").classList.toggle("empty", v === "");
+            el.textContent = v === "" ? "Search Google or type a URL" : v;
+          });
+          track($("#taskTitle"), [
+            { t: 0, text: "New Tab" },
+            { t: 4.3, text: "Ship with Sentry" },
+          ]);
+          track($("#tabCount"), [
+            { t: 0, text: "0" },
+            { t: 4.95, text: "1" },
+            { t: 5.35, text: "2" },
+            { t: 5.75, text: "3" },
+            { t: 14.35, text: "4" },
+          ]);
+          track($("#hudStep"), [
+            { t: 0, text: "Opening Sentry, GitHub and Vercel" },
+            { t: 7.5, text: "Signing in to Sentry with Vault" },
+            { t: 8.95, text: "Creating Sentry project · my-app" },
+            { t: 9.9, text: "Pulling the DSN into Vault" },
+            { t: 10.75, text: "Installing @sentry/nextjs" },
+            { t: 12.3, text: "Deploying to production" },
+            { t: 14.35, text: "Triggering a test error" },
+            { t: 15.45, text: "Sentry caught TypeError · total.ts:42" },
+            { t: 17.75, text: "Patching getTotal()" },
+            { t: 18.8, text: "Running the test suite" },
+            { t: 19.9, text: "Redeploying to production" },
+            { t: 21.15, text: "All checks passed" },
+          ]);
+          track($("#email"), [
+            { t: 0, text: "" },
+            { t: 7.95, text: "you@acme.dev" },
+          ]);
+          track($("#pw"), [
+            { t: 0, text: "" },
+            { t: 7.95, text: "••••••••••••••" },
+          ]);
+          track($("#pname"), [
+            { t: 0, text: "" },
+            { t: 9.05, text: "m" },
+            { t: 9.1, text: "my" },
+            { t: 9.15, text: "my-" },
+            { t: 9.2, text: "my-a" },
+            { t: 9.25, text: "my-ap" },
+            { t: 9.3, text: "my-app" },
+          ]);
+          track($("#projTitle"), [
+            { t: 0, text: "Create project" },
+            { t: 9.8, text: "✓ my-app created" },
+          ], (el, v) => {
+            el.textContent = v;
+            el.style.color = v.startsWith("✓") ? "#13805a" : "";
+          });
+          track($("#dsnVal"), [
+            { t: 0, text: "" },
+            { t: 10.0, text: "••••••••" },
+            { t: 10.1, text: "••••••••••••••@o45" },
+            { t: 10.2, text: "••••••••••••••@o45••.ingest.sentry.io/45••" },
+          ]);
+          track($("#depPill"), [
+            { t: 0, text: "Building" },
+            { t: 14.05, text: "Ready · 38s" },
+          ], (el, v) => {
+            el.textContent = v;
+            el.className = v === "Building" ? "pill soft" : "pill good";
+          });
+          track($("#rdPill"), [
+            { t: 0, text: "Building" },
+            { t: 20.75, text: "Ready · 21s" },
+          ], (el, v) => {
+            el.textContent = v;
+            el.className = v === "Building" ? "pill soft" : "pill good";
+          });
+
+          const typedEl = $("#typed");
+          const promptEl = $("#prompt");
+          const caretEl = $("#caret");
+          const timeEl = $("#hudTime");
+          const pctEl = $("#depPct");
+          const passEl = $("#passN");
+
+          const clock = { t: 0 };
+          tl.to(clock, {
+            t: DUR,
+            duration: DUR,
+            ease: "none",
+            onUpdate: () => {
+              const t = clock.t;
+              for (const tr of tracks) {
+                const v = at(tr.seq, t);
+                if (v === tr.last) continue;
+                tr.last = v;
+                if (tr.onText) tr.onText(tr.el, v);
+                else tr.el.textContent = v;
+              }
+              // typing: smooth slice with a gentle ease so it starts and lands softly
+              if (t < TYPE_START) {
+                promptEl.classList.add("placeholder");
+                typedEl.textContent = "Ask AI a task, @ for context";
+              } else {
+                promptEl.classList.remove("placeholder");
+                const p = Math.min(1, (t - TYPE_START) / (TYPE_END - TYPE_START));
+                const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+                typedEl.textContent = PROMPT.substring(0, Math.round(e * PROMPT.length));
+              }
+              // caret: deterministic square-wave blink, solid while typing
+              const typing = t >= TYPE_START && t <= TYPE_END;
+              caretEl.style.opacity = typing || Math.sin(t * Math.PI * 2.4) > 0 ? "1" : "0";
+              // agent clock runs fast-forward so a real multi-minute job fits the cut
+              const worked = Math.max(0, Math.min(t, 21.15) - 4.4) * 16;
+              const m = Math.floor(worked / 60);
+              const s = String(Math.floor(worked % 60)).padStart(2, "0");
+              timeEl.textContent = (t >= 21.15 ? "DONE IN " : "WORKING · ") + m + "m " + s + "s";
+              // deploy percentage follows the bar
+              const dp = Math.max(0, Math.min(1, (t - 12.5) / 1.5));
+              pctEl.textContent = Math.round(dp * 100) + "%";
+              // tests count-up
+              const tp = Math.max(0, Math.min(1, (t - 19.0) / 0.8));
+              passEl.textContent = String(Math.round((1 - Math.pow(1 - tp, 3)) * 24));
+            },
+          }, 0);
+
+          // ---------- background ambience (finite, on the timeline) ----------
+          tl.fromTo("#bPeach", { x: 0, y: 0 }, { x: 120, y: 60, duration: DUR, ease: "sine.inOut" }, 0);
+          tl.fromTo("#bLilac", { x: 0, y: 0, scale: 1 }, { x: -140, y: 40, scale: 1.08, duration: DUR, ease: "sine.inOut" }, 0);
+          tl.fromTo("#bRose", { x: 0, y: 0 }, { x: -90, y: 120, duration: DUR, ease: "sine.inOut" }, 0);
+          tl.fromTo("#bSky", { x: 0, y: 0 }, { x: 160, y: -50, duration: DUR, ease: "sine.inOut" }, 0);
+          tl.fromTo("#ghost", { x: 0 }, { x: -220, duration: DUR, ease: "none" }, 0);
+
+          // ---------- layout constants, measured once ----------
+          const bar = inWin($("#bar"));
+          const ask = inWin($("#askBtn"));
+          const create = inWin($("#createBtn"));
+          const pay = inWin($("#payBtn"));
+          const CX = 960;
+          const CY = 540;
+          function camTo(p, s, target) {
+            const px = p.x + WIN_X;
+            const py = p.y + WIN_Y;
+            return { scale: s, x: target.x - (CX + s * (px - CX)), y: target.y - (CY + s * (py - CY)) };
+          }
+
+          // ================= S1 · the ask (0 – 4.3) =================
+          tl.fromTo("#win", { y: 90, rotationX: 12, scale: 0.94, opacity: 0, transformPerspective: 1600, transformOrigin: "50% 100%" },
+            { y: 0, rotationX: 0, scale: 1, opacity: 1, duration: 1.3, ease: "power3.out" }, 0.15);
+          tl.fromTo(".mark", { scale: 0.7, opacity: 0, rotation: -30 }, { scale: 1, opacity: 1, rotation: 0, duration: 0.9, ease: "expo.out" }, 0.5);
+          tl.fromTo("#bar", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 0.6);
+          tl.fromTo(".chips", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "sine.out" }, 0.8);
+          tl.fromTo(".rcard, .recent-l", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, stagger: 0.06, ease: "power2.out" }, 0.8);
+
+          const zoomIn = camTo(bar, 1.34, { x: 960, y: 500 });
+          tl.fromTo("#world", { scale: 1, x: 0, y: 0 }, { ...zoomIn, duration: 1.3, ease: "power3.inOut" }, 0.95);
+          tl.fromTo("#bar", { boxShadow: "0 20px 50px rgba(76,48,160,0.16)" },
+            { boxShadow: "0 0 0 4px rgba(116,84,236,0.28), 0 24px 60px rgba(76,48,160,0.24)", duration: 0.5, ease: "sine.out", immediateRender: false }, 1.1);
+
+          // agent cursor to "Ask AI", press, ripple
+          tl.set("#cursor", { x: ask.x + 170, y: ask.y + 140, opacity: 0, scale: 1 }, 0);
+          tl.fromTo("#cursor", { opacity: 0 }, { opacity: 1, duration: 0.25, immediateRender: false, ease: "sine.out" }, 2.75);
+          tl.fromTo("#cursor", { x: ask.x + 170, y: ask.y + 140 }, { x: ask.x - 6, y: ask.y - 4, duration: 0.6, immediateRender: false, ease: "power3.out" }, 2.8);
+          tl.to("#cursor", { scale: 0.86, duration: 0.09, ease: "power2.in", yoyo: true, repeat: 1 }, 3.5);
+          tl.to("#askBtn", { scale: 0.92, duration: 0.09, ease: "power2.in", yoyo: true, repeat: 1 }, 3.5);
+          tl.to("#askBtn", { backgroundColor: "#7454ec", color: "#ffffff", duration: 0.15, ease: "power1.out" }, 3.52);
+          gsap.set("#rp1", { left: ask.x, top: ask.y });
+          gsap.set("#rp2", { left: create.x, top: create.y });
+          gsap.set("#rp3", { left: pay.x, top: pay.y });
+          tl.fromTo("#rp1", { scale: 0.3, opacity: 0.9 }, { scale: 2.6, opacity: 0, duration: 0.6, ease: "power2.out", immediateRender: false }, 3.55);
+          tl.to("#cursor", { opacity: 0, duration: 0.25, ease: "power1.in" }, 3.9);
+
+          tl.to("#world", { scale: 1, x: 0, y: 0, duration: 0.9, ease: "power3.inOut" }, 3.75);
+
+          // pane handoff: outgoing and incoming blur-crossfade at the same T
+          function handoff(outSel, inSel, T) {
+            tl.to(outSel + " > .pi", { opacity: 0, scale: 0.985, filter: "blur(10px)", duration: 0.45, ease: "power2.in" }, T);
+            tl.fromTo(inSel + " > .pi", { opacity: 0, scale: 1.02, filter: "blur(12px)" },
+              { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.6, ease: "power3.out" }, T + 0.08);
+          }
+          function selTo(rowTop, T) {
+            tl.to("#sel", { y: rowTop - 374, duration: 0.45, ease: "power3.inOut" }, T);
+          }
+          function capIn(sel, T) {
+            tl.fromTo(sel, { opacity: 0, y: 18, filter: "blur(6px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.6, ease: "power3.out" }, T);
+          }
+          function capSwap(outSel, inSel, T) {
+            tl.to(outSel, { opacity: 0, y: -14, filter: "blur(6px)", duration: 0.3, ease: "power2.in" }, T);
+            capIn(inSel, T + 0.1);
+          }
+
+          // ================= S2 · tabs spin up (4.3 – 7.4) =================
+          handoff("#p1", "#p2", 4.3);
+          tl.fromTo("#hud", { y: 40, opacity: 0, scale: 0.9 }, { y: 0, opacity: 1, scale: 1, duration: 0.7, ease: "expo.out" }, 4.45);
+          tl.fromTo("#spin", { rotation: 0 }, { rotation: 360 * 17, duration: 16.7, ease: "none" }, 4.45);
+          capIn("#c2", 4.55);
+          tl.fromTo("#bubble", { x: 40, opacity: 0 }, { x: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, 4.45);
+          tl.fromTo("#agent .agent-h", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.5, ease: "power2.out" }, 4.75);
+          tl.fromTo("#agent .step", { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.45, stagger: 0.07, ease: "power3.out" }, 4.85);
+
+          [["#tc1", "#lb1", "#t1", 4.9], ["#tc2", "#lb2", "#t2", 5.3], ["#tc3", "#lb3", "#t3", 5.7]].forEach(([card, lb, row, T]) => {
+            tl.fromTo(card, { x: 80, opacity: 0, rotationY: -14, transformPerspective: 1400 },
+              { x: 0, opacity: 1, rotationY: 0, duration: 0.7, ease: "power3.out" }, T);
+            tl.fromTo(lb, { scaleX: 0, opacity: 1 }, { scaleX: 1, duration: 0.8, ease: "power1.inOut" }, T + 0.15);
+            tl.to(lb, { opacity: 0, duration: 0.2, ease: "power1.out" }, T + 0.95);
+            tl.fromTo(card + " .skel", { opacity: 0 }, { opacity: 1, duration: 0.4, stagger: 0.05, ease: "sine.out" }, T + 0.45);
+            tl.fromTo(row, { x: -24, opacity: 0 }, { x: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, T);
+          });
+          tl.fromTo("#tabCount", { opacity: 0 }, { opacity: 1, duration: 0.2, ease: "sine.out" }, 4.9);
+          [4.95, 5.35, 5.75, 14.35].forEach((T) => {
+            tl.to("#tabCount", { scale: 1.3, duration: 0.1, yoyo: true, repeat: 1, ease: "sine.inOut" }, T);
+          });
+          tl.fromTo("#ck1", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(2)" }, 6.5);
+
+          // ================= S3 · vault autofill + Sentry project (7.4 – 10.7) =================
+          handoff("#p2", "#p3", 7.4);
+          capSwap("#c2", "#c3", 7.4);
+          selTo(524, 7.45);
+          tl.fromTo("#login", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 7.5);
+          tl.fromTo("#vaultGlow", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "sine.out" }, 7.8);
+          tl.to("#vaultGlow", { opacity: 0, duration: 0.6, ease: "sine.in" }, 8.9);
+          tl.fromTo(["#fg1", "#fg2"], { opacity: 0 }, { opacity: 1, duration: 0.18, ease: "sine.out" }, 7.95);
+          tl.to(["#fg1", "#fg2"], { opacity: 0.45, duration: 0.6, ease: "sine.inOut" }, 8.2);
+          tl.fromTo("#vchip", { opacity: 0, y: 10, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "expo.out" }, 8.15);
+          tl.to("#signBtn", { scale: 0.96, duration: 0.1, yoyo: true, repeat: 1, ease: "power2.in" }, 8.65);
+
+          const loginC = inWin($("#login"));
+          tl.to("#world", { ...camTo(loginC, 1.1, { x: 800, y: 448 }), duration: 0.9, ease: "power3.inOut" }, 7.6);
+          tl.to("#world", { scale: 1, x: 0, y: 0, duration: 0.8, ease: "power3.inOut" }, 8.75);
+          tl.fromTo("#proj", { x: 60, opacity: 0 }, { x: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 8.8);
+          tl.fromTo("#cursor", { opacity: 0 }, { opacity: 1, duration: 0.2, immediateRender: false, ease: "sine.out" }, 9.0);
+          tl.fromTo("#cursor", { x: create.x + 120, y: create.y + 150 }, { x: create.x - 4, y: create.y - 2, duration: 0.45, immediateRender: false, ease: "power3.out" }, 9.0);
+          tl.to("#cursor", { scale: 0.86, duration: 0.08, ease: "power2.in", yoyo: true, repeat: 1 }, 9.55);
+          tl.to("#createBtn", { scale: 0.96, duration: 0.08, ease: "power2.in", yoyo: true, repeat: 1 }, 9.55);
+          tl.fromTo("#rp2", { scale: 0.3, opacity: 0.9 }, { scale: 2.4, opacity: 0, duration: 0.55, ease: "power2.out", immediateRender: false }, 9.58);
+          tl.to("#cursor", { opacity: 0, duration: 0.25, ease: "power1.in" }, 9.95);
+          tl.to("#projH", { backgroundColor: "#e9f7f0", duration: 0.3, ease: "sine.out" }, 9.8);
+
+          tl.fromTo("#dsn", { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 9.75);
+          tl.fromTo("#scan", { x: -180 }, { x: 640, duration: 0.8, ease: "power1.inOut" }, 10.0);
+          tl.fromTo(["#dsnPill1", "#dsnPill2"], { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, stagger: 0.12, ease: "power3.out" }, 10.3);
+
+          // ================= S4 · code, env, deploy (10.7 – 14.3) =================
+          handoff("#p3", "#p4", 10.7);
+          capSwap("#c3", "#c4", 10.6);
+          selTo(574, 10.75);
+          tl.fromTo("#diffA .ln", { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.35, stagger: 0.1, ease: "power2.out" }, 10.95);
+          tl.fromTo("#diffB .ln", { opacity: 0 }, { opacity: 1, duration: 0.3, stagger: 0.08, ease: "sine.out" }, 11.6);
+          tl.to("#diffB .ln.del", { opacity: 0.45, duration: 0.3, ease: "sine.inOut" }, 12.0);
+          tl.fromTo("#env", { x: 50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "expo.out" }, 11.5);
+          tl.fromTo(["#e1", "#e2", "#e3"], { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, stagger: 0.14, ease: "power2.out" }, 11.75);
+          selTo(624, 12.3);
+          tl.fromTo("#deploy", { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 12.2);
+          tl.fromTo("#depFill", { scaleX: 0 }, { scaleX: 1, duration: 1.5, ease: "power1.inOut" }, 12.5);
+          [["#d1", 12.8], ["#d2", 13.4], ["#d3", 13.95]].forEach(([d, T]) => {
+            tl.fromTo(d, { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: "power3.out" }, T);
+          });
+
+          // ================= S5 · production error (14.3 – 17.7) =================
+          handoff("#p4", "#p5", 14.3);
+          capSwap("#c4", "#c5", 14.2);
+          tl.fromTo("#t4", { x: -24, opacity: 0 }, { x: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, 14.35);
+          selTo(674, 14.4);
+          tl.fromTo("#cursor", { opacity: 0 }, { opacity: 1, duration: 0.2, immediateRender: false, ease: "sine.out" }, 14.55);
+          tl.fromTo("#cursor", { x: pay.x + 150, y: pay.y + 110 }, { x: pay.x + 10, y: pay.y - 4, duration: 0.45, immediateRender: false, ease: "power3.out" }, 14.55);
+          tl.to("#cursor", { scale: 0.86, duration: 0.08, ease: "power2.in", yoyo: true, repeat: 1 }, 15.05);
+          tl.to("#payBtn", { scale: 0.97, duration: 0.08, ease: "power2.in", yoyo: true, repeat: 1 }, 15.05);
+          tl.fromTo("#rp3", { scale: 0.3, opacity: 0.9 }, { scale: 2.4, opacity: 0, duration: 0.5, ease: "power2.out", immediateRender: false }, 15.08);
+          // the break: hard, fast, a little violent
+          tl.fromTo("#err", { opacity: 0 }, { opacity: 1, duration: 0.06, ease: "none" }, 15.22);
+          tl.fromTo(".shop .item, .shop .total, .shop .pay", { opacity: 1 }, { opacity: 0, duration: 0.06, ease: "none", immediateRender: false }, 15.22);
+          tl.fromTo("#err h4, #err p", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, stagger: 0.06, ease: "expo.out" }, 15.25);
+          tl.fromTo("#flash", { opacity: 0 }, { opacity: 1, duration: 0.06, ease: "none" }, 15.22);
+          tl.to("#flash", { opacity: 0, duration: 0.5, ease: "power2.out" }, 15.3);
+          [-10, 9, -6, 4, 0].forEach((dx, i) => {
+            tl.to("#shake", { x: dx, duration: 0.045, ease: "none" }, 15.22 + i * 0.045);
+          });
+          tl.to("#cursor", { opacity: 0, duration: 0.2, ease: "power1.in" }, 15.4);
+          tl.fromTo("#issue", { x: 90, opacity: 0, scale: 0.96 }, { x: 0, opacity: 1, scale: 1, duration: 0.7, ease: "expo.out" }, 15.55);
+          tl.fromTo("#ring", { opacity: 0.9, scale: 1 }, { opacity: 0, scale: 1.05, duration: 0.7, ease: "power2.out", repeat: 1 }, 16.1);
+          const issueC = inWin($("#issue"));
+          tl.to("#world", { ...camTo(issueC, 1.1, { x: 1250, y: 370 }), duration: 1.0, ease: "power3.inOut" }, 15.6);
+          tl.to("#world", { scale: 1, x: 0, y: 0, duration: 0.8, ease: "power3.inOut" }, 17.45);
+          tl.fromTo("#crumbs", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, 16.2);
+          tl.to("#hudIcon", { backgroundColor: "#fde6ee", duration: 0.2, ease: "sine.out" }, 15.45);
+          tl.to("#hudIcon", { backgroundColor: "#e9e2ff", duration: 0.4, ease: "sine.inOut" }, 17.7);
+
+          // ================= S6 · fix, test, redeploy (17.7 – 21.1) =================
+          handoff("#p5", "#p6", 17.7);
+          capSwap("#c5", "#c6", 17.6);
+          selTo(574, 17.75);
+          tl.fromTo("#diffC .ln", { opacity: 0 }, { opacity: 1, duration: 0.3, stagger: 0.05, ease: "sine.out" }, 17.95);
+          tl.fromTo("#diffC .ln.add", { x: -16, backgroundColor: "rgba(226,245,234,0)" }, { x: 0, backgroundColor: "rgba(226,245,234,1)", duration: 0.5, ease: "power3.out", immediateRender: false }, 18.3);
+          tl.to("#diffC .ln.del", { opacity: 0.45, duration: 0.3, ease: "sine.inOut" }, 18.4);
+          tl.fromTo("#diffD .ln", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.3, stagger: 0.08, ease: "power2.out" }, 18.6);
+          tl.fromTo("#tests", { x: 50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "expo.out" }, 18.7);
+          tl.fromTo(["#tl1", "#tl2"], { opacity: 0 }, { opacity: 1, duration: 0.2, stagger: 0.25, ease: "none" }, 19.05);
+          tl.fromTo("#bigCount", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 19.0);
+          selTo(624, 19.85);
+          tl.fromTo("#redeploy", { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 19.8);
+          tl.fromTo("#rdFill", { scaleX: 0 }, { scaleX: 1, duration: 0.8, ease: "power2.inOut" }, 19.95);
+          tl.fromTo(["#rdOk1", "#rdOk2"], { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, stagger: 0.15, ease: "power3.out" }, 20.75);
+
+          // ================= S7 · success (21.1 – 23.5) =================
+          handoff("#p6", "#p7", 21.1);
+          capSwap("#c6", "#c7", 21.0);
+          selTo(374, 21.15);
+          tl.fromTo("#spin", { opacity: 1 }, { opacity: 0, duration: 0.2, ease: "none", immediateRender: false }, 21.15);
+          tl.fromTo("#hudDone", { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.4, ease: "back.out(2)" }, 21.15);
+          const ring = $("#ckRing");
+          const ringLen = 2 * Math.PI * 68;
+          ring.style.strokeDasharray = String(ringLen);
+          const tick = $("#ckTick");
+          const tickLen = tick.getTotalLength();
+          tick.style.strokeDasharray = String(tickLen);
+          tl.fromTo(ring, { strokeDashoffset: ringLen }, { strokeDashoffset: 0, duration: 0.8, ease: "power2.inOut" }, 21.3);
+          tl.fromTo(tick, { strokeDashoffset: tickLen }, { strokeDashoffset: 0, duration: 0.45, ease: "power3.out" }, 21.8);
+          tl.fromTo(".success .check", { scale: 0.8 }, { scale: 1, duration: 0.8, ease: "expo.out" }, 21.3);
+          tl.fromTo("#okH", { y: 30, opacity: 0, scale: 1.04 }, { y: 0, opacity: 1, scale: 1, duration: 0.8, ease: "power3.out" }, 21.55);
+          tl.fromTo(["#s1", "#s2", "#s3"], { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, stagger: 0.1, ease: "power3.out" }, 21.9);
+
+          // ================= S8 · bring your own AI → brand (23.4 – 28) =================
+          tl.to("#world", { scale: 0.9, y: -30, opacity: 0, filter: "blur(16px)", duration: 0.75, ease: "power3.in" }, 23.35);
+          tl.to("#c7", { opacity: 0, y: -14, filter: "blur(6px)", duration: 0.35, ease: "power2.in" }, 23.35);
+          tl.fromTo("#byoH", { y: 50, opacity: 0, filter: "blur(10px)" }, { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.8, ease: "power3.out" }, 23.7);
+          tl.fromTo("#byoS", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power2.out" }, 24.05);
+          tl.fromTo("#signin", { x: 80, opacity: 0, rotationY: -12, transformPerspective: 1600 },
+            { x: 0, opacity: 1, rotationY: 0, duration: 0.9, ease: "expo.out" }, 23.8);
+          tl.fromTo(["#sb1", "#sb2"], { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.12, ease: "power3.out" }, 24.1);
+          tl.fromTo("#ok1", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power3.out" }, 24.7);
+          tl.fromTo("#ok2", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power3.out" }, 24.95);
+          tl.fromTo("#zero", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 24.9);
+
+          // brand lockup
+          tl.to("#e1i", { opacity: 0, scale: 0.97, filter: "blur(12px)", duration: 0.5, ease: "power2.in" }, 25.9);
+          tl.fromTo("#halo", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 1.4, ease: "sine.out" }, 26.0);
+          ["#lmC", "#lmA", "#lmB"].forEach((sel, i) => {
+            const el = $(sel);
+            const len = el.getTotalLength();
+            el.style.strokeDasharray = String(len);
+            tl.fromTo(el, { strokeDashoffset: len }, { strokeDashoffset: 0, duration: 0.8, ease: "power2.inOut" }, 26.05 + i * 0.12);
+          });
+          tl.fromTo("#lmark", { scale: 0.85, rotation: -20 }, { scale: 1, rotation: 0, duration: 1.0, ease: "expo.out" }, 26.05);
+          tl.fromTo("#lockH", { y: 40, opacity: 0, filter: "blur(10px)" }, { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.9, ease: "power3.out" }, 26.3);
+          tl.fromTo("#lockP", { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power2.out" }, 26.65);
+          tl.fromTo("#lockF", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "sine.out" }, 27.0);
+
+          return tl;
+        }
+
+        document.fonts.ready.then(() => {
+          const tl = build();
+          window.__timelines["main"] = tl;
+          if (window.__hfForceTimelineRebind) window.__hfForceTimelineRebind();
+        });
+      })();
+    </script>
+  </body>
+</html>

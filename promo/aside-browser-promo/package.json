@@ -1,0 +1,11 @@
+{
+  "name": "aside-browser-promo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.8.71 preview",
+    "check": "npx --yes hyperframes@0.8.71 check",
+    "render": "npx --yes hyperframes@0.8.71 render",
+    "publish": "npx --yes hyperframes@0.8.71 publish"
+  }
+}
