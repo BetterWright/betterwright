@@ -1,3 +1,4 @@
 snapshots/
 .hyperframes/
 node_modules/
+renders/work-*/
