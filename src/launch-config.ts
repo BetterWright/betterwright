@@ -75,7 +75,13 @@ export function launchOptionsFromEnv(home = defaultHome(), env = process.env): L
 }
 
 export function resolveLaunchOptions(options: BetterWrightOptions): BetterWrightOptions {
-  const defaults = launchOptionsFromEnv(options.home || defaultHome());
+  // Lower-priority variables cannot reject a setting the caller supplied.
+  const env = { ...process.env };
+  if (options.headless !== undefined) delete env.BETTERWRIGHT_HEADLESS;
+  if (options.adBlock !== undefined) delete env.BETTERWRIGHT_AD_BLOCK;
+  if (options.profile !== undefined) delete env.BETTERWRIGHT_PROFILE;
+  if (options.downloadPolicy !== undefined) delete env.BETTERWRIGHT_DOWNLOAD_POLICY;
+  const defaults = launchOptionsFromEnv(options.home || defaultHome(), env);
   // A forced display mode must also cancel an inherited off-screen window.
   if (options.headless !== undefined && options.headedInvisible === undefined) defaults.headedInvisible = false;
   return { ...options, ...defaults, ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) };
