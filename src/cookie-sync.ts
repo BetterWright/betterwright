@@ -205,6 +205,9 @@ export function normalizeCookieSyncOptions(
   if (includeSessionValue !== undefined && !isBoolean(includeSessionValue)) {
     throw new TypeError("syncCookies includeSession must be a boolean.");
   }
+  if (includeSessionValue === true && "path" in source) {
+    throw new TypeError("includeSession is unavailable for explicit cookie paths.");
+  }
   const appBoundValue = untrustedField(value, "windowsAppBound");
   const windowsAppBound = appBoundValue === undefined
     ? "disabled"
