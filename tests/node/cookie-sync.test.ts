@@ -82,7 +82,10 @@ test("explicit Chromium sources read plaintext cookies outside the registry with
   }
   assert.throws(() => normalizeCookieSyncOptions({ source: { browser: "chrome", path: profile } }), /cannot be combined/);
   assert.throws(() => normalizeCookieSyncOptions({ source: { path: "\n" } }), /single-line/);
-  await assert.rejects(extractCookieSync(normalizeCookieSyncOptions({ source: { path: profile }, includeSession: true })), /includeSession/);
+  assert.throws(
+    () => normalizeCookieSyncOptions({ source: { path: profile }, includeSession: true }),
+    /includeSession is unavailable for explicit cookie paths/,
+  );
 });
 
 test("Cookie Sync normalizes source, domains, timeout, and secure defaults", () => {
