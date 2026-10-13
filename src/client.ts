@@ -1361,7 +1361,7 @@ export class BetterWright {
         synced: 0,
         selected: extracted.selected,
         skipped: extracted.skipped,
-        source: extracted.source,
+        source: "path" in extracted.source ? { path: "selected" } : extracted.source,
         target: consentTarget || (this.hostTarget ? "host" : "local"),
         warnings: extracted.warnings,
       };

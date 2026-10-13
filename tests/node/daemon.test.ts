@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
 import {
@@ -355,6 +356,12 @@ test("Cookie Sync crosses the daemon socket as source options, not cookie plaint
     assert.equal(result.synced, 4);
     assert.deepEqual(browser.calls.at(-1), ["syncCookies", options]);
     assert.equal(JSON.stringify(browser.calls.at(-1)).includes('"cookies"'), false);
+    const relative = { source: { path: path.join("profiles", "Default") }, domains: ["example.com"] };
+    assert.equal((await proxy.syncCookies(relative)).ok, true);
+    assert.deepEqual(browser.calls.at(-1), ["syncCookies", {
+      ...relative,
+      source: { path: path.resolve("profiles", "Default") },
+    }]);
     await proxy.close();
   } finally {
     await cleanup();

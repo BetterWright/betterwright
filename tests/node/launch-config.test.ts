@@ -65,6 +65,29 @@ test("environment and explicit constructor options override saved launch default
   }
 });
 
+test("invalid environment values do not reject explicitly supplied constructor options", async () => {
+  const home = makeTempDir("betterwright-launch-explicit-");
+  const invalid = { BETTERWRIGHT_HEADLESS: "maybe", BETTERWRIGHT_AD_BLOCK: "invalid",
+    BETTERWRIGHT_PROFILE: "../escape", BETTERWRIGHT_DOWNLOAD_POLICY: "sometimes" };
+  const previous = Object.fromEntries(Object.keys(invalid).map(key => [key, process.env[key]]));
+  Object.assign(process.env, invalid);
+  try {
+    const browser = new BetterWright({ home, vault: false, headless: true, adBlock: false,
+      profile: "explicit", downloadPolicy: "ask" });
+    assert.equal(browser.headless, true);
+    assert.equal(browser.adBlock, false);
+    assert.equal(browser.profile, "explicit");
+    assert.equal(browser.downloadPolicy, "ask");
+    await browser.close();
+    assert.throws(() => new BetterWright({ home, vault: false, headless: true }), /BETTERWRIGHT_AD_BLOCK/);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test("CLI daemon config includes saved identity, display and download policy in its signature", () => {
   const home = makeTempDir("betterwright-launch-daemon-");
   const file = path.join(home, "config.json");
