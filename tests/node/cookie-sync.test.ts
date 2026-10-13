@@ -66,9 +66,11 @@ test("explicit Chromium sources read plaintext cookies outside the registry with
       samesite INTEGER DEFAULT 1, source_scheme INTEGER DEFAULT 2, source_port INTEGER DEFAULT 443,
       last_update_utc INTEGER DEFAULT 0, has_cross_site_ancestor INTEGER DEFAULT 0);`);
   const expires = (Math.floor(Date.now() / 1000) + 3600 + 11644473600) * 1000000;
-  const insert = db.prepare("INSERT INTO cookies (host_key, name, value, path, expires_utc, is_secure, is_httponly) VALUES (?, ?, ?, '/', ?, 1, 1)");
-  insert.run(".example.com", "auth", "synthetic-token", expires);
-  insert.run("unrelated.test", "other", "synthetic-other", expires);
+  // Do not retain a prepared statement across close: Bun can defer releasing
+  // its SQLite file handle until the statement is collected on Windows.
+  db.exec(`INSERT INTO cookies (host_key, name, value, path, expires_utc, is_secure, is_httponly) VALUES
+    ('.example.com', 'auth', 'synthetic-token', '/', ${expires}, 1, 1),
+    ('unrelated.test', 'other', 'synthetic-other', '/', ${expires}, 1, 1);`);
   db.close();
   const before = fs.readFileSync(cookieFile);
   for (const selected of [profile, cookieFile]) {
