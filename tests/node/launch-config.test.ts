@@ -84,3 +84,54 @@ test("CLI daemon config includes saved identity, display and download policy in 
   assert.equal(headed.browser.headedInvisible, false);
   assert.equal(headed.browser.adBlock, true);
 });
+
+test("explicit SDK settings bypass invalid lower-priority environment values", async () => {
+  const home = makeTempDir("betterwright-launch-invalid-env-");
+  const settings = {
+    BETTERWRIGHT_HEADLESS: "invalid",
+    BETTERWRIGHT_PROFILE: "../invalid",
+    BETTERWRIGHT_AD_BLOCK: "invalid",
+    BETTERWRIGHT_DOWNLOAD_POLICY: "invalid",
+  };
+  const previous = Object.fromEntries(Object.keys(settings).map(key => [key, process.env[key]]));
+  Object.assign(process.env, settings);
+  const explicit = { home, vault: false as const, headless: true, profile: null, adBlock: false, downloadPolicy: "deny" as const };
+  try {
+    const browser = new BetterWright(explicit);
+    const invisible = new BetterWright({ ...explicit, headless: undefined, headedInvisible: true, profile: "valid" });
+    try {
+      assert.equal(browser.headless, true);
+      assert.equal(browser.profile, null);
+      assert.equal(browser.adBlock, false);
+      assert.equal(browser.downloadPolicy, "deny");
+      assert.equal(invisible.headless, false);
+      assert.equal(invisible.headedInvisible, true);
+      assert.equal(invisible.profile, "valid");
+      // Invalid values still fail when the caller actually inherits them.
+      assert.throws(() => new BetterWright({ ...explicit, headless: undefined }), /BETTERWRIGHT_HEADLESS/);
+      assert.throws(() => new BetterWright({ ...explicit, profile: undefined }), /invalid profile/);
+      assert.throws(() => new BetterWright({ ...explicit, adBlock: undefined }), /BETTERWRIGHT_AD_BLOCK/);
+      assert.throws(() => new BetterWright({ ...explicit, downloadPolicy: undefined }), /BETTERWRIGHT_DOWNLOAD_POLICY/);
+    } finally {
+      await browser.close();
+      await invisible.close();
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("explicit CLI flags bypass invalid overridden environment settings", () => {
+  const home = makeTempDir("betterwright-launch-cli-precedence-");
+  const flags = new Set(["--headed", "--no-ad-block", "--profile"]);
+  const config = daemonConfigFromFlags(flags, {
+    home, argv: ["--headed", "--no-ad-block", "--profile", "valid"],
+    env: { BETTERWRIGHT_HEADLESS: "invalid", BETTERWRIGHT_AD_BLOCK: "invalid", BETTERWRIGHT_PROFILE: "../invalid" },
+  });
+  assert.equal(config.headless, false);
+  assert.equal(config.browser.adBlock, false);
+  assert.equal(config.profile, "valid");
+});

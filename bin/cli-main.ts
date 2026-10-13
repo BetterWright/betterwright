@@ -83,7 +83,7 @@ import {
   execTask,
   interruptSession,
 } from "../src/daemon-client.js";
-import { launchOptionsFromEnv } from "../src/launch-config.js";
+import { launchOptionsFromEnv, loadLaunchConfig } from "../src/launch-config.js";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.js";
 import { profileLabel, resolveProfileName } from "../src/profile-name.js";
 // `agentSystemPrompt` comes from the light prompt module, not index.js, which
@@ -287,9 +287,10 @@ function cliProfile(): string | null {
     // and then BETTERWRIGHT_PROFILE, the same variable the MCP server reads,
     // so a host that runs both surfaces acts as one identity in both (and
     // `betterwright view` attaches to the browser its MCP server is driving).
-    const fromEnv = launchOptionsFromEnv().profile;
     cliProfileCache = resolveProfileName(
-      raw === undefined || raw === null ? fromEnv : raw,
+      raw === undefined || raw === null
+        ? String(process.env.BETTERWRIGHT_PROFILE || "").trim() || loadLaunchConfig().profile
+        : raw,
     );
   }
   return cliProfileCache;
@@ -300,8 +301,19 @@ function cliProfile(): string | null {
 // --upstream-proxy chains an egress proxy through the policy guard (the IP
 // layer); --geoip aligns locale and timezone with the egress IP unless
 // --locale/--timezone pin them explicitly.
+function launchOverridesFromFlags(flags, argv = process.argv) {
+  return {
+    headless: flags.has("--headed") || flags.has("--headed-invisible") ? false : undefined,
+    headedInvisible: flags.has("--headed-invisible") ? true : flags.has("--headed") ? false : undefined,
+    adBlock: flags.has("--no-ad-block") ? false : flags.has("--ad-block") ? true : undefined,
+    profile: flagValue(argv, "--profile") ?? undefined,
+    locale: flagValue(argv, "--locale") ?? undefined,
+    timezone: flagValue(argv, "--timezone") ?? undefined,
+  };
+}
+
 function browserOptionsFromFlags(flags, argv = process.argv, home = defaultDaemonHome(), env = process.env) {
-  const launch = launchOptionsFromEnv(home, env);
+  const launch = launchOptionsFromEnv(home, env, launchOverridesFromFlags(flags, argv));
   const options: any = {
     ...launch,
     adBlock: flags.has("--ad-block") || flags.has("--no-ad-block")
@@ -320,9 +332,9 @@ function browserOptionsFromFlags(flags, argv = process.argv, home = defaultDaemo
   return options;
 }
 
-function cliHeadless(flags, home = defaultDaemonHome(), env = process.env): boolean | "auto" {
+function cliHeadless(flags, home = defaultDaemonHome(), env = process.env, argv = process.argv): boolean | "auto" {
   if (flags.has("--headed") || flags.has("--headed-invisible")) return false;
-  return launchOptionsFromEnv(home, env).headless ?? true;
+  return launchOptionsFromEnv(home, env, launchOverridesFromFlags(flags, argv)).headless ?? true;
 }
 
 // --browser / --browser-key / BETTERWRIGHT_CDP_URL: the escape hatch from the
@@ -583,10 +595,10 @@ export function daemonConfigFromFlags(
     browser.provider = expandProviderChoice(browser.provider, { home, env });
   }
   return {
-    headless: cliHeadless(flags, home, env),
+    headless: cliHeadless(flags, home, env, argv),
     // Selects which daemon to talk to (one per profile per home), not merely
     // how it is configured — see connectSessionDaemon.
-    profile: cliProfile() ?? launchOptionsFromEnv(home, env).profile ?? null,
+    profile: resolveProfileName(flagValue(argv, "--profile") ?? browser.profile),
     policy: {
       allowLoopback: !flags.has("--block-loopback"),
       allowPrivateNetwork: !flags.has("--block-private-network"),

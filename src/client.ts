@@ -1361,10 +1361,12 @@ export class BetterWright {
         synced: 0,
         selected: extracted.selected,
         skipped: extracted.skipped,
-        source: extracted.source,
+        source: { ...extracted.source },
         target: consentTarget || (this.hostTarget ? "host" : "local"),
         warnings: extracted.warnings,
       };
+      if (empty.source.path !== undefined) empty.source.path = "selected";
+      if (empty.source.profile !== undefined) empty.source.profile = "selected";
       if (this.hostTarget) empty.cookieImportDomains = [];
       return empty;
     }

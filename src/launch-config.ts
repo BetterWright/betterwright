@@ -47,25 +47,25 @@ export function loadLaunchConfig(home = defaultHome()): LaunchFileConfig {
 }
 
 /** Environment overrides saved defaults; explicit host options come last. */
-export function launchOptionsFromEnv(home = defaultHome(), env = process.env): LaunchFileConfig {
+export function launchOptionsFromEnv(home = defaultHome(), env = process.env, overrides: LaunchFileConfig = {}): LaunchFileConfig {
   const out = loadLaunchConfig(home);
   const headless = String(env.BETTERWRIGHT_HEADLESS || "").trim().toLowerCase();
-  if (headless) {
+  if (headless && overrides.headless === undefined && overrides.headedInvisible !== true) {
     if (!["auto", "1", "true", "yes", "on", "0", "false", "no", "off"].includes(headless)) {
       throw new TypeError('BETTERWRIGHT_HEADLESS must be auto, true, or false.');
     }
     out.headless = headless === "auto" ? "auto" : ["1", "true", "yes", "on"].includes(headless);
     out.headedInvisible = false;
   }
-  if (String(env.BETTERWRIGHT_AD_BLOCK || "").trim()) out.adBlock = resolveAdBlock(undefined, env);
+  if (overrides.adBlock === undefined && String(env.BETTERWRIGHT_AD_BLOCK || "").trim()) out.adBlock = resolveAdBlock(undefined, env);
   const profile = String(env.BETTERWRIGHT_PROFILE || "").trim();
-  if (profile) out.profile = resolveProfileName(profile);
+  if (profile && overrides.profile === undefined) out.profile = resolveProfileName(profile);
   const locale = String(env.BETTERWRIGHT_LOCALE || "").trim();
-  if (locale) out.locale = locale;
+  if (locale && overrides.locale === undefined) out.locale = locale;
   const timezone = String(env.BETTERWRIGHT_TIMEZONE || "").trim();
-  if (timezone) out.timezone = timezone;
+  if (timezone && overrides.timezone === undefined) out.timezone = timezone;
   const policy = String(env.BETTERWRIGHT_DOWNLOAD_POLICY || "").trim().toLowerCase();
-  if (policy) {
+  if (policy && overrides.downloadPolicy === undefined) {
     if (policy !== "ask" && policy !== "allow" && policy !== "deny") {
       throw new TypeError('BETTERWRIGHT_DOWNLOAD_POLICY must be "ask", "allow", or "deny".');
     }
@@ -75,7 +75,7 @@ export function launchOptionsFromEnv(home = defaultHome(), env = process.env): L
 }
 
 export function resolveLaunchOptions(options: BetterWrightOptions): BetterWrightOptions {
-  const defaults = launchOptionsFromEnv(options.home || defaultHome());
+  const defaults = launchOptionsFromEnv(options.home || defaultHome(), process.env, options);
   // A forced display mode must also cancel an inherited off-screen window.
   if (options.headless !== undefined && options.headedInvisible === undefined) defaults.headedInvisible = false;
   return { ...options, ...defaults, ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) };
