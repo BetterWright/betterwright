@@ -39,6 +39,7 @@ import {
 } from "./credential-constants.js";
 import { normalizeDownloadPolicy } from "./downloads.js";
 import { defaultHome } from "./home.js";
+import { resolveLaunchOptions } from "./launch-config.js";
 import { defaultLiveViewListen } from "./live-view.js";
 import { loadLiveViewConfig } from "./live-view-config.js";
 import { NetworkPolicy } from "./policy.js";
@@ -496,6 +497,7 @@ export class BetterWright {
    *   machine on the network. Pass `{host:"127.0.0.1"}` for loopback-only.
    */
   constructor(options: BetterWrightOptions = {}) {
+    options = resolveLaunchOptions(options);
     this.hostTarget = options.hostTarget;
     this.hostUploadFiles = options.hostUploadFiles ?? [];
     if (this.hostTarget && (!isCallable(this.hostTarget.connect) || options.provider != null)) {
@@ -1359,10 +1361,12 @@ export class BetterWright {
         synced: 0,
         selected: extracted.selected,
         skipped: extracted.skipped,
-        source: extracted.source,
+        source: { ...extracted.source },
         target: consentTarget || (this.hostTarget ? "host" : "local"),
         warnings: extracted.warnings,
       };
+      if (empty.source.path !== undefined) empty.source.path = "selected";
+      if (empty.source.profile !== undefined) empty.source.profile = "selected";
       if (this.hostTarget) empty.cookieImportDomains = [];
       return empty;
     }

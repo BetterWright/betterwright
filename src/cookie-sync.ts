@@ -1,6 +1,9 @@
+import fs from "node:fs/promises";
 import { isIP } from "node:net";
+import path from "node:path";
 import { domainToASCII } from "node:url";
-import { cookieReaderError } from "./cookie-reader-error.js";
+import type { CookieSyncSource } from "../types/public.js";
+import { CookieReaderError, cookieReaderError } from "./cookie-reader-error.js";
 
 import {
   isBoolean,
@@ -34,7 +37,7 @@ export interface CookieSyncTargetCookie {
 }
 
 export interface NormalizedCookieSyncOptions {
-  source: { browser: string; profile?: string };
+  source: CookieSyncSource;
   domains?: string[];
   includeSession: boolean;
   windowsAppBound: "disabled" | "injection";
@@ -53,6 +56,7 @@ interface CookieReaderReadOptions {
 interface CookieReaderModule {
   version: () => string;
   read: (options: CookieReaderReadOptions) => Promise<UntrustedValue>;
+  fromPath?: (options: { path: string; timeoutMs: number; appBound: "disabled" | "injection_only" }) => Promise<UntrustedValue>;
   supportedBrowsers: () => Promise<UntrustedValue>;
   browserProfiles: (
     browser: string,
@@ -65,7 +69,7 @@ export interface CookieSyncExtraction {
   selected: number;
   skipped: number;
   warnings: Array<{ code: string; count: number }>;
-  source: { browser: string; profile?: string };
+  source: CookieSyncSource;
 }
 
 function isCookieReaderModule(value: UntrustedValue): value is CookieReaderModule {
@@ -160,20 +164,32 @@ export function normalizeCookieSyncOptions(
   }
   const sourceValue = untrustedField(value, "source");
   if (!isRecord(sourceValue)) {
-    throw new TypeError("syncCookies options require source.browser.");
+    throw new TypeError("syncCookies options require source.browser or source.path.");
   }
-  const browser = cleanText(untrustedField(sourceValue, "browser"), 128).toLowerCase();
-  if (!browser || !/^[a-z0-9][a-z0-9._-]*$/.test(browser)) {
-    throw new TypeError("syncCookies source.browser must be a browser id.");
-  }
-  const source: NormalizedCookieSyncOptions["source"] = { browser };
-  const profileValue = untrustedField(sourceValue, "profile");
-  if (profileValue !== undefined) {
-    const profile = cleanText(profileValue, 4_096);
-    if (!profile || hasAsciiControl(profile)) {
-      throw new TypeError("syncCookies source.profile must be non-empty and single-line.");
+  const pathValue = untrustedField(sourceValue, "path");
+  let source: CookieSyncSource;
+  if (pathValue !== undefined) {
+    if (!isString(pathValue) || !pathValue.trim() || hasAsciiControl(pathValue) || pathValue.length > 4_096) {
+      throw new TypeError("syncCookies source.path must be a non-empty, single-line local path.");
     }
-    source.profile = profile;
+    if (untrustedField(sourceValue, "browser") !== undefined || untrustedField(sourceValue, "profile") !== undefined) {
+      throw new TypeError("syncCookies source.path cannot be combined with browser or profile.");
+    }
+    source = { path: path.resolve(pathValue.trim()) };
+  } else {
+    const browser = cleanText(untrustedField(sourceValue, "browser"), 128).toLowerCase();
+    if (!browser || !/^[a-z0-9][a-z0-9._-]*$/.test(browser)) {
+      throw new TypeError("syncCookies source.browser must be a browser id.");
+    }
+    source = { browser };
+    const profileValue = untrustedField(sourceValue, "profile");
+    if (profileValue !== undefined) {
+      const profile = cleanText(profileValue, 4_096);
+      if (!profile || hasAsciiControl(profile)) {
+        throw new TypeError("syncCookies source.profile must be non-empty and single-line.");
+      }
+      source.profile = profile;
+    }
   }
 
   const domainsValue = untrustedField(value, "domains");
@@ -544,6 +560,27 @@ export async function extractCookieSync(
   let reader: CookieReaderModule;
   let snapshot: UntrustedValue;
   reader = await load();
+  if ("path" in options.source) {
+    if (options.includeSession) throw new TypeError("includeSession is unavailable for explicit cookie paths.");
+    if (!reader.fromPath) throw new Error("Cookie Sync reader has no explicit-path support.");
+    try {
+      let dbPath = options.source.path;
+      if ((await fs.stat(dbPath)).isDirectory()) {
+        const network = path.join(dbPath, "Network", "Cookies");
+        try { await fs.access(network); dbPath = network; }
+        catch { dbPath = path.join(dbPath, "Cookies"); }
+      }
+      snapshot = await reader.fromPath({
+        path: dbPath,
+        timeoutMs: options.timeoutMs,
+        appBound: options.windowsAppBound === "injection" ? "injection_only" : "disabled",
+      });
+    } catch (cause) {
+      // Path jobs have no registry profile to inspect; never rerun discovery.
+      throw new CookieReaderError(cause);
+    }
+    return normalizeCookieSnapshot(snapshot, options);
+  }
   const readOptions: CookieReaderReadOptions = {
     browser: options.source.browser,
     includeSession: options.includeSession,
@@ -588,6 +625,7 @@ export async function listCookieSourceProfiles(
 ): Promise<Array<{ id: string; name: string; isDefault: boolean }>> {
   const normalized = normalizeCookieSyncOptions({ source: { browser }, timeoutMs });
   const source = normalized.source;
+  if (!("browser" in source)) throw new TypeError("A browser id is required to list profiles.");
   const reader = await load();
   let value: UntrustedValue;
   try {

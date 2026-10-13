@@ -12,18 +12,17 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
-import { fromPath } from "rookie-cookies";
 import { WebSocket, WebSocketServer } from "ws";
 import { AD_BLOCK_CACHE_FILE } from "../../dist/src/ad-blocker.js";
 import { saveBrowserFallbacks, saveDefaultBrowser } from "../../dist/src/browser-config.js";
 import { chromiumNeedsSoftwareGpu, managedForkArgs } from "../../dist/src/browser-runtime.js";
 import { guardProxyLaunchArgs } from "../../dist/src/chromium-args.js";
 import { resolveChromiumForkBinary } from "../../dist/src/chromium-fork.js";
-import { normalizeCookieSnapshot, normalizeCookieSyncOptions } from "../../dist/src/cookie-sync.js";
 import { doctorReport } from "../../dist/src/doctor.js";
 import { createGuardProxy } from "../../dist/src/guard-proxy.js";
 import { BetterWright, NetworkPolicy, runAgentTask } from "../../dist/src/index.js";
 import { _createMcpHandlersForTest } from "../../dist/src/mcp-server.js";
+import { createPiExtension } from "../../dist/src/pi-extension.js";
 import { isBoolean, isCallable, isString } from "../../dist/src/untrusted-value.js";
 import { createLocalCredentialVault } from "../../dist/src/vault.js";
 import { makeTempDir } from "./helpers/temp-dir.js";
@@ -4492,11 +4491,10 @@ test("native Cookie Sync reads a live SQLite WAL and authenticates after target 
   });
   const config = { home, headless: true, adBlock: false, vault: false };
   const browser = new BetterWright(config);
-  browser._extractCookieSync = async (options) => normalizeCookieSnapshot(
-    await fromPath({ path: cookieFile, timeoutMs: 10000 }), normalizeCookieSyncOptions(options));
   try {
-    const result = await browser.syncCookies({ source: { browser: "firefox" }, domains: ["127.0.0.1"] });
+    const result = await browser.syncCookies({ source: { path: cookieFile }, domains: ["127.0.0.1"] });
     assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.source, { path: "selected" });
     assert.equal(result.synced, 1);
     assert.equal(JSON.stringify(result).includes(sentinel), false);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM moz_cookies").get().count, 1);
@@ -4511,6 +4509,74 @@ test("native Cookie Sync reads a live SQLite WAL and authenticates after target 
       assert.equal(result.result, "authenticated");
     } finally { await again.close(); }
   } finally { db.close(); await browser.close(); await server.close(); }
+});
+
+test("Pi visibility initializes headless and preserves tabs when the mode stays the same", opts, async () => {
+  const home = tempHome();
+  const tools = new Map<string, any>();
+  const handlers = new Map<string, any>();
+  createPiExtension({ browserOptions: { home, vault: false, adBlock: false }, autoScreenshot: false })({
+    registerTool: tool => tools.set(tool.name, tool),
+    on: (event, handler) => handlers.set(event, handler),
+  });
+  try {
+    const initialized = await tools.get("browser_visibility").execute("init", { mode: "headless" });
+    assert.equal(initialized.details.ok, true, initialized.details.error);
+    assert.equal(initialized.details.restarted, false);
+    await tools.get("browser").execute("page", { code: "await page.setContent('<h1>retained</h1>')" });
+    const same = await tools.get("browser_visibility").execute("same", { mode: "headless" });
+    assert.equal(same.details.restarted, false);
+    const read = await tools.get("browser").execute("read", { code: "return page.locator('h1').innerText()" });
+    assert.equal(JSON.parse(read.content[0].text).result, "retained");
+  } finally {
+    await handlers.get("session_shutdown")();
+    removeBrowserHome(home);
+  }
+});
+
+test("Pi visibility restarts across all display modes while retaining the configured profile and login", {
+  skip: !ready ? opts.skip : process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY ? "headed display unavailable" : false,
+}, async () => {
+  const home = tempHome();
+  fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ launch: { profile: "pi-identity", adBlock: false } }));
+  const server = await listen((_request, response) => {
+    response.setHeader("content-type", "text/html");
+    response.end("<h1>local fixture</h1>");
+  });
+  const tools = new Map<string, any>();
+  const handlers = new Map<string, any>();
+  createPiExtension({ browserOptions: { home, vault: false }, autoScreenshot: false })({
+    registerTool: tool => tools.set(tool.name, tool),
+    on: (event, handler) => handlers.set(event, handler),
+  });
+  try {
+    await tools.get("browser_visibility").execute("init", { mode: "offscreen" });
+    const saved = await tools.get("browser").execute("login", { code:
+      `await page.goto(${JSON.stringify(server.origin)});
+       await page.evaluate(() => { document.cookie = 'synthetic_login=retained; max-age=3600; path=/'; localStorage.setItem('fixture', 'retained'); });
+       await openPage(); return pages.length;` });
+    assert.equal(JSON.parse(saved.content[0].text).ok, true);
+    for (const mode of ["headless", "visible", "offscreen"]) {
+      const changed = await tools.get("browser_visibility").execute("mode", { mode });
+      assert.equal(changed.details.ok, true, changed.details.error);
+      assert.equal(changed.details.restarted, true);
+      assert.equal(changed.details.tabsLost, true);
+      const checked = await tools.get("browser").execute("check", { code:
+        `const count = pages.length; await page.goto(${JSON.stringify(server.origin)});
+         return { count, cookie: await page.evaluate(() => document.cookie), storage: await page.evaluate(() => localStorage.getItem('fixture')) };` });
+      const result = JSON.parse(checked.content[0].text);
+      assert.equal(result.ok, true, result.error);
+      assert.equal(result.result.count, 1);
+      assert.match(result.result.cookie, /synthetic_login=retained/);
+      assert.equal(result.result.storage, "retained");
+    }
+    assert.ok(fs.existsSync(path.join(home, "browser", "profiles", "pi-identity", "Default", "Cookies")) ||
+      fs.existsSync(path.join(home, "browser", "profiles", "pi-identity", "Default", "Network", "Cookies")));
+  } finally {
+    await handlers.get("session_shutdown")();
+    await server.close();
+    removeBrowserHome(home);
+  }
 });
 
 test("Cookie Sync refuses a batch that could evict target cookies", opts, async () => {

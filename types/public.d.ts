@@ -81,12 +81,18 @@ export type BrowserProviderOptions =
   | CloudBrowserProvider
   | ManagedBrowserProvider;
 
-export interface CookieSyncSource {
+export type CookieSyncSource = {
   /** Browser id from `listCookieSourceBrowsers()`, such as `chrome` or `firefox`. */
   browser: string;
   /** Profile id or name from `listCookieSourceProfiles()`. */
   profile?: string;
-}
+  path?: never;
+} | {
+  /** Cookie database file or Chromium profile directory, independent of browser discovery. */
+  path: string;
+  browser?: never;
+  profile?: never;
+};
 
 export interface CookieSyncOptions {
   source: CookieSyncSource;
@@ -113,7 +119,8 @@ export type CookieSyncResult =
       synced: number;
       selected: number;
       skipped: number;
-      source: { browser: string; profile?: string };
+      /** Explicit paths are reported as "selected" to avoid exposing local paths. */
+      source: CookieSyncSource;
       target: string;
       /**
        * Host-owned targets (`hostTarget`) only: deduplicated cookie domains

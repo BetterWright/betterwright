@@ -68,6 +68,10 @@ export interface PiExtensionApiLike {
       },
     ): Promise<UntrustedValue>;
   }): void;
+  registerCommand?(name: string, command: {
+    description: string;
+    handler(args: string, context: { ui: { notify(message: string, type: "info" | "error"): void } }): Promise<void>;
+  }): void;
   on(event: string, handler: (...args: any[]) => UntrustedValue): void;
   getActiveTools?(): string[];
   setActiveTools?(names: string[]): void;
@@ -80,10 +84,11 @@ export type PiExtension = (pi: PiExtensionApiLike) => void;
 export const PI_BROWSER_PARAMETERS: Readonly<object>;
 export const PI_LOGIN_PARAMETERS: Readonly<object>;
 export const PI_EVIDENCE_PARAMETERS: Readonly<object>;
+export const PI_VISIBILITY_PARAMETERS: Readonly<object>;
 
 /**
  * Build the extension `pi install npm:betterwright` loads: registers
- * `browser`, `browser_download`, `browser_evidence`, and `browser_login`
+ * `browser`, `browser_download`, `browser_evidence`, `browser_visibility`, and `browser_login`
  * (the last only when the vault is enabled), keeps one browser session
  * alive, and appends the operator guidance to the system prompt.
  * See SETUP.md §2.

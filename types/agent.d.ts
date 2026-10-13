@@ -2,6 +2,7 @@ import type { BetterWright } from "./client.js";
 import type { CredentialVault } from "./common.js";
 import type { NetworkPolicy } from "./policy.js";
 import type { Guardrails } from "./prompt.js";
+import type { BetterWrightOptions } from "./public.js";
 import type { UntrustedValue } from "./untrusted-value.js";
 
 /** Per-request auth an OAuth adapter resolves before each model call. */
@@ -75,7 +76,8 @@ export interface AgentPhaseEvent {
   tools?: string[];
 }
 
-export interface RunAgentTaskOptions {
+export interface RunAgentTaskOptions extends Pick<BetterWrightOptions,
+  "home" | "headedInvisible" | "locale" | "timezone" | "downloadPolicy"> {
   task: string;
   model?: string | AgentModel;
   modelOptions?: Record<string, UntrustedValue>;
@@ -87,7 +89,7 @@ export interface RunAgentTaskOptions {
    * browser this call creates. Ignored when `browser` is supplied, since that
    * browser already has a profile.
    */
-  profile?: string;
+  profile?: string | null;
   headless?: boolean | "auto";
   /** Ad/tracker blocking for a browser this call creates (default on). */
   adBlock?: boolean;

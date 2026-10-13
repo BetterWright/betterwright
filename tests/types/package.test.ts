@@ -125,9 +125,12 @@ const cookieSyncOptions: CookieSyncOptions = {
   windowsAppBound: "disabled",
 };
 const cookieSync: Promise<CookieSyncResult> = browser.syncCookies(cookieSyncOptions);
+const pathCookieSync: Promise<CookieSyncResult> = browser.syncCookies({ source: { path: "/tmp/helium/Default" } });
+// @ts-expect-error A source is either a registered browser or an explicit path.
+const invalidCookieSource: CookieSyncOptions = { source: { path: "/tmp/Cookies", browser: "chrome" } };
 const cookieBrowsers = listCookieSourceBrowsers();
 const cookieProfiles = listCookieSourceProfiles("chrome", { timeoutMs: 10_000 });
-void [cookieSync, cookieBrowsers, cookieProfiles];
+void [cookieSync, pathCookieSync, invalidCookieSource, cookieBrowsers, cookieProfiles];
 const run: Promise<RunResult<{ title: string }>> = browser.run<{ title: string }>(
   "return { title: await page.title() }",
   { session: "docs", note: "Reading the page" },
@@ -195,6 +198,11 @@ const endpointModels: Promise<{
 const openRouterBaseURL: string | null =
   MODEL_ENDPOINT_PRESETS.openrouter.baseURL;
 const agentResult: Promise<AgentResult> = runAgentTask({
+  home: "/tmp/betterwright-agent-types",
+  headedInvisible: false,
+  locale: "en-US",
+  timezone: "UTC",
+  downloadPolicy: "deny",
   task: "read the page title",
   model: customModel,
   maxDurationMs: 120_000,

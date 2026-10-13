@@ -312,6 +312,7 @@ interface NormalizedDaemonPolicy {
 
 interface NormalizedDaemonBrowser {
   adBlock: boolean;
+  downloadPolicy?: "ask" | "allow" | "deny";
   launchIdentity: boolean;
   upstreamProxy: string | null;
   geoip: boolean;
@@ -330,7 +331,7 @@ interface NormalizedDaemonBrowser {
 // signature JSON (the signature is compared byte-wise).
 export interface NormalizedDaemonConfig {
   protocol: number;
-  headless: boolean;
+  headless: boolean | "auto";
   profile?: string;
   policy?: NormalizedDaemonPolicy;
   browser?: NormalizedDaemonBrowser;
@@ -344,7 +345,7 @@ export function normalizeDaemonConfig(config: any = {}): NormalizedDaemonConfig 
   const profile = resolveProfileName(config.profile);
   const normalized: NormalizedDaemonConfig = {
     protocol: DAEMON_PROTOCOL,
-    headless: config.headless !== false,
+    headless: config.headless === "auto" ? "auto" : config.headless !== false,
   };
   // A daemon serves exactly one profile (it owns one browser), and the
   // socket is already keyed by profile — but keep it in the signature too so
@@ -389,6 +390,13 @@ export function normalizeDaemonConfig(config: any = {}): NormalizedDaemonConfig 
         .filter((note) => note.trim());
     })(),
   };
+  const downloadPolicy = untrustedField(browser, "downloadPolicy");
+  if (downloadPolicy !== undefined) {
+    if (downloadPolicy !== "ask" && downloadPolicy !== "allow" && downloadPolicy !== "deny") {
+      throw new TypeError('downloadPolicy must be "ask", "allow", or "deny".');
+    }
+    normalized.browser.downloadPolicy = downloadPolicy;
+  }
   // Include both modes in the signature: a pre-blocker daemon must not be
   // silently reused when the default now requires blocking.
   return normalized;
@@ -459,7 +467,8 @@ export async function createBrowserFromDaemonConfig(config) {
     platform: normalized.browser.platform || undefined,
     stealthRuntimeFix: normalized.browser.stealthRuntimeFix || undefined,
   };
-  if (normalized.profile) options.profile = normalized.profile;
+  options.profile = normalized.profile ?? null;
+  if (normalized.browser.downloadPolicy) options.downloadPolicy = normalized.browser.downloadPolicy;
   if (normalized.browser.provider) {
     // Assigned only when present: BetterWright treats a `provider` KEY on its
     // options — even a nullish one — as an explicit choice (Object.hasOwn)

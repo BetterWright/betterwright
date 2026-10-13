@@ -12,12 +12,47 @@ A handful of `BETTERWRIGHT_*` names exist only for the build and test harness
 overrides used by development and CI. They are not supported configuration and
 are not listed below.
 
+## Saved launch defaults
+
+Every host (SDK, CLI, MCP, and Pi) reads the `launch` section of
+`$BETTERWRIGHT_HOME/config.json` when constructing a browser. For example:
+
+```json
+{
+  "launch": {
+    "headless": true,
+    "profile": "research",
+    "adBlock": true,
+    "locale": "en-US",
+    "timezone": "America/New_York",
+    "downloadPolicy": "ask"
+  }
+}
+```
+
+The allowed keys are `headless` (boolean or `"auto"`), `headedInvisible`
+(boolean), `profile` (valid profile name or `null` for the shared profile),
+`adBlock` (boolean), `locale` (BCP 47), `timezone` (IANA), and
+`downloadPolicy` (`"ask"`, `"allow"`, or `"deny"`). Unknown and invalid saved
+values are ignored. Other sections, such as `browser` and `liveView`, keep
+their existing meaning. Network policy, provider credentials, and arbitrary
+constructor options are not accepted in `launch`.
+
+Explicit constructor options and CLI flags override environment variables;
+environment variables override saved defaults. Omitting a setting preserves
+the host's existing default: the CLI starts headless, and the SDK, MCP, and Pi
+use automatic display detection. `headedInvisible: true` forces a headed
+window parked off-screen; an explicit `headless` option or
+`BETTERWRIGHT_HEADLESS` cancels an inherited off-screen setting. Changes apply
+to newly constructed browsers. Close a running CLI daemon before applying
+changed launch defaults.
+
 ## Home, sessions, and the daemon
 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `BETTERWRIGHT_HOME` | `~/.betterwright` | State directory: profiles, vault, artifacts, daemon sockets, `config.json` |
-| `BETTERWRIGHT_PROFILE` | unset | Select a named identity for a whole shell; `--profile` wins. The only way to pick a profile for the MCP server |
+| `BETTERWRIGHT_PROFILE` | unset | Select a named identity across all hosts; an explicit `profile` option or `--profile` wins |
 | `BETTERWRIGHT_SESSION_TTL_SECONDS` | `900` | Idle time before a session's pages close |
 | `BETTERWRIGHT_ORPHAN_GRACE_SECONDS` | `30` | Grace period before the daemon stops a run whose watcher disappeared; `0` lets detached runs finish |
 | `BETTERWRIGHT_NO_DAEMON` | unset | `1` forces one-shot browsers, skipping the session daemon entirely |
@@ -43,10 +78,10 @@ fallback browser that no longer exists. See
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `BETTERWRIGHT_HEADLESS` | unset | MCP only: `0` requests a visible window, `1` forces headless |
+| `BETTERWRIGHT_HEADLESS` | unset | Across all hosts: `0` requests a visible window, `1` forces headless, `auto` uses display detection |
 | `BETTERWRIGHT_DISPLAY` | detected | `1` forces headed-capable detection, `0` forces headless |
-| `BETTERWRIGHT_LOCALE` | unset | Browser locale (BCP 47) for the MCP server; the CLI uses `--locale` |
-| `BETTERWRIGHT_TIMEZONE` | unset | Browser timezone (IANA) for the MCP server; the CLI uses `--timezone` |
+| `BETTERWRIGHT_LOCALE` | unset | Browser locale (BCP 47) across all hosts; `locale` or `--locale` wins |
+| `BETTERWRIGHT_TIMEZONE` | unset | Browser timezone (IANA) across all hosts; `timezone` or `--timezone` wins |
 
 Identity must match egress geography; see
 [launch-identity.md](launch-identity.md) and

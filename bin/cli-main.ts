@@ -83,6 +83,7 @@ import {
   execTask,
   interruptSession,
 } from "../src/daemon-client.js";
+import { launchOptionsFromEnv, loadLaunchConfig } from "../src/launch-config.js";
 import { defaultLiveViewListen, guessLanHost } from "../src/live-view.js";
 import { profileLabel, resolveProfileName } from "../src/profile-name.js";
 // `agentSystemPrompt` comes from the light prompt module, not index.js, which
@@ -255,13 +256,14 @@ async function policyFromFlags(flags) {
 }
 
 /** Construct a local (non-daemon) BetterWright, loading the stack on demand. */
-async function makeBrowser(flags, { headless }: any = {}) {
+async function makeBrowser(flags, { headless, headedInvisible }: any = {}) {
   const { BetterWright, NetworkPolicy } = await browserModule();
   const options: BetterWrightOptions = {
     policy: new NetworkPolicy(policyOptionsFromFlags(flags)),
-    headless: headless ?? !flags.has("--headed"),
     ...browserOptionsFromFlags(flags),
+    headless: headless ?? cliHeadless(flags),
   };
+  if (headedInvisible !== undefined) options.headedInvisible = headedInvisible;
   const profile = cliProfile();
   if (profile) options.profile = profile;
   return new BetterWright(options);
@@ -285,9 +287,10 @@ function cliProfile(): string | null {
     // and then BETTERWRIGHT_PROFILE, the same variable the MCP server reads,
     // so a host that runs both surfaces acts as one identity in both (and
     // `betterwright view` attaches to the browser its MCP server is driving).
-    const fromEnv = String(process.env.BETTERWRIGHT_PROFILE || "").trim() || undefined;
     cliProfileCache = resolveProfileName(
-      raw === undefined || raw === null ? fromEnv : raw,
+      raw === undefined || raw === null
+        ? String(process.env.BETTERWRIGHT_PROFILE || "").trim() || loadLaunchConfig().profile
+        : raw,
     );
   }
   return cliProfileCache;
@@ -298,21 +301,40 @@ function cliProfile(): string | null {
 // --upstream-proxy chains an egress proxy through the policy guard (the IP
 // layer); --geoip aligns locale and timezone with the egress IP unless
 // --locale/--timezone pin them explicitly.
-function browserOptionsFromFlags(flags, argv = process.argv) {
+function launchOverridesFromFlags(flags, argv = process.argv) {
+  return {
+    headless: flags.has("--headed") || flags.has("--headed-invisible") ? false : undefined,
+    headedInvisible: flags.has("--headed-invisible") ? true : flags.has("--headed") ? false : undefined,
+    adBlock: flags.has("--no-ad-block") ? false : flags.has("--ad-block") ? true : undefined,
+    profile: flagValue(argv, "--profile") ?? undefined,
+    locale: flagValue(argv, "--locale") ?? undefined,
+    timezone: flagValue(argv, "--timezone") ?? undefined,
+  };
+}
+
+function browserOptionsFromFlags(flags, argv = process.argv, home = defaultDaemonHome(), env = process.env) {
+  const launch = launchOptionsFromEnv(home, env, launchOverridesFromFlags(flags, argv));
   const options: any = {
-    adBlock: adBlockFromFlags(flags),
+    ...launch,
+    adBlock: flags.has("--ad-block") || flags.has("--no-ad-block")
+      ? adBlockFromFlags(flags, env) : launch.adBlock,
     launchIdentity: !flags.has("--no-launch-identity"),
     upstreamProxy: flagValue(argv, "--upstream-proxy") || undefined,
     geoip: flags.has("--geoip"),
-    locale: flagValue(argv, "--locale") || undefined,
-    timezone: flagValue(argv, "--timezone") || undefined,
-    headedInvisible: flags.has("--headed-invisible"),
+    locale: flagValue(argv, "--locale") || launch.locale,
+    timezone: flagValue(argv, "--timezone") || launch.timezone,
+    headedInvisible: flags.has("--headed-invisible") || (!flags.has("--headed") && launch.headedInvisible === true),
     platform: flagValue(argv, "--platform") || undefined,
     stealthRuntimeFix: flags.has("--stealth") || undefined,
   };
   const provider = providerFromFlags(flags, argv);
   if (provider) options.provider = provider;
   return options;
+}
+
+function cliHeadless(flags, home = defaultDaemonHome(), env = process.env, argv = process.argv): boolean | "auto" {
+  if (flags.has("--headed") || flags.has("--headed-invisible")) return false;
+  return launchOptionsFromEnv(home, env, launchOverridesFromFlags(flags, argv)).headless ?? true;
 }
 
 // --browser / --browser-key / BETTERWRIGHT_CDP_URL: the escape hatch from the
@@ -548,7 +570,7 @@ export function daemonConfigFromFlags(
   flags,
   { argv = process.argv, home = defaultDaemonHome(), env = process.env }: any = {},
 ) {
-  const browser = browserOptionsFromFlags(flags, argv);
+  const browser = browserOptionsFromFlags(flags, argv, home, env);
   if (browser.provider === undefined) {
     // The daemon's BetterWright resolves this same ladder at construction —
     // env shorthand, then the persisted default and its fallbacks. Baking the
@@ -573,10 +595,10 @@ export function daemonConfigFromFlags(
     browser.provider = expandProviderChoice(browser.provider, { home, env });
   }
   return {
-    headless: !flags.has("--headed"),
+    headless: cliHeadless(flags, home, env, argv),
     // Selects which daemon to talk to (one per profile per home), not merely
     // how it is configured — see connectSessionDaemon.
-    profile: cliProfile(),
+    profile: resolveProfileName(flagValue(argv, "--profile") ?? browser.profile),
     policy: {
       allowLoopback: !flags.has("--block-loopback"),
       allowPrivateNetwork: !flags.has("--block-private-network"),
@@ -718,8 +740,9 @@ async function cmdCookies(tokens, flags) {
       }
       return 0;
     }
-    if (action !== "sync" || !browser || extra.length) {
-      return printFailure("Usage: betterwright cookies sync <browser> (--domain <host>... | --all)");
+    const sourcePath = cookieFlagValue(tokens, "--source-path");
+    if (action !== "sync" || Boolean(browser) === Boolean(sourcePath) || extra.length) {
+      return printFailure("Usage: betterwright cookies sync (<browser> | --source-path <path>) (--domain <host>... | --all)");
     }
 
     const domains = cookieFlagValues(tokens, "--domain");
@@ -729,7 +752,8 @@ async function cmdCookies(tokens, flags) {
     }
     const sourceProfile = cookieFlagValue(tokens, "--source-profile");
     const cloudConsent = cookieFlagValue(tokens, "--allow-cloud");
-    const source = { browser, profile: sourceProfile || undefined };
+    if (sourcePath && sourceProfile) return printFailure("--source-path cannot be combined with --source-profile.");
+    const source = sourcePath ? { path: sourcePath } : { browser, profile: sourceProfile || undefined };
     const options: any = {
       source,
       includeSession: flags.has("--include-session"),
@@ -765,7 +789,7 @@ async function cmdCookies(tokens, flags) {
       if (json) console.log(JSON.stringify(printable, null, 2));
       else if (result.ok) {
         console.log(
-          `Synced ${result.synced} cookie${result.synced === 1 ? "" : "s"} from ${browser} into ${result.target}.`,
+          `Synced ${result.synced} cookie${result.synced === 1 ? "" : "s"} from ${browser || "the selected path"} into ${result.target}.`,
         );
         if (result.skipped) console.log(`Skipped ${result.skipped} cookie rows.`);
         for (const warning of result.warnings || []) {
@@ -1137,9 +1161,10 @@ async function cmdInteractive(flags) {
   const session = flagValue(argv, "--session", "default");
   // Mutable so `/headed` and `/headless` can switch it (each recreates the
   // browser, since headless is fixed at construction).
-  let headless = !flags.has("--headed");
+  let headless = cliHeadless(flags);
+  let headedInvisible = browserOptionsFromFlags(flags).headedInvisible;
 
-  const newBrowser = () => makeBrowser(flags, { headless });
+  const newBrowser = () => makeBrowser(flags, { headless, headedInvisible });
   // Mutable: process --live-view starts a viewer at boot; `/live` enables the
   // same path mid-session so /new /headed /headless re-open it after replace.
   let interactiveLiveView = liveViewCliOptions(argv);
@@ -1401,7 +1426,7 @@ async function cmdInteractive(flags) {
         }
         if (cmd === "headed" || cmd === "headless") {
           const wantHeadless = cmd === "headless";
-          if (wantHeadless === headless) {
+          if (wantHeadless === headless && !headedInvisible) {
             console.log(dim(`already ${headless ? "headless" : "headed"}`));
             continue;
           }
@@ -1409,6 +1434,7 @@ async function cmdInteractive(flags) {
           // on-disk profile (logins/cookies) and the conversation carry over;
           // open tabs do not.
           headless = wantHeadless;
+          headedInvisible = false;
           await browsers.replace();
           console.log(dim(`switched to ${headless ? "headless" : "headed"} (fresh browser; you stay signed in)`));
           continue;
@@ -1737,8 +1763,8 @@ async function cmdExec(flags) {
         session,
         history,
         policy,
-        headless: !flags.has("--headed"),
-        adBlock: adBlockFromFlags(flags),
+        ...browserOptionsFromFlags(flags),
+        headless: cliHeadless(flags),
         liveView: liveViewCliOptions(argv),
         onStep,
         onPhase: (event) => spinner.setLabel(phaseLabel(event)),
@@ -2394,7 +2420,7 @@ export async function runCli() {
       const { runMcpServer } = await import("../src/mcp-server.js");
       await runMcpServer({
         ...process.env,
-        BETTERWRIGHT_AD_BLOCK: adBlockFromFlags(flags) ? "1" : "0",
+        BETTERWRIGHT_AD_BLOCK: (browserOptionsFromFlags(flags).adBlock ?? true) ? "1" : "0",
       });
       return 0;
     }

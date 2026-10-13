@@ -14,17 +14,23 @@ class FakePi {
   tools: Map<string, any>;
   handlers: Map<string, any>;
   messages: any[];
+  commands: Map<string, any>;
   activeTools: string[];
 
   constructor() {
     this.tools = new Map();
     this.handlers = new Map();
     this.messages = [];
+    this.commands = new Map();
     this.activeTools = ["read", "browser", "browser_download", "browser_evidence"];
   }
 
   registerTool(tool) {
     this.tools.set(tool.name, tool);
+  }
+
+  registerCommand(name, command) {
+    this.commands.set(name, command);
   }
 
   on(event, handler) {
@@ -43,6 +49,25 @@ class FakePi {
     this.messages.push({ message, options });
   }
 }
+
+test("Pi visibility rejects invalid modes, identity options and changes to host-supplied browsers", async () => {
+  const browser = new FakeBrowser();
+  const pi = new FakePi();
+  createPiExtension({ browser })(pi);
+  const tool = pi.tools.get("browser_visibility");
+  assert.deepEqual(tool.parameters.properties.mode.enum, ["visible", "headless", "offscreen"]);
+  assert.equal(tool.parameters.additionalProperties, false);
+  assert.ok(pi.commands.has("browser-visibility"));
+  await assert.rejects(tool.execute("invalid", { mode: "auto" }), /mode must be/);
+  await assert.rejects(tool.execute("identity", { mode: "headless", profile: "other" }), /only mode/);
+  await assert.rejects(tool.execute("host", { mode: "headless" }), /changed by its host/);
+  assert.equal(browser.closeCount, 0);
+  assert.equal(browser.calls.length, 0);
+  const remote = new FakePi();
+  createPiExtension({ browserOptions: { vault: false, provider: { cdpUrl: "ws://127.0.0.1:1" } } })(remote);
+  await assert.rejects(remote.tools.get("browser_visibility").execute("remote", { mode: "headless" }), /locally launched/);
+  await remote.handlers.get("session_shutdown")();
+});
 
 class FakeBrowser {
   calls: any[];
@@ -150,6 +175,7 @@ test("native Pi extension registers persistent tools and records its supplied st
     })(pi);
 
     assert.deepEqual([...pi.tools.keys()], [
+      "browser_visibility",
       "browser",
       "browser_login",
       "browser_evidence",
