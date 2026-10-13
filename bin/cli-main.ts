@@ -2267,9 +2267,11 @@ export async function runCli() {
     } catch (error) {
       // Name where the bad value came from: an MCP host debugging a server
       // that will not start needs to know it is the environment, not a flag.
-      const source =
-        flagValue(process.argv, "--profile") === undefined ? "BETTERWRIGHT_PROFILE" : "--profile";
-      console.error(`${source}: ${error?.message || error}`);
+      // Launch-default errors already name their variable.
+      const message = String(error?.message || error);
+      const source = /^BETTERWRIGHT_[A-Z_]+ /.test(message) ? ""
+        : `${flagValue(process.argv, "--profile") === undefined ? "BETTERWRIGHT_PROFILE" : "--profile"}: `;
+      console.error(`${source}${message}`);
       return 1;
     }
   }
