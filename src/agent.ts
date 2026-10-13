@@ -725,11 +725,16 @@ export async function runAgentTask(options: RunAgentTaskOptions) {
   let browser = options.browser;
   if (!browser) {
     const ownedBrowserOptions: BetterWrightOptions = {
+      home: options.home,
       policy: options.policy || new NetworkPolicy(),
       headless: options.headless,
+      headedInvisible: options.headedInvisible,
       adBlock: options.adBlock,
+      locale: options.locale,
+      timezone: options.timezone,
+      downloadPolicy: options.downloadPolicy,
     };
-    if (options.profile) ownedBrowserOptions.profile = options.profile;
+    if (options.profile !== undefined) ownedBrowserOptions.profile = options.profile;
     // `vault: undefined` and an absent vault mean different things to the
     // constructor (explicit override vs built-in default), so mirror the key's
     // presence, not just its value.

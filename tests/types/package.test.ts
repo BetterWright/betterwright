@@ -198,6 +198,11 @@ const endpointModels: Promise<{
 const openRouterBaseURL: string | null =
   MODEL_ENDPOINT_PRESETS.openrouter.baseURL;
 const agentResult: Promise<AgentResult> = runAgentTask({
+  home: "/tmp/betterwright-agent-types",
+  headedInvisible: false,
+  locale: "en-US",
+  timezone: "UTC",
+  downloadPolicy: "deny",
   task: "read the page title",
   model: customModel,
   maxDurationMs: 120_000,

@@ -144,6 +144,15 @@ function scriptedModel(responses) {
   };
 }
 
+test("owned agent browsers validate forwarded launch settings before calling the model", async () => {
+  const model = scriptedModel([]);
+  await assert.rejects(runAgentTask({
+    task: "read a page", model, home: makeTempDir("betterwright-agent-launch-"),
+    downloadPolicy: "sometimes", vault: false,
+  }), /downloadPolicy must be/);
+  assert.equal(model.seen.length, 0);
+});
+
 test("runAgentTask drives browser then finishes on done", async () => {
   const browser = fakeBrowser({
     runs: [{ ok: true, result: "HN", artifacts: [{ kind: "proof", path: "/tmp/p.png" }], durationMs: 9 }],
