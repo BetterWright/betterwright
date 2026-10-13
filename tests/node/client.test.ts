@@ -373,6 +373,24 @@ test("the worker rechecks Cookie Sync consent before opening a remote CDP target
   }
 });
 
+test("an empty Cookie Sync result does not echo an explicit source path", async () => {
+  const hostTarget = {
+    connect: async () => ({ provider: { cdpUrl: "ws://127.0.0.1:9/devtools/browser/unreachable" }, close: async () => {} }),
+  };
+  const browser = new BetterWright({ hostTarget, vault: false });
+  browser._extractCookieSync = async (normalized) => ({
+    cookies: [], selected: 0, skipped: 1, warnings: [], source: { ...normalized.source },
+  });
+  try {
+    const empty = await browser.syncCookies({ source: { path: "/private/fixture/Cookies" }, domains: ["example.test"] });
+    assert.equal(empty.ok, true);
+    assert.deepEqual(empty.source, { path: "selected" });
+    assert.equal(JSON.stringify(empty).includes("/private/fixture"), false);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("Cookie Sync to a host-owned target needs no cloud consent and reports the granted domains", async () => {
   const hostTarget = {
     connect: async () => ({ provider: { cdpUrl: "ws://127.0.0.1:9/devtools/browser/unreachable" }, close: async () => {} }),
