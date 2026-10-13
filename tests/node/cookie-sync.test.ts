@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-
 import {
   COOKIE_SYNC_MAX_COOKIES,
   extractCookieSync,
@@ -10,6 +12,7 @@ import {
   normalizeCookieSyncOptions,
   validateCookieSyncTargetCookies,
 } from "../../dist/src/cookie-sync.js";
+import { makeTempDir } from "./helpers/temp-dir.js";
 
 function detailed(cookie: any = {}, context: any = {}) {
   return {
@@ -49,6 +52,36 @@ function reader(snapshot: any, calls: any[] = []) {
     browserProfiles: async () => [],
   };
 }
+
+test("explicit Chromium sources read plaintext cookies outside the registry without changing the source", async () => {
+  const profile = makeTempDir("betterwright-cookie-path-");
+  const cookieFile = path.join(profile, "Cookies");
+  const db = new DatabaseSync(cookieFile);
+  db.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+    INSERT INTO meta VALUES ('version', '24');
+    CREATE TABLE cookies (creation_utc INTEGER, host_key TEXT, top_frame_site_key TEXT DEFAULT '',
+      name TEXT, value TEXT, encrypted_value BLOB DEFAULT X'', path TEXT, expires_utc INTEGER,
+      is_secure INTEGER, is_httponly INTEGER, last_access_utc INTEGER DEFAULT 0,
+      has_expires INTEGER DEFAULT 1, is_persistent INTEGER DEFAULT 1, priority INTEGER DEFAULT 1,
+      samesite INTEGER DEFAULT 1, source_scheme INTEGER DEFAULT 2, source_port INTEGER DEFAULT 443,
+      last_update_utc INTEGER DEFAULT 0, has_cross_site_ancestor INTEGER DEFAULT 0);`);
+  const expires = (Math.floor(Date.now() / 1000) + 3600 + 11644473600) * 1000000;
+  const insert = db.prepare("INSERT INTO cookies (host_key, name, value, path, expires_utc, is_secure, is_httponly) VALUES (?, ?, ?, '/', ?, 1, 1)");
+  insert.run(".example.com", "auth", "synthetic-token", expires);
+  insert.run("unrelated.test", "other", "synthetic-other", expires);
+  db.close();
+  const before = fs.readFileSync(cookieFile);
+  for (const selected of [profile, cookieFile]) {
+    const result = await extractCookieSync(normalizeCookieSyncOptions({ source: { path: selected }, domains: ["app.example.com"] }));
+    assert.equal(result.selected, 1);
+    assert.equal(result.cookies[0].name, "auth");
+    assert.equal(result.cookies[0].value, "synthetic-token");
+    assert.deepEqual(fs.readFileSync(cookieFile), before);
+  }
+  assert.throws(() => normalizeCookieSyncOptions({ source: { browser: "chrome", path: profile } }), /cannot be combined/);
+  assert.throws(() => normalizeCookieSyncOptions({ source: { path: "\n" } }), /single-line/);
+  await assert.rejects(extractCookieSync(normalizeCookieSyncOptions({ source: { path: profile }, includeSession: true })), /includeSession/);
+});
 
 test("Cookie Sync normalizes source, domains, timeout, and secure defaults", () => {
   const options = normalizeCookieSyncOptions({

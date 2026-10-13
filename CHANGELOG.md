@@ -9,7 +9,26 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.8.9] - 2026-10-12
+
+### Added
+
+- Cookie Sync accepts `source: { path }` and CLI `--source-path` for cookie
+  databases or Chromium profile directories outside the reader registry.
+  Domain filtering, source preservation, secure transfer limits, and target
+  verification remain in effect. (#230)
+- Pi exposes `browser_visibility` and `/browser-visibility` for visible,
+  headless, and off-screen headed sessions. Mode changes report a restart and
+  lost tabs while preserving the configured profile's cookies and storage. (#231)
+- Every host reads validated launch defaults from the home `config.json`:
+  display mode, profile, ad blocking, locale, timezone, and download policy.
+  Explicit options override environment variables, which override saved
+  defaults. CLI daemon signatures include effective launch settings. (#232)
+
 ### Changed
+
+- Update the SHA-pinned `actions/upload-artifact` to 7.0.2 and
+  `actions/setup-node` to 7.1.0. (#233, #234)
 
 - The browser worker delegates realm handling, live view, artifacts and
   recording, snapshots, trusted input, site tools, and CAPTCHA operations to
@@ -1833,7 +1852,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.8...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.9...HEAD
+[2.8.9]: https://github.com/BetterWright/betterwright/compare/v2.8.8...v2.8.9
 [2.8.8]: https://github.com/BetterWright/betterwright/compare/v2.8.7...v2.8.8
 [2.8.7]: https://github.com/BetterWright/betterwright/compare/v2.8.6...v2.8.7
 [2.8.6]: https://github.com/BetterWright/betterwright/compare/v2.8.5...v2.8.6

@@ -140,7 +140,8 @@ let profileWarning = "";
 let cookieSyncActive = false;
 
 interface CookieSyncResultSource {
-  browser: string;
+  browser?: string;
+  path?: string;
   profile?: string;
 }
 interface CookieSyncSuccessResult {
@@ -2362,9 +2363,14 @@ async function cookieSync(message) {
       : 0;
     const source: CookieSyncResultSource = { browser: "" };
     if (isObjectValue(message.source)) {
-      source.browser = String(untrustedField(message.source, "browser") || "").slice(0, 128);
-      if (isString(untrustedField(message.source, "profile"))) {
-        source.profile = "selected";
+      if (isString(untrustedField(message.source, "path"))) {
+        delete source.browser;
+        source.path = "selected";
+      } else {
+        source.browser = String(untrustedField(message.source, "browser") || "").slice(0, 128);
+        if (isString(untrustedField(message.source, "profile"))) {
+          source.profile = "selected";
+        }
       }
     }
     const result: CookieSyncSuccessResult = {

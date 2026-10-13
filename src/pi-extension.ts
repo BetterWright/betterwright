@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-
+import { providerResolutionPlans, resolveBrowserProvider } from "./browser-providers.js";
 import { BetterWright } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
 import {
@@ -10,13 +10,14 @@ import {
 } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
 import { piBrowserToolParameters, piLoginToolParameters } from "./tool-schemas.js";
-import { isCallable, isNumber, type UntrustedValue } from "./untrusted-value.js";
+import { isCallable, isNumber, isRecord, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 const BROWSER_TOOL_NAMES = new Set([
   "browser",
   "browser_download",
   "browser_evidence",
   "browser_login",
+  "browser_visibility",
 ]);
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
@@ -28,6 +29,15 @@ const WEB_PROTOCOLS = new Set(["http:", "https:"]);
 export const PI_BROWSER_PARAMETERS = piBrowserToolParameters();
 
 export const PI_LOGIN_PARAMETERS = piLoginToolParameters();
+
+export const PI_VISIBILITY_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    mode: { type: "string", enum: ["visible", "headless", "offscreen"] },
+  },
+  required: ["mode"],
+};
 
 export const PI_EVIDENCE_PARAMETERS = {
   type: "object",
@@ -145,8 +155,8 @@ function resolvedBrowserOptions(options) {
     .trim()
     .toLowerCase();
   const resolved = { ...(options || {}) };
-  if (timeout) resolved.defaultTimeout = timeout;
-  if (downloadPolicy) resolved.downloadPolicy = downloadPolicy;
+  if (timeout && resolved.defaultTimeout === undefined) resolved.defaultTimeout = timeout;
+  if (downloadPolicy && resolved.downloadPolicy === undefined) resolved.downloadPolicy = downloadPolicy;
   return resolved;
 }
 
@@ -432,6 +442,13 @@ export function createPiExtension(options: any = {}) {
       options.startUrl ?? process.env.BETTERWRIGHT_PI_START_URL,
     );
     let browser = options.browser || null;
+    let visibilityOptions = {};
+    let operationTail = Promise.resolve();
+    function serializeOperation<T>(operation: () => Promise<T>): Promise<T> {
+      const result = operationTail.then(operation);
+      operationTail = result.then(() => undefined, () => undefined);
+      return result;
+    }
     let startPromise = null;
     let pendingStartWarning = "";
     let stepCount = 0;
@@ -492,7 +509,7 @@ export function createPiExtension(options: any = {}) {
 
     async function getBrowser() {
       if (!browser)
-        browser = new BetterWright(resolvedBrowserOptions(options.browserOptions));
+        browser = new BetterWright({ ...resolvedBrowserOptions(options.browserOptions), ...visibilityOptions });
       if (startUrl && !startPromise) {
         startPromise = browser
           .run(
@@ -527,6 +544,74 @@ export function createPiExtension(options: any = {}) {
       }
       if (startPromise) await startPromise;
       return browser;
+    }
+
+    async function setVisibility(params, signal) {
+      if (signal?.aborted) throw new Error("Browser visibility change cancelled.");
+      if (!isRecord(params) || Object.keys(params).some(key => key !== "mode")) {
+        throw new TypeError("browser_visibility accepts only mode.");
+      }
+      const mode = untrustedField(params, "mode");
+      if (mode !== "visible" && mode !== "headless" && mode !== "offscreen") {
+        throw new TypeError("mode must be visible, headless, or offscreen.");
+      }
+      if (options.browser) throw new Error("A caller-supplied browser's visibility must be changed by its host.");
+      const headless = mode === "headless";
+      const headedInvisible = mode === "offscreen";
+      const restarted = Boolean(browser && (browser.headless !== headless || browser.headedInvisible !== headedInvisible));
+      visibilityOptions = { headless, headedInvisible };
+      if (!browser) browser = new BetterWright({ ...resolvedBrowserOptions(options.browserOptions), ...visibilityOptions });
+      if (browser.hostTarget || providerResolutionPlans(resolveBrowserProvider(browser.provider)).some(plan => plan?.kind === "remote")) {
+        throw new Error("Browser visibility can only be controlled for locally launched browsers.");
+      }
+      if (restarted) {
+        await browser.close({ restart: true, endLiveView: true });
+        browser.headless = headless;
+        browser.headedInvisible = headedInvisible;
+        startPromise = null;
+        pendingStartWarning = "";
+        // Proofs describe the old tabs and cannot certify a fresh browser.
+        for (const item of evidenceChecklist.values()) {
+          item.status = "pending";
+          item.evidence = null;
+          item.proofStep = null;
+          item.proofUrl = null;
+        }
+        currentChecklistAudited = false;
+      }
+      const instance = await getBrowser();
+      const launch = await instance.run("return { visibility: await page.evaluate(() => document.visibilityState) }", { session });
+      const details = {
+        ok: launch.ok === true,
+        error: launch.error,
+        mode,
+        restarted,
+        tabsLost: restarted,
+        message: restarted
+          ? "Browser restarted. Open tabs and in-memory page state were lost; persistent cookies, storage, and logins remain."
+          : "Browser visibility initialized; no restart was needed.",
+      };
+      return { content: [{ type: "text", text: JSON.stringify(details) }], details };
+    }
+
+    pi.registerTool({
+      name: "browser_visibility",
+      label: "BetterWright Browser Visibility",
+      description: "Initialize a locally launched browser as visible, headless, or offscreen (a headed window parked away from the desktop). Changing mode restarts the browser: open tabs and page state are lost, while persistent cookies, storage, and logins survive. The result reports whether a restart happened. Profile identity stays host-configured.",
+      parameters: PI_VISIBILITY_PARAMETERS,
+      execute: (_id, params, signal) => serializeOperation(() => setVisibility(params, signal)),
+      renderCall: makeRenderCall("browser_visibility"),
+      renderResult: summaryRenderResult,
+    });
+    const registerCommand = pi.registerCommand;
+    if (isCallable(registerCommand)) {
+      pi.registerCommand("browser-visibility", {
+        description: "Set browser visibility: visible, headless, or offscreen. Changing mode loses open tabs.",
+        handler: async (args, ctx) => {
+          const result = await serializeOperation(() => setVisibility({ mode: String(args).trim() }, undefined));
+          ctx.ui.notify(result.details.message, result.details.ok ? "info" : "error");
+        },
+      });
     }
 
     function deactivateBrowserTools() {
@@ -748,7 +833,7 @@ export function createPiExtension(options: any = {}) {
       ],
       parameters: PI_BROWSER_PARAMETERS,
       execute: (_id, params, signal) =>
-        executeBrowser("browser", params, signal, false),
+        serializeOperation(() => executeBrowser("browser", params, signal, false)),
       renderCall: makeRenderCall("browser"),
       renderResult: summaryRenderResult,
     });
@@ -767,27 +852,29 @@ export function createPiExtension(options: any = {}) {
           "failure. Generated credentials remain pending until committed. After a complete " +
           "host restart, credentials.listPending() recovers secret-free pending metadata.",
         parameters: PI_LOGIN_PARAMETERS,
-        async execute(_id, params, signal) {
-          if (signal?.aborted) throw new Error("Browser login cancelled.");
-          const instance = await getBrowser();
-          const fillCredential = instance.fillCredential;
-          if (!isCallable(fillCredential)) {
-            throw new Error("This BetterWright build has no credential fill available.");
-          }
-          const result = await instance.fillCredential(
-            normalizeCredentialToolOptions(params, { session }),
-          );
-          return {
-            content: [
-              { type: "text", text: JSON.stringify(result, null, 2) },
-              ...(await piImageContent(result)),
-            ],
-            details: {
-              ok: result?.ok === true,
-              error: result?.error,
-              pages: result?.pages || [],
-            },
-          };
+        execute(_id, params, signal) {
+          return serializeOperation(async () => {
+            if (signal?.aborted) throw new Error("Browser login cancelled.");
+            const instance = await getBrowser();
+            const fillCredential = instance.fillCredential;
+            if (!isCallable(fillCredential)) {
+              throw new Error("This BetterWright build has no credential fill available.");
+            }
+            const result = await instance.fillCredential(
+              normalizeCredentialToolOptions(params, { session }),
+            );
+            return {
+              content: [
+                { type: "text", text: JSON.stringify(result, null, 2) },
+                ...(await piImageContent(result)),
+              ],
+              details: {
+                ok: result?.ok === true,
+                error: result?.error,
+                pages: result?.pages || [],
+              },
+            };
+          });
         },
         renderCall: makeRenderCall("browser_login"),
         renderResult: summaryRenderResult,
@@ -805,7 +892,7 @@ export function createPiExtension(options: any = {}) {
         "Use browser_evidence initialize before browser calls with an optional non-empty journey name and one atomic item per explicit filter, ranking, action, and requested datum; prove only items visible in the attached frame, and audit while ready before the final answer or before initializing the next sequential journey.",
       ],
       parameters: PI_EVIDENCE_PARAMETERS,
-      execute: (_id, params, signal) => executeEvidence(params, signal),
+      execute: (_id, params, signal) => serializeOperation(() => executeEvidence(params, signal)),
       renderCall: makeRenderCall("browser_evidence"),
       renderResult: summaryRenderResult,
     });
@@ -815,25 +902,27 @@ export function createPiExtension(options: any = {}) {
       label: "BetterWright Download",
       description: `${TOOL_DESCRIPTION} This approval-gated variant may save a remote file.`,
       parameters: PI_BROWSER_PARAMETERS,
-      async execute(_id, params, signal, _onUpdate, ctx) {
-        const instance = await getBrowser();
-        if (instance.downloadPolicy === "deny") {
-          throw new Error("Browser downloads are disabled by host policy.");
-        }
-        if (instance.downloadPolicy === "ask") {
-          const confirm = ctx?.ui?.confirm;
-          if (!ctx?.hasUI || !isCallable(confirm)) {
-            throw new Error(
-              "Browser download requires user approval, but this Pi mode has no approval UI.",
-            );
+      execute(_id, params, signal, _onUpdate, ctx) {
+        return serializeOperation(async () => {
+          const instance = await getBrowser();
+          if (instance.downloadPolicy === "deny") {
+            throw new Error("Browser downloads are disabled by host policy.");
           }
-          const approved = await ctx.ui.confirm(
-            "Allow browser download?",
-            params.note || "The agent requested one bounded download step.",
-          );
-          if (!approved) throw new Error("Browser download was not approved.");
-        }
-        return executeBrowser("browser_download", params, signal, true);
+          if (instance.downloadPolicy === "ask") {
+            const confirm = ctx?.ui?.confirm;
+            if (!ctx?.hasUI || !isCallable(confirm)) {
+              throw new Error(
+                "Browser download requires user approval, but this Pi mode has no approval UI.",
+              );
+            }
+            const approved = await ctx.ui.confirm(
+              "Allow browser download?",
+              params.note || "The agent requested one bounded download step.",
+            );
+            if (!approved) throw new Error("Browser download was not approved.");
+          }
+          return executeBrowser("browser_download", params, signal, true);
+        });
       },
       renderCall: makeRenderCall("browser_download"),
       renderResult: summaryRenderResult,
@@ -875,6 +964,7 @@ export function createPiExtension(options: any = {}) {
     });
 
     pi.on("session_shutdown", async () => {
+      await operationTail;
       if (browser && options.closeBrowserOnShutdown !== false) await browser.close();
       browser = null;
       startPromise = null;

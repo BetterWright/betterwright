@@ -62,6 +62,7 @@ import {
 } from "./client.js";
 import { normalizeCredentialToolOptions } from "./credential-tool-options.js";
 import { doctorReport } from "./doctor.js";
+import { launchOptionsFromEnv } from "./launch-config.js";
 import { loadLiveViewConfig } from "./live-view-config.js";
 import { importOptionalPeer } from "./optional-peer.js";
 import { piImageArtifacts, piImageContent } from "./pi.js";
@@ -674,14 +675,16 @@ export async function runMcpServer(env = process.env, options: any = {}) {
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
     await loadSdk();
 
-  const downloadPolicy = downloadPolicyFromEnv(env);
+  const launch = launchOptionsFromEnv(undefined, env);
+  const downloadPolicy = launch.downloadPolicy ?? "ask";
   // One persistent browser for the life of the server, so pages and logins
   // survive across tool calls the way an agent expects. The built-in encrypted
   // vault enables `browser_login`; an embedding may override or disable it.
   const browserOptions: BetterWrightOptions = {
+    ...launch,
     policy: policyFromEnv(env),
-    headless: headlessFromEnv(env),
-    adBlock: resolveAdBlock(undefined, env),
+    headless: launch.headless ?? "auto",
+    adBlock: launch.adBlock ?? resolveAdBlock(undefined, env),
     downloadPolicy,
     defaultTimeout: timeoutFromEnv(env),
   };

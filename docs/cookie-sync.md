@@ -31,6 +31,25 @@ domains whose cookies apply to that host. Repeat it for more sites. Use
 The CLI requires one of these scopes so an omitted flag cannot copy every
 site by accident.
 
+For a Chromium-family browser outside the reader's registry, pass its exact
+profile directory or cookie database file instead of a browser id:
+
+```bash
+betterwright cookies sync --source-path "$HOME/.config/net.imput.helium/Default" \
+  --domain github.com --profile work
+```
+
+The SDK equivalent is
+`browser.syncCookies({ source: { path: "/absolute/path/to/Default" }, domains: ["github.com"] })`.
+Directories resolve `Network/Cookies` first, then `Cookies`; database files
+are passed directly to the pinned reader's `fromPath` API. Relative paths
+resolve from the host's working directory. The reader handles supported
+decryption without changing the source. Path sources cannot be combined with
+a browser id, source profile, or `includeSession`. Domain scopes, transfer
+limits, remote-target consent, and target readback verification still apply.
+Result metadata reports the path as `"selected"` rather than exposing the
+local filename.
+
 Persistent cookies are included by default. `--include-session` also reads
 Firefox-family session stores. Chromium-family session cookies that exist
 only in a running browser process cannot be recovered from its profile, so

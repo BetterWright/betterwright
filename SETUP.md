@@ -164,6 +164,20 @@ manifest. Pi therefore loads `browser` and `browser_download` directly, keeps
 one BetterWright session alive, attaches screenshots as vision content, and
 adds the BetterWright operator guidance to the system prompt.
 
+The `browser_visibility` tool accepts `{ "mode": "visible" }`,
+`{ "mode": "headless" }`, or `{ "mode": "offscreen" }`. Users can also run
+`/browser-visibility visible`, `/browser-visibility headless`, or
+`/browser-visibility offscreen` in Pi. Changing mode restarts the browser and
+the result reports `restarted: true` and `tabsLost: true`: open tabs and
+in-memory page state are lost, while persistent cookies, storage, and logins
+remain. Selecting the current mode keeps tabs. Current evidence proofs are
+reset after a restart. This control does not select a profile; identity stays
+in host configuration. Visibility control applies to locally launched
+browsers; remote, attached, and caller-supplied browsers remain host-controlled.
+
+Pi also reads the shared `launch` defaults from BetterWright's home
+`config.json`; see [saved launch defaults](docs/environment.md#saved-launch-defaults).
+
 For a published package:
 
 ```bash

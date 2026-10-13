@@ -81,6 +81,7 @@ export const VALUE_FLAGS = new Set([
   "--session-id",
   "--status",
   "--source-profile",
+  "--source-path",
   "--key-env",
   "--add",
   "--remove",

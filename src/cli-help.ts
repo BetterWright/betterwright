@@ -226,6 +226,7 @@ connect-only. Details: docs/browser-providers.md`,
   cookies: `Usage: betterwright cookies browsers [--json]
        betterwright cookies profiles <browser> [--json]
        betterwright cookies sync <browser> (--domain <host>... | --all) [options]
+       betterwright cookies sync --source-path <path> (--domain <host>... | --all) [options]
 
 Copy cookies from a local browser profile into the selected persistent
 BetterWright profile. Sync merges cookies and can be run again safely.
@@ -235,6 +236,8 @@ Options for sync:
                            parent-domain cookies. Repeat for more domains
   --all                    sync every compatible cookie in the source profile
   --source-profile <id>    source profile id or name from \`cookies profiles\`
+  --source-path <path>     Chromium profile directory or cookie database,
+                           instead of a registered browser id
   --include-session        include Firefox-family session-store cookies
   --allow-app-bound        on Windows, allow unprivileged browser-process
                            injection for Chrome App-Bound cookie decryption
