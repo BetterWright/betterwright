@@ -4556,11 +4556,24 @@ test("Pi visibility restarts across all display modes while retaining the config
        await page.evaluate(() => { document.cookie = 'synthetic_login=retained; max-age=3600; path=/'; localStorage.setItem('fixture', 'retained'); });
        await openPage(); return pages.length;` });
     assert.equal(JSON.parse(saved.content[0].text).ok, true);
+    const evidence = params => tools.get("browser_evidence").execute("evidence", params);
+    await evidence({ operation: "initialize", name: "before-restart", requirements: [{ id: "fixture", description: "Show local fixture" }] });
+    await tools.get("browser").execute("proof-fixture", { code: "await page.setContent('<h1>local fixture</h1>'); return page.title()" });
+    assert.equal((await evidence({ operation: "prove", proofs: [{ id: "fixture", evidence: "The frame shows local fixture" }] })).details.ok, true);
+    await evidence({ operation: "audit" });
+    await evidence({ operation: "initialize", name: "current", requirements: [{ id: "fixture", description: "Show local fixture" }] });
+    assert.equal((await evidence({ operation: "prove", proofs: [{ id: "fixture", evidence: "The frame shows local fixture" }] })).details.ok, true);
+    await evidence({ operation: "audit" });
     for (const mode of ["headless", "visible", "offscreen"]) {
       const changed = await tools.get("browser_visibility").execute("mode", { mode });
       assert.equal(changed.details.ok, true, changed.details.error);
       assert.equal(changed.details.restarted, true);
       assert.equal(changed.details.tabsLost, true);
+      const currentEvidence = await evidence({ operation: "get", name: "current" });
+      assert.equal(currentEvidence.details.checklist.audited, false);
+      assert.deepEqual(currentEvidence.details.checklist.pending, ["fixture"]);
+      assert.deepEqual(currentEvidence.details.checklist.requirements[0].proofArtifacts, []);
+      assert.equal((await evidence({ operation: "get", name: "before-restart" })).details.checklist.requirements[0].proofArtifacts[0].available, true);
       const checked = await tools.get("browser").execute("check", { code:
         `const count = pages.length; await page.goto(${JSON.stringify(server.origin)});
          return { count, cookie: await page.evaluate(() => document.cookie), storage: await page.evaluate(() => localStorage.getItem('fixture')) };` });
@@ -5579,6 +5592,47 @@ test("provider chain: a failed release reports the session instead of starting a
       assert.deepEqual(fs.readFileSync(calls, "utf8").trim().split("\n").map((line) => JSON.parse(line).method), ["POST", "DELETE", "DELETE"]);
     }
   } finally {
+    removeBrowserHome(home);
+  }
+});
+
+test("Pi evidence retains proof images through real worker quota eviction and reads archived journeys without changing the current one", opts, async () => {
+  const home = tempHome();
+  const tools = new Map<string, any>();
+  const handlers = new Map<string, any>();
+  createPiExtension({ browser: new LimitedBetterWright({ home, vault: false, adBlock: false, headless: true }, { maxArtifactBytes: 30_000 }), autoScreenshot: false })({
+    registerTool: tool => tools.set(tool.name, tool),
+    on: (event, handler) => handlers.set(event, handler),
+  });
+  const evidence = params => tools.get("browser_evidence").execute("evidence", params);
+  const requirements = [{ id: "fixture", description: "Show Evidence fixture and Visible marker ALPHA" }];
+  let retained: string | undefined;
+  try {
+    await evidence({ operation: "initialize", name: "first", requirements });
+    const browsed = await tools.get("browser").execute("fixture", { code: "await page.setContent('<h1>Evidence fixture</h1><p>Visible marker ALPHA</p>'); return await page.locator('body').innerText()" });
+    assert.equal(browsed.details.ok, true, browsed.details.error);
+    const proof = await evidence({ operation: "prove", proofs: [{ id: "fixture", evidence: "The frame shows Evidence fixture and Visible marker ALPHA" }] });
+    assert.equal(proof.details.ok, true, proof.details.error);
+    assert.equal(proof.content.filter(block => block.type === "image").length, 1);
+    const artifact = proof.details.evidenceChecklist.requirements[0].proofArtifacts[0];
+    retained = artifact.path;
+    assert.equal(fs.readFileSync(retained).subarray(1, 4).toString(), "PNG");
+    await evidence({ operation: "audit" });
+    await evidence({ operation: "initialize", name: "second", requirements });
+    // Repeated real screenshots force eviction without any network download.
+    for (let index = 0; index < 12 && fs.existsSync(artifact.originalPath); index += 1) {
+      const evicted = await tools.get("browser").execute("evict", { code: "return screenshot({ kind: 'debug', name: 'quota' })" });
+      assert.equal(evicted.details.ok, true, evicted.details.error);
+    }
+    assert.equal(fs.existsSync(artifact.originalPath), false);
+    const old = await evidence({ operation: "get", name: "first" });
+    assert.equal(old.details.checklist.requirements[0].proofArtifacts[0].available, true);
+    assert.equal(old.details.checklist.audited, true);
+    assert.equal((await evidence({ operation: "get", name: "second" })).details.checklist.ready, false);
+    assert.equal(fs.existsSync(retained), true);
+  } finally {
+    await handlers.get("session_shutdown")();
+    if (retained) assert.equal(fs.existsSync(retained), false);
     removeBrowserHome(home);
   }
 });

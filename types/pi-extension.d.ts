@@ -80,7 +80,39 @@ export interface PiExtensionApiLike {
 /** A Pi extension entrypoint: registers the tools and lifecycle handlers. */
 export type PiExtension = (pi: PiExtensionApiLike) => void;
 
-/** JSON Schemas for the registered tools, exported for tests and audits. */
+/** A retained proof image, scoped to the lifetime of one extension session. */
+export interface PiEvidenceArtifact {
+  path: string;
+  originalPath: string;
+  mimeType: string;
+  /** Set by get after checking the retained copy on disk. */
+  available?: boolean;
+}
+
+export interface PiEvidenceRequirement {
+  id: string;
+  description: string;
+  status: "pending" | "proven";
+  evidence: string | null;
+  proofStep: number | null;
+  proofUrl: string | null;
+  proofArtifacts: PiEvidenceArtifact[];
+}
+
+/** Full current or archived journey returned by browser_evidence get. */
+export interface PiEvidenceChecklist {
+  name: string | null;
+  audited: boolean;
+  ready: boolean;
+  pending: string[];
+  requirements: PiEvidenceRequirement[];
+}
+
+/** JSON Schemas for the registered tools, exported for tests and audits.
+ * Evidence operations: initialize, prove, audit, list (offset/limit <= 100),
+ * and get (exact name). Default responses use archivedCount; list/get read
+ * retained history without modifying active state. See SETUP.md.
+ */
 export const PI_BROWSER_PARAMETERS: Readonly<object>;
 export const PI_LOGIN_PARAMETERS: Readonly<object>;
 export const PI_EVIDENCE_PARAMETERS: Readonly<object>;

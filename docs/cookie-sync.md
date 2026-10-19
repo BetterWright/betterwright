@@ -43,8 +43,11 @@ The SDK equivalent is
 `browser.syncCookies({ source: { path: "/absolute/path/to/Default" }, domains: ["github.com"] })`.
 Directories resolve `Network/Cookies` first, then `Cookies`; database files
 are passed directly to the pinned reader's `fromPath` API. Relative paths
-resolve from the host's working directory. The reader handles supported
-decryption without changing the source. Path sources cannot be combined with
+resolve from the invoking host's working directory, including when a session
+daemon was started elsewhere. Explicit paths support plaintext Chromium
+cookies; encrypted Chromium databases need a registered browser source for
+credential selection. Use a browser id for encrypted profiles. The source is
+never changed. Path sources cannot be combined with
 a browser id, source profile, or `includeSession`. Domain scopes, transfer
 limits, remote-target consent, and target readback verification still apply.
 Result metadata reports the path as `"selected"` rather than exposing the

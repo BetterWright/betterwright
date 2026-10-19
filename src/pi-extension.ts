@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { providerResolutionPlans, resolveBrowserProvider } from "./browser-providers.js";
 import { BetterWright } from "./client.js";
@@ -10,7 +11,7 @@ import {
 } from "./pi.js";
 import { agentSystemPrompt } from "./prompt.js";
 import { piBrowserToolParameters, piLoginToolParameters } from "./tool-schemas.js";
-import { isCallable, isNumber, isRecord, type UntrustedValue, untrustedField } from "./untrusted-value.js";
+import { isCallable, isNumber, isRecord, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 const BROWSER_TOOL_NAMES = new Set([
   "browser",
@@ -45,16 +46,18 @@ export const PI_EVIDENCE_PARAMETERS = {
   properties: {
     operation: {
       type: "string",
-      enum: ["initialize", "prove", "audit"],
+      enum: ["initialize", "prove", "audit", "list", "get"],
       description:
-        "Initialize a task checklist, prove visible requirements, or audit what remains. A ready, audited checklist may be followed by another initialize.",
+        "Initialize, prove, or audit the current checklist. Use list for a paged journey index and get for full evidence by name; history reads never change state.",
     },
     name: {
       type: "string",
       minLength: 1,
       description:
-        "For initialize: optional checklist or journey name. Omitted names receive a deterministic fallback.",
+        "For initialize: optional unique journey name. For get: required exact current or archived journey name.",
     },
+    offset: { type: "integer", minimum: 0, description: "For list: zero-based offset, default 0." },
+    limit: { type: "integer", minimum: 1, maximum: 100, description: "For list: page size, default 20, maximum 100." },
     requirements: {
       type: "array",
       minItems: 1,
@@ -457,14 +460,15 @@ export function createPiExtension(options: any = {}) {
     let currentChecklistAudited = false;
     let completionNudges = 0;
     const evidenceChecklist = new Map();
-    const archivedChecklists: any[] = [];
+    const archivedChecklists = new Map<string, any>();
+    let proofDirectory: string | null = null;
     const withLogin = browser
       ? Boolean(browser.vault)
       : !Object.hasOwn(options.browserOptions || {}, "vault") ||
         Boolean(options.browserOptions.vault);
 
     function currentChecklistState() {
-      const requirements = [...evidenceChecklist.values()];
+      const requirements = structuredClone([...evidenceChecklist.values()]);
       const pending = requirements.filter((item) => item.status !== "proven");
       return {
         name: currentChecklistName,
@@ -483,28 +487,58 @@ export function createPiExtension(options: any = {}) {
         pending: currentChecklist.pending,
         requirements: currentChecklist.requirements,
         currentChecklist,
-        archivedChecklists,
+        archivedCount: archivedChecklists.size,
       };
     }
 
     function nextChecklistName() {
-      const used = new Set([
-        currentChecklistName,
-        ...archivedChecklists.map((checklist) => checklist.name),
-      ]);
-      let index = archivedChecklists.length + 1;
-      while (used.has(`checklist-${index}`)) index += 1;
+      let index = archivedChecklists.size + 1;
+      while (currentChecklistName === `checklist-${index}` || archivedChecklists.has(`checklist-${index}`)) index += 1;
       return `checklist-${index}`;
     }
 
-    function checklistResult(extra: any = {}) {
-      const state = checklistState();
+    function stateResult(state) {
       return {
-        content: [
-          { type: "text", text: JSON.stringify({ ...state, ...extra }, null, 2) },
-        ],
-        details: state,
+        content: [{ type: "text", text: JSON.stringify(state, null, 2) }],
+        // Callers must not be able to mutate retained evidence via details.
+        details: structuredClone(state),
       };
+    }
+
+    function checklistResult(extra: any = {}) {
+      return stateResult({ ...checklistState(), ...extra });
+    }
+
+    async function retainProof(result, step) {
+      const artifact = result.artifacts?.findLast((item) => item.kind === "proof");
+      const image = piPrimaryImageArtifact({ artifacts: artifact ? [artifact] : [] });
+      if (!image) throw new Error("The proof screenshot is missing; requirements remain pending.");
+      const data = await fs.readFile(image.path);
+      if (!data.length || data.length > 2_500_000) {
+        throw new Error("The proof screenshot cannot be attached (empty or over 2500000 bytes); requirements remain pending.");
+      }
+      // Worker quotas may evict the original. These private session copies are
+      // outside the worker's artifact directory and live until session shutdown.
+      if (!proofDirectory) proofDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "betterwright-pi-proof-"));
+      const retained = path.join(proofDirectory, `step-${step}${path.extname(image.path)}`);
+      await fs.writeFile(retained, data, { mode: 0o600, flag: "wx" });
+      const reference = { path: retained, originalPath: image.path, mimeType: image.mimeType };
+      result.artifacts = result.artifacts.map((item) => item === artifact ? { ...item, ...reference, media: `MEDIA:${retained}` } : item);
+      return reference;
+    }
+
+    async function readChecklist(checklist) {
+      const copy = structuredClone(checklist);
+      for (const item of copy.requirements) {
+        for (const artifact of item.proofArtifacts || []) {
+          try {
+            const file = await fs.open(artifact.path, "r");
+            try { artifact.available = (await file.stat()).isFile(); }
+            finally { await file.close(); }
+          } catch { artifact.available = false; }
+        }
+      }
+      return copy;
     }
 
     async function getBrowser() {
@@ -576,6 +610,7 @@ export function createPiExtension(options: any = {}) {
           item.evidence = null;
           item.proofStep = null;
           item.proofUrl = null;
+          item.proofArtifacts = [];
         }
         currentChecklistAudited = false;
       }
@@ -621,11 +656,11 @@ export function createPiExtension(options: any = {}) {
       const setActiveTools = pi.setActiveTools;
       if (!isCallable(getActiveTools) || !isCallable(setActiveTools)) return;
       pi.setActiveTools(
-        pi.getActiveTools().filter((name) => !BROWSER_TOOL_NAMES.has(name)),
+        pi.getActiveTools().filter((name) => name === "browser_evidence" || !BROWSER_TOOL_NAMES.has(name)),
       );
     }
 
-    async function executeBrowser(toolName, params, signal, approvedDownloads) {
+    async function executeBrowser(toolName, params, signal, approvedDownloads, afterRun?: (result: any, step: number) => Promise<void>) {
       if (signal?.aborted) throw new Error("Browser call cancelled.");
       if (requireEvidence && !checklistInitialized) {
         throw new Error(
@@ -646,7 +681,7 @@ export function createPiExtension(options: any = {}) {
         approvedDownloads,
       });
       let observation = null;
-      if (autoScreenshot && piImageArtifacts(result).length === 0) {
+      if (toolName !== "browser_evidence" && autoScreenshot && piImageArtifacts(result).length === 0) {
         observation = await instance.run(
           'const artifact = await screenshot({ kind: "debug", name: "pi-observation" }); return { artifact, url: page.url(), title: await page.title() }',
           { session, note: "Capturing the current browser state" },
@@ -661,6 +696,7 @@ export function createPiExtension(options: any = {}) {
         ];
         pendingStartWarning = "";
       }
+      if (afterRun) await afterRun(combined, step);
       let traceWarning = "";
       try {
         await traceStep(traceDir, step, toolName, params, combined);
@@ -699,7 +735,36 @@ export function createPiExtension(options: any = {}) {
     }
 
     async function executeEvidence(params, signal) {
+      if (signal?.aborted) throw new Error("Browser evidence call cancelled.");
       const operation = String(params.operation || "");
+      if (operation === "list") {
+        const offset = params.offset ?? 0;
+        const limit = params.limit ?? 20;
+        if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+          throw new TypeError("list requires a non-negative integer offset and a limit from 1 to 100.");
+        }
+        const total = archivedChecklists.size + (checklistInitialized ? 1 : 0);
+        const checklists: any[] = [];
+        let index = 0;
+        // Iterate only as far as the requested page; do not serialize evidence.
+        for (const checklist of archivedChecklists.values()) {
+          if (index >= offset && checklists.length < limit) checklists.push({ name: checklist.name, current: false, ready: checklist.ready, audited: checklist.audited });
+          index += 1;
+          if (checklists.length === limit) break;
+        }
+        if (checklistInitialized && checklists.length < limit && archivedChecklists.size >= offset) {
+          const current = currentChecklistState();
+          checklists.push({ name: current.name, current: true, ready: current.ready, audited: current.audited });
+        }
+        return stateResult({ checklists, total, archivedCount: archivedChecklists.size, offset, nextOffset: offset + checklists.length < total ? offset + checklists.length : null });
+      }
+      if (operation === "get") {
+        if (!isString(params.name) || !params.name.trim()) throw new TypeError("get requires an exact checklist name.");
+        const name = params.name.trim();
+        const checklist = name === currentChecklistName ? currentChecklistState() : archivedChecklists.get(name);
+        if (!checklist) throw new Error(`Unknown checklist name: ${name}`);
+        return stateResult({ checklist: await readChecklist(checklist), current: name === currentChecklistName });
+      }
       if (operation === "initialize") {
         const existing = currentChecklistState();
         if (checklistInitialized && !existing.ready) {
@@ -723,7 +788,7 @@ export function createPiExtension(options: any = {}) {
         const name = requestedName || nextChecklistName();
         if (
           name === currentChecklistName ||
-          archivedChecklists.some((checklist) => checklist.name === name)
+          archivedChecklists.has(name)
         ) {
           throw new Error(`Checklist name is already in use: ${name}`);
         }
@@ -744,9 +809,10 @@ export function createPiExtension(options: any = {}) {
             evidence: null,
             proofStep: null,
             proofUrl: null,
+            proofArtifacts: [],
           });
         }
-        if (checklistInitialized) archivedChecklists.push(existing);
+        if (checklistInitialized) archivedChecklists.set(existing.name, structuredClone(existing));
         evidenceChecklist.clear();
         for (const [id, requirement] of nextRequirements) {
           evidenceChecklist.set(id, requirement);
@@ -794,7 +860,7 @@ export function createPiExtension(options: any = {}) {
         return { id, evidence };
       });
       const note = `PROOF ${proofs.map((proof) => `${proof.id}: ${proof.evidence}`).join(" | ")}`;
-      const result = await executeBrowser(
+      return executeBrowser(
         "browser_evidence",
         {
           code:
@@ -803,23 +869,30 @@ export function createPiExtension(options: any = {}) {
         },
         signal,
         false,
+        async (result, step) => {
+          if (!result.ok) return;
+          let artifact;
+          try { artifact = await retainProof(result, step); }
+          catch (error) {
+            result.ok = false;
+            result.error = `Proof screenshot retention failed: ${error?.message || error}`;
+            return;
+          }
+          const proofUrl = result.pages?.find((page) => page?.active)?.url || null;
+          for (const proof of proofs) {
+            evidenceChecklist.set(proof.id, {
+              ...evidenceChecklist.get(proof.id),
+              status: "proven",
+              evidence: proof.evidence,
+              proofStep: step,
+              proofUrl,
+              proofArtifacts: [{ ...artifact }],
+            });
+          }
+          currentChecklistAudited = false;
+          result.proven = proofs.map((proof) => proof.id);
+        },
       );
-      if (result.details.ok) {
-        const proofUrl = result.details.pages.find((page) => page?.active)?.url || null;
-        for (const proof of proofs) {
-          evidenceChecklist.set(proof.id, {
-            ...evidenceChecklist.get(proof.id),
-            status: "proven",
-            evidence: proof.evidence,
-            proofStep: result.details.step,
-            proofUrl,
-          });
-        }
-      }
-      const state = checklistState();
-      result.content[0].text += `\n\nEvidence checklist after this proof:\n${JSON.stringify(state, null, 2)}`;
-      result.details.evidenceChecklist = state;
-      return result;
     }
 
     pi.registerTool({
@@ -885,7 +958,7 @@ export function createPiExtension(options: any = {}) {
       name: "browser_evidence",
       label: "BetterWright Evidence Checklist",
       description:
-        "Track named, sequential browser-task checklists and capture grounded proof screenshots. Initialize before browsing, prove only requirements visible on the current page, and audit while ready. After that, initialize may archive the completed checklist and start the next journey.",
+        "Track named, sequential browser-task checklists and capture grounded proof screenshots. Initialize before browsing, prove only requirements visible on the current page, and audit while ready. After that, initialize may archive the completed checklist and start the next journey. Default responses include only the current checklist and archivedCount; use list (offset/limit) and get (name) to read history without changing state.",
       promptSnippet:
         "Initialize named task checklists, capture requirement-linked proof frames, audit completion, and retain prior journeys",
       promptGuidelines: [
@@ -965,9 +1038,14 @@ export function createPiExtension(options: any = {}) {
 
     pi.on("session_shutdown", async () => {
       await operationTail;
-      if (browser && options.closeBrowserOnShutdown !== false) await browser.close();
-      browser = null;
-      startPromise = null;
+      try {
+        if (browser && options.closeBrowserOnShutdown !== false) await browser.close();
+      } finally {
+        if (proofDirectory) await fs.rm(proofDirectory, { recursive: true, force: true });
+        proofDirectory = null;
+        browser = null;
+        startPromise = null;
+      }
     });
   };
 }

@@ -105,3 +105,15 @@ test("invalid launch environment errors name their own variable, not the profile
   assert.equal(profile.status, 1);
   assert.match(profile.stderr, /^BETTERWRIGHT_PROFILE: /m);
 });
+
+test("management commands remain available with invalid unrelated launch defaults", () => {
+  for (const args of [["sessions"], ["close"], ["skill", "--claude"], ["view", "--clear-password"]]) {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd: root,
+      env: { ...process.env, BETTERWRIGHT_HOME: makeTempDir("betterwright-startup-management-"), BETTERWRIGHT_HEADLESS: "invalid", BETTERWRIGHT_AD_BLOCK: "invalid", BETTERWRIGHT_DOWNLOAD_POLICY: "invalid" },
+      encoding: "utf8", timeout: 15_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /BETTERWRIGHT_(HEADLESS|AD_BLOCK|DOWNLOAD_POLICY) must/);
+  }
+});

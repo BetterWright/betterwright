@@ -175,6 +175,48 @@ reset after a restart. This control does not select a profile; identity stays
 in host configuration. Visibility control applies to locally launched
 browsers; remote, attached, and caller-supplied browsers remain host-controlled.
 
+### Evidence history in 2.9.0
+
+`browser_evidence` supports `initialize`, `prove`, and `audit` for the current
+journey. A completed journey must be audited before initializing another.
+Names are unique for the extension session; omitted names are generated.
+
+Default tool responses include current requirements, exact constraints,
+pending IDs, proof references, ready/audited status, and `archivedCount`.
+They no longer serialize previous journeys in `archivedChecklists`. This
+behavior is automatic in 2.9.0, with no environment switch. Integrations that
+used that array should retrieve history explicitly:
+
+```json
+{ "operation": "list", "offset": 0, "limit": 20 }
+{ "operation": "get", "name": "find-product" }
+```
+
+`list` returns journey summaries in creation order, including the current
+journey, with `total` and `nextOffset` (null at the end). Its default limit is
+20 and maximum is 100. `get` requires an exact name and returns the full
+selected `checklist`; unknown names fail. Neither operation browses, consumes
+a browser step, changes the active journey, nor marks anything audited.
+Both operations and `audit` remain available after the browser budget ends.
+
+Each proven requirement has `proofArtifacts` containing a private session copy
+`path`, the worker's `originalPath`, and `mimeType`. `get` checks that retained
+files are readable regular files and adds `available` to each reference; missing copies are reported as
+unavailable. Proof images still accompany successful proof calls. A missing,
+unreadable, empty, oversized (over 2,500,000 bytes), or unretainable screenshot
+cannot prove a pending requirement. Rejected descriptions and browser errors
+remain visible and leave pending requirements pending.
+
+The extension copies proof images outside the worker's quota directory before
+accepting them. Worker quota eviction therefore cannot remove retained
+history images. These copies consume disk space for the extension session,
+are not subject to the worker quota, and are removed on `session_shutdown`,
+even when the host owns the browser. Checklists live only in this extension
+instance's memory. There is no cross-process recovery or indefinite retention
+contract; an abrupt host exit can leave temporary copies for OS cleanup.
+Visibility restarts invalidate current proofs and audit, while archived
+journeys remain readable.
+
 Pi also reads the shared `launch` defaults from BetterWright's home
 `config.json`; see [saved launch defaults](docs/environment.md#saved-launch-defaults).
 

@@ -243,14 +243,6 @@ async function waitForSocketGone(socketPath, timeoutMs = 5_000) {
   return false;
 }
 
-/**
- * Connect to (or start) the session daemon and complete the hello handshake.
- *
- * @returns {Promise<
- *   | {ok: true, channel: ReturnType<typeof createChannel>, hello: object}
- *   | {ok: false, reason: string}
- * >}
- */
 // The daemon keeps the cwd of whichever CLI spawned it, so a relative
 // cookie path must be resolved here, against the caller's directory.
 function callerRelativeCookieSource(options: UntrustedValue) {
@@ -259,9 +251,19 @@ function callerRelativeCookieSource(options: UntrustedValue) {
   if (!isRecord(options) || !isRecord(source) || !isString(sourcePath) || !sourcePath.trim() || path.isAbsolute(sourcePath.trim())) {
     return options;
   }
+  // Preserve invalid inputs for the same canonical rejection as direct calls.
+  if (sourcePath.length > 4_096 || Array.from(sourcePath).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return options;
   return { ...options, source: { ...source, path: path.resolve(sourcePath.trim()) } };
 }
 
+/**
+ * Connect to (or start) the session daemon and complete the hello handshake.
+ *
+ * @returns {Promise<
+ *   | {ok: true, channel: ReturnType<typeof createChannel>, hello: object}
+ *   | {ok: false, reason: string}
+ * >}
+ */
 export async function connectSessionDaemon({
   home = defaultDaemonHome(),
   cliPath,
