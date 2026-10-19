@@ -9,6 +9,39 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-10-19
+
+### Added
+
+- Pi evidence history can be read with `browser_evidence` operations `list`
+  (paged, at most 100 journeys) and `get` (exact journey name), without
+  changing the active checklist, proof state, or audit. Proofs include original
+  and retained artifact paths; private copies survive worker quota eviction
+  until the Pi extension session shuts down. (#238)
+
+### Changed
+
+- Pi default evidence responses contain the current checklist and a scalar
+  `archivedCount`, replacing the full `archivedChecklists` array. Consumers
+  reading history should migrate to `list` and `get`. Successful proof calls
+  serialize one post-operation status. History reads and audit remain available
+  after the browser step budget is exhausted. See SETUP.md for session retention
+  and migration details. (#238)
+
+### Fixed
+
+- Pi no longer marks a requirement proven when its screenshot is missing,
+  unreadable, oversized, or cannot be retained. A new proof invalidates the
+  previous audit so the changed evidence must be audited again.
+- Relative Cookie Sync source paths resolve in the invoking process instead
+  of the session daemon's working directory. Explicit paths with
+  `includeSession` fail validation with the specific unsupported-option error.
+  The other launch-precedence and path-redaction fixes proposed in #237 were
+  already included in 2.8.9. (#237)
+- CLI launch-default validation errors identify their own environment variable
+  instead of being attributed to the profile setting or printed as a stack
+  trace. (#236)
+
 ## [2.8.9] - 2026-10-12
 
 ### Added
@@ -1852,7 +1885,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.8.9...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.9.0...HEAD
+[2.9.0]: https://github.com/BetterWright/betterwright/compare/v2.8.9...v2.9.0
 [2.8.9]: https://github.com/BetterWright/betterwright/compare/v2.8.8...v2.8.9
 [2.8.8]: https://github.com/BetterWright/betterwright/compare/v2.8.7...v2.8.8
 [2.8.7]: https://github.com/BetterWright/betterwright/compare/v2.8.6...v2.8.7

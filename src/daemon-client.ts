@@ -15,6 +15,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import readline from "node:readline";
 
 import {
@@ -27,7 +28,7 @@ import {
 } from "./daemon.js";
 import { profileLabel, resolveProfileName } from "./profile-name.js";
 import { bunInheritedExecArgv } from "./runtime.js";
-import type { UntrustedValue } from "./untrusted-value.js";
+import { isRecord, isString, type UntrustedValue, untrustedField } from "./untrusted-value.js";
 
 const CONNECT_TIMEOUT_MS = 1_000;
 const SPAWN_WAIT_MS = 8_000;
@@ -242,6 +243,19 @@ async function waitForSocketGone(socketPath, timeoutMs = 5_000) {
   return false;
 }
 
+// The daemon keeps the cwd of whichever CLI spawned it, so a relative
+// cookie path must be resolved here, against the caller's directory.
+function callerRelativeCookieSource(options: UntrustedValue) {
+  const source = isRecord(options) ? untrustedField(options, "source") : undefined;
+  const sourcePath = isRecord(source) ? untrustedField(source, "path") : undefined;
+  if (!isRecord(options) || !isRecord(source) || !isString(sourcePath) || !sourcePath.trim() || path.isAbsolute(sourcePath.trim())) {
+    return options;
+  }
+  // Preserve invalid inputs for the same canonical rejection as direct calls.
+  if (sourcePath.length > 4_096 || Array.from(sourcePath).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return options;
+  return { ...options, source: { ...source, path: path.resolve(sourcePath.trim()) } };
+}
+
 /**
  * Connect to (or start) the session daemon and complete the hello handshake.
  *
@@ -376,7 +390,7 @@ export function createDaemonBrowser(channel, { session = "default" }: any = {}) 
     syncCookies: (options?: any) =>
       call(
         "syncCookies",
-        [options],
+        [callerRelativeCookieSource(options)],
         Math.min(
           Math.max(Number(options?.timeoutMs) || 30_000, 1_000) + 45_000,
           180_000,

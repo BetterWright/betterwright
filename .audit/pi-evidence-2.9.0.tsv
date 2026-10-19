@@ -1,0 +1,7 @@
+version	bun	platform	archived	initialize_utf8_bytes	browser_utf8_bytes	prove_utf8_bytes	audit_utf8_bytes	ready	proof_images
+2.8.9	1.4.0	macOS-arm64	0	885	853	2384	954	true	1
+2.8.9	1.4.0	macOS-arm64	1	1341	1155	3145	1410	true	1
+2.8.9	1.4.0	macOS-arm64	2	1795	1464	3906	1864	true	1
+2.9.0	1.4.0	macOS-arm64	0	937	885	2295	1694	true	1
+2.9.0	1.4.0	macOS-arm64	1	937	884	2294	1694	true	1
+2.9.0	1.4.0	macOS-arm64	2	937	886	2294	1694	true	1

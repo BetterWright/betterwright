@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
 import {
@@ -355,6 +356,17 @@ test("Cookie Sync crosses the daemon socket as source options, not cookie plaint
     assert.equal(result.synced, 4);
     assert.deepEqual(browser.calls.at(-1), ["syncCookies", options]);
     assert.equal(JSON.stringify(browser.calls.at(-1)).includes('"cookies"'), false);
+    const relative = { source: { path: path.join("profiles", "Default") }, domains: ["example.com"] };
+    assert.equal((await proxy.syncCookies(relative)).ok, true);
+    assert.deepEqual(browser.calls.at(-1), ["syncCookies", {
+      ...relative,
+      source: { path: path.resolve("profiles", "Default") },
+    }]);
+    for (const path of ["profiles/Default\n", "profiles/Default\r", "\tprofiles/Default", "profiles/\0Default", "p".repeat(4097)]) {
+      const malformed = { source: { path }, domains: ["example.com"] };
+      await proxy.syncCookies(malformed);
+      assert.deepEqual(browser.calls.at(-1), ["syncCookies", malformed]);
+    }
     await proxy.close();
   } finally {
     await cleanup();
@@ -641,4 +653,31 @@ test("daemon stdin config survives multi-byte characters split across chunks", a
   assert.deepEqual(await daemonConfigFromStdin(Readable.from([])), {});
   // And malformed JSON falls back to defaults too.
   assert.deepEqual(await daemonConfigFromStdin(Readable.from([Buffer.from("{oops")])), {});
+});
+
+test("spawned CLI daemon uses resolved stdin overrides instead of revalidating inherited launch env", async () => {
+  const home = makeTempDir("bw-daemon-overrides-");
+  const cliPath = path.resolve(import.meta.dirname, "../../dist/bin/betterwright.js");
+  const invalid = { BETTERWRIGHT_HEADLESS: "invalid", BETTERWRIGHT_AD_BLOCK: "invalid", BETTERWRIGHT_PROFILE: "../escape", BETTERWRIGHT_DOWNLOAD_POLICY: "invalid" };
+  const previous = Object.fromEntries(Object.keys(invalid).map(key => [key, process.env[key]]));
+  Object.assign(process.env, invalid);
+  let channel;
+  try {
+    const connected = await connectSessionDaemon({ home, cliPath, config: { headless: false, profile: "explicit", browser: { adBlock: false, downloadPolicy: "ask" } } });
+    assert.equal(connected.ok, true, JSON.stringify(connected));
+    channel = connected.channel;
+    assert.equal(connected.hello.profile, "explicit");
+    const status = await channel.request({ op: "status" });
+    assert.equal(status.ok, true);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    if (channel) {
+      const closed = new Promise<void>(resolve => channel.socket.once("close", resolve));
+      await channel.request({ op: "shutdown" }).catch(() => {});
+      await closed;
+    }
+  }
 });

@@ -79,3 +79,41 @@ test("an absent or empty environment model still loads default model discovery",
     assert.match(result.stderr, /Unexpected setup module: .*doctor\.js/);
   }
 });
+
+test("invalid launch environment errors name their own variable, not the profile source", () => {
+  for (const [name, value, profileArgs] of [
+    ["BETTERWRIGHT_HEADLESS", "maybe", []],
+    ["BETTERWRIGHT_HEADLESS", "maybe", ["--profile", "work"]],
+    ["BETTERWRIGHT_DOWNLOAD_POLICY", "sometimes", []],
+  ] as const) {
+    const result = spawnSync(process.execPath, [cli, "run", ...profileArgs, "-c", "return 1"], {
+      cwd: root,
+      env: { ...process.env, BETTERWRIGHT_HOME: makeTempDir("betterwright-startup-home-"), BETTERWRIGHT_NO_DAEMON: "1", [name]: value },
+      encoding: "utf8",
+      timeout: 15_000,
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`^${name} must be`, "m"));
+    assert.doesNotMatch(result.stderr, /BETTERWRIGHT_PROFILE:|--profile:/);
+  }
+  const profile = spawnSync(process.execPath, [cli, "run", "-c", "return 1"], {
+    cwd: root,
+    env: { ...process.env, BETTERWRIGHT_HOME: makeTempDir("betterwright-startup-home-"), BETTERWRIGHT_NO_DAEMON: "1", BETTERWRIGHT_PROFILE: "../escape" },
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  assert.equal(profile.status, 1);
+  assert.match(profile.stderr, /^BETTERWRIGHT_PROFILE: /m);
+});
+
+test("management commands remain available with invalid unrelated launch defaults", () => {
+  for (const args of [["sessions"], ["close"], ["skill", "--claude"], ["view", "--clear-password"]]) {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd: root,
+      env: { ...process.env, BETTERWRIGHT_HOME: makeTempDir("betterwright-startup-management-"), BETTERWRIGHT_HEADLESS: "invalid", BETTERWRIGHT_AD_BLOCK: "invalid", BETTERWRIGHT_DOWNLOAD_POLICY: "invalid" },
+      encoding: "utf8", timeout: 15_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /BETTERWRIGHT_(HEADLESS|AD_BLOCK|DOWNLOAD_POLICY) must/);
+  }
+});

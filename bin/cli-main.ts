@@ -2258,18 +2258,31 @@ export async function runCli() {
     const { runLocalCommand } = await import("../src/local-ai-cli.js");
     return runLocalCommand(tokens.slice(1));
   }
+  // The daemon receives resolved overrides on stdin, not CLI flags. Validating
+  // inherited environment here would reject values the initiating CLI overrode.
+  if (first === "__daemon") {
+    const { runSessionDaemon } = await import("../src/daemon.js");
+    return runSessionDaemon();
+  }
   // A bad `--profile` should read as one clear line before anything launches,
   // not as a TypeError stack from inside a browser constructor. Help and
   // --version still answer, so `--help` never depends on valid flags.
   if (!wantsHelp(tokens) && !flags.has("--version")) {
     try {
       cliProfile();
+      const usesLaunchDefaults = !first || first.startsWith("-") ||
+        ["run", "repl", "exec", "record", "mcp"].includes(first) ||
+        (first === "view" && !flags.has("--set-password") && !flags.has("--clear-password")) ||
+        (first === "cookies" && tokens[1] === "sync");
+      if (usesLaunchDefaults) launchOptionsFromEnv(defaultDaemonHome(), process.env, launchOverridesFromFlags(flags));
     } catch (error) {
       // Name where the bad value came from: an MCP host debugging a server
       // that will not start needs to know it is the environment, not a flag.
-      const source =
-        flagValue(process.argv, "--profile") === undefined ? "BETTERWRIGHT_PROFILE" : "--profile";
-      console.error(`${source}: ${error?.message || error}`);
+      // Launch-default errors already name their variable.
+      const message = String(error?.message || error);
+      const source = /^BETTERWRIGHT_[A-Z_]+ /.test(message) ? ""
+        : `${flagValue(process.argv, "--profile") === undefined ? "BETTERWRIGHT_PROFILE" : "--profile"}: `;
+      console.error(`${source}${message}`);
       return 1;
     }
   }
@@ -2423,10 +2436,6 @@ export async function runCli() {
         BETTERWRIGHT_AD_BLOCK: (browserOptionsFromFlags(flags).adBlock ?? true) ? "1" : "0",
       });
       return 0;
-    }
-    case "__daemon": {
-      const { runSessionDaemon } = await import("../src/daemon.js");
-      return runSessionDaemon();
     }
     default:
       console.error(`Unknown command "${command}".\n\n${cliPaint({ stream: process.stderr }).help(MAIN_USAGE)}`);
