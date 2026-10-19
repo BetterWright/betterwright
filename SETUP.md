@@ -217,6 +217,19 @@ contract; an abrupt host exit can leave temporary copies for OS cleanup.
 Visibility restarts invalidate current proofs and audit, while archived
 journeys remain readable.
 
+The [native measurement record](.audit/pi-evidence-2.9.0.tsv) compares 2.8.9
+and 2.9.0 using Bun 1.4.0, BetterChromium 153.0.8010.36, and macOS arm64.
+For three fixed local-fixture journeys, initialize text grew from 885 to
+1,795 UTF-8 bytes in 2.8.9, and stayed at 937 bytes in 2.9.0. Proof images
+were attached in every journey. Run `bun research/pi-evidence-history-probe.ts`
+after building to repeat the real extension/browser calls through a minimal
+Pi host adapter. These measurements exclude image bytes and provider framing;
+the full Pi UI and model context accounting were not measured. The unit suite
+also checks 120 archived journeys with 2,048-byte evidence, the shared download
+response path without a real download, rejected/failed proofs, and history
+selection. Browser tests force real worker quota eviction and verify visibility
+restart invalidation.
+
 Pi also reads the shared `launch` defaults from BetterWright's home
 `config.json`; see [saved launch defaults](docs/environment.md#saved-launch-defaults).
 
