@@ -24,7 +24,7 @@ function storedProfileVersion(profileDir, readFileSync = fs.readFileSync) {
  * path as an opaque SIGTRAP). A caller-supplied provider binary can ship an
  * older Chromium than the managed fork, so this turns that latent crash into a
  * clear, actionable error. `runningVersion` is a dotted version like
- * "153.0.8010.36"; a missing or unparseable version, or a fresh profile, is a
+ * "156.0.8078.90"; a missing or unparseable version, or a fresh profile, is a
  * no-op.
  */
 export function assertProfileNotNewer(profileDir, runningVersion) {

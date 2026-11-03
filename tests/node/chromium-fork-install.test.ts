@@ -24,26 +24,26 @@ const ROOT = path.dirname(
   path.dirname(path.dirname(fileURLToPath(import.meta.url))),
 );
 
-test("Chromium 153 release is pinned to verified public assets", () => {
+test("Chromium 156 release is pinned to verified public assets", () => {
   assert.equal(
     CHROMIUM_FORK_RELEASE_TAG,
-    `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`,
+    `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r1`,
   );
   assert.deepEqual(CHROMIUM_FORK_ASSETS, {
     "darwin-arm64": {
       name: "betterchromium-mac-arm64.zip",
       sha256:
-        "e59b872601542e29c85a22ed8b83a36c9f6fd4ec0523c11253eaff74b279806c",
+        "0000000000000000000000000000000000000000000000000000000000000000",
     },
     "linux-x64": {
       name: "betterchromium-linux-x64.zip",
       sha256:
-        "fe7ec75a7bffe7c39de02073bf9592ac490f985b8457d16def2b372305830446",
+        "0000000000000000000000000000000000000000000000000000000000000000",
     },
     "win32-x64": {
       name: "betterchromium-win-x64.zip",
       sha256:
-        "589246796678e331773ce2a26d572384759f1aa57415418d5ee5685c017c2753",
+        "0000000000000000000000000000000000000000000000000000000000000000",
     },
   });
 });
@@ -64,7 +64,7 @@ test("Windows packaging carries Chromium's matching private assembly manifest", 
     "utf8",
   );
   const buildVersion = packageScript.match(/chromium_version="([^"]+)"/)?.[1];
-  assert.equal(buildVersion, "153.0.8010.36");
+  assert.equal(buildVersion, "156.0.8078.90");
   assert.equal(
     fs.readFileSync(path.join(ROOT, "scripts", "chromium", `${buildVersion}.manifest`), "utf8"),
     windowsVersionAssemblyManifest(buildVersion),

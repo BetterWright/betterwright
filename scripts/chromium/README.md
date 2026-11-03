@@ -1,15 +1,15 @@
-# BetterChromium 153 build
+# BetterChromium 156 build
 
 This directory is the reproducible definition for the browser source worktree. Chromium itself remains an external gclient checkout.
 
 Pinned revisions:
 
-- Chromium `153.0.8010.36`: `507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c`
-- V8: `f343157cebb388bfa416baccb5d35507e6fe8cc7`
+- Chromium `156.0.8078.90`: `23b0e24adfceff6d8e3344ff2641f879bfb314f7`
+- V8: `d72e817d59894a332093c48beae5749fde6f320f`
 
 ## Checkout and patch
 
-Copy `gclient-153.py` to `<work>/.gclient`. Before syncing, apply the small
+Copy `gclient-156.py` to `<work>/.gclient`. Before syncing, apply the small
 `depot-tools-custom-deps.patch` to depot_tools so it honors `custom_deps: None`
 for CIPD packages as well as Git dependencies:
 
