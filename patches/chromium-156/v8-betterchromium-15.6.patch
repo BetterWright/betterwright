@@ -77,7 +77,7 @@ index 009375b..a987e45 100644
  
  }  // namespace v8_inspector
 diff --git a/src/inspector/v8-console-message.cc b/src/inspector/v8-console-message.cc
-index da35ae7..58d70c2 100644
+index da35ae7..78e78f8 100644
 --- a/src/inspector/v8-console-message.cc
 +++ b/src/inspector/v8-console-message.cc
 @@ -592,14 +592,20 @@ void V8ConsoleMessageStorage::addMessage(
@@ -109,7 +109,7 @@ index da35ae7..58d70c2 100644
    V8ConsoleMessageStorage* inspectorStorage =
        inspector->consoleMessageStorage(contextGroupId);
    if (!inspectorStorage || inspectorStorage->id() != currentId) {
-@@ -608,21 +614,71 @@ void V8ConsoleMessageStorage::addMessage(
+@@ -608,21 +614,86 @@ void V8ConsoleMessageStorage::addMessage(
  
    DCHECK(m_messages.size() <= maxConsoleMessageCount);
    if (m_messages.size() == maxConsoleMessageCount) {
@@ -164,11 +164,26 @@ index da35ae7..58d70c2 100644
 +    pending.push_back(*message);
 +  }
 +  m_pendingReports.clear();
-+  m_inspector->forEachSession(
-+      m_contextGroupId, [&pending](V8InspectorSessionImpl* session) {
++  // Reporting can also reset the context group and destroy this storage.
++  // Use only locals from here on, and stop once the storage is replaced so
++  // this batch's sequence numbers cannot advance the new storage's session
++  // watermarks.
++  V8InspectorImpl* inspector = m_inspector;
++  int contextGroupId = m_contextGroupId;
++  uint64_t currentId = id();
++  auto storageIsCurrent = [inspector, contextGroupId, currentId]() {
++    V8ConsoleMessageStorage* storage =
++        inspector->consoleMessageStorage(contextGroupId);
++    return storage && storage->id() == currentId;
++  };
++  inspector->forEachSession(
++      contextGroupId,
++      [&pending, &storageIsCurrent](V8InspectorSessionImpl* session) {
 +        for (V8ConsoleMessage& message : pending) {
++          if (!storageIsCurrent()) return;
 +          if (message.origin() == V8MessageOrigin::kConsole) {
 +            session->consoleAgent()->messageAdded(&message);
++            if (!storageIsCurrent()) return;
 +          }
 +          session->runtimeAgent()->messageAdded(&message);
 +        }
