@@ -336,21 +336,20 @@ index 824ec2a..92916d6 100644
    testonly = true
    sources = [ "font_data_service_impl_unittest.cc" ]
 diff --git a/content/app/content_main_runner_impl.cc b/content/app/content_main_runner_impl.cc
-index 92ab96d..0d589e9 100644
+index 92ab96d..5e88d00 100644
 --- a/content/app/content_main_runner_impl.cc
 +++ b/content/app/content_main_runner_impl.cc
-@@ -32,6 +32,10 @@
+@@ -32,6 +32,9 @@
  #include "base/functional/callback.h"
  #include "base/functional/callback_helpers.h"
  #include "base/i18n/icu_util.h"
 +#include "base/i18n/language_tag.h"
 +#include "base/i18n/rtl.h"
 +#include "base/i18n/tag_converters.h"
-+#include "base/i18n/icubridge/default_icu_locale.h"
  #include "base/lazy_instance.h"
  #include "base/location.h"
  #include "base/logging.h"
-@@ -128,6 +132,8 @@
+@@ -128,6 +131,8 @@
  #include "services/webnn/public/cpp/webnn_sandbox_init.h"
  #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
  #include "third_party/blink/public/common/origin_trials/trial_token_validator.h"
@@ -359,7 +358,7 @@ index 92ab96d..0d589e9 100644
  #include "third_party/perfetto/include/perfetto/tracing/track.h"
  #include "third_party/tflite/buildflags.h"
  #include "tools/v8_context_snapshot/buildflags.h"
-@@ -860,10 +866,56 @@ int ContentMainRunnerImpl::Initialize(ContentMainParams params) {
+@@ -860,10 +865,56 @@ int ContentMainRunnerImpl::Initialize(ContentMainParams params) {
    delegate_ = std::exchange(params.delegate, nullptr);
    content_main_params_.emplace(std::move(params));
  
@@ -418,7 +417,7 @@ index 92ab96d..0d589e9 100644
  
  #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
    // Must run while the process is still single-threaded, i.e. before the
-@@ -1027,6 +1079,33 @@ int ContentMainRunnerImpl::Initialize(ContentMainParams params) {
+@@ -1027,6 +1078,32 @@ int ContentMainRunnerImpl::Initialize(ContentMainParams params) {
      return TerminateForFatalInitializationError();
  #endif  // BUILDFLAG(IS_ANDROID) && (ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE)
  
@@ -442,11 +441,10 @@ index 92ab96d..0d589e9 100644
 +    }
 +  }
 +  if (!identity_locale.empty()) {
-+    if (std::optional<base::i18n::LanguageTag> identity_tag =
-+            base::i18n::GetLanguageTagFromString(identity_locale)) {
-+      base::i18n::SetDefaultIcuLocale(
-+          base::i18n::DefaultIcuLocaleSetterKey(), *identity_tag);
-+    }
++    // DefaultIcuLocaleSetterKey is constructible only by its friends, so use
++    // the friended string setter. It updates both ICU's process default and
++    // base's cached LanguageTag; identity_locale was validated above.
++    base::i18n::SetICUDefaultLocale(identity_locale);
 +  }
 +
  #if defined(V8_USE_EXTERNAL_STARTUP_DATA)
