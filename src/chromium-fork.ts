@@ -178,26 +178,22 @@ export const CHROMIUM_FORK_RELEASE_TAG = `betterchromium-${BETTERWRIGHT_CHROMIUM
 /**
  * Public download manifest for `betterwright update` / default `setup`.
  * SHA-256 pins are of the zip archives on the release, not the nested binary.
- *
- * UNRELEASED: the 156.0.8078.90 zips have not been built yet, so the hashes
- * below are zero placeholders. `setup`/`update` fail closed on a checksum
- * mismatch until the release publishes real artifacts and pins them here.
  */
 export const CHROMIUM_FORK_ASSETS = Object.freeze({
   "darwin-arm64": Object.freeze({
     name: "betterchromium-mac-arm64.zip",
     sha256:
-      "0000000000000000000000000000000000000000000000000000000000000000",
+      "a05e042a8a73f1c5eca019a432bb1a76de4cb3d0617455310721aa29b7ac934e",
   }),
   "linux-x64": Object.freeze({
     name: "betterchromium-linux-x64.zip",
     sha256:
-      "0000000000000000000000000000000000000000000000000000000000000000",
+      "c67db9093c80afbf96711b2f958cbd8b73a4f274555c6cc536bc1bd32225e05f",
   }),
   "win32-x64": Object.freeze({
     name: "betterchromium-win-x64.zip",
     sha256:
-      "0000000000000000000000000000000000000000000000000000000000000000",
+      "1bd0b75b2c2be5387beda463e2d75b262f5edd2b552c4672628eb04216ff74ce",
   }),
 });
 

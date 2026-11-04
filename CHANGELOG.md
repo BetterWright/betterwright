@@ -23,6 +23,9 @@ Releases before 1.1.3 predate this file; their notes live on the
   before installing the browser and restart them afterward. Electron hosts,
   explicit browser paths, and remote providers require their own browser
   updates.
+- Fix a BetterChromium V8 use-after-free in deferred DevTools console delivery.
+  Page code running during reporting, including custom object formatters, could
+  free queued messages. Deferred delivery now reports copies of the messages.
 
 ### Changed
 

@@ -33,17 +33,17 @@ test("Chromium 156 release is pinned to verified public assets", () => {
     "darwin-arm64": {
       name: "betterchromium-mac-arm64.zip",
       sha256:
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        "a05e042a8a73f1c5eca019a432bb1a76de4cb3d0617455310721aa29b7ac934e",
     },
     "linux-x64": {
       name: "betterchromium-linux-x64.zip",
       sha256:
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        "c67db9093c80afbf96711b2f958cbd8b73a4f274555c6cc536bc1bd32225e05f",
     },
     "win32-x64": {
       name: "betterchromium-win-x64.zip",
       sha256:
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        "1bd0b75b2c2be5387beda463e2d75b262f5edd2b552c4672628eb04216ff74ce",
     },
   });
 });

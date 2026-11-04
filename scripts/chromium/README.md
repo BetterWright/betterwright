@@ -20,7 +20,7 @@ git -C /path/to/depot_tools apply /absolute/path/to/betterwright/scripts/chromiu
 The config omits old Windows Chrome installers used only by upstream updater
 integration tests. They are not inputs to the `chrome` and `inspector-test`
 release targets. The depot_tools revision used for this build is
-`36a8df4ad006eaa0572fb446edb8145fe5403592`.
+`006c1455f9ac26d03cafdf337003fdc3144dbff3`.
 
 Run `gclient sync --no-history` and `gclient runhooks`, then:
 
@@ -39,6 +39,11 @@ scripts/chromium/build.sh mac <work>/src out/BetterChromiumStatic
 scripts/chromium/build.sh linux <work>/src out/LinuxStatic
 scripts/chromium/build.sh win <work>/src out/WinStatic
 ```
+
+The macOS build used Xcode 27.2 and `xcodebuild -downloadComponent MetalToolchain`;
+ANGLE's Metal shaders require the separately downloaded toolchain. Windows
+builds running as a non-interactive scheduled task need
+`DEPOT_TOOLS_BUILD_TELEMETRY=0`.
 
 The Chromium patch also carries the BetterChromium product name and macOS bundle
 identifier, so a clean build produces the bundle expected by the packager.
