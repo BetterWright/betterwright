@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { isCallable } from "./untrusted-value.js";
 
-export const BETTERWRIGHT_CHROMIUM_VERSION = "153.0.8010.36";
+export const BETTERWRIGHT_CHROMIUM_VERSION = "156.0.8078.90";
 
 /**
  * Chromium's Windows launcher uses a private side-by-side assembly to locate
@@ -173,7 +173,7 @@ export const PLATFORM_LAYOUT = Object.freeze({
 });
 
 /** GitHub release that hosts the per-platform fork zip artifacts. */
-export const CHROMIUM_FORK_RELEASE_TAG = `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`;
+export const CHROMIUM_FORK_RELEASE_TAG = `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r1`;
 
 /**
  * Public download manifest for `betterwright update` / default `setup`.
@@ -183,17 +183,17 @@ export const CHROMIUM_FORK_ASSETS = Object.freeze({
   "darwin-arm64": Object.freeze({
     name: "betterchromium-mac-arm64.zip",
     sha256:
-      "e59b872601542e29c85a22ed8b83a36c9f6fd4ec0523c11253eaff74b279806c",
+      "a05e042a8a73f1c5eca019a432bb1a76de4cb3d0617455310721aa29b7ac934e",
   }),
   "linux-x64": Object.freeze({
     name: "betterchromium-linux-x64.zip",
     sha256:
-      "fe7ec75a7bffe7c39de02073bf9592ac490f985b8457d16def2b372305830446",
+      "c67db9093c80afbf96711b2f958cbd8b73a4f274555c6cc536bc1bd32225e05f",
   }),
   "win32-x64": Object.freeze({
     name: "betterchromium-win-x64.zip",
     sha256:
-      "589246796678e331773ce2a26d572384759f1aa57415418d5ee5685c017c2753",
+      "1bd0b75b2c2be5387beda463e2d75b262f5edd2b552c4672628eb04216ff74ce",
   }),
 });
 

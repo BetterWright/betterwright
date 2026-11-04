@@ -24,26 +24,26 @@ const ROOT = path.dirname(
   path.dirname(path.dirname(fileURLToPath(import.meta.url))),
 );
 
-test("Chromium 153 release is pinned to verified public assets", () => {
+test("Chromium 156 release is pinned to verified public assets", () => {
   assert.equal(
     CHROMIUM_FORK_RELEASE_TAG,
-    `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r2`,
+    `betterchromium-${BETTERWRIGHT_CHROMIUM_VERSION}-r1`,
   );
   assert.deepEqual(CHROMIUM_FORK_ASSETS, {
     "darwin-arm64": {
       name: "betterchromium-mac-arm64.zip",
       sha256:
-        "e59b872601542e29c85a22ed8b83a36c9f6fd4ec0523c11253eaff74b279806c",
+        "a05e042a8a73f1c5eca019a432bb1a76de4cb3d0617455310721aa29b7ac934e",
     },
     "linux-x64": {
       name: "betterchromium-linux-x64.zip",
       sha256:
-        "fe7ec75a7bffe7c39de02073bf9592ac490f985b8457d16def2b372305830446",
+        "c67db9093c80afbf96711b2f958cbd8b73a4f274555c6cc536bc1bd32225e05f",
     },
     "win32-x64": {
       name: "betterchromium-win-x64.zip",
       sha256:
-        "589246796678e331773ce2a26d572384759f1aa57415418d5ee5685c017c2753",
+        "1bd0b75b2c2be5387beda463e2d75b262f5edd2b552c4672628eb04216ff74ce",
     },
   });
 });
@@ -64,7 +64,7 @@ test("Windows packaging carries Chromium's matching private assembly manifest", 
     "utf8",
   );
   const buildVersion = packageScript.match(/chromium_version="([^"]+)"/)?.[1];
-  assert.equal(buildVersion, "153.0.8010.36");
+  assert.equal(buildVersion, "156.0.8078.90");
   assert.equal(
     fs.readFileSync(path.join(ROOT, "scripts", "chromium", `${buildVersion}.manifest`), "utf8"),
     windowsVersionAssemblyManifest(buildVersion),

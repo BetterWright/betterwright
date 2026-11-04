@@ -1979,9 +1979,11 @@ test("automatic UI avoids duplicate observations and bounds fallback context", o
 
 test("default navigation reaches a usable document while subresources are still loading", opts, async () => {
   const pending = [];
+  let notifySubresource: (() => void) | undefined;
   const site = await listen((request, response) => {
     if (request.url === "/slow.png") {
       pending.push(response);
+      notifySubresource?.();
       return;
     }
     if (request.url === "/webagents.md" || request.url === "/.well-known/webagents.json") {
@@ -1996,6 +1998,14 @@ test("default navigation reaches a usable document while subresources are still 
     const opened = await bw.run(`await page.goto('${site.origin}/default', { timeout: 2000 }); return { heading: await page.locator('h1').innerText() }`);
     assert.equal(opened.ok, true, opened.error);
     assert.deepEqual(opened.result, { heading: "Ready" });
+    // Document readiness can precede the server observing the image request.
+    // Wait for its arrival while keeping the response deliberately unfinished.
+    if (!pending.length) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("The image request did not arrive")), 2000);
+        notifySubresource = () => { clearTimeout(timer); resolve(); };
+      });
+    }
     assert.ok(pending.length > 0, "the subresource is still pending");
     const reloaded = await bw.run("await page.reload({ timeout: 2000 }); return { heading: await page.locator('h1').innerText() }");
     assert.equal(reloaded.ok, true, reloaded.error);
@@ -5248,10 +5258,21 @@ async function spawnCdpEndpoint() {
     child.once("error", () => resolve());
   });
   const close = async () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) {
+      if (process.platform === "win32") {
+        // Windows does not terminate descendants when the browser parent dies.
+        // Kill this fixture's tree so children cannot retain its profile files.
+        const killed = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+          stdio: "ignore", timeout: 5000, windowsHide: true,
+        });
+        if (killed.status !== 0) child.kill("SIGKILL");
+      } else {
+        child.kill("SIGKILL");
+      }
+    }
     await exited;
     await guard.close();
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    removeBrowserHome(profile);
   };
   let stderr = "";
   const cdpUrl = await new Promise<string>((resolve, reject) => {

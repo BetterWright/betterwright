@@ -1,15 +1,15 @@
-# BetterChromium 153 build
+# BetterChromium 156 build
 
 This directory is the reproducible definition for the browser source worktree. Chromium itself remains an external gclient checkout.
 
 Pinned revisions:
 
-- Chromium `153.0.8010.36`: `507c6ee3e2f3b2ca0e660547e5b9ea4820c67f4c`
-- V8: `f343157cebb388bfa416baccb5d35507e6fe8cc7`
+- Chromium `156.0.8078.90`: `23b0e24adfceff6d8e3344ff2641f879bfb314f7`
+- V8: `d72e817d59894a332093c48beae5749fde6f320f`
 
 ## Checkout and patch
 
-Copy `gclient-153.py` to `<work>/.gclient`. Before syncing, apply the small
+Copy `gclient-156.py` to `<work>/.gclient`. Before syncing, apply the small
 `depot-tools-custom-deps.patch` to depot_tools so it honors `custom_deps: None`
 for CIPD packages as well as Git dependencies:
 
@@ -20,7 +20,7 @@ git -C /path/to/depot_tools apply /absolute/path/to/betterwright/scripts/chromiu
 The config omits old Windows Chrome installers used only by upstream updater
 integration tests. They are not inputs to the `chrome` and `inspector-test`
 release targets. The depot_tools revision used for this build is
-`36a8df4ad006eaa0572fb446edb8145fe5403592`.
+`006c1455f9ac26d03cafdf337003fdc3144dbff3`.
 
 Run `gclient sync --no-history` and `gclient runhooks`, then:
 
@@ -40,12 +40,18 @@ scripts/chromium/build.sh linux <work>/src out/LinuxStatic
 scripts/chromium/build.sh win <work>/src out/WinStatic
 ```
 
+The macOS build used Xcode 27.2 and `xcodebuild -downloadComponent MetalToolchain`;
+ANGLE's Metal shaders require the separately downloaded toolchain. Windows
+builds running as a non-interactive scheduled task need
+`DEPOT_TOOLS_BUILD_TELEMETRY=0`.
+
 The Chromium patch also carries the BetterChromium product name and macOS bundle
 identifier, so a clean build produces the bundle expected by the packager.
 
-The V8 patch guards WebAssembly memory-map system calls by the operating system
-executing the code. This lets macOS build the host snapshot tools for a Linux
-target while retaining the Linux implementation in the shipped browser.
+Upstream V8 15.6 already guards WebAssembly memory-map system calls by the
+operating system executing the code (`V8_OS_LINUX`), so macOS can build the host
+snapshot tools for a Linux target without the hunk the 153 V8 patch carried.
+The 156 V8 patch contains only the inspector console change.
 
 The default profile is a static release build with proprietary Chrome codecs. PGO remains disabled in the reproducible default because Chromium profile artifacts are platform/revision coupled. PGO/ThinLTO candidates must be benchmarked against this control before replacing it.
 

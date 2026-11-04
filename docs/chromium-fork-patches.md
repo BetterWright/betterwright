@@ -1,6 +1,6 @@
 # Chromium fork patch set
 
-The pinned BetterChromium 153 fork carries a small set of source patches
+The pinned BetterChromium 156 fork carries a small set of source patches
 on top of upstream Chromium. This page is the reference for what each one
 changes and why it lives in the browser source rather than in the JS layer.
 Install, discovery, and the runtime options are in
@@ -11,7 +11,7 @@ real operating system. It does not install the former `src/fork-identity.ts`
 CDP masking layer or configure a macOS font collection on Linux. Native patch
 behavior still covers non-page contexts, WebGL, canvas readback, and audio.
 
-The aggregate [Chromium patch](../patches/chromium-153/chromium-betterchromium-153.patch)
+The aggregate [Chromium patch](../patches/chromium-156/chromium-betterchromium-156.patch)
 retains optional macOS-mask hunks gated on `--fingerprint-platform=macos`.
 Their reference values below came from Google Chrome 151.0.7922.108 on Apple
 silicon under macOS 26.6; they are not the default Linux identity. Other hunks
@@ -63,7 +63,7 @@ Chromium 151 r3 archive: a SwiftShader, llvmpipe, or softpipe renderer reports
 `Google Inc. (Intel)` and the Mesa Intel UHD Graphics 620 renderer string.
 Hardware renderer strings pass through unchanged. This changes the WebGL debug
 identity only; rendering, extensions, limits, and WebGPU capabilities continue
-to come from the real backend. The Chromium 153 patch now includes this behavior
+to come from the real backend. The Chromium 156 patch now includes this behavior
 so it can be reproduced from the checked-in build definition.
 
 Chromium 151 no longer guarantees an automatic software WebGL fallback. The
@@ -185,8 +185,8 @@ onto a single fallback. These are measurements of that local font set.
 
 ## 9. Linux font-data file sharing
 
-Upstream Chromium 153 already allows `FontDataService` to return either a
-read-only backing-file handle or its memory fallback on Linux. The 153
+Upstream Chromium 156 already allows `FontDataService` to return either a
+read-only backing-file handle or its memory fallback on Linux. The 156
 aggregate preserves those upstream paths and test expectations and adds a
 standalone `font_data_service_unittests` target. It no longer needs the 151
 service assertion removal or test changes that assumed a file-backed result.
@@ -207,7 +207,7 @@ deleted `/tmp/.org.chromium.*` copies. That collection is not bundled publicly.
 ## 10. Linux renderer soft limit
 
 The renderer-limit hunk in
-[`patches/chromium-153/chromium-betterchromium-153.patch`](../patches/chromium-153/chromium-betterchromium-153.patch)
+[`patches/chromium-156/chromium-betterchromium-156.patch`](../patches/chromium-156/chromium-betterchromium-156.patch)
 makes four the Linux binary's native default
 **soft** renderer-process limit, keeping `--renderer-process-limit` as an
 explicit override. Chromium's memory-derived default allows dozens of renderers

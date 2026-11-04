@@ -31,7 +31,7 @@ test("Chromium fork stays unresolved when no runtime path is configured", () => 
     resolveChromiumForkBinary({ env: {}, home: NO_FORK_HOME }),
     null,
   );
-  assert.equal(BETTERWRIGHT_CHROMIUM_VERSION, "153.0.8010.36");
+  assert.equal(BETTERWRIGHT_CHROMIUM_VERSION, "156.0.8078.90");
 });
 
 test("default root discovers a deployed artifact (zero-config fork)", () => {
