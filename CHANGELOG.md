@@ -9,6 +9,28 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-11-04
+
+### Security
+
+- Upgrade the managed BetterChromium browser from Chromium `153.0.8010.36` to
+  `156.0.8078.90`, the current Chromium 156 extended-stable branch. It includes
+  the upstream fixes for CVE-2026-118306, CVE-2026-118331, CVE-2026-118344, and
+  CVE-2026-118348 (fixed in `156.0.8078.73`), and the 55 security fixes in
+  Extended Stable `156.0.8078.88`, including Critical CVE-2026-121156 (#240).
+  After updating the package, stop CLI sessions with `betterwright close --all`
+  and run `betterwright setup` or `betterwright update`. Close SDK applications
+  before installing the browser and restart them afterward. Electron hosts,
+  explicit browser paths, and remote providers require their own browser
+  updates.
+
+### Changed
+
+- The BetterChromium source patches are rebased onto Chromium 156 (#241). The
+  patched behavior is unchanged. Locale identity uses Chromium 156's
+  LanguageTag API for the Accept-Language base language, and V8 now ships the
+  host-OS guard for WebAssembly memory-map calls that the 153 patch added.
+
 ## [2.9.0] - 2026-10-19
 
 ### Added
@@ -1885,7 +1907,8 @@ number to be reused.
   refresh already-installed skill files but never create new ones; `doctor`
   tips when a managed skill is stale.
 
-[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.9.0...HEAD
+[Unreleased]: https://github.com/BetterWright/betterwright/compare/v2.9.1...HEAD
+[2.9.1]: https://github.com/BetterWright/betterwright/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/BetterWright/betterwright/compare/v2.8.9...v2.9.0
 [2.8.9]: https://github.com/BetterWright/betterwright/compare/v2.8.8...v2.8.9
 [2.8.8]: https://github.com/BetterWright/betterwright/compare/v2.8.7...v2.8.8

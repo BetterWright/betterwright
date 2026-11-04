@@ -1,6 +1,6 @@
 # BetterChromium
 
-BetterWright runs the pinned BetterChromium 153 fork while keeping its
+BetterWright runs the pinned BetterChromium 156 fork while keeping its
 public `run()`, `human.*`, `captcha.*`, snapshot, policy, proxy, and vault
 APIs unchanged. On platforms with a checksum-pinned release asset,
 `betterwright setup` / `betterwright update` download the fork into the
