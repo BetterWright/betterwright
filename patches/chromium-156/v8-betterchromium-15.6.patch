@@ -77,10 +77,10 @@ index 009375b..a987e45 100644
  
  }  // namespace v8_inspector
 diff --git a/src/inspector/v8-console-message.cc b/src/inspector/v8-console-message.cc
-index da35ae7..88d545b 100644
+index da35ae7..58d70c2 100644
 --- a/src/inspector/v8-console-message.cc
 +++ b/src/inspector/v8-console-message.cc
-@@ -592,14 +592,34 @@ void V8ConsoleMessageStorage::addMessage(
+@@ -592,14 +592,20 @@ void V8ConsoleMessageStorage::addMessage(
  
    TraceV8ConsoleMessageEvent(message->origin(), message->type());
  
@@ -106,24 +106,10 @@ index da35ae7..88d545b 100644
 +                                hasConsumer = true;
 +                              }
 +                            });
-+  if (hasConsumer) {
-+    m_pendingReports.push_back(message.get());
-+    if (!m_flushScheduled) {
-+      m_flushScheduled = true;
-+      uint64_t flushId = ++m_flushGeneration;
-+      inspector->client()->scheduleInspectorWork(
-+          [inspector, contextGroupId, flushId]() {
-+            if (V8ConsoleMessageStorage* storage =
-+                    inspector->consoleMessageStorage(contextGroupId)) {
-+              storage->FlushPendingReports(flushId);
-+            }
-+          });
-+    }
-+  }
    V8ConsoleMessageStorage* inspectorStorage =
        inspector->consoleMessageStorage(contextGroupId);
    if (!inspectorStorage || inspectorStorage->id() != currentId) {
-@@ -608,11 +628,19 @@ void V8ConsoleMessageStorage::addMessage(
+@@ -608,21 +614,71 @@ void V8ConsoleMessageStorage::addMessage(
  
    DCHECK(m_messages.size() <= maxConsoleMessageCount);
    if (m_messages.size() == maxConsoleMessageCount) {
@@ -143,26 +129,52 @@ index da35ae7..88d545b 100644
      m_estimatedSize -= m_messages.front()->estimatedSize();
      m_messages.pop_front();
    }
-@@ -621,8 +649,25 @@ void V8ConsoleMessageStorage::addMessage(
-   m_estimatedSize += m_messages.back()->estimatedSize();
- }
  
+   m_messages.push_back(std::move(message));
+   m_estimatedSize += m_messages.back()->estimatedSize();
++
++  // Queue only messages this storage owns, so every pending pointer is
++  // removed by eviction or clear() before its message is freed.
++  if (hasConsumer) {
++    m_pendingReports.push_back(m_messages.back().get());
++    if (!m_flushScheduled) {
++      m_flushScheduled = true;
++      uint64_t flushId = ++m_flushGeneration;
++      inspector->client()->scheduleInspectorWork(
++          [inspector, contextGroupId, flushId]() {
++            if (V8ConsoleMessageStorage* storage =
++                    inspector->consoleMessageStorage(contextGroupId)) {
++              storage->FlushPendingReports(flushId);
++            }
++          });
++    }
++  }
++}
++
 +void V8ConsoleMessageStorage::FlushPendingReports(uint64_t flushId) {
 +  if (flushId != m_flushGeneration) return;
 +  m_flushScheduled = false;
-+  std::vector<V8ConsoleMessage*> pending;
-+  pending.swap(m_pendingReports);
++  // Reporting can run page code (custom object formatters) that clears or
++  // evicts stored messages. Copy every queued message before reporting, as
++  // upstream enable-time replay does (crbug.com/485672657), so no session
++  // reads a message the storage has freed.
++  std::vector<V8ConsoleMessage> pending;
++  pending.reserve(m_pendingReports.size());
++  for (V8ConsoleMessage* message : m_pendingReports) {
++    pending.push_back(*message);
++  }
++  m_pendingReports.clear();
 +  m_inspector->forEachSession(
 +      m_contextGroupId, [&pending](V8InspectorSessionImpl* session) {
-+        for (V8ConsoleMessage* message : pending) {
-+          if (message->origin() == V8MessageOrigin::kConsole) {
-+            session->consoleAgent()->messageAdded(message);
++        for (V8ConsoleMessage& message : pending) {
++          if (message.origin() == V8MessageOrigin::kConsole) {
++            session->consoleAgent()->messageAdded(&message);
 +          }
-+          session->runtimeAgent()->messageAdded(message);
++          session->runtimeAgent()->messageAdded(&message);
 +        }
 +      });
-+}
-+
+ }
+ 
  void V8ConsoleMessageStorage::clear() {
    m_messages.clear();
 +  m_pendingReports.clear();
