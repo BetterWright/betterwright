@@ -9,6 +9,15 @@ Releases before 1.1.3 predate this file; their notes live on the
 
 ## [Unreleased]
 
+### Changed
+
+- The native Pi extension now appends its operating guidance as a separate
+  system prompt part when the host passes the system prompt as an array of
+  parts, instead of joining every part into one string. Hosts place provider
+  prompt-cache breakpoints between parts, so the host's stable parts keep their
+  cached prefix. A string or missing system prompt is still joined with the
+  guidance as before.
+
 ## [2.9.1] - 2026-11-04
 
 ### Security
