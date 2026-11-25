@@ -1001,9 +1001,18 @@ export function createPiExtension(options: any = {}) {
       renderResult: summaryRenderResult,
     });
 
-    pi.on("before_agent_start", (event) => ({
-      systemPrompt: `${String(event.systemPrompt || "")}\n\n${agentSystemPrompt(options.guardrails)}`,
-    }));
+    pi.on("before_agent_start", (event) => {
+      const guardrailPrompt = agentSystemPrompt(options.guardrails);
+      // Newer hosts pass the system prompt as separate parts and place provider
+      // cache breakpoints between them. Append our text as its own part so the
+      // host's stable parts keep their cached prefix when another part changes.
+      if (Array.isArray(event.systemPrompt)) {
+        return { systemPrompt: [...event.systemPrompt, guardrailPrompt] };
+      }
+      return {
+        systemPrompt: `${String(event.systemPrompt || "")}\n\n${guardrailPrompt}`,
+      };
+    });
 
     pi.on("agent_end", () => {
       const sendMessage = pi.sendMessage;

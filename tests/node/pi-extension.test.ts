@@ -235,6 +235,36 @@ test("native Pi extension registers persistent tools and records its supplied st
   }
 });
 
+test("native Pi extension appends guardrails as a separate part when the host passes prompt parts", () => {
+  const pi = new FakePi();
+  createPiExtension({ browser: new FakeBrowser() })(pi);
+  const handler = pi.handlers.get("before_agent_start");
+
+  const parts = ["stable host policy", "recalled memories"];
+  const result = handler({ systemPrompt: parts });
+
+  assert.ok(Array.isArray(result.systemPrompt));
+  assert.equal(result.systemPrompt.length, 3);
+  assert.deepEqual(result.systemPrompt.slice(0, 2), ["stable host policy", "recalled memories"]);
+  assert.match(result.systemPrompt[2], /^# Operating the browser/);
+  assert.deepEqual(parts, ["stable host policy", "recalled memories"]);
+});
+
+test("native Pi extension keeps joining a string or missing system prompt", () => {
+  const pi = new FakePi();
+  createPiExtension({ browser: new FakeBrowser() })(pi);
+  const handler = pi.handlers.get("before_agent_start");
+
+  const fromString = handler({ systemPrompt: "base" });
+  assert.equal(Array.isArray(fromString.systemPrompt), false);
+  assert.match(fromString.systemPrompt, /^base\n\n# Operating the browser/);
+
+  const fromUndefined = handler({});
+  assert.equal(Array.isArray(fromUndefined.systemPrompt), false);
+  assert.match(fromUndefined.systemPrompt, /^\n\n# Operating the browser/);
+});
+
+
 test("native Pi extension grounds required checklist items in proof frames", async () => {
   const { dir, screenshot } = await fixture();
   const browser = new FakeBrowser({ screenshot });
