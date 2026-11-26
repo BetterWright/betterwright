@@ -56,9 +56,11 @@ BetterWright uses the existing browser context when one is available, so it can
 access the prepared site's saved state. A CDP URL with a token is a browser
 control credential. Keep the URL in your secret store and out of shared logs.
 
-BetterWright closes the tabs it uses when you close the session or when the
-session's idle timeout expires. Closing the last tab can also close the Chrome
-window. Leave a separate tab open if you want the desktop to stay available.
+When a CLI session closes or reaches its idle timeout, BetterWright closes the
+tabs it used, including the existing tab it selected on attach. Closing the
+last tab can also close the Chrome window. Save work in open tabs before
+attaching. The JavaScript SDK's `bw.close()` disconnects from an attached
+browser and leaves its tabs open.
 
 ## Configuring a default
 
