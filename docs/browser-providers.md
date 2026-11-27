@@ -44,6 +44,26 @@ betterwright run … --browser wss://browser.example.com/devtools/abc
 
 `BETTERWRIGHT_CDP_URL` is the host-level shorthand for `{ cdpUrl }`.
 
+### Attach to a Chrome profile you prepared
+
+Start or resume the browser in your provider. A hosted Chrome desktop lets you
+prepare a signed-in profile before handing the browser to a CDP client. The
+[Cloudbrowser virtual browser guide](https://cloudbrowser.tv/virtual-browser)
+shows this workflow and where to get the running browser's CDP URL.
+
+Set `BETTERWRIGHT_CDP_URL` in the SDK host's environment. For CLI use, export
+it in the shell you use for `betterwright run`, `betterwright repl`, or
+`betterwright exec` so every invocation receives the endpoint.
+BetterWright uses the existing browser context when one is available, so it can
+access the prepared site's saved state. A CDP URL with a token is a browser
+control credential. Keep the URL in your secret store and out of shared logs.
+
+When a CLI session closes or reaches its idle timeout, BetterWright closes the
+tabs it used, including the existing tab it selected on attach. Closing the
+last tab can also close the Chrome window. Save work in open tabs before
+attaching. The JavaScript SDK's `bw.close()` disconnects from an attached
+browser and leaves its tabs open.
+
 ## Configuring a default
 
 Passing `--browser` on every call gets old. `betterwright configure` writes the
