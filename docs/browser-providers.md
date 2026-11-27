@@ -51,7 +51,9 @@ prepare a signed-in profile before handing the browser to a CDP client. The
 [Cloudbrowser virtual browser guide](https://cloudbrowser.tv/virtual-browser)
 shows this workflow and where to get the running browser's CDP URL.
 
-Set `BETTERWRIGHT_CDP_URL` in the calling process's environment at launch.
+Set `BETTERWRIGHT_CDP_URL` in the SDK host's environment. For CLI use, export
+it in the shell you use for `betterwright run`, `betterwright repl`, or
+`betterwright exec` so every invocation receives the endpoint.
 BetterWright uses the existing browser context when one is available, so it can
 access the prepared site's saved state. A CDP URL with a token is a browser
 control credential. Keep the URL in your secret store and out of shared logs.
